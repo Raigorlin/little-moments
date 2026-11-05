@@ -1,6 +1,6 @@
 # 日子拾光 · LITTLE MOMENTS
 
-**日子拾光** is a Traditional Chinese camping and trip planner. Plan an itinerary, meals, shopping, shared gear, vehicles, and trip expenses; invite an account to collaborate; and switch to a personal departure checklist when it is time to go.
+**日子拾光** is a Traditional Chinese camping and trip planner. Plan an itinerary, meals, shopping, shared gear, vehicles, and trip expenses; invite an account to collaborate; and switch to a personal departure checklist when it is time to go. The repository includes an account-backed **Expo / React Native** iOS and Android client alongside the web app.
 
 The app has two modes:
 
@@ -25,6 +25,7 @@ This repository contains source code, not personal trip data or a hosted website
 - **Mobile and accessibility:** Responsive layouts, horizontally scrollable trip sections and date selection, mobile swipe actions for editing and deleting, a dark theme, keyboard focus indicators, and reduced-motion support.
 - **Illustrations and presentation:** Original SVG trip and meal illustrations, trip cover choices, a daily note, and optional scene animation controls.
 - **Trip export and print:** Export or print a trip handbook from its settings. Handbook export is separate from expense-ledger export and a full database backup.
+- **React Native mobile app (early migration):** A native iOS/Android client with secure session storage, account sign-in, trip list, mobile swipe-to-open cards, itinerary, meals, shopping, gear and crew views. It can update itinerary completion, shopping check-offs, and the signed-in member's packing status. More trip-management features are still being migrated; keep using the web app for full feature coverage.
 
 ## Getting started
 
@@ -58,6 +59,35 @@ Once setup is complete:
 - Use `/demo/` to open the independent local planner.
 
 The first administrator can invite members or manage accounts from the admin dashboard. To share a trip, create or open a trip, use **Invite companions**, and share the generated invitation link with the intended person. A member must have an account and sign in to collaborate.
+
+## Expo / React Native mobile app
+
+The `mobile/` folder is an actual Expo React Native app for iOS and Android; it is not the web planner in a native-looking browser. It talks to the same account API and SQLite database as the existing web app. The web app remains available during the gradual mobile migration.
+
+### Requirements
+
+- Bun 1.4 or later to install packages and run the Expo CLI.
+- Node.js supported by the installed Expo SDK for some native development/build workflows (Expo SDK 58 requires Node 22.13.x or 24.3+).
+- Android Studio and Android SDK for a local Android build/emulator. Local iOS builds require macOS and Xcode; on Windows, use an iOS device with Expo Go or a cloud build service.
+
+Install dependencies and start Expo from the repository root:
+
+```powershell
+bun install --cwd mobile
+bun run --cwd mobile start
+```
+
+In the app, enter the address of the running account server. For an Android emulator, use the computer's reachable LAN address or emulator host address; for a physical phone, use the server computer's LAN IPv4 address, for example `http://192.168.1.20:5182`. Both devices must be on the same trusted private network and the Windows Private-profile firewall rule described above must permit the app port. `127.0.0.1` on a physical phone means the phone itself, not the server computer. The default `http://127.0.0.1:5182` is intended for a local emulator or a server running on the same device.
+
+The server validates request Origin headers; the mobile client sends the configured server origin for mutations and keeps the session cookie in the device's secure storage. Changing the server address clears the stored session. This is a private-LAN development setup over HTTP, not production mobile networking; do not expose the server publicly. For distribution beyond a trusted LAN, use HTTPS and a reviewed deployment configuration.
+
+Useful validation commands:
+
+```powershell
+bun run --cwd mobile typecheck
+bunx --cwd mobile expo export --platform android
+bunx --cwd mobile expo export --platform ios
+```
 
 ## Plan a trip
 

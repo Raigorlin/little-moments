@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "日子拾光",
+    "slug": "little-moments",
+    "scheme": "littlemoments",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "package": "com.littlemoments.camping",
+      "usesCleartextTraffic": true
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}
