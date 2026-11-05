@@ -1,0 +1,11 @@
+services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:5174:5174"
+    volumes:
+      - camping-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  camping-data:

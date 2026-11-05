@@ -44,6 +44,19 @@ Open `http://127.0.0.1:5174/setup` and create your own administrator account. Th
 
 Without `PORT`, the server defaults to 5173. Use an unused port if another copy is already running. `CAMPING_DIST` changes the build directory; `CAMPING_DB` changes the private SQLite path.
 
+## Run with Docker
+
+Requires Docker Desktop with Docker Compose. From this folder, build and start the app in PowerShell:
+
+```powershell
+docker compose up --build -d
+docker compose logs -f
+```
+
+Open `http://127.0.0.1:5174/setup` and create your administrator account. The Compose configuration publishes the app on the local machine only and stores SQLite data in a persistent Docker volume named `camping-data`. If port 5174 is already in use, stop the other server or change the host port in `docker-compose.yml` (for example, `127.0.0.1:5175:5174`) and open that port instead. Stop `docker compose logs -f` with `Ctrl+C` to leave the logs, then run `docker compose down` to stop the app; the volume and account data are preserved. Start it again with `docker compose up -d`.
+
+This Docker setup is for local use only, not public hosting. Do not change the port binding to `0.0.0.0`, expose the container directly to the internet, or use this configuration on an untrusted network. To permanently delete the database and other volume data, run `docker compose down --volumes`.
+
 ## Data and security
 
 - The server binds only to `127.0.0.1` and accepts loopback hostnames. First-admin setup also requires a loopback client. Do not remove these protections to expose this prototype publicly.
@@ -85,7 +98,7 @@ CAMPING_BUN="$(command -v bun)" CAMPING_DIST=dist node scripts/check-accounts.mj
 
 This repository stores **source code**, not a hosted website or a copy of your personal data. **GitHub Pages cannot run the Bun/SQLite backend.** Public hosting would require a separate deployment design, HTTPS and security review.
 
-Generated builds, dependencies, screenshots, logs, backups and database files are excluded. No Docker configuration is included.
+Generated builds, dependencies, screenshots, logs, backups and database files are excluded. Docker builds the static app and keeps persistent account data in a separate named volume.
 
 ## Third-party assets
 

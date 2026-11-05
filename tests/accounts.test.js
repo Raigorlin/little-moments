@@ -100,6 +100,22 @@ describe('first-admin setup', () => {
     failed(await call('POST', '/api/setup', { body, info: { ip: '192.168.1.20' } }), 403);
     ok(await call('POST', '/api/setup', { body, info: { ip: '::ffff:127.0.0.1' } }));
   });
+  test('container mode only allows setup through a loopback host', async () => {
+    const containerSvc = createAccountService({ dbPath: ':memory:', allowLoopbackHostFromContainer: true });
+    try {
+      const body = { username: 'admin-one', displayName: '管理員', password: PASS };
+      failed(await (async () => {
+        const headers = { origin: 'http://camp.example.com', 'content-type': 'application/json' };
+        const res = await containerSvc.handle(new Request('http://camp.example.com/api/setup', { method: 'POST', headers, body: JSON.stringify(body) }), { ip: '172.20.0.2' });
+        return { status: res.status, body: await res.json() };
+      })(), 403);
+      const headers = { origin: BASE, 'content-type': 'application/json' };
+      const res = await containerSvc.handle(new Request(`${BASE}/api/setup`, { method: 'POST', headers, body: JSON.stringify(body) }), { ip: '172.20.0.2' });
+      expect(res.status).toBe(200);
+    } finally {
+      containerSvc.close();
+    }
+  });
   test('creates an admin, sets a hardened cookie and runs only once', async () => {
     const res = ok(await call('POST', '/api/setup', { body: { username: 'admin-one', displayName: ' 管理員  小安 ', password: PASS } }));
     expect(res.body).toEqual({ user: { id: expect.any(String), username: 'admin-one', displayName: '管理員 小安', role: 'admin' }, needsSetup: false });

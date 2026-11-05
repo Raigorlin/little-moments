@@ -206,8 +206,9 @@ class RateLimiter {
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const isLoopbackIp = ip => /^(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}|::1|::ffff:127\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.test(ip);
-function isLoopback(url, info) {
+function isLoopback(url, info, allowLoopbackHostFromContainer = false) {
   if (!LOOPBACK_HOSTS.has(url.hostname)) return false;
+  if (allowLoopbackHostFromContainer) return true;
   if (info?.ip !== undefined) return typeof info.ip === 'string' && isLoopbackIp(info.ip);
   return true;
 }
@@ -251,7 +252,7 @@ CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL
 );`;
 
-export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
+export function createAccountService({ dbPath, now, receiptAi = null, allowLoopbackHostFromContainer = false } = {}) {
   const clock = () => { const value = now ? now() : Date.now(); return value instanceof Date ? value.getTime() : Number(value); };
   const iso = () => new Date(clock()).toISOString();
   const db = new Database(assertPrivateDbPath(dbPath), { create: true });
@@ -540,7 +541,7 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
     },
 
     async setup(request, url, info) {
-      if (!isLoopback(url, info)) fail(403, '首次管理員設定只能在本機進行。');
+      if (!isLoopback(url, info, allowLoopbackHostFromContainer)) fail(403, '首次管理員設定只能在本機進行。');
       if (!needsSetup()) fail(409, '管理員已設定完成。');
       const body = await readJson(request);
       const username = validateUsername(body.username), displayName = validateDisplayName(body.displayName);
