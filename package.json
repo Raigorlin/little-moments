@@ -1,0 +1,20 @@
+{
+  "name": "good-good-camping-local",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun scripts/build.mjs",
+    "test": "bun test tests/*.test.js",
+    "test:e2e": "playwright test",
+    "start": "bun scripts/serve.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  },
+  "dependencies": {
+    "@tesseract.js-data/chi_tra": "1.0.0",
+    "@tesseract.js-data/eng": "1.0.0",
+    "tesseract.js": "7.0.0"
+  }
+}

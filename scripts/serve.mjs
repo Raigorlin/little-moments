@@ -1,0 +1,13 @@
+import {resolve,dirname} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {createAccountService} from '../server/accounts.js';
+import {createHttpHandler} from '../server/http.js';
+import {createReceiptAi} from '../server/receipt-ai.js';
+const project=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+const port=Number(process.env.PORT||5173);
+const dbPath=process.env.CAMPING_DB||resolve(project,'data/accounts.sqlite');
+const accounts=createAccountService({dbPath,receiptAi:createReceiptAi({env:process.env})});
+const server=Bun.serve({hostname:'127.0.0.1',port,maxRequestBodySize:4_194_304,fetch:createHttpHandler({root:resolve(project,process.env.CAMPING_DIST||'dist'),accounts})});
+console.log(`Camping accounts ready: http://127.0.0.1:${server.port}`);
+console.log('First visit: create your own administrator. No default credentials. Listening on localhost only.');
+for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>{server.stop(true);accounts.close();process.exit(0);});
