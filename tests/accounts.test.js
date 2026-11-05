@@ -1,4 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join as joinPath } from 'node:path';
 import { createAccountService } from '../server/accounts.js';
 import { seed, isValidState } from '../src/model.js';
 
@@ -48,6 +52,48 @@ async function putState(cookie, id, mutate) {
 async function login(username) { return ok(await call('POST', '/api/login', { body: { username, password: PASS } })).cookie; }
 async function invite(cookie, tripId) { return ok(await call('POST', `/api/trips/${tripId}/invites`, { cookie, body: {} }), 201).body; }
 async function join(cookie, token, name, role) { return call('POST', `/api/invites/${token}/join`, { cookie, body: role === undefined ? { name } : { name, role } }); }
+
+test('upgrades existing trip cover constraints without losing trips or members', () => {
+  const root = joinPath(homedir(), '.aki', 'tmp');
+  mkdirSync(root, { recursive: true });
+  const dir = mkdtempSync(joinPath(root, 'camping-cover-upgrade-')), path = joinPath(dir, 'fixture.sqlite');
+  let upgraded, db;
+  try {
+    db = new Database(path);
+    db.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('admin','member')), password_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL, deleted_at INTEGER
+      );
+      CREATE TABLE trips (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id),
+        title TEXT NOT NULL, destination TEXT NOT NULL, start_date TEXT NOT NULL, end_date TEXT NOT NULL,
+        description TEXT NOT NULL, note TEXT NOT NULL,
+        cover_kind TEXT NOT NULL CHECK (cover_kind IN ('camp','mountain','lake','night')),
+        status TEXT NOT NULL CHECK (status IN ('planning','completed')),
+        revision INTEGER NOT NULL, people_count INTEGER NOT NULL, state_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE trip_members (
+        trip_id TEXT NOT NULL REFERENCES trips(id), user_id TEXT NOT NULL REFERENCES users(id),
+        person_id TEXT NOT NULL, joined_at INTEGER NOT NULL,
+        PRIMARY KEY (trip_id, user_id), UNIQUE (trip_id, person_id)
+      );
+      INSERT INTO users VALUES ('u1','old-owner','Old owner','admin','hash',1,NULL);
+      INSERT INTO trips VALUES ('t1','u1','Old trip','Lake','2026-11-20','2026-11-22','','','lake','planning',1,1,'{}',1,1);
+      INSERT INTO trip_members VALUES ('t1','u1','p1',1);
+    `);
+    db.close(); db = null;
+    upgraded = createAccountService({ dbPath: path });
+    db = new Database(path, { readonly: true });
+    expect(db.query('SELECT id, cover_kind FROM trips').all()).toEqual([{ id: 't1', cover_kind: 'lake' }]);
+    expect(db.query('SELECT trip_id, user_id, person_id FROM trip_members').all()).toEqual([{ trip_id: 't1', user_id: 'u1', person_id: 'p1' }]);
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([]);
+  } finally {
+    db?.close(); upgraded?.close(); rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 describe('routing and transport', () => {
   test('non-api paths are left to the static server', async () => {
@@ -231,10 +277,16 @@ describe('trips and isolation', () => {
     expect(env.state.revision).toBe(1);
     expect([env.state.activities, env.state.meals, env.state.shopping, env.state.gear, env.state.vehicles]).toEqual([[], [], [], [], []]);
   });
+  test('accepts and persists every cover illustration option', async () => {
+    const { cookie } = await setupAdmin();
+    for (const coverKind of ['camp', 'mountain', 'lake', 'night', 'forest', 'beach', 'sunrise']) {
+      expect((await createTrip(cookie, { coverKind })).coverKind).toBe(coverKind);
+    }
+  });
   test('validates card fields', async () => {
     const { cookie } = await setupAdmin();
     const bad = async extra => failed(await call('POST', '/api/trips', { cookie, body: card(extra) }), 400);
-    await bad({ coverKind: 'beach' });
+    await bad({ coverKind: 'ocean' });
     await bad({ status: 'archived' });
     await bad({ title: '   ' });
     await bad({ title: 42 });

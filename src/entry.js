@@ -1,3 +1,6 @@
+import { enableSwipeActions } from './mobile-swipe.js';
+
+enableSwipeActions();
 if (location.pathname === '/demo' || location.pathname.startsWith('/demo/')) {
   await import('./app.js');
 } else {

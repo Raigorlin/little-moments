@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 import {STORAGE_KEY} from '../src/model.js';
 const nav=(page,tab)=>page.locator(`.section-tabs [data-tab="${tab}"]`).click();
 const state=page=>page.evaluate(key=>JSON.parse(localStorage.getItem(key)),STORAGE_KEY);
@@ -7,7 +7,7 @@ const openMeal=async page=>{await page.goto('/demo/');await nav(page,'meals');aw
 
 test('recipe presets preview, merge shortcuts and save correct picture plus shopping',async({page})=>{
  await openMeal(page);const before=await state(page);await page.getByRole('combobox',{name:'常用料理範本',exact:true}).selectOption('curry');await expect(page.locator('#template-preview')).toContainText('馬鈴薯');expect(await state(page)).toEqual(before);
- await page.getByRole('button',{name:'套用範本',exact:true}).click();await expect(page.getByLabel('料理名稱',{exact:true})).toHaveValue('野炊雞肉咖哩飯');await expect(page.locator('#meal-image-preview [data-dish-kind]')).toHaveAttribute('data-dish-kind','curry');await expect(page.getByLabel('食材（以頓號、/、逗號或句點分隔）',{exact:true})).toHaveValue(/雞腿肉/);
+ await page.getByRole('button',{name:'套用範本',exact:true}).click();await expect(page.getByLabel('料理名稱',{exact:true})).toHaveValue('野炊雞肉咖哩飯');await expect(page.locator('#meal-image-preview')).toHaveCount(0);await expect(page.getByLabel('食材（以頓號、/、逗號或句點分隔）',{exact:true})).toHaveValue(/雞腿肉/);
  await page.locator('.common-ingredients summary').click();await page.getByRole('button',{name:'鮮蝦',exact:true}).click();await expect(page.getByRole('button',{name:'鮮蝦',exact:true})).toBeDisabled();expect(await state(page)).toEqual(before);await save(page);
  const card=page.locator('.meal-card').filter({has:page.getByRole('heading',{name:'野炊雞肉咖哩飯',exact:true})});await expect(card.locator('[data-dish-kind]')).toHaveAttribute('data-dish-kind','curry');
  const saved=await state(page);expect(saved.meals.at(-1).imageKind).toBe('curry');expect(saved.shopping.some(s=>s.name==='咖哩塊')).toBe(true);expect(saved.shopping.filter(s=>s.name==='鮮蝦')).toHaveLength(1);
@@ -24,7 +24,7 @@ test('existing meals retain automatic or explicitly saved images while the image
  await page.getByRole('button',{name:'編輯 暖暖壽喜燒',exact:true}).click();await expect(page.getByRole('combobox',{name:'料理圖片',exact:true})).toHaveCount(0);await save(page);expect((await state(page)).meals[0].imageKind).toBeUndefined();
  await page.evaluate(key=>{const s=JSON.parse(localStorage.getItem(key));s.meals[0].imageKind='salad';localStorage.setItem(key,JSON.stringify(s));},STORAGE_KEY);
  await page.reload();await nav(page,'meals');await page.getByRole('button',{name:'編輯 暖暖壽喜燒',exact:true}).click();
- await expect(page.locator('#meal-image-preview [data-dish-kind]')).toHaveAttribute('data-dish-kind','salad');await expect(page.locator('#edit-form select[name="imageKind"]')).toHaveCount(0);
+ await expect(page.locator('#meal-image-preview')).toHaveCount(0);await expect(page.locator('#edit-form select[name="imageKind"]')).toHaveCount(0);
  await page.getByRole('textbox',{name:'料理筆記',exact:true}).fill('保留原有配圖');await save(page);expect((await state(page)).meals[0].imageKind).toBe('salad');
  await page.reload();await nav(page,'meals');await expect(page.locator('.meal-card').first().locator('[data-dish-kind]')).toHaveAttribute('data-dish-kind','salad');
 });

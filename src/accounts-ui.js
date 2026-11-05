@@ -9,8 +9,11 @@ export const ENDPOINTS = {
 export const COVERS = {
   camp: { art: 'camp', label: '營地帳篷', tone: 'green' },
   mountain: { art: 'travel', label: '山間旅途', tone: 'peach' },
-  lake: { art: 'camp', label: '湖畔水岸', tone: 'blue' },
-  night: { art: 'night', label: '星空夜晚', tone: 'night' }
+  lake: { art: 'lake', label: '湖畔水岸', tone: 'blue' },
+  night: { art: 'night', label: '星空夜晚', tone: 'night' },
+  forest: { art: 'forest', label: '森林小屋', tone: 'green' },
+  beach: { art: 'beach', label: '海邊假期', tone: 'blue' },
+  sunrise: { art: 'sunrise', label: '日出山嵐', tone: 'peach' }
 };
 export const STATUSES = { planning: '規劃中', completed: '已完成' };
 export const USERNAME_RE = /^[a-z][a-z0-9-]{2,31}$/;
@@ -267,6 +270,9 @@ function selectField({ id, label, options, value, help = '', attrs = '', wide = 
   const helpId = help ? `${id}-help` : '';
   return `<div class="field${wide ? ' acct-wide' : ''}"><label for="${id}">${e(label)}</label><select id="${id}" name="${id}" ${helpId ? `aria-describedby="${helpId}"` : ''} ${attrs}>${options.map(([v, l]) => `<option value="${e(v)}"${v === value ? ' selected' : ''}>${e(l)}</option>`).join('')}</select>${help ? `<small class="help" id="${helpId}">${e(help)}</small>` : ''}</div>`;
 }
+function coverPicker(selected) {
+  return `<fieldset class="acct-cover-picker acct-wide"><legend>封面插畫</legend><div class="acct-cover-options">${Object.entries(COVERS).map(([kind, cover]) => `<label class="acct-cover-option"><input class="visually-hidden" type="radio" name="trip-cover" value="${e(kind)}"${kind === selected ? ' checked' : ''}><span class="acct-cover-option-content"><span class="acct-cover-preview tone-${e(cover.tone)}">${illustration(cover.art)}</span><span class="acct-cover-label">${e(cover.label)}</span></span></label>`).join('')}</div></fieldset>`;
+}
 const formError = () => '<p class="form-error" role="alert" tabindex="-1"></p>';
 
 function renderAuth(kind) {
@@ -327,7 +333,7 @@ function tripCard(trip, user) {
   const cover = coverOf(trip.coverKind);
   const status = STATUSES[trip.status] ? trip.status : 'planning';
   const open = tripPath(user, trip.id);
-  return `<article class="acct-trip-card" data-trip-id="${e(trip.id)}">
+  return `<article class="acct-trip-card" data-swipe-row data-trip-id="${e(trip.id)}">
     <div class="acct-trip-art tone-${cover.tone}">${illustration(cover.art)}<span class="tag acct-status status-${status}">${e(STATUSES[status])}</span></div>
     <div class="acct-trip-body">
       <h3><a href="${e(open)}">${e(trip.title || '未命名旅行')}</a></h3>
@@ -371,7 +377,7 @@ function openTripDialog({ mode, trip = {}, legacyState = null, sourceLabel = '',
     ${field({ id: 'trip-end', label: '結束日期', type: 'date', value: d.endDate, attrs: `required${imported ? ' readonly' : ''}`, help: '一趟最多 31 天。' })}
     ${field({ id: 'trip-description', label: '旅行介紹', type: 'textarea', value: d.description, attrs: 'maxlength="1000"', wide: true })}
     ${field({ id: 'trip-note', label: '給旅伴的備註', type: 'textarea', value: d.note, attrs: 'maxlength="1000"', wide: true })}
-    ${selectField({ id: 'trip-cover', label: '封面插畫', value: d.coverKind, options: Object.entries(COVERS).map(([k, c]) => [k, c.label]) })}
+    ${coverPicker(d.coverKind)}
     ${selectField({ id: 'trip-status', label: '旅行狀態', value: d.status, options: [['planning', '規劃中（還沒出發）'], ['completed', '已完成（收進回憶）']] })}
   </div>${formError()}<div class="form-actions"><button type="button" class="button quiet" data-modal-close>取消</button><button type="submit" class="button primary">${mode === 'edit' ? '儲存卡片' : imported ? '確認匯入' : '建立旅行'}</button></div></form>`;
   openModal(title, body, root => {
@@ -548,7 +554,7 @@ async function renderAdmin(user) {
 
   const userRow = u => {
     const self = u.id === user.id;
-    return `<li class="acct-user-row${u.deleted ? ' is-deleted' : ''}" data-user-id="${e(u.id)}"><div class="acct-user-info"><span class="avatar small ${u.role === 'admin' ? 'yellow' : 'blue'}" aria-hidden="true">${initialOf(u.displayName)}</span><div><b>${e(u.displayName)}</b>${self ? ' <span class="acct-pill">你</span>' : ''}<small>@${e(u.username)} · ${roleLabel(u.role)} · ${u.deleted ? '已刪除' : '使用中'} · ${count(u.tripCount)} 趟旅行</small></div></div><div class="acct-actions"><button type="button" class="button small" data-action="acct-edit-user" data-id="${e(u.id)}"${u.deleted ? ' disabled' : ''}>${icon('edit')} 編輯帳號</button><button type="button" class="button small danger" data-action="acct-delete-user" data-id="${e(u.id)}"${self || u.deleted ? ' disabled' : ''}>刪除帳號</button></div>${self ? '<small class="help acct-row-note">不能刪除自己的帳號，也不能移除自己的管理員權限。</small>' : ''}</li>`;
+    return `<li class="acct-user-row${u.deleted ? ' is-deleted' : ''}" data-swipe-row data-user-id="${e(u.id)}"><div class="acct-user-info"><span class="avatar small ${u.role === 'admin' ? 'yellow' : 'blue'}" aria-hidden="true">${initialOf(u.displayName)}</span><div><b>${e(u.displayName)}</b>${self ? ' <span class="acct-pill">你</span>' : ''}<small>@${e(u.username)} · ${roleLabel(u.role)} · ${u.deleted ? '已刪除' : '使用中'} · ${count(u.tripCount)} 趟旅行</small></div></div><div class="acct-actions"><button type="button" class="button small" data-action="acct-edit-user" data-id="${e(u.id)}"${u.deleted ? ' disabled' : ''}>${icon('edit')} 編輯帳號</button><button type="button" class="button small danger" data-action="acct-delete-user" data-id="${e(u.id)}"${self || u.deleted ? ' disabled' : ''}>刪除帳號</button></div>${self ? '<small class="help acct-row-note">不能刪除自己的帳號，也不能移除自己的管理員權限。</small>' : ''}</li>`;
   };
   const auditRow = ev => {
     const at = new Date(ev.at);

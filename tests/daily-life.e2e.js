@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 import {seed,STORAGE_KEY} from '../src/model.js';
 import {dailyNote} from '../src/daily-notes.js';
 const base=process.env.CAMPING_BASE_URL;

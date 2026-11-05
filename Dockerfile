@@ -12,7 +12,8 @@ WORKDIR /app
 ENV PORT=5174 \
     HOST=0.0.0.0 \
     CAMPING_DOCKER_LOCAL_ONLY=1 \
-    CAMPING_DB=/app/data/accounts.sqlite
+    CAMPING_DB=/app/data/accounts.sqlite \
+    CAMPING_OPENAI_API_KEY_FILE=/run/secrets/openai_api_key
 RUN mkdir -p /app/data && chown bun:bun /app/data
 COPY --from=build --chown=bun:bun /app/dist ./dist
 COPY --from=build --chown=bun:bun /app/server ./server

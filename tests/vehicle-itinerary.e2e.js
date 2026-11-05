@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './local-planner-fixture.js';
 import { seed, STORAGE_KEY } from '../src/model.js';
 import { fileURLToPath } from 'node:url';
 const preview = name => fileURLToPath(new URL('../previews/'+name,import.meta.url));

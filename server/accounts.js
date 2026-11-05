@@ -17,7 +17,7 @@ const COOKIE = 'ggc_session';
 const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 64 };
 const RESERVED = new Set(['api', 'admin', 'setup', 'login', 'register', 'logout', 'demo', 'assets']);
 const USERNAME = /^[a-z][a-z0-9-]{2,31}$/;
-const COVER_KINDS = ['camp', 'mountain', 'lake', 'night'];
+const COVER_KINDS = ['camp', 'mountain', 'lake', 'night', 'forest', 'beach', 'sunrise'];
 const STATUSES = ['planning', 'completed'];
 const ROLES = ['admin', 'member'];
 const CARD_LIMITS = { title: 100, destination: 100, description: 1000, note: 1000 };
@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS trips (
   id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id),
   title TEXT NOT NULL, destination TEXT NOT NULL, start_date TEXT NOT NULL, end_date TEXT NOT NULL,
   description TEXT NOT NULL, note TEXT NOT NULL,
-  cover_kind TEXT NOT NULL CHECK (cover_kind IN ('camp','mountain','lake','night')),
+  cover_kind TEXT NOT NULL CHECK (cover_kind IN ('camp','mountain','lake','night','forest','beach','sunrise')),
   status TEXT NOT NULL CHECK (status IN ('planning','completed')),
   revision INTEGER NOT NULL, people_count INTEGER NOT NULL, state_json TEXT NOT NULL,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
@@ -252,6 +252,33 @@ CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL
 );`;
 
+function migrateCoverKinds(db) {
+  const schema = db.query("SELECT sql FROM sqlite_master WHERE type='table' AND name='trips'").get()?.sql || '';
+  if (COVER_KINDS.every(kind => schema.includes(`'${kind}'`))) return;
+  db.exec('PRAGMA foreign_keys = OFF;');
+  try {
+    db.exec(`BEGIN IMMEDIATE;
+      CREATE TABLE trips_new (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id),
+        title TEXT NOT NULL, destination TEXT NOT NULL, start_date TEXT NOT NULL, end_date TEXT NOT NULL,
+        description TEXT NOT NULL, note TEXT NOT NULL,
+        cover_kind TEXT NOT NULL CHECK (cover_kind IN ('camp','mountain','lake','night','forest','beach','sunrise')),
+        status TEXT NOT NULL CHECK (status IN ('planning','completed')),
+        revision INTEGER NOT NULL, people_count INTEGER NOT NULL, state_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      INSERT INTO trips_new SELECT * FROM trips;
+      DROP TABLE trips;
+      ALTER TABLE trips_new RENAME TO trips;
+      COMMIT;`);
+  } catch (error) {
+    db.exec('ROLLBACK;');
+    throw error;
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON;');
+  }
+}
+
 export function createAccountService({ dbPath, now, receiptAi = null, allowLoopbackHostFromContainer = false } = {}) {
   const clock = () => { const value = now ? now() : Date.now(); return value instanceof Date ? value.getTime() : Number(value); };
   const iso = () => new Date(clock()).toISOString();
@@ -259,6 +286,7 @@ export function createAccountService({ dbPath, now, receiptAi = null, allowLoopb
   db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
   if (dbPath !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
   db.exec(SCHEMA + LEDGER_SCHEMA);
+  migrateCoverKinds(db);
   const limiter = new RateLimiter(clock);
   const aiActive = new Map();
   let closed = false, dummyHash;
@@ -851,7 +879,7 @@ export function createAccountService({ dbPath, now, receiptAi = null, allowLoopb
     getReceiptAi(request, url, info, [tripId]) {
       const access = ledgerAccess(requireUser(request), tripId);
       if (!access.canEdit) fail(403, '需要旅行編輯權限才能辨識收據。');
-      return json(200, receiptAi?.status || { enabled: false, provider: 'Amazon Bedrock', region: '', modelId: '', maxImageBytes: AI_IMAGE_LIMIT });
+      return json(200, receiptAi?.status || { enabled: false, provider: 'OpenAI', modelId: '', maxImageBytes: AI_IMAGE_LIMIT });
     },
     async recognizeReceiptAi(request, url, info, [tripId]) {
       const expected = request.headers.get('x-camping-user-id');
@@ -862,8 +890,8 @@ export function createAccountService({ dbPath, now, receiptAi = null, allowLoopb
         return user;
       };
       const user = authorize();
-      if (request.headers.get('x-receipt-consent') !== 'bedrock-v1') fail(400, '請先同意將這張收據照片送到 Amazon Bedrock。');
-      if (!receiptAi?.status?.enabled) fail(503, 'AI 辨識尚未設定，請改用本機 OCR 或聯絡管理員。');
+      if (request.headers.get('x-receipt-consent') !== 'openai-v1') fail(400, '請先同意將這張收據照片送到 OpenAI。');
+      if (!receiptAi?.status?.enabled) fail(503, 'AI 辨識尚未設定，請聯絡管理員。');
       const type = (request.headers.get('content-type') || '').split(';')[0].toLowerCase();
       if (!['image/jpeg', 'image/png'].includes(type)) fail(415, '請傳送 JPEG 或 PNG 圖片。');
       if (Number(request.headers.get('content-length')) > AI_IMAGE_LIMIT) fail(413, 'AI 圖片超過 3.5 MiB。');

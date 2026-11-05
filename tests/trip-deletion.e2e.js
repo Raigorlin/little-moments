@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 import {STORAGE_KEY,seed} from '../src/model.js';
 const base=process.env.CAMPING_BASE_URL;
 const password='Local-Only-Test-Pass-2026';

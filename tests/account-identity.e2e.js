@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 const base=process.env.CAMPING_BASE_URL,password='Session-Test-Pass-2026';
 let serial=0;
 const username=()=>`focus-${Date.now().toString(36)}-${++serial}`;

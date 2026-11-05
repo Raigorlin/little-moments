@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 test.beforeEach(async({baseURL})=>expect(new URL(baseURL).port).toBe('5181'));
 test('OCR assets are same-origin and on demand, CSP allows only WASM evaluation, photos have no public upload route',async({page:p,request})=>{
  const urls=[];p.on('request',r=>urls.push(r.url()));

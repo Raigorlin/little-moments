@@ -1,10 +1,20 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 import {seed,STORAGE_KEY} from '../src/model.js';
 const nav=async(page,tab)=>page.locator(`.section-tabs [data-tab="${tab}"]`).click();
 const saveDialog=async page=>page.locator('#edit-form button[type="submit"]').click();
+test('new local planner starts blank and reset stays blank',async({page})=>{
+  await page.goto('/demo/?blank=1');await expect(page.getByRole('heading',{name:'我的露營旅行',exact:true})).toBeVisible();await expect(page.locator('.activity-card')).toHaveCount(0);
+  const fresh=await page.evaluate(key=>JSON.parse(localStorage.getItem(key)),STORAGE_KEY);expect(fresh.activities).toEqual([]);expect(fresh.meals).toEqual([]);expect(fresh.shopping).toEqual([]);expect(fresh.gear).toEqual([]);
+  await page.evaluate(key=>localStorage.removeItem(key),STORAGE_KEY);await page.goto('/demo/');await nav(page,'settings');await page.getByRole('button',{name:'清除旅行資料',exact:true}).click();await page.getByRole('button',{name:'清除並重新開始',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'我的露營旅行',exact:true})).toBeVisible();await expect(page.locator('.activity-card')).toHaveCount(0);await page.reload();await expect(page.getByRole('heading',{name:'我的露營旅行',exact:true})).toBeVisible();
+});
 test('dashboard renders and all planning tabs work',async({page})=>{
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto('/demo/');await expect(page.getByRole('heading',{name:'雲海裡，住一晚'})).toBeVisible();
+  const hero=page.locator('.hero');await expect(hero).toHaveCSS('background-image',/linear-gradient/);
+  await expect(page.locator('.hero-art>.illustration>svg>rect').first()).toHaveCSS('fill','rgba(0, 0, 0, 0)');
+  await page.setViewportSize({width:390,height:900});await expect(hero).toHaveCSS('background-image',/linear-gradient/);
+  await page.setViewportSize({width:1440,height:1000});
   await expect(page.locator('.activity-card')).toHaveCount(5);
   await page.locator('[data-day="2026-11-21"]').click();await expect(page.locator('.activity-card')).toHaveCount(3);
   for(const [tab,title] of [['meals','一起煮，一起吃'],['shopping','把好吃的買齊'],['gear','小隊裝備分工'],['crew','最好的風景，是一起的人'],['settings','旅行設定與紀錄']]){await nav(page,tab);await expect(page.getByRole('heading',{name:title,exact:true})).toBeVisible();}
@@ -25,6 +35,50 @@ test('create, edit, and remove an itinerary entry',async({page})=>{
   await expect(page.getByRole('heading',{name:'午后野餐',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'編輯 午后野餐',exact:true}).click();await page.getByRole('button',{name:'移除項目',exact:true}).click();await page.getByRole('button',{name:'確認移除',exact:true}).click();
   await expect(page.getByRole('heading',{name:'午后野餐',exact:true})).toHaveCount(0);
+});
+test('mobile list rows reveal edit and delete actions by swiping left',async({page})=>{
+  await page.goto('/demo/');await page.setViewportSize({width:390,height:900});
+  const card=page.locator('.activity-card').first();
+  await expect(card.locator('.swipe-actions')).toHaveCount(1);
+  const heading=card.locator('h3'),box=await heading.boundingBox();
+  await heading.dispatchEvent('pointerdown',{pointerType:'touch',clientX:box.x+box.width-10,clientY:box.y+10});
+  await heading.dispatchEvent('pointerup',{pointerType:'touch',clientX:box.x+box.width-95,clientY:box.y+10});
+  await expect(card).toHaveClass(/swipe-open/);
+  await expect(card.locator('.swipe-actions [data-action="activity"]')).toBeVisible();
+  await expect(card.locator('.swipe-actions [data-action="delete"]')).toBeVisible();
+  await card.locator('.swipe-actions [data-action="delete"]').click();
+  await expect(page.getByRole('heading',{name:'移除這個項目？'})).toBeVisible();
+  await page.getByRole('button',{name:'取消',exact:true}).click();
+  await expect(card).toBeVisible();
+  await page.setViewportSize({width:1440,height:1000});
+  await expect(card.locator('.activity-top [data-action="activity"]')).toBeVisible();
+});
+test('mobile planner keeps its first section close and selected navigation visible',async({page})=>{
+  await page.goto('/demo/');
+  for(const width of [320,390]){
+    await page.setViewportSize({width,height:844});await page.evaluate(()=>window.scrollTo(0,0));
+    const metrics=await page.evaluate(()=>({hero:document.querySelector('.hero:not(.hero-home)').getBoundingClientRect().height,workspace:document.querySelector('.workspace').getBoundingClientRect().top,scheduleBar:document.querySelector('.schedule-bar').getBoundingClientRect().height,documentWidth:document.documentElement.scrollWidth,clientWidth:document.documentElement.clientWidth}));
+    expect(metrics.hero,`${width}px hero`).toBeLessThan(250);expect(metrics.workspace,`${width}px workspace`).toBeLessThan(720);expect(metrics.scheduleBar,`${width}px schedule controls`).toBeLessThan(130);expect(metrics.documentWidth,`${width}px overflow`).toBeLessThanOrEqual(metrics.clientWidth);
+  }
+  const lastDay=page.locator('.date-tabs button').last();
+  await lastDay.click();await expect(lastDay).toHaveAttribute('aria-pressed','true');
+  const dayVisible=await page.evaluate(()=>{const days=document.querySelector('.date-tabs'),active=days.querySelector('button[aria-pressed="true"]'),list=days.getBoundingClientRect(),item=active.getBoundingClientRect();return item.left>=list.left&&item.right<=list.right;});
+  expect(dayVisible).toBe(true);
+  const tabs=page.locator('.section-tabs'),settingsTab=tabs.locator('[data-tab="settings"]');
+  await settingsTab.click();await expect(settingsTab).toHaveAttribute('aria-current','page');await expect(settingsTab).toBeInViewport();
+  await page.evaluate(()=>window.scrollTo(0,650));
+  const stickyTop=await tabs.evaluate(el=>el.getBoundingClientRect().top);
+  expect(stickyTop).toBeGreaterThanOrEqual(78);expect(stickyTop).toBeLessThanOrEqual(85);
+});
+test('meal card removes directly with an X after confirmation',async({page})=>{
+  await page.goto('/demo/');await nav(page,'meals');
+  const card=page.locator('.meal-card').filter({has:page.getByRole('heading',{name:'暖暖壽喜燒',exact:true})});
+  await card.getByRole('button',{name:'移除 暖暖壽喜燒',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'移除這個項目？',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'取消',exact:true}).click();await expect(card).toBeVisible();
+  await card.getByRole('button',{name:'移除 暖暖壽喜燒',exact:true}).click();
+  await page.getByRole('button',{name:'確認移除',exact:true}).click();
+  await expect(card).toHaveCount(0);
 });
 test('shopping checkboxes persist, filter, and survive offline reload',async({page,context})=>{
   await page.goto('/demo/');await page.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(r=>navigator.serviceWorker.addEventListener('controllerchange',r,{once:true}));});

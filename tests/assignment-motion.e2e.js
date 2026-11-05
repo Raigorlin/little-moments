@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 import {seed,STORAGE_KEY} from '../src/model.js';
 const base=process.env.CAMPING_BASE_URL,password='Assignment-Test-Pass-2026';
 const nav=(page,name)=>page.locator(`.section-tabs [data-tab="${name}"]`).click();

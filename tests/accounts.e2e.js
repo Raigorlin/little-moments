@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 import {STORAGE_KEY} from '../src/model.js';
 const testBase=process.env.CAMPING_BASE_URL;
 const password='Local-Only-Test-Pass-2026';
@@ -33,6 +33,16 @@ test('account home clean URL, multiple cards, edit history and no demo storage w
  const trips=(await api(page,'/api/trips')).data.trips;expect(trips).toHaveLength(1);const trip=trips[0];
  await page.locator(`[data-action="acct-edit-trip"][data-id="${trip.id}"]`).click();await page.locator('#dialog [name="trip-title"]').fill('松林裡的回憶');await page.locator('#dialog button[type="submit"]').click();await expect(page.getByRole('heading',{name:'松林裡的回憶',exact:true})).toBeVisible();
  await createTrip(page,{title:'下一趟海邊',status:'planning'});await page.reload();await expect(page.getByRole('heading',{name:'下一趟海邊',exact:true})).toBeVisible();await expect(page.getByRole('heading',{name:'松林裡的回憶',exact:true})).toBeVisible();
+});
+
+test('cover illustrations show previews and persist a newly selected scene',async({page})=>{
+ const user=await member(page);await page.goto(`/${user.username}/home`);await page.locator('[data-action="acct-new-trip"]').first().click();
+ const form=page.locator('#dialog form'),covers=form.locator('.acct-cover-option');
+ await expect(covers).toHaveCount(7);await expect(covers.locator('svg')).toHaveCount(7);
+ await form.getByRole('radio',{name:'海邊假期'}).check();await form.locator('[name="trip-title"]').fill('海邊小旅行');await form.locator('[name="trip-start"]').fill('2026-10-02');await form.locator('[name="trip-end"]').fill('2026-10-03');await form.locator('button[type="submit"]').click();
+ const trip=(await api(page,'/api/trips')).data.trips.find(item=>item.title==='海邊小旅行');expect(trip.coverKind).toBe('beach');await expect(page.locator(`[data-trip-id="${trip.id}"] .acct-trip-art svg`)).toHaveClass(/illustration--beach/);
+ await page.locator(`[data-action="acct-edit-trip"][data-id="${trip.id}"]`).click();await page.locator('#dialog').getByRole('radio',{name:'日出山嵐'}).check();await page.locator('#dialog button[type="submit"]').click();
+ expect((await api(page,`/api/trips/${trip.id}`)).data.trip.coverKind).toBe('sunrise');
 });
 
 test('owner recipe template saves isolated server state and shopping with inline assignment selector',async({page})=>{

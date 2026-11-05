@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 import {seed} from '../src/model.js';
 const base=process.env.CAMPING_BASE_URL;
 const address='台北車站';
