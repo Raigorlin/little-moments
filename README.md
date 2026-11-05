@@ -1,96 +1,205 @@
 # 日子拾光 · LITTLE MOMENTS
 
-A local camping planner with a Traditional Chinese interface, original SVG illustrations, account-specific trips and shared planning.
+**日子拾光** is a Traditional Chinese camping and trip planner. Plan an itinerary, meals, shopping, shared gear, vehicles, and trip expenses; invite an account to collaborate; and switch to a personal departure checklist when it is time to go.
 
-This source snapshot matches the application release served locally on port **5174**. It contains no real accounts, trips, receipt images, database, backups or credentials. It is independent of the original inspiration site and does not connect to it.
+The app has two modes:
+
+| Mode | Open | Data and availability |
+| --- | --- | --- |
+| Account mode | `/setup`, `/login`, or `/register` | Trips and accounts are stored in the server's SQLite database. Sign in to collaborate from other devices on your trusted network. Account mode needs a running server and is not available offline. |
+| Local planner | `/demo/` | Starts with a blank trip and stores it in this browser only. It can be used offline after the app has loaded. It is separate from account trips and is not shared with other devices. |
+
+This repository contains source code, not personal trip data or a hosted website. It is independent of the original inspiration site and does not connect to it.
 
 ## Features
 
-- Separate accounts, trip histories, invitations and administrator controls.
-- Itinerary stops for everyone, one vehicle or multiple vehicles, with per-car filtering and independent arrivals.
-- A countdown centered on the camping illustration; restrained animation with pause and reduced-motion support.
-- Meal templates, automatic illustrations and ingredient-to-shopping synchronization. The meal-image selector is hidden; previews and saved image choices are preserved.
-- Personal and shared gear with common camping presets.
-- New Taiwan dollar expense splitting and repayment records.
-- OpenAI GPT-6 Luna receipt recognition by default. Selecting a receipt image uploads it automatically; recognition failures do not fall back to local OCR. Results always require review before saving.
-- Light/dark themes, responsive layouts and a browser-only local planner that starts with an empty trip.
+- **Accounts and trips:** Create an administrator on first run, register member accounts, create multiple planning or completed trips, choose an illustrated cover, and keep each trip's history separate.
+- **Invitations and permissions:** Invite companions to a trip. Trip creators and administrators can manage membership and delete trip content; collaborators can plan within their permissions. Administrators can manage accounts, trips, invitations, and review the audit history.
+- **Trip overview:** See the trip dates, destination, companions, and departure countdown alongside trip progress.
+- **Itinerary:** Plan dated and timed stops, add notes and map links, mark stops complete, and filter by vehicle. Specify which people or cars participate. Each vehicle can have its own departure time and meeting place.
+- **Meals and shopping:** Use meal templates and ingredient shortcuts, assign cooks, and organize meals by date. Ingredients sync into categorized shopping lists without discarding manually managed items. Assign shoppers, update quantities, filter items, and check off purchases.
+- **Gear and departure checklist:** Separate personal and shared equipment, start from common camping presets, assign shared gear to a companion, and track each person's packing progress.
+- **Crew and vehicles:** Manage companion names and roles, driver/passenger assignments, seat counts, and each car's departure arrangements.
+- **Shared expense ledger:** In account mode, record trip expenses and repayments, review balances, and export ledger records separately from the trip handbook.
+- **Receipt assistance:** In account mode, selecting a receipt photo sends it automatically to the configured OpenAI model (default `gpt-6-luna`, GPT-6 Luna). Review and confirm every suggested item before saving. There is no automatic local-OCR fallback.
+- **Mobile and accessibility:** Responsive layouts, horizontally scrollable trip sections and date selection, mobile swipe actions for editing and deleting, a dark theme, keyboard focus indicators, and reduced-motion support.
+- **Illustrations and presentation:** Original SVG trip and meal illustrations, trip cover choices, a daily note, and optional scene animation controls.
+- **Trip export and print:** Export or print a trip handbook from its settings. Handbook export is separate from expense-ledger export and a full database backup.
 
-## Run locally
+## Getting started
 
-Requires **Bun 1.3+**. This snapshot was built and tested with Bun **1.3.14**. Run commands from this folder.
+### Requirements
 
-```sh
-bun install --frozen-lockfile
-bun run build
-```
+- [Bun](https://bun.sh/) 1.3 or later (the Docker image uses Bun 1.3.14).
+- Docker Desktop with Docker Compose for container deployment.
+- Native Node.js and Chrome/Chromium only when running the browser end-to-end test harness.
 
-Start on port 5174 in PowerShell:
+### Run locally
+
+From the project directory:
 
 ```powershell
+bun install --frozen-lockfile
+bun run build
 $env:PORT = '5174'
 bun run start
 ```
 
-Or in bash:
+Open [http://127.0.0.1:5174/setup](http://127.0.0.1:5174/setup) to create the first administrator. The server defaults to port `5173` if `PORT` is not set; its default bind address is `127.0.0.1` (loopback only).
 
-```sh
-PORT=5174 bun run start
+The first administrator must be created from the server computer using a loopback address. There is **no default account or password**. Account names are 3–32 characters, start with a lowercase letter, and use lowercase letters, numbers, or hyphens. Passwords must be at least 12 characters.
+
+Once setup is complete:
+
+- Sign in at `/login`.
+- Create a member account at `/register`.
+- Open the account homepage at `/<account-name>/home`.
+- Open the administrator dashboard at `/admin`.
+- Use `/demo/` to open the independent local planner.
+
+The first administrator can invite members or manage accounts from the admin dashboard. To share a trip, create or open a trip, use **Invite companions**, and share the generated invitation link with the intended person. A member must have an account and sign in to collaborate.
+
+## Plan a trip
+
+1. **Create or open a handbook.** From your account homepage, create a trip, enter its name and dates, select a cover, and add an optional destination, description, and notes. Local planner mode opens directly into its blank handbook.
+2. **Plan the itinerary.** In **Schedule**, select a day and add a stop with a time, location, type, notes, and participants. Locations can open in a map app. Add vehicles and departure arrangements in **Companions & vehicles**; vehicle filters let you inspect each car's stops separately.
+3. **Plan meals.** In **Meals**, add meals by date and mealtime. Apply a template or add ingredient shortcuts, assign a cook, and include notes. Linked ingredients are added to the shopping list automatically; editing meal ingredients updates the linked items.
+4. **Organize shopping.** In **Shopping**, assign who buys each item, adjust its quantity or category, filter the list, and mark items as purchased. Use **Hide purchased** to focus on what remains.
+5. **Divide the gear.** In **Gear**, add personal or shared items. Personal gear is tracked per companion; shared gear can be assigned to an owner. Check the unassigned count before departure.
+6. **Check the crew and vehicles.** In **Companions & vehicles**, add companions, roles, drivers, passengers, and vehicle capacity. Set each vehicle's separate departure time and location.
+7. **Record expenses (account mode).** Open **Expenses**, add expenses and repayments, then review the balances. Expense ledgers are stored by the server, separately from handbook data.
+8. **Get ready to leave.** Open **Departure mode** to see your packing progress, your assigned personal and shared gear, and the next unfinished stop. Mark items packed and confirm when you are ready.
+9. **Keep or share the handbook.** From **Trip settings**, export a JSON handbook backup or print the current handbook. Account trips remain available to trip members after signing in.
+
+On a phone, swipe a supported list row left to reveal edit and delete actions; swipe right to close it. The on-screen action control is also available. Deletion continues to follow the account's permissions and confirmation prompts.
+
+## Expense splitting and receipt recognition
+
+The **Expenses** tab uses the authenticated account-mode ledger. The local browser planner does not provide the server-backed expense ledger.
+
+### Add and settle expenses
+
+- Record who paid, the amount, category, date, and participating companions.
+- Add repayments separately from purchases.
+- Review the resulting balances and export the expense records when needed.
+- Only users with the appropriate trip permissions can edit or remove ledger entries.
+
+### Scan a receipt
+
+1. Configure an OpenAI API key on the server as described below.
+2. Open **Expenses** for a trip and choose the receipt-photo option.
+3. **Selecting a photo automatically sends a prepared copy to OpenAI** using the configured model (default `gpt-6-luna`). Do not select a photo if you do not want it uploaded. API use may incur charges and is subject to OpenAI's API data policies.
+4. Review the suggested store, date, items, categories, and amounts against the receipt. Correct anything uncertain and confirm the items before saving them to the ledger.
+5. If recognition is unavailable or incorrect, enter the receipt text or expenses manually. The app does not silently switch to local OCR.
+
+JPEG, PNG, and WebP receipt photos are supported. Images over 10 MB or 20 megapixels are rejected; the prepared image is resized for the request. The app does not save receipt photos or raw OCR text. It stores only the expense entries you confirm and a file fingerprint used to help prevent duplicate receipt entry. Re-encoding removes EXIF/GPS metadata before upload.
+
+## Configure OpenAI receipt recognition
+
+By default, the server reads the API key from `.secrets/openai_api_key`. Create this file locally and store the key in it:
+
+```powershell
+New-Item -ItemType Directory -Force .secrets
+notepad .secrets\openai_api_key
 ```
 
-AI receipt recognition reads the API key from `.secrets/openai_api_key` by default. Replace its placeholder with your OpenAI API key to enable it, then restart the server. Selecting a receipt image sends it to OpenAI automatically and may incur API charges; the image is not saved by the app. Results are drafts and require review before saving. `CAMPING_OPENAI_API_KEY_FILE` can point to a different key file; `CAMPING_OPENAI_MODEL_ID` optionally selects a GPT model with image support (default `gpt-6-luna`).
+Keep the key private. `.secrets/` is ignored by Git and excluded from the Docker build context. In Docker, Compose mounts the key read-only at `/run/secrets/openai_api_key`.
 
-Open `http://127.0.0.1:5174/setup` and create your own administrator account. There is **no default admin password**. Later logins use `/login`, registrations use `/register`, and the administrator dashboard is `/admin`.
+The Compose file requires the secret file to exist even if you do not plan to use receipt recognition. To run Docker without AI, create an empty file instead; receipt recognition will remain disabled:
 
-Without `PORT`, the server defaults to 5173. Use an unused port if another copy is already running. `CAMPING_DIST` changes the build directory; `CAMPING_DB` changes the private SQLite path.
+```powershell
+New-Item -ItemType Directory -Force .secrets
+New-Item -ItemType File -Force .secrets\openai_api_key
+```
+
+Optional server environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `CAMPING_OPENAI_API_KEY_FILE` | `.secrets/openai_api_key` locally; `/run/secrets/openai_api_key` in Docker | Path to the server-side API key file. |
+| `CAMPING_OPENAI_MODEL_ID` | `gpt-6-luna` | OpenAI model ID used for image-capable receipt recognition. |
+
+Restart the local server after changing the key. For Docker, recreate the app container:
+
+```powershell
+docker compose up -d --force-recreate
+```
+
+Receipt recognition is disabled until a valid key is configured. The key is read by the server and is never sent to the browser.
 
 ## Run with Docker
 
-Requires Docker Desktop with Docker Compose. From this folder, build and start the app in PowerShell:
+From the project directory, create the API key file (or an empty file to disable AI) as described above, then build and start:
 
 ```powershell
-notepad .secrets\openai_api_key
-# Replace the placeholder with your OpenAI API key, then save and close Notepad.
 docker compose up --build -d
-docker compose logs -f
+docker compose ps
+docker compose logs -f app
 ```
 
-Open `http://127.0.0.1:5182/setup` on the host computer and create your administrator account before enabling network access. The Compose configuration publishes the app on all host interfaces; restrict inbound access with the Windows Firewall rule below so only devices on the private local subnet can connect. To find the host's LAN address, run `ipconfig` and use the IPv4 address for the Wi-Fi or Ethernet adapter (for example, `http://192.168.1.114:5182`). Other devices on the same trusted private network can then sign in and share trips. This is a private-LAN setup, not public hosting: do not configure router port forwarding, use a public/untrusted network, or allow inbound access from the internet.
+Open [http://127.0.0.1:5182/setup](http://127.0.0.1:5182/setup) **on the host computer** and create the administrator before enabling LAN access. Compose publishes the app on port `5182` on all host interfaces by default.
 
-On Windows, run PowerShell as Administrator to allow the app port only from local-subnet devices on Private network profiles:
+### Optional trusted-LAN access
+
+This is a private-network setup, not public hosting. First complete administrator setup on the host. Find its LAN IPv4 address with `ipconfig`, then allow the application port only from local-subnet devices on the Windows **Private** network profile. Run PowerShell as Administrator:
 
 ```powershell
 New-NetFirewallRule -DisplayName "Little Moments LAN" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5182 -RemoteAddress LocalSubnet -Profile Private
 ```
 
-If you change `CAMPING_HOST_PORT`, update `-LocalPort` to match. To remove the rule later, run `Remove-NetFirewallRule -DisplayName "Little Moments LAN"` in elevated PowerShell. `CAMPING_BIND_ADDRESS` can optionally bind to one specific host IPv4 address instead of all interfaces; the default is `0.0.0.0`, so keep the firewall restriction in place.
+Other devices on that trusted network can then visit `http://<host-LAN-IPv4>:5182` and sign in. Do not configure router port forwarding or expose the service to the public internet; this setup does not provide TLS. Remove the firewall rule later with:
 
-The app mounts the ignored key file read-only into the container and stores SQLite data in a persistent Docker volume named `camping-data` (by default, `little-moments-initial-setup-data`). Set `CAMPING_DATA_VOLUME` before running Compose to use a different existing volume. Switching volumes does not delete the previous volume; set `CAMPING_DATA_VOLUME` to its name to use its accounts and trips again. If port 5182 is already in use, set `CAMPING_HOST_PORT` to an available port and open that port instead. Recreate the container after changing the key with `docker compose up -d --force-recreate`. Stop `docker compose logs -f` with `Ctrl+C` to leave the logs, then run `docker compose down` to stop the app; the volume and account data are preserved. Start it again with `docker compose up -d`.
-
-To permanently delete the database and other volume data, run `docker compose down --volumes`.
-
-## Data and security
-
-- The app is reachable to other devices only when the host firewall permits it. The first-admin setup requires a loopback host and must be completed from the host machine before LAN users sign in. Limit access to a trusted private network; this configuration does not provide TLS and is not suitable for public hosting.
-- SQLite is stored at `data/accounts.sqlite`, outside the static build. This folder must remain private and is ignored by Git.
-- Do not copy an active SQLite database file by itself: use SQLite's backup API, or stop all writers before making a complete backup. Keep database backups outside GitHub.
-- Sessions use HttpOnly cookies; passwords use salted scrypt hashes. Mutating requests require an exact matching Origin and appropriate account/trip permissions.
-- Account API responses are never cached for offline use. The local planner at `/demo/#/trip` starts with a blank trip, uses separate browser-local storage and supports offline use. Existing browser-saved trips are preserved; use **清除旅行資料** in the settings to start over.
-- Receipt images and raw OCR text are not persisted by the app. OCR assets are served locally and loaded on demand. Local OCR stays in the browser.
-- OpenAI receipt recognition is available only when an API key is configured. Selecting a receipt image automatically sends the prepared image to OpenAI; this can incur API charges and is subject to OpenAI API data policies. Recognition failures do not fall back to local OCR. Results are drafts and require human review. The API key is read server-side from `.secrets/openai_api_key` and is never sent to the browser.
-- The `.secrets/openai_api_key` file is plain text on your computer, not encrypted storage. Keep it private; do not sync or share it. It and the entire `.secrets/` directory are ignored by Git and excluded from Docker build context. Docker Compose mounts the key file read-only.
-- Homepage JSON-import controls remain hidden; implementation is retained. Trip export and expense export are separate; neither replaces a full database backup.
-
-## Tests
-
-Build first, then run the unit and isolated API tests:
-
-```sh
-bun test ./tests
+```powershell
+Remove-NetFirewallRule -DisplayName "Little Moments LAN"
 ```
 
-Browser tests require native Node.js plus Chrome/Chromium. The harness starts a separate server on **5181** with an **in-memory database**, creates synthetic test accounts, and closes the server afterwards. Do not point browser tests at a real server or private database.
+### Docker settings and lifecycle
 
-PowerShell example (Chrome installed in its default Windows location):
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `CAMPING_HOST_PORT` | `5182` | Host port published by Docker. Update the firewall rule if changed. |
+| `CAMPING_BIND_ADDRESS` | `0.0.0.0` | Host interface to bind; the default requires an appropriate firewall restriction. |
+| `CAMPING_DATA_VOLUME` | `little-moments-initial-setup-data` | Existing or new named Docker volume used for the SQLite database. |
+
+Stop the service with `docker compose down`; the named volume and accounts are preserved. Start again with `docker compose up -d`. Switching to a different `CAMPING_DATA_VOLUME` does not delete the previous volume. To permanently remove the active Compose volume and its database, run `docker compose down --volumes`; this is destructive and cannot be undone without a separate backup.
+
+## Data, privacy, and security
+
+- **Local planner:** Trip data is stored in this browser's local storage. It is not uploaded or synchronized, and is separate from account trips.
+- **Account mode:** Accounts, trips, and expense ledgers are stored in the server's private SQLite database (`data/accounts.sqlite` by default; `/app/data/accounts.sqlite` in Docker). Account API responses are not cached for offline use.
+- **Credentials and sessions:** There is no default password. Passwords are stored as salted scrypt hashes. Sessions use HttpOnly cookies and expire; changing or losing the server database invalidates server-side data and sessions.
+- **Access control:** Mutating requests require a matching Origin and the appropriate account/trip permissions. Deletion is restricted to trip creators or administrators.
+- **Receipt privacy:** Selecting a receipt photo for AI recognition sends it to OpenAI. The app does not persist the image or raw OCR text, but does save confirmed ledger entries and a receipt fingerprint. Review OpenAI's API data policies before use.
+- **API key security:** The `.secrets/openai_api_key` file is plain text on your computer, not encrypted storage. Do not commit, sync, or share it.
+- **Network security:** The built-in server binds to loopback by default outside Docker. LAN use should remain behind the Windows local-subnet firewall rule. This configuration is not suitable for public hosting.
+- **Separate exports:** Trip handbook export, expense-ledger export, and a full SQLite database backup are different. A handbook export is not a full account/database backup.
+- **Database backups:** Keep backups private and outside GitHub. Do not copy a live SQLite database file on its own; use SQLite's backup API or stop all writers and back up the complete database safely.
+
+## Configuration for local development
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `5173` | Local server port. |
+| `HOST` | `127.0.0.1` | Local server bind address. |
+| `CAMPING_DB` | `data/accounts.sqlite` | Private SQLite database path. |
+| `CAMPING_DIST` | `dist` | Built static application directory. |
+
+## Build and tests
+
+Install dependencies and build the static application:
+
+```powershell
+bun install --frozen-lockfile
+bun run build
+```
+
+Run the unit and isolated API tests:
+
+```powershell
+bun test
+```
+
+The repository also includes Playwright browser tests. `playwright.config.js` expects Chrome at the default Windows path or at `CHROME_PATH`, and defaults to `http://127.0.0.1:5173`. The isolated harness starts a separate server on port `5181` with an **in-memory database** and synthetic test accounts:
 
 ```powershell
 $env:CAMPING_BUN = (Get-Command bun).Source
@@ -98,22 +207,14 @@ $env:CAMPING_DIST = 'dist'
 node scripts/check-accounts.mjs
 ```
 
-Bash example (set `CHROME_PATH` to the installed Chrome/Chromium executable):
+Use native Node.js to run the harness (not Bun). Set `CHROME_PATH` if Chrome/Chromium is installed elsewhere. Do not point browser tests at a real server or private database. Test credentials are synthetic and are not application defaults.
 
-```sh
-CAMPING_BUN="$(command -v bun)" CAMPING_DIST=dist node scripts/check-accounts.mjs
-```
+## GitHub and hosting
 
-`CHROME_PATH` overrides the default Windows Chrome path. Run the harness with native Node, not Bun. Test fixture passwords are synthetic and used only in isolated test databases; they are not application defaults.
+This repository stores source code, not a hosted website or personal data. GitHub Pages cannot run the Bun/SQLite backend. Public hosting requires a separate deployment design, HTTPS, and a security review.
 
-## GitHub scope
+## Third-party assets and licensing
 
-This repository stores **source code**, not a hosted website or a copy of your personal data. **GitHub Pages cannot run the Bun/SQLite backend.** Public hosting would require a separate deployment design, HTTPS and security review.
-
-Generated builds, dependencies, screenshots, logs, backups and database files are excluded. Docker builds the static app and keeps persistent account data in a separate named volume.
-
-## Third-party assets
-
-Self-hosted Huninn fonts retain their SIL Open Font License files in `assets/fonts/`. Font provenance is in `assets/fonts/SOURCE.txt`. The build copies Tesseract and bundled component license notices with the OCR runtime files.
+Self-hosted Huninn fonts retain their SIL Open Font License files in `assets/fonts/`. Font provenance is recorded in `assets/fonts/SOURCE.txt`. Tesseract and bundled OCR runtime files include their license notices.
 
 No project-wide open-source license has been selected. Existing third-party license notices remain applicable.
