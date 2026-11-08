@@ -1,0 +1,7 @@
+const PUBLISHED=false;
+const CACHE='ggc-accounts-f467cea4f6b2'+(PUBLISHED?'-p':'');
+const STATIC=["/index.html","/styles.css","/favicon.svg","/entry.js","/chunks/entry-8fs557mj.js","/chunks/entry-3ee9g88n.js","/chunks/receipt-ai-client-vkratb5s.js","/chunks/app-6q6smhsf.js","/chunks/accounts-ui-3f8n8g1s.js"];
+const OPTIONAL=["/assets/fonts/Huninn-Regular.ttf","/assets/fonts/jf-openhuninn-2.1.ttf","/assets/fonts/jf-openhuninn-LICENSE.txt","/assets/fonts/OFL.txt","/assets/fonts/SOURCE.txt"];
+self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(async cache=>{await cache.addAll(STATIC);await Promise.all(OPTIONAL.map(url=>cache.add(url).catch(()=>{})));}).then(()=>self.skipWaiting())));
+self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>(key.startsWith('ggc-replica-')||key.startsWith('ggc-accounts-'))&&key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
+self.addEventListener('fetch',event=>{const url=new URL(event.request.url);if(event.request.method!=='GET'||url.origin!==location.origin||url.pathname.startsWith('/api/'))return;const isStatic=[...STATIC,...OPTIONAL].includes(url.pathname);if(!isStatic&&event.request.mode!=='navigate')return;if(PUBLISHED&&event.request.mode==='navigate'&&/^\/demo(?:\/|$)/.test(url.pathname))return;event.respondWith(fetch(event.request).catch(async()=>isStatic?await caches.match(url.pathname)||Response.error():await caches.match('/index.html')||Response.error()));});

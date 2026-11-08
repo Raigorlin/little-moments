@@ -1,4 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join as joinPath } from 'node:path';
 import { createAccountService } from '../server/accounts.js';
 import { seed, isValidState } from '../src/model.js';
 
@@ -49,6 +53,48 @@ async function login(username) { return ok(await call('POST', '/api/login', { bo
 async function invite(cookie, tripId) { return ok(await call('POST', `/api/trips/${tripId}/invites`, { cookie, body: {} }), 201).body; }
 async function join(cookie, token, name, role) { return call('POST', `/api/invites/${token}/join`, { cookie, body: role === undefined ? { name } : { name, role } }); }
 
+test('upgrades existing trip cover constraints without losing trips or members', () => {
+  const root = joinPath(homedir(), '.aki', 'tmp');
+  mkdirSync(root, { recursive: true });
+  const dir = mkdtempSync(joinPath(root, 'camping-cover-upgrade-')), path = joinPath(dir, 'fixture.sqlite');
+  let upgraded, db;
+  try {
+    db = new Database(path);
+    db.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('admin','member')), password_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL, deleted_at INTEGER
+      );
+      CREATE TABLE trips (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id),
+        title TEXT NOT NULL, destination TEXT NOT NULL, start_date TEXT NOT NULL, end_date TEXT NOT NULL,
+        description TEXT NOT NULL, note TEXT NOT NULL,
+        cover_kind TEXT NOT NULL CHECK (cover_kind IN ('camp','mountain','lake','night')),
+        status TEXT NOT NULL CHECK (status IN ('planning','completed')),
+        revision INTEGER NOT NULL, people_count INTEGER NOT NULL, state_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE trip_members (
+        trip_id TEXT NOT NULL REFERENCES trips(id), user_id TEXT NOT NULL REFERENCES users(id),
+        person_id TEXT NOT NULL, joined_at INTEGER NOT NULL,
+        PRIMARY KEY (trip_id, user_id), UNIQUE (trip_id, person_id)
+      );
+      INSERT INTO users VALUES ('u1','old-owner','Old owner','admin','hash',1,NULL);
+      INSERT INTO trips VALUES ('t1','u1','Old trip','Lake','2026-11-20','2026-11-22','','','lake','planning',1,1,'{}',1,1);
+      INSERT INTO trip_members VALUES ('t1','u1','p1',1);
+    `);
+    db.close(); db = null;
+    upgraded = createAccountService({ dbPath: path });
+    db = new Database(path, { readonly: true });
+    expect(db.query('SELECT id, cover_kind FROM trips').all()).toEqual([{ id: 't1', cover_kind: 'lake' }]);
+    expect(db.query('SELECT trip_id, user_id, person_id FROM trip_members').all()).toEqual([{ trip_id: 't1', user_id: 'u1', person_id: 'p1' }]);
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([]);
+  } finally {
+    db?.close(); upgraded?.close(); rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 describe('routing and transport', () => {
   test('non-api paths are left to the static server', async () => {
     expect(await call('GET', '/')).toBeNull();
@@ -67,7 +113,7 @@ describe('routing and transport', () => {
     const res = ok(await call('GET', '/api/session'));
     expect(res.headers.get('content-type')).toContain('application/json');
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(res.body).toEqual({ user: null, needsSetup: true });
+    expect(res.body).toEqual({ user: null, needsSetup: true, webSetup: true, registrationOpen: true, inviteRegistration: false });
   });
   test('mutations need the exact request origin (CSRF)', async () => {
     const body = { username: 'admin-one', displayName: '管理員', password: PASS };
@@ -100,11 +146,27 @@ describe('first-admin setup', () => {
     failed(await call('POST', '/api/setup', { body, info: { ip: '192.168.1.20' } }), 403);
     ok(await call('POST', '/api/setup', { body, info: { ip: '::ffff:127.0.0.1' } }));
   });
+  test('container mode only allows setup through a loopback host', async () => {
+    const containerSvc = createAccountService({ dbPath: ':memory:', allowLoopbackHostFromContainer: true });
+    try {
+      const body = { username: 'admin-one', displayName: '管理員', password: PASS };
+      failed(await (async () => {
+        const headers = { origin: 'http://camp.example.com', 'content-type': 'application/json' };
+        const res = await containerSvc.handle(new Request('http://camp.example.com/api/setup', { method: 'POST', headers, body: JSON.stringify(body) }), { ip: '172.20.0.2' });
+        return { status: res.status, body: await res.json() };
+      })(), 403);
+      const headers = { origin: BASE, 'content-type': 'application/json' };
+      const res = await containerSvc.handle(new Request(`${BASE}/api/setup`, { method: 'POST', headers, body: JSON.stringify(body) }), { ip: '172.20.0.2' });
+      expect(res.status).toBe(200);
+    } finally {
+      containerSvc.close();
+    }
+  });
   test('creates an admin, sets a hardened cookie and runs only once', async () => {
     const res = ok(await call('POST', '/api/setup', { body: { username: 'admin-one', displayName: ' 管理員  小安 ', password: PASS } }));
     expect(res.body).toEqual({ user: { id: expect.any(String), username: 'admin-one', displayName: '管理員 小安', role: 'admin' }, needsSetup: false });
     expect(res.setCookie).toMatch(/^ggc_session=[a-f0-9]{64}; HttpOnly; SameSite=Strict; Path=\/; Max-Age=604800$/);
-    expect(ok(await call('GET', '/api/session', { cookie: res.cookie })).body).toEqual({ user: res.body.user, needsSetup: false });
+    expect(ok(await call('GET', '/api/session', { cookie: res.cookie })).body).toEqual({ user: res.body.user, needsSetup: false, webSetup: true, registrationOpen: true, inviteRegistration: true });
     failed(await call('POST', '/api/setup', { body: { username: 'admin-two', displayName: 'x', password: PASS } }), 409);
   });
   test('cookie is Secure on https', async () => {
@@ -215,10 +277,16 @@ describe('trips and isolation', () => {
     expect(env.state.revision).toBe(1);
     expect([env.state.activities, env.state.meals, env.state.shopping, env.state.gear, env.state.vehicles]).toEqual([[], [], [], [], []]);
   });
+  test('accepts and persists every cover illustration option', async () => {
+    const { cookie } = await setupAdmin();
+    for (const coverKind of ['camp', 'mountain', 'lake', 'night', 'forest', 'beach', 'sunrise']) {
+      expect((await createTrip(cookie, { coverKind })).coverKind).toBe(coverKind);
+    }
+  });
   test('validates card fields', async () => {
     const { cookie } = await setupAdmin();
     const bad = async extra => failed(await call('POST', '/api/trips', { cookie, body: card(extra) }), 400);
-    await bad({ coverKind: 'beach' });
+    await bad({ coverKind: 'ocean' });
     await bad({ status: 'archived' });
     await bad({ title: '   ' });
     await bad({ title: 42 });
@@ -336,14 +404,14 @@ describe('editing, revisions and tampering', () => {
     ok(await call('PUT', `/api/trips/${trip.id}`, { cookie: owner.cookie, body: { expectedUserId: owner.user.id, revision: env.trip.revision, state: env.state } }));
     expect((await getTrip(owner.cookie, trip.id)).trip.title).toBe('不能由另一個帳號儲存');
   });
-  test('members can edit and patch but not invite', async () => {
+  test('members can edit, patch and invite', async () => {
     const { member, trip } = await tripWithMember();
     const env = await getTrip(member.cookie, trip.id);
-    expect(env.permissions).toEqual({ canEdit: true, canDelete: false, canInvite: false, canManage: false, personId: env.permissions.personId });
-    expect(env.trip).toMatchObject({ canEdit: true, canDelete: false, canInvite: false, canManage: false, isMember: true });
+    expect(env.permissions).toEqual({ canEdit: true, canDelete: false, canInvite: true, canManage: false, personId: env.permissions.personId });
+    expect(env.trip).toMatchObject({ canEdit: true, canDelete: false, canInvite: true, canManage: false, isMember: true });
     const put = ok(await call('PUT', `/api/trips/${trip.id}`, { cookie: member.cookie, body: { revision: env.trip.revision, state: env.state } }));
     ok(await call('PATCH', `/api/trips/${trip.id}`, { cookie: member.cookie, body: { revision: put.body.trip.revision, title: 'mine' } }));
-    failed(await call('POST', `/api/trips/${trip.id}/invites`, { cookie: member.cookie, body: {} }), 403);
+    ok(await call('POST', `/api/trips/${trip.id}/invites`, { cookie: member.cookie, body: {} }), 201);
   });
   test('bound participants cannot be removed or swapped, but can be renamed', async () => {
     const { owner, trip, memberPid, ownerPid } = await tripWithMember();
@@ -644,7 +712,8 @@ describe('admin user management', () => {
     ok(await join(last.cookie, token, '第一百位'));
     expect((await getTrip(owner.cookie, trip.id)).state.people).toHaveLength(100);
     const late = await register('member-y', 'Y');
-    failed(await join(late.cookie, token, '一百零一'), 409);
+    const fresh = await invite(owner.cookie, trip.id);
+    failed(await join(late.cookie, fresh.token, '一百零一'), 409);
     ok(await call('POST', `/api/admin/users/${owner.user.id}/delete`, { cookie: admin.cookie, body: { confirmUsername: 'owner-a' } }));
     const env = await getTrip(admin.cookie, trip.id);
     expect(env.state.people).toHaveLength(100);
@@ -843,7 +912,7 @@ describe('collaborator edit and owner-only delete rights', () => {
   const confirm = (who, trip, extra = {}) => ({ expectedUserId: who.user.id, confirmTitle: trip.title, revision: trip.revision, ...extra });
   const listTrips = async cookie => ok(await call('GET', '/api/trips', { cookie })).body.trips;
   const caps = t => ({ canEdit: t.canEdit, canDelete: t.canDelete, canInvite: t.canInvite, canManage: t.canManage });
-  const MEMBER = { canEdit: true, canDelete: false, canInvite: false, canManage: false };
+  const MEMBER = { canEdit: true, canDelete: false, canInvite: true, canManage: false };
   const HOST = { canEdit: true, canDelete: true, canInvite: true, canManage: true };
 
   async function world() {
@@ -887,7 +956,8 @@ describe('collaborator edit and owner-only delete rights', () => {
     expect(forged.body.permissions).toEqual({ ...MEMBER, personId: env.permissions.personId });
     expect(forged.body.trip.ownerId).toBe(owner.user.id);
     failed(await del(member.cookie, trip.id, confirm(member, forged.body.trip, { canDelete: true, role: 'admin', permissions: HOST })), 403);
-    failed(await call('POST', `/api/trips/${trip.id}/invites`, { cookie: member.cookie, body: { canInvite: true } }), 403);
+    ok(await call('POST', `/api/trips/${trip.id}/invites`, { cookie: member.cookie, body: { canInvite: true, canDelete: true, permissions: HOST } }), 201);
+    expect((await getTrip(member.cookie, trip.id)).permissions).toEqual({ ...MEMBER, personId: env.permissions.personId });
     failed(await call('GET', '/api/admin/users', { cookie: member.cookie }), 403);
   });
 

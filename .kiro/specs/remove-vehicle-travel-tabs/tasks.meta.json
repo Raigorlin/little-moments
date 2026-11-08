@@ -1,0 +1,400 @@
+{
+  "pbtResults": {
+    "1.3 Write property test for `resolveTab()`": {
+      "status": "passed",
+      "lastRunTimestamp": 1794098050283
+    },
+    "2.2 Write property test for person entries and add fixed-entry example test": {
+      "status": "passed",
+      "lastRunTimestamp": 1794098396070
+    },
+    "2.3 Write property test for vehicle entries": {
+      "status": "passed",
+      "lastRunTimestamp": 1794098688280
+    },
+    "2.4 Write property test for recent events": {
+      "status": "passed",
+      "lastRunTimestamp": 1794145546776
+    }
+  },
+  "executionHistory": {
+    "1.1 Update `TABS` and add `resolveTab()` in `src/model.js`": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097682288
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097691531
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097847176
+      }
+    ],
+    "1.2 Create `tests/trip-menu.test.js` with tab and storage example tests": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097682407
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097853957
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098013350
+      }
+    ],
+    "1.3 Write property test for `resolveTab()`": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097682497
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098018974
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098345182
+      }
+    ],
+    "2.1 Create `src/trip-menu.js` with `tripMenuEntries(state, account)`": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097682568
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097692779
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097848001
+      }
+    ],
+    "2.2 Write property test for person entries and add fixed-entry example test": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097682621
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098350644
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098634818
+      }
+    ],
+    "2.3 Write property test for vehicle entries": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097682671
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098649332
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794099858072
+      }
+    ],
+    "2.4 Write property test for recent events": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097682737
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794145511712
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794146064901
+      }
+    ],
+    "3.1 Remove the `crew` and `settings` tab rendering": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097682799
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097854609
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098014035
+      }
+    ],
+    "3.2 Add the Menu_Button and render `tripMenu()`": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097682873
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098020666
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098345610
+      }
+    ],
+    "3.3 Wire open, close, Escape, and entry activation": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097682945
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098351405
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098635917
+      }
+    ],
+    "4.1 Add drawer and title-row styles in `src/styles.css`": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097683006
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097693855
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097848985
+      }
+    ],
+    "5. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097683069
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794146072126
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794146149154
+      }
+    ],
+    "6.1 Update existing flows in `tests/app.e2e.js`": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097683122
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098649665
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794144810189
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794144816803
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794145503942
+      }
+    ],
+    "6.2 Update account e2e tests": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097683177
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098650417
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794144810331
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794144817707
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794145504220
+      }
+    ],
+    "6.3 Update scene motion and daily-life e2e tests": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097683248
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098651666
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794099858278
+      }
+    ],
+    "6.4 Update vehicle and map e2e tests": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097683301
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098653087
+      },
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794099858590
+      }
+    ],
+    "6.5 Update avatar, ingredients, schedule-bar, and mobile-swipe e2e tests": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097683358
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794144810525
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794145505247
+      }
+    ],
+    "6.6 Add new Trip_Menu e2e cases to `tests/app.e2e.js`": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097683409
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794145512576
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794146065867
+      }
+    ],
+    "7. Final checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097683461
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794146155402
+      },
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794147729050
+      }
+    ],
+    "4. Style the Trip_Menu": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794097849049
+      }
+    ],
+    "1. Reduce section tabs and add tab resolution": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098345247
+      }
+    ],
+    "3. Move removed-tab content into the Trip_Menu in `src/app.js`": [
+      {
+        "executionId": "de21e6ea-cd57-4094-a484-2d419c730b0e",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794098635968
+      }
+    ],
+    "2. Add the pure Trip_Menu entries module": [
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794146064965
+      }
+    ],
+    "6. Update the e2e suite for Trip_Menu navigation": [
+      {
+        "executionId": "5e08b8b5-8906-4575-92f8-64a0d09948d2",
+        "chatSessionId": "sess_587e4c72-af51-4c3a-b1ae-14a6d0534f40",
+        "timestamp": 1794146065962
+      }
+    ]
+  }
+}

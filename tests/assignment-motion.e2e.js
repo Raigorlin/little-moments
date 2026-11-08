@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 import {seed,STORAGE_KEY} from '../src/model.js';
 const base=process.env.CAMPING_BASE_URL,password='Assignment-Test-Pass-2026';
 const nav=(page,name)=>page.locator(`.section-tabs [data-tab="${name}"]`).click();
@@ -16,7 +16,9 @@ async function fixture(page){
  await page.goto(`/${user.username}/trips/${trip.id}`);await expect(page.locator('.hero h1')).toBeVisible();
  return {user,trip,detail:()=>api(page,`/api/trips/${trip.id}`)};
 }
-const settingsMotion=page=>page.locator('.workspace-main .motion-settings');
+const openTripMenu=page=>page.getByRole('button',{name:'旅行選單',exact:true}).click();
+const closeTripMenu=page=>page.getByRole('button',{name:'關閉旅行選單',exact:true}).click();
+const settingsMotion=page=>page.locator('#trip-menu .motion-settings');
 const settingsToggle=page=>settingsMotion(page).locator('[data-scene-motion-toggle]');
 async function noHeroControls(page){await expect(page.locator('.hero [data-scene-motion-toggle], .hero .scene-motion__toggle, .hero .motion-settings')).toHaveCount(0);}
 async function openDisplayPreferences(page){const prefs=page.locator('details.display-preferences');if(!await prefs.evaluate(el=>el.open))await prefs.locator('summary',{hasText:'畫面偏好'}).click();await expect(prefs).toHaveAttribute('open','');return prefs.locator('.motion-settings');}
@@ -85,18 +87,18 @@ test('hero moves automatically, pause lives in trip settings, is keyboard access
  await expect(html).toHaveAttribute('data-scene-motion','running');
  const moving=()=>page.locator('.hero .scene-motion').evaluate(el=>el.getAnimations({subtree:true}).filter(a=>a.playState==='running').length);
  expect(await moving()).toBeGreaterThan(0);await noHeroControls(page);
- await nav(page,'settings');const toggle=settingsToggle(page);
+ await openTripMenu(page);const toggle=settingsToggle(page);
  await expect(settingsMotion(page).getByRole('heading',{name:'插畫動畫',exact:true})).toBeVisible();await expect(settingsMotion(page)).toContainText('控制車子與背景動態，只影響這台裝置。');
  await expect(toggle).toHaveAccessibleName('暫停動畫');await expect(toggle).not.toHaveAttribute('aria-pressed');
  await toggle.focus();await page.keyboard.press('Enter');
  await expect(html).toHaveAttribute('data-scene-motion','paused');expect(await moving()).toBe(0);await expect(toggle).toHaveAccessibleName('播放動畫');await expect(toggle).toBeFocused();
- await nav(page,'shopping');await expect(html).toHaveAttribute('data-scene-motion','paused');expect(await moving()).toBe(0);await noHeroControls(page);
+ await closeTripMenu(page);await nav(page,'shopping');await expect(html).toHaveAttribute('data-scene-motion','paused');expect(await moving()).toBe(0);await noHeroControls(page);
  await page.reload();await expect(html).toHaveAttribute('data-scene-motion','paused');expect(await moving()).toBe(0);await noHeroControls(page);
  expect((await detail()).state).toEqual(before.state);
- await nav(page,'settings');await expect(settingsToggle(page)).toHaveAccessibleName('播放動畫');await settingsToggle(page).click();
+ await openTripMenu(page);await expect(settingsToggle(page)).toHaveAccessibleName('播放動畫');await settingsToggle(page).click();
  await expect(html).toHaveAttribute('data-scene-motion','running');expect(await moving()).toBeGreaterThan(0);
  expect((await detail()).state).toEqual(before.state);
- await page.locator('.hero').screenshot({path:'previews/animated-camp-hero.png'});
+ await closeTripMenu(page);await page.locator('.hero').screenshot({path:'previews/animated-camp-hero.png'});
 });
 
 test('reduced motion and print remain static, and card illustrations never animate',async({page})=>{
@@ -107,7 +109,7 @@ test('reduced motion and print remain static, and card illustrations never anima
  expect(await page.locator('.hero').evaluate(el=>el.getAnimations({subtree:true}).length)).toBeGreaterThan(0);
  expect(await page.locator('.trip-card-art').evaluate(el=>el.getAnimations({subtree:true}).length)).toBe(0);
  await page.emulateMedia({media:'print'});expect(await page.locator('.hero').evaluate(el=>el.getAnimations({subtree:true}).length)).toBe(0);
- await page.emulateMedia({media:'screen',reducedMotion:'reduce'});await page.goto('/demo/#/trip');await nav(page,'settings');await noHeroControls(page);
+ await page.emulateMedia({media:'screen',reducedMotion:'reduce'});await page.goto('/demo/#/trip');await openTripMenu(page);await noHeroControls(page);
  await expect(page.locator('html')).toHaveAttribute('data-scene-motion','reduced');await expect(settingsToggle(page)).toBeHidden();
  await expect(settingsMotion(page).locator('[data-motion-reduced-note]')).toHaveText('依系統減少動態設定，插畫保持靜態。');await expect(settingsMotion(page).locator('[data-motion-reduced-note]')).toBeVisible();
  expect(await page.locator('.hero').evaluate(el=>el.getAnimations({subtree:true}).length)).toBe(0);
@@ -132,7 +134,7 @@ test('account forms stay neutral with jf open font, and footer motion preference
 test('person representative colors persist and follow every food and gear selector after editing',async({page})=>{
  const {detail}=await fixture(page);const before=await detail();const people=[before.state.people.find(p=>p.id==='p3'),before.state.people.find(p=>p.id==='p5')];
  for(const [person,name,color] of [[people[0],'Ena','green'],[people[1],'Mike','coral']]){
-  await nav(page,'crew');await page.locator('.member-card').filter({has:page.getByRole('heading',{name:person.name,exact:true})}).getByRole('button',{name:'編輯旅伴',exact:true}).click();
+  await openTripMenu(page);await page.locator('#trip-menu .member-card').filter({has:page.getByRole('heading',{name:person.name,exact:true})}).getByRole('button',{name:'編輯旅伴',exact:true}).click();
   await page.getByLabel('旅伴名字',{exact:true}).fill(name);await page.getByLabel('旅伴代表色',{exact:true}).selectOption(color);await page.locator('#edit-form button[type=submit]').click();await saved(page);
   await nav(page,'shopping');const shop=page.locator('[data-shopping-assignee="s1"]');await shop.selectOption(person.id);await saved(page);await expect(shop).toHaveAttribute('data-person-color',color);await expect(shop.locator('option:checked')).toContainText(name);const style=await shop.evaluate(signature);
   await nav(page,'gear');const gear=page.locator('[data-gear-assignee="g7"]');await gear.selectOption(person.id);await saved(page);await expect(gear).toHaveAttribute('data-person-color',color);expect(await gear.evaluate(signature)).toEqual(style);

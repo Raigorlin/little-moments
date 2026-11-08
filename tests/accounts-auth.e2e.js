@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 const password='UI-Only-Test-Pass-2026';
 test('registration and login forms create account-specific URL and reject mismatched passwords',async({page,baseURL})=>{
  test.skip(new URL(baseURL).port!=='5181','Use isolated account test server.');

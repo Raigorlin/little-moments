@@ -1,0 +1,320 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - link "跳到主要內容" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "日子拾光首頁" [ref=e6] [cursor=pointer]:
+          - /url: "#/home"
+          - img [ref=e7]
+          - generic [ref=e12]:
+            - text: 日子拾光
+            - generic [ref=e13]: LITTLE MOMENTS
+        - generic [ref=e14]:
+          - button "切換深色模式" [ref=e15] [cursor=pointer]:
+            - img [ref=e16]
+          - button "切換旅伴身分" [ref=e18] [cursor=pointer]:
+            - generic "小安" [ref=e19]: 小
+    - main [ref=e20]:
+      - navigation "麵包屑" [ref=e21]:
+        - link "我的旅行" [ref=e22] [cursor=pointer]:
+          - /url: "#/home"
+        - generic [ref=e23]: /
+        - generic [ref=e24]: 雲海裡，住一晚
+      - generic [ref=e25]:
+        - generic [ref=e26]:
+          - generic [ref=e27]: LITTLE MOMENTS
+          - generic [ref=e28]:
+            - heading "雲海裡，住一晚" [level=1] [ref=e29]
+            - button "旅行選單" [ref=e30] [cursor=pointer]:
+              - img [ref=e31]
+          - generic [ref=e33]:
+            - generic [ref=e34]:
+              - img [ref=e35]
+              - text: 11/20 — 11/22
+            - generic [ref=e38]:
+              - img [ref=e39]
+              - link "在 Google Maps 開啟 山間小日子營地（另開分頁）" [ref=e42] [cursor=pointer]:
+                - /url: https://www.google.com/maps/search/?api=1&query=%E5%B1%B1%E9%96%93%E5%B0%8F%E6%97%A5%E5%AD%90%E7%87%9F%E5%9C%B0
+                - text: 山間小日子營地
+                - img [ref=e43]
+            - generic [ref=e45]:
+              - img [ref=e46]
+              - text: 6 位旅伴
+        - generic [ref=e49]:
+          - generic [ref=e50]: Let's go camping!
+          - generic [ref=e51]:
+            - img [ref=e52]
+            - generic [ref=e112]:
+              - generic [ref=e113]: 距離出發
+              - strong [ref=e114]: "12"
+              - generic [ref=e115]: 天
+      - generic [ref=e116]:
+        - navigation "旅行模式" [ref=e117]:
+          - link "規劃手冊" [ref=e118] [cursor=pointer]:
+            - /url: "#/trip"
+          - link "出發模式" [ref=e119] [cursor=pointer]:
+            - /url: "#/go"
+            - img [ref=e120]
+            - text: 出發模式
+        - generic [ref=e122]:
+          - button "匯出手冊" [ref=e123] [cursor=pointer]:
+            - img [ref=e124]
+            - generic [ref=e126]: 匯出手冊
+          - button "邀請旅伴" [ref=e127] [cursor=pointer]:
+            - img [ref=e128]
+            - text: 邀請旅伴
+      - generic [ref=e131]:
+        - text: 已儲存在這台裝置
+        - generic [ref=e133]: ·
+        - text: 本機資料，不會同步至其他裝置
+      - navigation "旅行內容" [ref=e134]:
+        - button "行程表" [ref=e135] [cursor=pointer]
+        - button "料理菜單" [ref=e136] [cursor=pointer]
+        - button "採買清單" [ref=e137] [cursor=pointer]
+        - button "裝備分工 2 項待分配" [ref=e138] [cursor=pointer]:
+          - text: 裝備分工
+          - generic "2 項待分配" [ref=e139]: "2"
+        - button "分帳記帳" [ref=e140] [cursor=pointer]
+      - generic [ref=e141]:
+        - region "行程表" [ref=e142]:
+          - generic [ref=e143]:
+            - generic "選擇行程日期" [ref=e144]:
+              - button "DAY 01 11/20 週五" [pressed] [ref=e145] [cursor=pointer]:
+                - generic [ref=e146]: DAY 01
+                - generic [ref=e147]: 11/20
+                - generic [ref=e148]: 週五
+              - button "DAY 02 11/21 週六" [ref=e149] [cursor=pointer]:
+                - generic [ref=e150]: DAY 02
+                - generic [ref=e151]: 11/21
+                - generic [ref=e152]: 週六
+              - button "DAY 03 11/22 週日" [ref=e153] [cursor=pointer]:
+                - generic [ref=e154]: DAY 03
+                - generic [ref=e155]: 11/22
+                - generic [ref=e156]: 週日
+            - button "新增一站" [ref=e157] [cursor=pointer]:
+              - img [ref=e158]
+              - text: 新增一站
+          - region "各車出發 2 台車" [ref=e160]:
+            - generic [ref=e161]:
+              - generic [ref=e162]:
+                - generic [ref=e163]: DIFFERENT STARTS, SHARED MEMORIES
+                - heading "各車出發 2 台車" [level=2] [ref=e164]
+              - button "新增車輛" [ref=e165] [cursor=pointer]:
+                - img [ref=e166]
+                - text: 新增車輛
+            - paragraph [ref=e168]: 出發時間與地點會同步到「旅行選單」的車輛。沿途採買、接人與抵達營區，請在下方新增一站，指定參與車輛。
+            - generic [ref=e169]:
+              - article [ref=e170]:
+                - generic [ref=e172]:
+                  - img [ref=e173]
+                  - heading "山線小巴" [level=3] [ref=e175]
+                - generic [ref=e177]:
+                  - time [ref=e178]: 14:00
+                  - generic [ref=e179]: 出發
+                - paragraph [ref=e180]:
+                  - img [ref=e181]
+                  - link "在 Google Maps 開啟 台北車站東三門（另開分頁）" [ref=e185] [cursor=pointer]:
+                    - /url: https://www.google.com/maps/search/?api=1&query=%E5%8F%B0%E5%8C%97%E8%BB%8A%E7%AB%99%E6%9D%B1%E4%B8%89%E9%96%80
+                    - text: 台北車站東三門
+                    - img [ref=e186]
+                - generic [ref=e188]:
+                  - generic [ref=e189]:
+                    - term [ref=e190]: 駕駛
+                    - definition [ref=e191]: 阿哲
+                  - generic [ref=e192]:
+                    - term [ref=e193]: 乘客
+                    - definition [ref=e194]: 小安、小雨
+                - generic [ref=e195]: 3 / 4 人
+                - button "顯示編輯與刪除操作" [ref=e196] [cursor=pointer]: ‹
+              - article [ref=e197]:
+                - generic [ref=e199]:
+                  - img [ref=e200]
+                  - heading "海風號" [level=3] [ref=e202]
+                - generic [ref=e204]:
+                  - time [ref=e205]: 14:00
+                  - generic [ref=e206]: 出發
+                - paragraph [ref=e207]:
+                  - img [ref=e208]
+                  - link "在 Google Maps 開啟 台北車站東三門（另開分頁）" [ref=e212] [cursor=pointer]:
+                    - /url: https://www.google.com/maps/search/?api=1&query=%E5%8F%B0%E5%8C%97%E8%BB%8A%E7%AB%99%E6%9D%B1%E4%B8%89%E9%96%80
+                    - text: 台北車站東三門
+                    - img [ref=e213]
+                - generic [ref=e215]:
+                  - generic [ref=e216]:
+                    - term [ref=e217]: 駕駛
+                    - definition [ref=e218]: 大海
+                  - generic [ref=e219]:
+                    - term [ref=e220]: 乘客
+                    - definition [ref=e221]: 阿森、米米
+                - generic [ref=e222]: 3 / 4 人
+                - button "顯示編輯與刪除操作" [ref=e223] [cursor=pointer]: ‹
+          - generic [ref=e224]:
+            - generic [ref=e225]:
+              - generic [ref=e226]: 按車查看行程
+              - combobox "按車查看行程" [ref=e227] [cursor=pointer]:
+                - option "全部行程" [selected]
+                - option "山線小巴"
+                - option "海風號"
+            - paragraph [ref=e228]: 單車檢視會包含全體行程，以及原旅伴名單中有這台車成員的行程。不同車輛可各自安排抵達時間，不會自動合併。
+          - generic [ref=e229]:
+            - generic [ref=e230]: 當日行程 · 慢慢走，好好玩。
+            - generic [ref=e231]: 5 個小片刻
+          - generic [ref=e232]:
+            - article [ref=e233]:
+              - img [ref=e235]
+              - generic [ref=e238]:
+                - time [ref=e239]: 14:00
+                - generic [ref=e240]: 集合
+              - heading "城市集合，把日常暫停" [level=3] [ref=e242]
+              - generic [ref=e243]:
+                - img [ref=e244]
+                - link "在 Google Maps 開啟 台北車站東三門（另開分頁）" [ref=e247] [cursor=pointer]:
+                  - /url: https://www.google.com/maps/search/?api=1&query=%E5%8F%B0%E5%8C%97%E8%BB%8A%E7%AB%99%E6%9D%B1%E4%B8%89%E9%96%80
+                  - text: 台北車站東三門
+                  - img [ref=e248]
+              - paragraph [ref=e250]: 先吃飽再集合，帶上你的好心情。
+              - generic [ref=e251]:
+                - generic [ref=e252]:
+                  - img [ref=e253]
+                  - generic [ref=e256]: 全體旅伴
+                - generic [ref=e257] [cursor=pointer]:
+                  - checkbox "城市集合，把日常暫停已完成" [ref=e258]
+                  - generic [ref=e259]: 完成
+              - button "顯示編輯與刪除操作" [ref=e260] [cursor=pointer]: ‹
+            - article [ref=e261]:
+              - img [ref=e263]
+              - generic [ref=e265]:
+                - time [ref=e266]: 15:00
+                - generic [ref=e267]: 採買補給
+              - heading "把好吃的，一起買齊" [level=3] [ref=e269]
+              - generic [ref=e270]:
+                - img [ref=e271]
+                - link "在 Google Maps 開啟 山下超市（另開分頁）" [ref=e274] [cursor=pointer]:
+                  - /url: https://www.google.com/maps/search/?api=1&query=%E5%B1%B1%E4%B8%8B%E8%B6%85%E5%B8%82
+                  - text: 山下超市
+                  - img [ref=e275]
+              - paragraph [ref=e277]: 照著採買清單分頭行動，別忘了冰塊。
+              - generic [ref=e278]:
+                - generic [ref=e279]:
+                  - img [ref=e280]
+                  - generic [ref=e283]: 小安、小雨、米米
+                - generic [ref=e284] [cursor=pointer]:
+                  - checkbox "把好吃的，一起買齊已完成" [ref=e285]
+                  - generic [ref=e286]: 完成
+              - button "顯示編輯與刪除操作" [ref=e287] [cursor=pointer]: ‹
+            - article [ref=e288]:
+              - img [ref=e290]
+              - generic [ref=e292]:
+                - time [ref=e293]: 16:30
+                - generic [ref=e294]: 營地時光
+              - heading "你好，山間小日子" [level=3] [ref=e296]
+              - generic [ref=e297]:
+                - img [ref=e298]
+                - link "在 Google Maps 開啟 山間小日子營地（另開分頁）" [ref=e301] [cursor=pointer]:
+                  - /url: https://www.google.com/maps/search/?api=1&query=%E5%B1%B1%E9%96%93%E5%B0%8F%E6%97%A5%E5%AD%90%E7%87%9F%E5%9C%B0
+                  - text: 山間小日子營地
+                  - img [ref=e302]
+              - paragraph [ref=e304]: 分工搭帳、擺好椅子，再慢慢喝杯咖啡。
+              - generic [ref=e305]:
+                - generic [ref=e306]:
+                  - img [ref=e307]
+                  - generic [ref=e310]: 全體旅伴
+                - generic [ref=e311] [cursor=pointer]:
+                  - checkbox "你好，山間小日子已完成" [ref=e312]
+                  - generic [ref=e313]: 完成
+              - button "顯示編輯與刪除操作" [ref=e314] [cursor=pointer]: ‹
+            - article [ref=e315]:
+              - img [ref=e317]
+              - generic [ref=e319]:
+                - time [ref=e320]: 18:30
+                - generic [ref=e321]: 一起吃飯
+              - heading "營地的第一頓晚餐" [level=3] [ref=e323]
+              - generic [ref=e324]:
+                - img [ref=e325]
+                - link "在 Google Maps 開啟 我們的天幕下（另開分頁）" [ref=e328] [cursor=pointer]:
+                  - /url: https://www.google.com/maps/search/?api=1&query=%E6%88%91%E5%80%91%E7%9A%84%E5%A4%A9%E5%B9%95%E4%B8%8B
+                  - text: 我們的天幕下
+                  - img [ref=e329]
+              - paragraph [ref=e331]: 熱騰騰的壽喜燒，配上今晚的聊天時間。
+              - generic [ref=e332]:
+                - generic [ref=e333]:
+                  - img [ref=e334]
+                  - generic [ref=e337]: 全體旅伴
+                - generic [ref=e338] [cursor=pointer]:
+                  - checkbox "營地的第一頓晚餐已完成" [ref=e339]
+                  - generic [ref=e340]: 完成
+              - button "顯示編輯與刪除操作" [ref=e341] [cursor=pointer]: ‹
+            - article [ref=e342]:
+              - img [ref=e344]
+              - generic [ref=e346]:
+                - time [ref=e347]: 20:00
+                - generic [ref=e348]: 星空時間
+              - heading "把星星留給今晚" [level=3] [ref=e350]
+              - generic [ref=e351]:
+                - img [ref=e352]
+                - link "在 Google Maps 開啟 營地草坪（另開分頁）" [ref=e355] [cursor=pointer]:
+                  - /url: https://www.google.com/maps/search/?api=1&query=%E7%87%9F%E5%9C%B0%E8%8D%89%E5%9D%AA
+                  - text: 營地草坪
+                  - img [ref=e356]
+              - paragraph [ref=e358]: 關掉大燈、泡一杯熱可可，一起抬頭看看。
+              - generic [ref=e359]:
+                - generic [ref=e360]:
+                  - img [ref=e361]
+                  - generic [ref=e364]: 全體旅伴
+                - generic [ref=e365] [cursor=pointer]:
+                  - checkbox "把星星留給今晚已完成" [ref=e366]
+                  - generic [ref=e367]: 完成
+              - button "顯示編輯與刪除操作" [ref=e368] [cursor=pointer]: ‹
+          - generic [ref=e369]:
+            - img [ref=e371]
+            - text: 好日子，不用急。
+        - complementary [ref=e374]:
+          - generic [ref=e375]:
+            - generic [ref=e376]: OUR TRAVEL CREW
+            - heading "小隊準備好了嗎？" [level=2] [ref=e377]
+            - generic [ref=e378]:
+              - generic "小安" [ref=e379]: 小
+              - generic "阿哲" [ref=e380]: 阿
+              - generic "小雨" [ref=e381]: 小
+              - generic "阿森" [ref=e382]: 阿
+              - generic "米米" [ref=e383]: 米
+              - generic "大海" [ref=e384]: 大
+            - paragraph [ref=e385]: 6 位旅伴，一起收集回憶。
+            - generic [ref=e386]:
+              - generic [ref=e387]: 食材採買
+              - generic [ref=e388]: 3 / 18
+            - progressbar "食材採買進度" [ref=e389]
+            - generic [ref=e390]:
+              - generic [ref=e391]: 裝備準備
+              - generic [ref=e392]: 1 / 31
+            - progressbar "裝備準備進度" [ref=e393]
+            - button "2 項裝備還在等主人" [ref=e394] [cursor=pointer]:
+              - img [ref=e395]
+              - text: 2 項裝備還在等主人
+              - img [ref=e397]
+            - link "看看我的行前清單" [ref=e399] [cursor=pointer]:
+              - /url: "#/go"
+              - text: 看看我的行前清單
+              - img [ref=e400]
+          - region "每日快樂小語" [ref=e402]:
+            - generic [ref=e404]: ✳
+            - generic [ref=e405]:
+              - text: 每日一語
+              - time [ref=e406]: 11/08
+            - paragraph [ref=e407]: 把腳步放慢，讓快樂有機會跟上。
+            - generic [ref=e408]: A LITTLE JOY, EVERY DAY
+          - generic [ref=e409]:
+            - img [ref=e410]
+            - text: 把垃圾帶走，把風景留下。
+    - contentinfo [ref=e412]:
+      - generic [ref=e414]: 日子拾光·把平凡的日子，留成喜歡的回憶。
+      - generic [ref=e415]:
+        - generic [ref=e416]: 本機版 · 資料只儲存在此瀏覽器
+        - link "資料與隱私" [ref=e417] [cursor=pointer]:
+          - /url: "#/privacy"
+  - status
+```

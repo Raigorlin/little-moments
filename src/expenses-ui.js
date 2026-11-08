@@ -16,6 +16,10 @@ const NOT_FOUND = '找不到帳本：可能是分帳後端尚未啟用（請先�
 const EXPENSE_KEYS = ['id', 'date', 'title', 'amountCents', 'payerId', 'participantIds', 'category', 'note', 'shoppingId', 'source', 'receiptId', 'receiptLine'];
 const SETTLEMENT_KEYS = ['id', 'date', 'fromId', 'toId', 'amountCents', 'note'];
 const CATEGORY_TONE = { 食材: 'green', 交通: 'blue', 住宿: 'lavender', 其他: 'peach' };
+const ACTION_ICONS = {
+  edit: '<path d="m14 5 5 5M4 20l5-1L21 7l-5-5L4 14v6Z"/>',
+  close: '<path d="m6 6 12 12M6 18 18 6"/>'
+};
 let instances = 0;
 
 const chars = value => [...String(value ?? '')].length;
@@ -49,6 +53,9 @@ export function centsToInput(cents) {
 }
 function money(cents) {
   try { return formatMoney(cents); } catch { return `NT$${centsToInput(cents) || '0'}`; }
+}
+function actionIcon(name) {
+  return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ACTION_ICONS[name]}</svg>`;
 }
 export function csvCell(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
@@ -92,7 +99,7 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
   const S = {
     status: account ? 'loading' : 'demo', loadError: null, reloading: false,
     ledger: null, perms: { canEdit: false, canDelete: false },
-    editor: null, form: null, receipt: null, receiptError: '', confirm: null,
+    editor: null, form: null, receipt: null, receiptError: '', confirm: null, discardPrompt: null, promptReturnFocusId: '',
     pending: null, busy: false, locked: '', notice: null, destroyed: false,
     lastDirty: false, focusId: '', highlight: new Set()
   };
@@ -392,7 +399,7 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
     S.receiptError = '';
     const R = {
       token: 0, file, size: file.size, url: URL.createObjectURL(file),
-      id: '', phase: 'hashing', progress: 0, progressText: '', controller: null, text: '', confidence: null, note: '',
+      id: '', phase: 'hashing', progress: 0, progressText: '', controller: null, text: '', confidence: null, note: '', resultMode: 'openai',
       rows: [], parsedTotal: null, totalInput: '', parseWarnings: [], payerId: '', participantIds: [], date: '',
       category: '食材', verified: false, discrepancyKey: '', error: '', rowsEdited: false, manualSeq: 0
     };
@@ -402,59 +409,85 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
     try { R.id = await sha256Hex(file); } catch { R.id = ''; }
     if (S.receipt !== R || R.token !== token) return;
     if (rejectBooked(R)) return;
-    await runOcr(R);
+    await runAi(R);
   }
-  async function runOcr(R) {
-    if (S.locked) { R.phase = 'review'; R.note = S.locked; render(); return; }
+  async function runAi(R) {
+    if (!R?.file || frozen() || !account?.user?.id || !account?.trip?.id) return;
+    if (R.rows.length && !window.confirm('改用 GPT-6 Luna 重新辨識會取代目前候選品項，並再次上傳這張照片，確定繼續？')) return;
     const token = ++R.token;
+    const previousMode = R.recognitionMode;
+    R.aiAttemptUploaded = false;
     R.controller = new AbortController();
+    const signal = R.controller.signal;
+    R.recognitionMode = 'checking-openai';
     R.phase = 'recognizing';
     R.progress = 0;
-    R.progressText = '準備辨識引擎…';
+    R.progressText = '確認 OpenAI 設定…';
     R.note = '';
     R.error = '';
     render();
-    const signal = R.controller.signal;
     try {
-      const { recognizeReceipt } = await import('./receipt-ocr.js');
+      const { AI_PROVIDER, AI_POLICY_DISABLED_MESSAGE, normalizeAiStatus, prepareAiImage, receiptAiPath, sendReceiptToAi } = await import('./receipt-ai-client.js');
+      const statusResponse = await fetch(receiptAiPath(account.trip.id), { credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal });
+      if (!statusResponse.ok) throw new Error('無法確認 OpenAI 辨識服務狀態，請重新整理後再試。');
+      const status = normalizeAiStatus(await statusResponse.json());
+      if (!status.enabled) throw new Error(status.disabledReason === 'policy' ? AI_POLICY_DISABLED_MESSAGE : 'OpenAI 尚未設定 API key，請先填入本機金鑰檔。');
       if (S.receipt !== R || R.token !== token || signal.aborted) return;
-      const result = await recognizeReceipt(R.file, { signal, onProgress: p => onProgress(R, token, p) });
+      if (typeof assertSession === 'function') await assertSession();
+      R.recognitionMode = 'openai';
+      R.progressText = `正在以 ${status.modelId} 傳送至 ${AI_PROVIDER}…`;
+      render();
+      const image = await prepareAiImage(R.file, { maxBytes: status.maxImageBytes, signal });
       if (S.receipt !== R || R.token !== token || signal.aborted) return;
-      if (typeof result?.receiptId === 'string' && ID_RE.test(result.receiptId)) R.id = result.receiptId;
+      R.aiAttemptUploaded = true;
+      const result = await sendReceiptToAi({ tripId: account.trip.id, userId: account.user.id, image, signal });
+      if (S.receipt !== R || R.token !== token || signal.aborted) return;
+      R.aiUploaded = true;
       if (rejectBooked(R)) return;
-      R.text = String(result?.text ?? '');
-      R.confidence = Number.isFinite(result?.confidence) ? result.confidence : null;
+      const usedLineIds = new Set();
+      R.rows = result.items.map((item, index) => ({
+        lineId: safeLineId(item.lineId, index, usedLineIds),
+        title: cleanText(item.title).slice(0, 100),
+        amount: String(item.amount || ''),
+        warning: cleanText(item.warning),
+        selected: !item.warning && toCents(item.amount) !== null
+      }));
+      R.parsedTotal = Number.isSafeInteger(result.totalCents) && result.totalCents > 0 ? result.totalCents : null;
+      R.totalInput = R.parsedTotal === null ? '' : centsToInput(R.parsedTotal);
+      R.date = isIsoDate(result.date) ? result.date : R.date;
+      R.text = '';
+      R.confidence = null;
+      R.parseWarnings = result.warnings;
+      R.rowsEdited = false;
+      R.discrepancyKey = '';
+      R.verified = false;
+      R.resultMode = 'openai';
       R.phase = 'review';
-      reparse(R);
-      R.note = R.rows.length ? '' : '沒有找到可用的品項。可以修改辨識文字後重新解析，或手動新增一列。';
-      announce(`辨識完成，找到 ${R.rows.length} 個候選品項，請逐項核對。`);
+      R.note = result.store ? `OpenAI 辨識結果：${result.store}。請逐項核對候選品項與金額。` : 'OpenAI 辨識完成，請逐項核對候選品項與金額。';
+      announce(`OpenAI 辨識完成，找到 ${R.rows.length} 個候選品項，請逐項核對。`);
     } catch (err) {
       if (S.receipt !== R || R.token !== token) return;
       R.phase = 'review';
-      R.note = signal.aborted ? '已取消辨識。可以手動輸入收據文字後按「重新解析」，或重新辨識。' : `辨識失敗：${err?.message || '未知錯誤'}。可以手動輸入收據文字後重新解析。`;
+      R.recognitionMode = R.aiUploaded ? 'openai' : previousMode;
+      R.note = signal?.aborted || err?.name === 'AbortError'
+        ? R.aiAttemptUploaded ? '已停止等待；若照片已送出，無法撤回且仍可能計費。' : '已取消，照片尚未傳送。'
+        : `OpenAI 辨識未完成：${err?.message || '請稍後重試或手動輸入。'}`;
       announce(R.note);
     } finally {
       if (S.receipt === R && R.token === token) { R.controller = null; render(); }
     }
   }
-  function onProgress(R, token, p) {
-    if (S.receipt !== R || R.token !== token || R.phase !== 'recognizing') return;
-    const value = typeof p === 'number' ? p : Number(p?.progress);
-    if (Number.isFinite(value)) R.progress = Math.max(0, Math.min(1, value));
-    if (typeof p?.status === 'string') R.progressText = p.status;
-    const pct = Math.round(R.progress * 100);
-    const bar = body.querySelector(`#${id('ocr-progress')}`);
-    if (bar) bar.value = pct;
-    const label = body.querySelector(`#${id('ocr-status')}`);
-    if (label) label.textContent = `${R.progressText || '辨識中'} · ${pct}%`;
-  }
-  function cancelOcr(R, note) {
+  function cancelRecognition(R, note) {
     if (!R || R.phase !== 'recognizing') return;
     R.token++;
     try { R.controller?.abort(); } catch {}
     R.controller = null;
     R.phase = 'review';
-    R.note = note;
+    const mode = R.recognitionMode;
+    R.recognitionMode = R.resultMode;
+    R.note = mode === 'openai'
+      ? R.aiAttemptUploaded ? '已停止等待；若照片已送出，無法撤回且仍可能計費。' : '已取消，照片尚未傳送。'
+      : mode === 'checking-openai' ? '已取消，照片尚未傳送。' : note;
   }
 
   function receiptCalc(R) {
@@ -564,16 +597,21 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
   };
   const frozen = () => Boolean(S.pending || S.busy || S.locked);
 
+  function discardPromptHtml() {
+    if (!S.discardPrompt) return '';
+    return `<div class="xp-confirm-backdrop"><section class="xp-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="${id('discard-title')}" aria-describedby="${id('discard-message')}"><span class="xp-confirm-mark" aria-hidden="true">!</span><h3 id="${id('discard-title')}">要放棄這份草稿嗎？</h3><p id="${id('discard-message')}">${e(S.discardPrompt.message)}</p><div class="xp-confirm-actions">${btn('繼續編輯', 'keep-discard', { cls: 'small quiet', bid: 'discard-keep' })}${btn('放棄草稿', 'confirm-discard', { cls: 'small danger', bid: 'discard-confirm' })}</div></section></div>`;
+  }
+
   function view() {
     const head = `<header class="xp-head"><span class="eyebrow">SHARE THE COST, KEEP THE MOMENT</span><h2 id="${id('title')}">分帳與收據</h2><p class="help xp-intro">記錄大家先墊付的花費，平均分攤並算出誰該還誰。這裡只做記錄，不會轉帳，也不會連結任何付款服務。</p></header>`;
-    if (S.status === 'demo') return `${head}<div class="xp-alert xp-alert-info" data-xp-state="demo"><p><b>分帳需要登入帳號。</b>金額紀錄存放在本機伺服器的帳號資料庫；單機示範模式不會儲存任何分帳資料。請登入帳號並開啟旅行後使用。</p><div class="xp-actions"><a class="button small" href="/login">前往登入</a></div></div>`;
+    if (S.status === 'demo') return `${head}<div class="xp-alert xp-alert-info" data-xp-state="demo"><p><b>分帳需要登入帳號。</b>金額紀錄存放在本機伺服器的帳號資料庫；單機本機模式不會儲存任何分帳資料。請登入帳號並開啟旅行後使用。</p><div class="xp-actions"><a class="button small" href="/login">前往登入</a></div></div>`;
     if (S.status === 'loading') return `${head}<p class="xp-loading" data-xp-state="loading">正在讀取分帳帳本…</p>`;
     if (S.status === 'unavailable') return `${head}<div class="xp-alert" role="alert" data-xp-state="unavailable"><p><b>${BACKEND_OFF}</b></p><p class="help">也可能是這趟旅行已刪除或你沒有存取權限${S.loadError?.message ? `（伺服器訊息：${e(S.loadError.message)}）` : ''}。目前沒有任何金額被儲存或送出。</p><div class="xp-actions">${btn('重新檢查', 'reload', { disabled: S.reloading || Boolean(S.locked), bid: 'reload' })}</div></div>`;
     if (S.status === 'error') {
       const err = S.loadError;
       return `${head}<div class="xp-alert" role="alert" data-xp-state="error"><p>${e(err?.status === 401 ? '登入狀態已失效，請重新登入後再開啟帳本。' : `讀取分帳帳本失敗：${err?.message || '未知錯誤'}`)}</p><div class="xp-actions">${btn('重試讀取', 'reload', { disabled: S.reloading || Boolean(S.locked), bid: 'reload' })}${err?.status === 401 ? '<a class="button small" href="/login">重新登入</a>' : ''}</div></div>`;
     }
-    return `${head}${banners()}${toolbar()}${editorHtml()}${balancesHtml()}${expensesHtml()}${settlementsHtml()}`;
+    return `${head}${banners()}${toolbar()}${editorHtml()}${balancesHtml()}${expensesHtml()}${settlementsHtml()}${discardPromptHtml()}`;
   }
 
   function banners() {
@@ -628,15 +666,15 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
 
   function receiptHtml() {
     const R = S.receipt;
-    const head = `<h3 id="${id('rc-heading')}">收據辨識</h3><p class="help">圖片只在這個瀏覽器分頁內辨識，不會上傳或儲存；只會儲存你核對後選取的品項與檔案指紋。</p>`;
-    const picker = `<div class="xp-picker"><label class="field" for="${id('rc-file')}">${R ? '換一張收據圖片' : '選擇收據圖片（JPEG／PNG／WebP，10 MB 內）'}<input type="file" id="${id('rc-file')}" class="xp-file" data-xp-file data-xp-receipt-file accept="image/jpeg,image/png,image/webp"${frozen() ? ' disabled' : ''}></label>${S.receiptError ? `<p class="form-error" role="alert" data-xp-receipt-error>${e(S.receiptError)}</p>` : ''}</div>`;
+    const head = `<h3 id="${id('rc-heading')}">收據辨識</h3><p class="help">選擇收據照片後會自動傳送至 OpenAI（預設模型 GPT-6 Luna）辨識，可能依 OpenAI API 資料政策處理並產生費用。若不希望上傳，請勿選取照片。辨識失敗時不會改用本機 OCR；你可手動輸入文字或品項。照片不會由本應用程式儲存，只會儲存你核對後選取的品項與檔案指紋。</p>`;
+    const picker = `<div class="xp-picker"><label class="field" for="${id('rc-file')}">${R ? '換一張收據圖片（選取後會自動上傳辨識）' : '選擇收據圖片（選取後會自動上傳至 OpenAI；預設 GPT-6 Luna，JPEG／PNG／WebP，10 MB 內）'}<input type="file" id="${id('rc-file')}" class="xp-file" data-xp-file data-xp-receipt-file accept="image/jpeg,image/png,image/webp"${frozen() ? ' disabled' : ''}></label>${S.receiptError ? `<p class="form-error" role="alert" data-xp-receipt-error>${e(S.receiptError)}</p>` : ''}</div>`;
     const close = btn(R ? '放棄這張收據' : '關閉', 'close-receipt', { bid: 'rc-close' });
     if (!R) return `<div class="xp-editor xp-receipt" id="${id('receipt')}" role="group" aria-labelledby="${id('rc-heading')}">${head}${picker}<div class="xp-actions xp-form-actions">${close}</div></div>`;
     let main;
     if (R.phase === 'hashing') main = '<p class="xp-loading">正在讀取圖片…</p>';
-    else if (R.phase === 'recognizing') main = `<div class="xp-ocr" data-xp-state="recognizing"><label for="${id('ocr-progress')}" id="${id('ocr-status')}">${e(R.progressText || '辨識中')} · ${Math.round(R.progress * 100)}%</label><progress id="${id('ocr-progress')}" max="100" value="${Math.round(R.progress * 100)}"></progress><div class="xp-actions">${btn('取消辨識', 'cancel-ocr', { bid: 'ocr-cancel' })}</div></div>`;
+    else if (R.phase === 'recognizing') main = `<div class="xp-ocr" data-xp-state="recognizing"><span id="${id('ai-status')}">${e(R.progressText || 'GPT-6 Luna 辨識中…')}</span><div class="xp-actions">${btn('取消辨識', 'cancel-recognition', { bid: 'ai-cancel' })}</div></div>`;
     else main = reviewHtml(R);
-    return `<div class="xp-editor xp-receipt" id="${id('receipt')}" role="group" aria-labelledby="${id('rc-heading')}">${head}${picker}<div class="xp-receipt-grid"><figure class="xp-receipt-image"><img src="${e(R.url)}" alt="收據圖片預覽"><figcaption>${(R.size / 1024 / 1024).toFixed(1)} MB · 只存在這個分頁</figcaption></figure><div class="xp-receipt-main">${R.note ? `<p class="xp-notice" data-xp-receipt-note>${e(R.note)}</p>` : ''}${main}</div></div><div class="xp-actions xp-form-actions">${close}${R.phase === 'review' ? `<button type="button" class="button small primary" data-xp="commit-receipt" id="${id('rc-commit')}"${frozen() ? ' disabled' : ''}>${commitLabel(R)}</button>` : ''}</div></div>`;
+    return `<div class="xp-editor xp-receipt" id="${id('receipt')}" role="group" aria-labelledby="${id('rc-heading')}">${head}${picker}<div class="xp-receipt-grid"><figure class="xp-receipt-image"><img src="${e(R.url)}" alt="收據圖片預覽"><figcaption>${(R.size / 1024 / 1024).toFixed(1)} MB · ${R.aiUploaded ? '已傳送至 OpenAI' : R.aiAttemptUploaded ? '可能已傳送至 OpenAI' : '只存在這個分頁'}</figcaption></figure><div class="xp-receipt-main">${R.note ? `<p class="xp-notice" data-xp-receipt-note>${e(R.note)}</p>` : ''}${main}</div></div><div class="xp-actions xp-form-actions">${close}${R.phase === 'review' ? `<button type="button" class="button small primary" data-xp="commit-receipt" id="${id('rc-commit')}"${frozen() ? ' disabled' : ''}>${commitLabel(R)}</button>` : ''}</div></div>`;
   }
   const commitLabel = R => (S.busy ? '儲存中…' : `一次儲存 ${R.rows.filter(r => r.selected).length} 筆品項`);
   function reviewHtml(R) {
@@ -651,11 +689,11 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
       return `<li class="xp-cand${r.selected ? ' is-selected' : ''}" data-xp-receipt-row="${i}" data-xp-line="${e(r.lineId)}"><label class="xp-cand-check" for="${id(`row-${i}-sel`)}"><input type="checkbox" id="${id(`row-${i}-sel`)}" data-xp-row="${i}" data-xp-row-key="selected" data-xp-receipt-field="selected"${r.selected ? ' checked' : ''}><span class="xp-sr">選取第 ${i + 1} 列</span></label><input class="xp-input" id="${id(`row-${i}-title`)}" data-xp-row="${i}" data-xp-row-key="title" data-xp-receipt-field="title" value="${e(r.title)}" maxlength="100" aria-label="第 ${i + 1} 列品名"><input class="xp-input xp-amount" id="${id(`row-${i}-amount`)}" data-xp-row="${i}" data-xp-row-key="amount" data-xp-receipt-field="amount" value="${e(r.amount)}" inputmode="decimal" autocomplete="off" aria-label="第 ${i + 1} 列金額（新台幣）"${r.amount && toCents(r.amount) === null ? ' aria-invalid="true"' : ''}>${warns.length ? `<small class="xp-cand-warn">${e(warns.join('；'))}</small>` : ''}</li>`;
     }).join('');
     return `<fieldset class="xp-fieldset"${frozen() ? ' disabled' : ''}><legend class="xp-sr">收據核對</legend>
-<details class="xp-raw"${R.rows.length ? '' : ' open'}><summary>辨識文字${R.confidence !== null ? `（信心 ${Math.round(R.confidence)}%）` : ''}，可修改後重新解析</summary><label class="field" for="${id('rc-text')}"><span class="xp-sr">收據辨識文字</span><textarea id="${id('rc-text')}" data-xp-receipt="text" data-xp-receipt-text rows="7" spellcheck="false">${e(R.text)}</textarea></label><div class="xp-actions">${btn('重新解析', 'reparse', { bid: 'rc-reparse' })}${btn('重新辨識', 'rerun-ocr', { bid: 'rc-rerun' })}</div></details>
+<details class="xp-raw"${R.rows.length ? '' : ' open'}><summary>AI 辨識結果</summary><p class="help">AI 不提供原始 OCR 文字；請核對下方候選品項與收據照片。也可以手動輸入辨識文字後重新解析。</p><label class="field" for="${id('rc-text')}"><span class="xp-sr">手動輸入收據辨識文字</span><textarea id="${id('rc-text')}" data-xp-receipt="text" data-xp-receipt-text rows="7" spellcheck="false">${e(R.text)}</textarea></label><div class="xp-actions">${btn('解析手動輸入文字', 'reparse', { bid: 'rc-reparse' })}</div></details>
 ${R.parseWarnings.length ? `<ul class="xp-warn-list">${R.parseWarnings.map(w => `<li>${e(w)}</li>`).join('')}</ul>` : ''}
 <h4 class="xp-subhead">候選品項 <small>勾選要記帳的品項，可逐列修改品名與金額</small></h4>
 <ol class="xp-cands" id="${id('rc-rows')}">${rows || '<li class="xp-empty">目前沒有候選品項。</li>'}</ol>
-<div class="xp-actions">${btn('＋ 手動新增一列', 'add-row', { bid: 'rc-add-row' })}${btn('全不選', 'rows-none', { bid: 'rc-rows-none' })}</div>
+<div class="xp-actions">${btn('＋ 手動新增一列', 'add-row', { bid: 'rc-add-row' })}${btn('全不選', 'rows-none', { bid: 'rc-rows-none' })}${account ? btn('重新使用 GPT-6 Luna 辨識', 'rerun-ai', { bid: 'rc-ai' }) : ''}</div>
 <div class="xp-grid">
 <label class="field" for="${id('rc-date')}">消費日期<input type="date" id="${id('rc-date')}" data-xp-receipt="date" value="${e(R.date)}" required></label>
 <label class="field" for="${id('rc-payer')}">付款人<select id="${id('rc-payer')}" data-xp-receipt="payerId">${personOptions(R.payerId)}</select></label>
@@ -721,7 +759,7 @@ ${transfers.length ? `<ul class="xp-transfers">${transfers.map((t, i) => `<li cl
       if (S.confirm?.kind === 'expense' && S.confirm.id === x.id) return confirmRow('expense', x.id, `確定從帳本移除「${x.title}」${money(x.amountCents)}？大家的結餘會跟著改變。`);
       const link = x.shoppingId ? items.find(s => s.id === x.shoppingId)?.name || '已移除的採買品項' : '';
       const ids = x.participantIds || [];
-      return `<li class="xp-row${S.highlight.has(x.id) ? ' is-new' : ''}" data-xp-expense="${e(x.id)}"><div class="xp-row-main"><b class="xp-row-title">${e(x.title)}</b><span class="xp-tag ${CATEGORY_TONE[x.category] || 'peach'}">${e(x.category)}</span>${x.source === 'receipt' ? '<span class="xp-tag paper">收據</span>' : ''}</div><span class="xp-money">${e(money(x.amountCents))}</span><small class="xp-row-meta">${e(nameOf(x.payerId))} 付款 · ${ids.length === everyone ? '全員' : `${ids.length} 人`}平分${ids.length <= 4 ? `（${e(ids.map(nameOf).join('、'))}）` : ''}${link ? ` · 採買：${e(link)}` : ''}${x.note ? ` · ${e(x.note)}` : ''}</small><div class="xp-row-actions">${S.perms.canEdit ? btn('編輯', 'edit-expense', { cls: 'small quiet', disabled: off, attrs: `data-xp-id="${e(x.id)}" aria-label="編輯 ${e(x.title)}"`, bid: `edit-${x.id}` }) : ''}${S.perms.canDelete ? btn('移除', 'ask-remove-expense', { cls: 'small quiet danger', disabled: offDel, attrs: `data-xp-id="${e(x.id)}" aria-label="移除 ${e(x.title)}"`, bid: `del-${x.id}` }) : ''}</div></li>`;
+      return `<li class="xp-row${S.highlight.has(x.id) ? ' is-new' : ''}" data-swipe-row data-xp-expense="${e(x.id)}"><div class="xp-row-main"><b class="xp-row-title">${e(x.title)}</b><span class="xp-tag ${CATEGORY_TONE[x.category] || 'peach'}">${e(x.category)}</span>${x.source === 'receipt' ? '<span class="xp-tag paper">收據</span>' : ''}</div><span class="xp-money">${e(money(x.amountCents))}</span><small class="xp-row-meta">${e(nameOf(x.payerId))} 付款 · ${ids.length === everyone ? '全員' : `${ids.length} 人`}平分${ids.length <= 4 ? `（${e(ids.map(nameOf).join('、'))}）` : ''}${link ? ` · 採買：${e(link)}` : ''}${x.note ? ` · ${e(x.note)}` : ''}</small><div class="xp-row-actions">${S.perms.canEdit ? `<button type="button" class="icon-button" data-xp="edit-expense" id="${id(`edit-${x.id}`)}" ${off ? 'disabled' : ''} data-xp-id="${e(x.id)}" aria-label="編輯 ${e(x.title)}" title="編輯支出">${actionIcon('edit')}</button>` : ''}${S.perms.canDelete ? `<button type="button" class="icon-button danger" data-xp="ask-remove-expense" id="${id(`del-${x.id}`)}" ${offDel ? 'disabled' : ''} data-xp-id="${e(x.id)}" aria-label="移除 ${e(x.title)}" title="移除 ${e(x.title)}">${actionIcon('close')}</button>` : ''}</div></li>`;
     };
     return `<section class="xp-section" aria-labelledby="${id('exp-title')}" data-xp-section="expenses"><div class="xp-section-head"><h3 id="${id('exp-title')}">支出明細</h3><p class="help">${list.length} 筆</p></div>${groups.length ? groups.map(g => `<div class="xp-day"><h4 class="xp-day-head"><time datetime="${e(g.date)}">${e(shortDate(g.date))}</time><span>${e(money(g.rows.reduce((a, x) => a + x.amountCents, 0)))}</span></h4><ul class="xp-rows">${g.rows.map(row).join('')}</ul></div>`).join('') : '<p class="xp-empty">還沒有任何支出。按「新增支出」或「掃描收據」開始記帳。</p>'}</section>`;
   }
@@ -730,7 +768,7 @@ ${transfers.length ? `<ul class="xp-transfers">${transfers.map((t, i) => `<li cl
     const offDel = !canMutate({ remove: true });
     const row = x => (S.confirm?.kind === 'settlement' && S.confirm.id === x.id
       ? confirmRow('settlement', x.id, '確定移除這筆還款紀錄？只會修改帳本，不會退回或取消任何實際付款。')
-      : `<li class="xp-row" data-xp-settlement="${e(x.id)}"><div class="xp-row-main"><b class="xp-row-title">${e(nameOf(x.fromId))} → ${e(nameOf(x.toId))}</b></div><span class="xp-money">${e(money(x.amountCents))}</span><small class="xp-row-meta"><time datetime="${e(x.date)}">${e(shortDate(x.date))}</time>${x.note ? ` · ${e(x.note)}` : ''}</small><div class="xp-row-actions">${S.perms.canDelete ? btn('移除', 'ask-remove-settlement', { cls: 'small quiet danger', disabled: offDel, attrs: `data-xp-id="${e(x.id)}" aria-label="移除 ${e(nameOf(x.fromId))} 給 ${e(nameOf(x.toId))} 的還款紀錄"`, bid: `sdel-${x.id}` }) : ''}</div></li>`);
+      : `<li class="xp-row" data-swipe-row data-xp-settlement="${e(x.id)}"><div class="xp-row-main"><b class="xp-row-title">${e(nameOf(x.fromId))} → ${e(nameOf(x.toId))}</b></div><span class="xp-money">${e(money(x.amountCents))}</span><small class="xp-row-meta"><time datetime="${e(x.date)}">${e(shortDate(x.date))}</time>${x.note ? ` · ${e(x.note)}` : ''}</small><div class="xp-row-actions">${S.perms.canDelete ? btn('移除', 'ask-remove-settlement', { cls: 'small quiet danger', disabled: offDel, attrs: `data-xp-id="${e(x.id)}" aria-label="移除 ${e(nameOf(x.fromId))} 給 ${e(nameOf(x.toId))} 的還款紀錄"`, bid: `sdel-${x.id}` }) : ''}</div></li>`);
     return `<section class="xp-section" aria-labelledby="${id('set-title')}" data-xp-section="settlements"><div class="xp-section-head"><h3 id="${id('set-title')}">已記錄的還款</h3><p class="help">實際已交付的金額紀錄</p></div>${list.length ? `<ul class="xp-rows">${list.map(row).join('')}</ul>` : '<p class="xp-empty">還沒有記錄任何還款。</p>'}</section>`;
   }
 
@@ -753,6 +791,28 @@ ${transfers.length ? `<ul class="xp-transfers">${transfers.map((t, i) => `<li cl
     notifyDirty();
   }
 
+  function askDiscard(message, onDiscard) {
+    const active = document.activeElement;
+    S.promptReturnFocusId = body.contains(active) ? active.id : '';
+    S.discardPrompt = { message, onDiscard };
+    S.focusId = id('discard-keep');
+    render();
+  }
+  function cancelDiscard() {
+    if (!S.discardPrompt) return;
+    S.discardPrompt = null;
+    S.focusId = S.promptReturnFocusId;
+    S.promptReturnFocusId = '';
+    render();
+  }
+  function confirmDiscard() {
+    const prompt = S.discardPrompt;
+    if (!prompt) return;
+    S.discardPrompt = null;
+    S.promptReturnFocusId = '';
+    prompt.onDiscard();
+  }
+
   const actions = {
     reload: () => void load({ ask: true }),
     retry: () => { if (S.pending?.retryable) void attempt(S.pending); },
@@ -765,8 +825,12 @@ ${transfers.length ? `<ul class="xp-transfers">${transfers.map((t, i) => `<li cl
     'settle-suggested': t => { const tr = summary().ok?.transfers?.[Number(t.dataset.xpIndex)]; if (tr) openSettlement(tr); },
     'open-receipt': () => { S.afterReceipt = 0; openEditor('receipt', null, id('rc-file')); },
     'cancel-editor': () => {
-      if (S.form?.dirty && !window.confirm('放棄這份尚未儲存的內容嗎？已儲存的紀錄不受影響。')) return;
-      closeEditor(); S.focusId = id('new-expense'); render();
+      const discard = () => { closeEditor(); S.focusId = id('new-expense'); render(); };
+      if (S.form?.dirty) {
+        askDiscard('放棄這份尚未儲存的內容嗎？已儲存的紀錄不受影響。', discard);
+        return;
+      }
+      discard();
     },
     'close-receipt': () => {
       if (S.receipt && !window.confirm('放棄這張收據的辨識與核對內容嗎？已儲存的紀錄不受影響。')) return;
@@ -776,13 +840,8 @@ ${transfers.length ? `<ul class="xp-transfers">${transfers.map((t, i) => `<li cl
     'form-none': () => { if (!S.form) return; S.form.values.participantIds = []; S.form.dirty = true; render(); },
     'rc-all': () => { if (!S.receipt) return; S.receipt.participantIds = people().filter(p => p.current).map(p => p.id); render(); },
     'rc-none': () => { if (!S.receipt) return; S.receipt.participantIds = []; render(); },
-    'cancel-ocr': () => { cancelOcr(S.receipt, '已取消辨識。可以手動輸入收據文字後按「重新解析」，或重新辨識。'); S.focusId = id('rc-text'); render(); },
-    'rerun-ocr': () => {
-      const R = S.receipt;
-      if (!R?.file || frozen()) return;
-      if (R.rows.length && !window.confirm('重新辨識會取代目前的辨識文字與候選品項，確定繼續？')) return;
-      void runOcr(R);
-    },
+    'cancel-recognition': () => { cancelRecognition(S.receipt, '已取消 GPT-6 Luna 辨識。若照片已送出，無法撤回且仍可能計費。'); S.focusId = id('rc-text'); render(); },
+    'rerun-ai': () => { if (S.receipt) void runAi(S.receipt); },
     reparse: () => {
       const R = S.receipt;
       if (!R || frozen()) return;
@@ -802,20 +861,42 @@ ${transfers.length ? `<ul class="xp-transfers">${transfers.map((t, i) => `<li cl
     },
     'rows-none': () => { const R = S.receipt; if (!R) return; R.rows.forEach(r => { r.selected = false; }); R.rowsEdited = true; render(); },
     'commit-receipt': commitReceipt,
-    'receipt-cancel': () => actions['cancel-ocr'](),
+    'receipt-cancel': () => actions['cancel-recognition'](),
     'ask-remove-expense': t => { if (canMutate({ remove: true })) { S.confirm = { kind: 'expense', id: t.dataset.xpId }; S.focusId = id('confirm-cancel'); render(); } },
     'ask-remove-settlement': t => { if (canMutate({ remove: true })) { S.confirm = { kind: 'settlement', id: t.dataset.xpId }; S.focusId = id('confirm-cancel'); render(); } },
     'cancel-confirm': () => { S.confirm = null; render(); },
+    'keep-discard': cancelDiscard,
+    'confirm-discard': confirmDiscard,
     'confirm-remove': () => { const c = S.confirm; if (c && canMutate({ remove: true })) removeRow(c.kind, c.id); }
   };
 
   function onClick(event) {
+    if (event.target.matches?.('.xp-confirm-backdrop')) { cancelDiscard(); return; }
     const target = event.target.closest?.('[data-xp]');
     if (!target || !body.contains(target) || target.disabled) return;
     const handler = actions[target.dataset.xp];
     if (!handler) return;
     event.preventDefault();
     handler(target, event);
+  }
+  function onKeydown(event) {
+    if (!S.discardPrompt) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelDiscard();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const buttons = [...body.querySelectorAll('.xp-confirm-dialog button:not(:disabled)')];
+    if (!buttons.length) return;
+    const first = buttons[0], last = buttons[buttons.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
   function onField(event) {
     const t = event.target;
@@ -870,6 +951,7 @@ ${transfers.length ? `<ul class="xp-transfers">${transfers.map((t, i) => `<li cl
   element.addEventListener('input', onField);
   element.addEventListener('change', onField);
   element.addEventListener('submit', onSubmit);
+  element.addEventListener('keydown', onKeydown);
 
   render();
   if (account) void load();
@@ -882,14 +964,18 @@ ${transfers.length ? `<ul class="xp-transfers">${transfers.map((t, i) => `<li cl
       closeEditor();
       S.pending = null;
       S.confirm = null;
+      S.discardPrompt = null;
+      S.promptReturnFocusId = '';
       S.notice = null;
       render();
     },
     lock(message) {
       if (S.destroyed) return;
       S.locked = cleanText(message) || '登入狀態已變更，帳本暫停操作。';
-      cancelOcr(S.receipt, '帳本已暫停操作，辨識已取消。核對中的內容仍保留，可以匯出。');
+      cancelRecognition(S.receipt, '帳本已暫停操作，辨識已取消。核對中的內容仍保留，可以匯出。');
       S.confirm = null;
+      S.discardPrompt = null;
+      S.promptReturnFocusId = '';
       render();
     },
     destroy() {
@@ -900,6 +986,7 @@ ${transfers.length ? `<ul class="xp-transfers">${transfers.map((t, i) => `<li cl
       element.removeEventListener('input', onField);
       element.removeEventListener('change', onField);
       element.removeEventListener('submit', onSubmit);
+      element.removeEventListener('keydown', onKeydown);
       body.innerHTML = '';
       element.remove();
     }

@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 import {STORAGE_KEY,seed} from '../src/model.js';
 const base=process.env.CAMPING_BASE_URL;
 const password='Local-Only-Test-Pass-2026';
@@ -48,7 +48,7 @@ test('admin can cancel then confirm own trip deletion from home on phone and des
 test('admin deletes another owner trip in backend, revokes link and leaves other trips and account intact',async({page,browser})=>{
  const owner=await member(page),trip=await create(page,'主揪的待刪卡片'),keep=await create(page,'要保留的另一趟');
  const link=await (await api(page,`/api/trips/${trip.id}/invites`,'POST',{})).json();
- await page.goto(`/${owner.username}/home`);await expect(tile(page,trip.id)).toBeVisible();await expect(tile(page,trip.id).locator('[data-action=acct-delete-trip]')).toBeVisible();
+ await page.goto(`/${owner.username}/home`);await expect(tile(page,trip.id)).toBeVisible();await expect(tile(page,trip.id).locator('[data-action=acct-delete-trip]:not(.swipe-action)')).toBeVisible();
  expect((await api(page,`/api/admin/trips/${trip.id}/delete`,'POST',{expectedUserId:owner.id,revision:trip.revision,confirmTitle:trip.title})).status()).toBe(403);
  const ctx=await browser.newContext({baseURL:base});try{
   const p=await ctx.newPage();await admin(p);await p.goto('/admin');await tile(p,trip.id).getByRole('button',{name:'刪除旅行',exact:true}).click();

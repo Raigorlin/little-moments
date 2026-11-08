@@ -1,0 +1,787 @@
+{
+  "pbtResults": {
+    "2.5 Write property test for rubber-band resistance": {
+      "status": "passed",
+      "lastRunTimestamp": 1793977921804
+    },
+    "2.6 Write property test for the reduced-motion branch of `trackOffset`": {
+      "status": "passed",
+      "lastRunTimestamp": 1793981100752
+    },
+    "2.7 Write property test for `sampleVelocity`": {
+      "status": "passed",
+      "lastRunTimestamp": 1793982527191
+    },
+    "2.8 Write property test for flick resolution": {
+      "status": "passed",
+      "lastRunTimestamp": 1793988090555
+    },
+    "2.9 Write property test for the halfway rule": {
+      "status": "passed",
+      "lastRunTimestamp": 1793989582690
+    },
+    "2.10 Write property test for the legacy distance rule": {
+      "status": "passed",
+      "lastRunTimestamp": 1793990855322
+    },
+    "2.11 Write property test for click suppression": {
+      "status": "passed",
+      "lastRunTimestamp": 1793993261739
+    },
+    "2.13 Write property test for `releaseVelocity`": {
+      "status": "passed",
+      "lastRunTimestamp": 1793997825669
+    }
+  },
+  "executionHistory": {
+    "1.1 Add the constants table and the axis and offset functions": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971252865
+      },
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971263204
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793972449159
+      }
+    ],
+    "1.2 Add the release-decision functions": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971252964
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793972463813
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793972596292
+      }
+    ],
+    "1.3 Add the per-frame coalescing writer": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253013
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793972601383
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793972839618
+      }
+    ],
+    "2.1 Create the test file and its deterministic generator": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253105
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793972602493
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793972840453
+      }
+    ],
+    "2.2 Write property test for `resolveAxis`": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253154
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793972847699
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793973133937
+      }
+    ],
+    "2.3 Write property test for linear tracking": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253204
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793973140177
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793973427965
+      }
+    ],
+    "2.4 Write property test for offset bounds": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253303
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793973434644
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793973780944
+      }
+    ],
+    "2.5 Write property test for rubber-band resistance": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253351
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793973786357
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976907553
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976923470
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793979311624
+      }
+    ],
+    "2.6 Write property test for the reduced-motion branch of `trackOffset`": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253402
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976907651
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793979869744
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793981640622
+      }
+    ],
+    "2.7 Write property test for `sampleVelocity`": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253448
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976907745
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793981723887
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793983463147
+      }
+    ],
+    "2.8 Write property test for flick resolution": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253494
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976907803
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793987093841
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793988635489
+      }
+    ],
+    "2.9 Write property test for the halfway rule": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253593
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976907860
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793988645175
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793990030767
+      }
+    ],
+    "2.10 Write property test for the legacy distance rule": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253644
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976907952
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793990039980
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793992465636
+      }
+    ],
+    "2.11 Write property test for click suppression": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253697
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976908035
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793992475401
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793993995552
+      }
+    ],
+    "2.12 Write unit test for `createFrameWriter`": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253742
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976908106
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793994010270
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793996781849
+      }
+    ],
+    "3.1 Replace the two defective swipe rules with the `--swipe-x` surface contract": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253792
+      },
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971264399
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971785266
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793972450325
+      }
+    ],
+    "4.1 Build the gesture record and the `pointerdown` path": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253839
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793972846849
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793973132945
+      }
+    ],
+    "4.2 Implement the `pointermove` tracking path": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253888
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793973139196
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793973427175
+      }
+    ],
+    "4.3 Implement the release and cancel settle": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971253990
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793973433868
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793973780033
+      }
+    ],
+    "4.4 Wire the media-query listeners and extend the disposer": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971254042
+      },
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793973787339
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976908270
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976922369
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793979311364
+      }
+    ],
+    "5. Checkpoint - verify the pure layer and the wiring": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971254090
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976908333
+      }
+    ],
+    "6.1 Create the e2e file and its gesture helpers": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971254142
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976908387
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793979869879
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793981640790
+      }
+    ],
+    "6.2 Test finger-tracked drag fidelity": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971254187
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976908439
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793981724015
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793983463381
+      }
+    ],
+    "6.3 Test the release snap, settle symmetry, and ARIA": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971254234
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976908492
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793987095013
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793988635619
+      }
+    ],
+    "6.4 Test the rubber-band end stop": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971254286
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976908545
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793988646215
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793990030877
+      }
+    ],
+    "6.5 Test scroll coexistence, cancellation, and layout change": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971254340
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976908600
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793990040177
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793992466604
+      }
+    ],
+    "6.6 Test the reduced-motion branch": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971254387
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976908655
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793992476485
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793993998053
+      }
+    ],
+    "6.7 Test the preserved markup and dismissal contracts": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971254439
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976908710
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793994011274
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793996781995
+      }
+    ],
+    "7. Final checkpoint - full verification": [
+      {
+        "executionId": "b42e0418-9e9c-4cfc-8301-87b41ba6f9a1",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793971254487
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976908826
+      }
+    ],
+    "3. Fix the CSS contract in `src/styles.css`": [
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793972450408
+      }
+    ],
+    "1. Extract the gesture physics into exported pure functions in `src/mobile-swipe.js`": [
+      {
+        "executionId": "9afc57f9-8f49-4042-93d3-3b1a14e11aab",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793972839733
+      }
+    ],
+    "3.2 Clip the Action_Panel to the width the Row_Surface has uncovered": [
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976908160
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976924535
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793979859045
+      }
+    ],
+    "3.3 Keep the 新增一站 button on the same row as the date tabs": [
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976908214
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793979869467
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793981640303
+      }
+    ],
+    "6.8 Test that the 新增一站 button stays on the same row as the date tabs": [
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793976908766
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793981724174
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793983464479
+      }
+    ],
+    "4. Wire the gesture tracker in `src/mobile-swipe.js`": [
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793979311507
+      }
+    ],
+    "2.13 Write property test for `releaseVelocity`": [
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793987079944
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793996790455
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793998193022
+      }
+    ],
+    "3.4 Keep every date button at least as wide as its content": [
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793987080120
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793988644377
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793990030059
+      }
+    ],
+    "4.5 Measure the release velocity over the 100ms that end at the release": [
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793987080208
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793987092856
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793988634630
+      }
+    ],
+    "6.9 Test that a release after a pause settles by position": [
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793987080295
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793996791346
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793998192729
+      }
+    ],
+    "6.10 Test that the date buttons keep their content width": [
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793987080394
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793990041034
+      },
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793992466722
+      }
+    ],
+    "6. Verify the real gesture with Playwright in `tests/mobile-swipe.e2e.js`": [
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793998192914
+      }
+    ],
+    "2. Cover the pure layer with `bun test` in `tests/mobile-swipe.test.js`": [
+      {
+        "executionId": "285de989-1d41-4aad-945c-7c9e88d102af",
+        "chatSessionId": "sess_f7f872e4-a35e-4d33-9dd8-07a9013d8b6a",
+        "timestamp": 1793998193098
+      }
+    ]
+  }
+}

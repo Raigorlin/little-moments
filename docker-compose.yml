@@ -1,0 +1,18 @@
+services:
+  app:
+    build: .
+    ports:
+      - "${CAMPING_BIND_ADDRESS:-0.0.0.0}:${CAMPING_HOST_PORT:-5182}:5174"
+    volumes:
+      - camping-data:/app/data
+    secrets:
+      - openai_api_key
+    restart: unless-stopped
+
+volumes:
+  camping-data:
+    name: ${CAMPING_DATA_VOLUME:-little-moments-initial-setup-data}
+
+secrets:
+  openai_api_key:
+    file: ./.secrets/openai_api_key

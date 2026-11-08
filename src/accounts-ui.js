@@ -1,21 +1,27 @@
 import { illustration, logo } from './art.js';
 import { animatedIllustration, setupSceneMotion, syncSceneMotion, sceneMotionSettings } from './scene-motion.js';
 import { THEMES_KEY, escape as e, readStorage, isValidState, dateRange, normalizeParticipantName } from './model.js';
+import { safeNext, loginPath } from './auth-paths.js';
+
+export { safeNext };
 
 export const ENDPOINTS = {
   session: '/api/session', setup: '/api/setup', register: '/api/register', login: '/api/login', logout: '/api/logout',
-  trips: '/api/trips', invites: '/api/invites', adminUsers: '/api/admin/users', adminTrips: '/api/admin/trips', adminAudit: '/api/admin/audit'
+  trips: '/api/trips', invites: '/api/invites', adminUsers: '/api/admin/users', adminTrips: '/api/admin/trips', adminAudit: '/api/admin/audit', adminSettings: '/api/admin/settings',
+  adminReceiptAiUsage: '/api/admin/receipt-ai-usage', adminSecurity: '/api/admin/security'
 };
 export const COVERS = {
   camp: { art: 'camp', label: '營地帳篷', tone: 'green' },
   mountain: { art: 'travel', label: '山間旅途', tone: 'peach' },
-  lake: { art: 'camp', label: '湖畔水岸', tone: 'blue' },
-  night: { art: 'night', label: '星空夜晚', tone: 'night' }
+  lake: { art: 'lake', label: '湖畔水岸', tone: 'blue' },
+  night: { art: 'night', label: '星空夜晚', tone: 'night' },
+  forest: { art: 'forest', label: '森林小屋', tone: 'green' },
+  beach: { art: 'beach', label: '海邊假期', tone: 'blue' },
+  sunrise: { art: 'sunrise', label: '日出山嵐', tone: 'peach' }
 };
 export const STATUSES = { planning: '規劃中', completed: '已完成' };
 export const USERNAME_RE = /^[a-z][a-z0-9-]{2,31}$/;
 const RESERVED_USERNAMES = new Set(['api', 'admin', 'setup', 'login', 'register', 'logout', 'demo', 'assets']);
-const INVITE_PATH_RE = /^\/invite\/[0-9a-f]{64}$/;
 const TOKEN_RE = /^[0-9a-f]{64}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -57,7 +63,6 @@ export function parseRoute(pathname) {
   return { name: 'notfound' };
 }
 
-export const safeNext = value => (typeof value === 'string' && INVITE_PATH_RE.test(value) ? value : null);
 export const homePath = user => `/${encodeURIComponent(user.username)}/home`;
 export const tripPath = (user, id) => `/${encodeURIComponent(user.username)}/trips/${encodeURIComponent(id)}`;
 export const coverOf = kind => COVERS[kind] || COVERS.camp;
@@ -124,6 +129,12 @@ const modal = { dirty: false, busy: false, returnFocus: null };
 let toastTimer;
 
 function go(url) { location.replace(url); }
+
+// A 401 while loading a Private_Page: drop any rendered account data, then sign in and come back (Req 1.10).
+function expireToLogin() {
+  app.innerHTML = '';
+  go(loginPath(location.pathname));
+}
 
 function toast(message) {
   if (!toasts) return;
@@ -267,9 +278,20 @@ function selectField({ id, label, options, value, help = '', attrs = '', wide = 
   const helpId = help ? `${id}-help` : '';
   return `<div class="field${wide ? ' acct-wide' : ''}"><label for="${id}">${e(label)}</label><select id="${id}" name="${id}" ${helpId ? `aria-describedby="${helpId}"` : ''} ${attrs}>${options.map(([v, l]) => `<option value="${e(v)}"${v === value ? ' selected' : ''}>${e(l)}</option>`).join('')}</select>${help ? `<small class="help" id="${helpId}">${e(help)}</small>` : ''}</div>`;
 }
+function coverPicker(selected) {
+  return `<fieldset class="acct-cover-picker acct-wide"><legend>封面插畫</legend><div class="acct-cover-options">${Object.entries(COVERS).map(([kind, cover]) => `<label class="acct-cover-option"><input class="visually-hidden" type="radio" name="trip-cover" value="${e(kind)}"${kind === selected ? ' checked' : ''}><span class="acct-cover-option-content"><span class="acct-cover-preview tone-${e(cover.tone)}">${illustration(cover.art)}</span><span class="acct-cover-label">${e(cover.label)}</span></span></label>`).join('')}</div></fieldset>`;
+}
 const formError = () => '<p class="form-error" role="alert" tabindex="-1"></p>';
 
-function renderAuth(kind) {
+// Username, display name, password, and confirmation fields shared by setup, register, and invite registration.
+function newAccountFields(prefix) {
+  return field({ id: `${prefix}-username`, label: '帳號名稱（網址用）', help: '3–32 個字元，小寫英文字母開頭，可用小寫英文字母、數字或連字號，例如 xiao-an。會出現在你的首頁網址 /帳號名稱/home。', attrs: 'required autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="32"' })
+    + field({ id: `${prefix}-display`, label: '顯示名稱', help: '旅伴看到的名字，最多 30 個字，可以使用中文。', attrs: 'required autocomplete="nickname" maxlength="30"' })
+    + field({ id: `${prefix}-password`, label: '密碼', type: 'password', help: '12–128 個字元。', attrs: 'required autocomplete="new-password" minlength="12" maxlength="128"' })
+    + field({ id: `${prefix}-confirm`, label: '再次輸入密碼', type: 'password', attrs: 'required autocomplete="new-password" minlength="12" maxlength="128"' });
+}
+
+function renderAuth(kind, session = {}) {
   const next = safeNext(new URLSearchParams(location.search).get('next'));
   const nextQuery = next ? `?next=${encodeURIComponent(next)}` : '';
   const copy = {
@@ -282,15 +304,21 @@ function renderAuth(kind) {
   const accountFields = kind === 'login'
     ? field({ id: 'auth-username', label: '帳號名稱', attrs: 'required autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32"' })
       + field({ id: 'auth-password', label: '密碼', type: 'password', attrs: 'required autocomplete="current-password" maxlength="128"' })
-    : field({ id: 'auth-username', label: '帳號名稱（網址用）', help: '3–32 個字元，小寫英文字母開頭，可用小寫英文字母、數字或連字號，例如 xiao-an。會出現在你的首頁網址 /帳號名稱/home。', attrs: 'required autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="32"' })
-      + field({ id: 'auth-display', label: '顯示名稱', help: '旅伴看到的名字，最多 30 個字，可以使用中文。', attrs: 'required autocomplete="nickname" maxlength="30"' })
-      + field({ id: 'auth-password', label: '密碼', type: 'password', help: '12–128 個字元。', attrs: 'required autocomplete="new-password" minlength="12" maxlength="128"' })
-      + field({ id: 'auth-confirm', label: '再次輸入密碼', type: 'password', attrs: 'required autocomplete="new-password" minlength="12" maxlength="128"' });
+    : newAccountFields('auth');
+  const registrationOpen = Boolean(session.registrationOpen);
   const links = kind === 'login'
-    ? `<p class="help">還沒有帳號？<a class="text-link" href="/register${e(nextQuery)}">註冊旅伴帳號</a></p>`
+    ? registrationOpen
+      ? `<p class="help">還沒有帳號？<a class="text-link" href="/register${e(nextQuery)}">註冊旅伴帳號</a></p>`
+      : '<p class="help">需要旅行邀請連結才能建立帳號。</p>'
     : kind === 'register' ? `<p class="help">已經有帳號了？<a class="text-link" href="/login${e(nextQuery)}">前往登入</a></p>` : '';
-  const nextNote = next ? `<p class="notice">${icon('info')}<span>完成後會帶你回到旅行邀請頁。</span></p>` : '';
-  app.innerHTML = shell(null, `<section class="acct-auth"><div class="acct-auth-art acct-auth-art--${artKind}">${animatedIllustration(artKind, { preserveAspectRatio: 'xMidYMax meet', transparentBackground: true, fullFrame: true, hideSun: artKind === 'travel' })}</div><div class="acct-auth-copy"><span class="eyebrow">${copy.eyebrow}</span><h1>${e(copy.title)}</h1><p>${e(copy.intro)}</p>${nextNote}<form class="acct-form" novalidate>${accountFields}${formError()}<button class="button primary full" type="submit">${e(copy.submit)}</button></form>${links}</div></section>`);
+  const nextNote = next ? `<p class="notice">${icon('info')}<span>${next.startsWith('/invite/') ? '完成後會帶你回到旅行邀請頁。' : '完成後會帶你回到剛才的頁面。'}</span></p>` : '';
+  const art = `<div class="acct-auth-art acct-auth-art--${artKind}">${animatedIllustration(artKind, { preserveAspectRatio: 'xMidYMax meet', transparentBackground: true, fullFrame: true, hideSun: artKind === 'travel' })}</div>`;
+  if (kind === 'register' && !registrationOpen) {
+    // Closed Registration_Policy: accounts come only from trip invitations (Req 10.3).
+    app.innerHTML = shell(null, `<section class="acct-auth">${art}<div class="acct-auth-copy"><span class="eyebrow">${copy.eyebrow}</span><h1>${e(copy.title)}</h1><p class="notice">${icon('info')}<span>目前不開放公開註冊。請向旅伴索取旅行邀請連結，從邀請頁建立帳號。</span></p><a class="button primary full" href="/login${e(nextQuery)}">前往登入</a></div></section>`);
+    return;
+  }
+  app.innerHTML = shell(null, `<section class="acct-auth">${art}<div class="acct-auth-copy"><span class="eyebrow">${copy.eyebrow}</span><h1>${e(copy.title)}</h1><p>${e(copy.intro)}</p>${nextNote}<form class="acct-form" novalidate>${accountFields}${formError()}<button class="button primary full" type="submit">${e(copy.submit)}</button></form>${links}</div></section>`);
   const form = app.querySelector('form');
   form.addEventListener('submit', async event => {
     event.preventDefault();
@@ -327,7 +355,7 @@ function tripCard(trip, user) {
   const cover = coverOf(trip.coverKind);
   const status = STATUSES[trip.status] ? trip.status : 'planning';
   const open = tripPath(user, trip.id);
-  return `<article class="acct-trip-card" data-trip-id="${e(trip.id)}">
+  return `<article class="acct-trip-card" data-swipe-row data-trip-id="${e(trip.id)}">
     <div class="acct-trip-art tone-${cover.tone}">${illustration(cover.art)}<span class="tag acct-status status-${status}">${e(STATUSES[status])}</span></div>
     <div class="acct-trip-body">
       <h3><a href="${e(open)}">${e(trip.title || '未命名旅行')}</a></h3>
@@ -371,7 +399,7 @@ function openTripDialog({ mode, trip = {}, legacyState = null, sourceLabel = '',
     ${field({ id: 'trip-end', label: '結束日期', type: 'date', value: d.endDate, attrs: `required${imported ? ' readonly' : ''}`, help: '一趟最多 31 天。' })}
     ${field({ id: 'trip-description', label: '旅行介紹', type: 'textarea', value: d.description, attrs: 'maxlength="1000"', wide: true })}
     ${field({ id: 'trip-note', label: '給旅伴的備註', type: 'textarea', value: d.note, attrs: 'maxlength="1000"', wide: true })}
-    ${selectField({ id: 'trip-cover', label: '封面插畫', value: d.coverKind, options: Object.entries(COVERS).map(([k, c]) => [k, c.label]) })}
+    ${coverPicker(d.coverKind)}
     ${selectField({ id: 'trip-status', label: '旅行狀態', value: d.status, options: [['planning', '規劃中（還沒出發）'], ['completed', '已完成（收進回憶）']] })}
   </div>${formError()}<div class="form-actions"><button type="button" class="button quiet" data-modal-close>取消</button><button type="submit" class="button primary">${mode === 'edit' ? '儲存卡片' : imported ? '確認匯入' : '建立旅行'}</button></div></form>`;
   openModal(title, body, root => {
@@ -435,7 +463,7 @@ function openDeleteTripDialog({ trip, user, onDone }) {
 }
 
 async function renderHome(user, route) {
-  if (!user) return go('/login');
+  if (!user) return go(loginPath(location.pathname));
   if (route.slug !== user.username) return permissionPage(user, '這是別人的旅行首頁。每個帳號只能看到自己的首頁，請回到你自己的首頁。');
   document.title = `${user.displayName} 的旅行 · 日子拾光`;
   let filter = 'all', trips = null, loadError = null;
@@ -457,7 +485,10 @@ async function renderHome(user, route) {
       const data = await api(ENDPOINTS.trips);
       const list = Array.isArray(data.trips) ? data.trips : [];
       trips = user.role === 'admin' ? list.filter(t => t.ownerId === user.id || t.isMember === true) : list;
-    } catch (err) { loadError = err; }
+    } catch (err) {
+      if (err.status === 401) return expireToLogin();
+      loadError = err;
+    }
     paint();
   };
 
@@ -490,27 +521,77 @@ async function renderHome(user, route) {
 }
 
 function renderTripError(user, err) {
-  if (err.status === 401) return go('/login');
+  if (err.status === 401) return expireToLogin();
   const denied = err.status === 403 || err.status === 404;
   const title = err.status === 403 ? '你沒有這趟旅行的權限' : err.status === 404 ? '找不到這趟旅行' : '旅行手冊暫時無法載入';
   messagePage(user, { title, body: denied ? '這趟旅行可能不存在，或你尚未受邀加入。請向召集人索取邀請連結。' : err.message, actions: `<a class="button primary" href="${e(homePath(user))}">回到我的旅行首頁</a>${denied ? '' : '<button type="button" class="button" data-act="reload">重新整理</button>'}` });
 }
 
-async function renderInvite(user, route) {
+const inviteSummary = info => `<span class="eyebrow">YOU'RE INVITED</span><h1>${e(info.title || '一趟旅行')}</h1><p class="invite-date">${icon('calendar')}${e(dateSpan(info.startDate, info.endDate))}</p><p class="invite-date">${icon('pin')}${e(info.destination || '地點尚未填寫')}</p>`;
+const invalidInvite = (err, back) => `<h1>邀請連結無效或已過期</h1>${errorBlock(err, false)}${back}`;
+
+// Signed-out visitor: show the Invite_Preview and register through the link (Req 14.1, 14.13, 15.9).
+async function renderInviteRegistration(route, invitePath) {
+  const tokenPath = `${ENDPOINTS.invites}/${encodeURIComponent(route.token)}`;
+  const loginLink = '<a class="button primary" href="/login">前往登入</a>';
+  document.title = '旅行邀請 · 日子拾光';
+  app.innerHTML = shell(null, `<div class="invite-page acct-invite"><div class="invite-card"><div class="invite-art">${illustration('camp')}</div><div class="invite-content"><p class="acct-loading" role="status">正在讀取邀請…</p></div></div></div>`);
+  const content = app.querySelector('.invite-content');
+  let info;
+  try { info = await api(`${tokenPath}/preview`); }
+  catch (err) {
+    if (err.status === 404) { content.innerHTML = invalidInvite(err, loginLink); return; }
+    if (err.status === 429) { content.innerHTML = `<h1>暫時無法讀取邀請</h1><div class="acct-error" role="alert"><p>查看邀請的次數太多，請稍後再試。</p><div class="acct-actions"><button type="button" class="button small" data-act="reload">重新整理</button></div></div>`; return; }
+    content.innerHTML = `<h1>無法讀取邀請</h1>${errorBlock(err, true)}${loginLink}`;
+    return;
+  }
+  content.innerHTML = `${inviteSummary(info)}<p class="invite-date">${icon('people')}${e(info.inviterName)} 邀請你加入</p><p class="invite-intro">建立你自己的帳號，完成後會直接加入這趟旅行。</p><p class="notice">${icon('info')}<span>這個邀請連結只能使用一次。</span></p><form class="acct-form" data-form="acct-invite-register" novalidate>${newAccountFields('invite')}${field({ id: 'join-name', label: '你在這趟旅行的名字', attrs: 'maxlength="30" autocomplete="off"', help: '留空會使用顯示名稱。最多 30 個字，不可和小隊裡其他人同名。' })}${field({ id: 'join-role', label: '小隊角色（選填）', attrs: 'maxlength="60"', help: '例如：咖啡擔當、營火守護者。' })}${formError()}<button type="submit" class="button primary full">建立帳號並加入</button></form><p class="help"><a class="text-link" href="/login?next=${e(encodeURIComponent(invitePath))}">已經有帳號？登入後加入</a></p>`;
+  const form = content.querySelector('form');
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (form.getAttribute('aria-busy') === 'true') return;
+    const usernameInput = form.elements['invite-username'];
+    const username = usernameInput.value.trim().toLowerCase();
+    usernameInput.value = username;
+    const displayName = form.elements['invite-display'].value;
+    const password = form.elements['invite-password'].value;
+    const problem = validateAccount({ username, displayName, password, confirm: form.elements['invite-confirm'].value });
+    if (problem) return showFormError(form, problem);
+    const name = normalizeParticipantName(form.elements['join-name'].value) || normalizeParticipantName(displayName);
+    const role = form.elements['join-role'].value.trim();
+    if (!name || [...name].length > 30) return showFormError(form, '請填寫 1–30 個字的名字。');
+    if ([...role].length > 60) return showFormError(form, '小隊角色最多 60 個字。');
+    showFormError(form, '');
+    setBusy(form, true, '處理中…');
+    try {
+      const { user, tripId } = await api(`${tokenPath}/register`, { method: 'POST', body: { username, displayName: normalizeParticipantName(displayName), password, name, role } });
+      for (const input of form.querySelectorAll('input[type=password]')) input.value = '';
+      location.href = tripPath(user, tripId);
+    } catch (err) {
+      setBusy(form, false);
+      // Someone else may have used the single-use link meanwhile (Req 17.3).
+      if (err.status === 404) { content.innerHTML = invalidInvite(err, loginLink); return; }
+      showFormError(form, err.message);
+    }
+  });
+}
+
+async function renderInvite(user, route, session = {}) {
   if (!TOKEN_RE.test(route.token)) return messagePage(user, { title: '邀請連結格式不正確', body: '請確認連結是否完整複製，或向召集人重新索取邀請。', actions: user ? `<a class="button primary" href="${e(homePath(user))}">回到我的旅行首頁</a>` : '<a class="button primary" href="/login">前往登入</a>' });
   const invitePath = `/invite/${route.token}`;
-  if (!user) return go(`/login?next=${encodeURIComponent(invitePath)}`);
+  if (!user) return session.inviteRegistration ? renderInviteRegistration(route, invitePath) : go(`/login?next=${encodeURIComponent(invitePath)}`);
   document.title = '旅行邀請 · 日子拾光';
   app.innerHTML = shell(user, `<div class="invite-page acct-invite"><div class="invite-card"><div class="invite-art">${illustration('camp')}</div><div class="invite-content"><p class="acct-loading" role="status">正在讀取邀請…</p></div></div></div>`);
   const content = app.querySelector('.invite-content');
   let info;
   try { info = await api(`${ENDPOINTS.invites}/${encodeURIComponent(route.token)}`); }
   catch (err) {
-    if (err.status === 401) return go(`/login?next=${encodeURIComponent(invitePath)}`);
+    if (err.status === 401) return expireToLogin();
+    // A used, expired, or revoked link (404/410) shows the invalid-link page (Req 17.3).
     content.innerHTML = `<h1>${err.status === 404 || err.status === 410 ? '邀請連結無效或已過期' : '無法讀取邀請'}</h1>${errorBlock(err, !err.status || err.status >= 500)}<a class="button" href="${e(homePath(user))}">回到我的旅行首頁</a>`;
     return;
   }
-  const summary = `<span class="eyebrow">YOU'RE INVITED</span><h1>${e(info.title || '一趟旅行')}</h1><p class="invite-date">${icon('calendar')}${e(dateSpan(info.startDate, info.endDate))}</p><p class="invite-date">${icon('pin')}${e(info.destination || '地點尚未填寫')}</p>`;
+  const summary = inviteSummary(info);
   if (info.alreadyMember) {
     content.innerHTML = `${summary}<p class="invite-intro">你已經是這趟旅行的成員了，可以從旅行首頁打開手冊。</p><a class="button primary" href="${e(homePath(user))}">回到我的旅行首頁</a>`;
     return;
@@ -537,24 +618,102 @@ async function renderInvite(user, route) {
 }
 
 async function renderAdmin(user) {
-  if (!user) return go('/login');
+  if (!user) return go(loginPath(location.pathname));
   if (user.role !== 'admin') return permissionPage(user, '管理後台只開放給管理員。');
   document.title = '管理後台 · 日子拾光';
-  let users = null, events = null, trips = null, errors = {};
-  app.innerHTML = shell(user, `<div class="acct-admin"><header class="acct-admin-head"><span class="eyebrow">ADMIN</span><h1>管理後台</h1><p class="help">管理這台本機伺服器上的帳號、旅行與操作紀錄。</p></header><section id="admin-stats" aria-label="統計"></section><section aria-labelledby="admin-users-title"><h2 id="admin-users-title">帳號列表</h2><div id="admin-users"></div></section><section aria-labelledby="admin-trips-title"><h2 id="admin-trips-title">所有旅行</h2><div id="admin-trips"></div></section><section aria-labelledby="admin-audit-title"><h2 id="admin-audit-title">操作紀錄</h2><div id="admin-audit"></div></section></div>`, 'admin');
+  let users = null, events = null, trips = null, settings = null, usage = null, security = null, errors = {};
+  app.innerHTML = shell(user, `<div class="acct-admin"><header class="acct-admin-head"><span class="eyebrow">ADMIN</span><h1>管理後台</h1><p class="help">管理這台本機伺服器上的帳號、旅行與操作紀錄。</p></header><section id="admin-stats" aria-label="統計"></section><section aria-labelledby="admin-settings-title"><h2 id="admin-settings-title">網站設定</h2><div id="admin-settings"></div></section><section aria-labelledby="admin-ai-usage-title"><h2 id="admin-ai-usage-title">收據 AI 用量</h2><div id="admin-ai-usage"></div></section><section aria-labelledby="admin-security-title"><h2 id="admin-security-title">登入安全</h2><div id="admin-security"></div></section><section aria-labelledby="admin-users-title"><h2 id="admin-users-title">帳號列表</h2><div id="admin-users"></div></section><section aria-labelledby="admin-trips-title"><h2 id="admin-trips-title">所有旅行</h2><div id="admin-trips"></div></section><section aria-labelledby="admin-audit-title"><h2 id="admin-audit-title">操作紀錄</h2><div id="admin-audit"></div></section></div>`, 'admin');
   const loading = '<p class="acct-loading" role="status">載入中…</p>';
   const memberRole = () => users?.find(u => u.role !== 'admin')?.role || 'member';
   const count = value => e(Number.isFinite(value) ? value : 0);
 
   const userRow = u => {
     const self = u.id === user.id;
-    return `<li class="acct-user-row${u.deleted ? ' is-deleted' : ''}" data-user-id="${e(u.id)}"><div class="acct-user-info"><span class="avatar small ${u.role === 'admin' ? 'yellow' : 'blue'}" aria-hidden="true">${initialOf(u.displayName)}</span><div><b>${e(u.displayName)}</b>${self ? ' <span class="acct-pill">你</span>' : ''}<small>@${e(u.username)} · ${roleLabel(u.role)} · ${u.deleted ? '已刪除' : '使用中'} · ${count(u.tripCount)} 趟旅行</small></div></div><div class="acct-actions"><button type="button" class="button small" data-action="acct-edit-user" data-id="${e(u.id)}"${u.deleted ? ' disabled' : ''}>${icon('edit')} 編輯帳號</button><button type="button" class="button small danger" data-action="acct-delete-user" data-id="${e(u.id)}"${self || u.deleted ? ' disabled' : ''}>刪除帳號</button></div>${self ? '<small class="help acct-row-note">不能刪除自己的帳號，也不能移除自己的管理員權限。</small>' : ''}</li>`;
+    return `<li class="acct-user-row${u.deleted ? ' is-deleted' : ''}" data-swipe-row data-user-id="${e(u.id)}"><div class="acct-user-info"><span class="avatar small ${u.role === 'admin' ? 'yellow' : 'blue'}" aria-hidden="true">${initialOf(u.displayName)}</span><div><b>${e(u.displayName)}</b>${self ? ' <span class="acct-pill">你</span>' : ''}<small>@${e(u.username)} · ${roleLabel(u.role)} · ${u.deleted ? '已刪除' : '使用中'} · ${count(u.tripCount)} 趟旅行</small></div></div><div class="acct-actions"><button type="button" class="button small" data-action="acct-edit-user" data-id="${e(u.id)}"${u.deleted ? ' disabled' : ''}>${icon('edit')} 編輯帳號</button><button type="button" class="button small danger" data-action="acct-delete-user" data-id="${e(u.id)}"${self || u.deleted ? ' disabled' : ''}>刪除帳號</button></div>${self ? '<small class="help acct-row-note">不能刪除自己的帳號，也不能移除自己的管理員權限。</small>' : ''}</li>`;
   };
   const auditRow = ev => {
     const at = new Date(ev.at);
     return `<li><time datetime="${e(ev.at)}">${e(Number.isFinite(+at) ? at.toLocaleString('zh-TW', { hour12: false }) : ev.at)}</time><span><b>${e(ev.actor || '系統')}</b> · ${e(ev.action)}${ev.target ? ` · <span class="acct-audit-target">${e(ev.target)}</span>` : ''}</span></li>`;
   };
+  // Receipt-AI policy (Req 11.11). selectField escapes the help text, so updatedBy and the time stay inert.
+  const policyOptions = [['all', '所有可編輯旅行的帳號'], ['admins', '只限管理員'], ['off', '關閉']];
+  const policyHelp = p => {
+    if (p.source === 'seed') return '目前使用伺服器環境變數 CAMPING_RECEIPT_AI_POLICY 的初始值。';
+    if (p.source === 'stored') {
+      const at = new Date(p.updatedAt);
+      return `由 ${p.updatedBy || '管理員'} 於 ${Number.isFinite(+at) ? at.toLocaleString('zh-TW', { hour12: false }) : p.updatedAt || '未知時間'} 設定。`;
+    }
+    return '目前使用預設值（all）。';
+  };
+  const settingsHtml = () => {
+    if (errors.settings) return errorBlock(errors.settings);
+    const p = settings?.receiptAiPolicy;
+    if (!p) return loading;
+    return `<form class="acct-form" data-form="admin-settings" novalidate>${selectField({ id: 'setting-receipt-ai', label: '收據 AI 辨識', value: p.value, options: policyOptions, help: policyHelp(p) })}${formError()}<div class="form-actions"><button type="submit" class="button primary">儲存設定</button></div></form>`;
+  };
+  const bindSettings = () => {
+    const form = app.querySelector('form[data-form="admin-settings"]');
+    if (!form) return;
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (form.getAttribute('aria-busy') === 'true') return;
+      const receiptAiPolicy = form.elements['setting-receipt-ai'].value;
+      if (!policyOptions.some(([v]) => v === receiptAiPolicy)) return showFormError(form, '收據 AI 政策必須是 all、admins 或 off。');
+      showFormError(form, '');
+      setBusy(form, true, '儲存中…');
+      try {
+        await api(ENDPOINTS.adminSettings, { method: 'PATCH', body: { receiptAiPolicy } });
+        setBusy(form, false); toast('收據 AI 設定已更新'); await load();
+      } catch (err) { setBusy(form, false); showFormError(form, `尚未儲存：${err.message}`); }
+    });
+  };
+  const timeText = value => {
+    const at = new Date(value);
+    return `<time datetime="${e(value)}">${e(Number.isFinite(+at) ? at.toLocaleString('zh-TW', { hour12: false }) : value)}</time>`;
+  };
+  // Receipt AI usage for the current UTC day and month, read-only (Req 18.6).
+  const usageHtml = () => {
+    if (errors.usage) return errorBlock(errors.usage);
+    if (!usage) return loading;
+    const period = (label, p, limit) => `<tr><th scope="row">${label}</th><td>${count(p?.requests)} / ${count(limit)}</td><td>${count(p?.promptTokens)}</td><td>${count(p?.completionTokens)}</td></tr>`;
+    const l = usage.limits || {}, m = usage.model || {};
+    return `<div class="acct-table-wrap"><table class="acct-usage"><thead><tr><th scope="col">期間（UTC）</th><th scope="col">請求次數 / 上限</th><th scope="col">輸入 token</th><th scope="col">輸出 token</th></tr></thead><tbody>${period('今天', usage.day, l.daily)}${period('本月', usage.month, l.monthly)}</tbody></table></div><p class="help">每位帳號每 ${count(l.perUserWindowMinutes)} 分鐘最多 ${count(l.perUser)} 次。模型 ${e(m.id || '—')} · 影像細節 ${e(m.imageDetail || '—')} · 輸出上限 ${count(m.maxCompletionTokens)} token。這些上限由伺服器環境變數設定。</p>`;
+  };
+  // Failed logins and alerts (Req 23.8, 23.9, 23.11). Every server value goes through e().
+  const reasonLabels = { invalid_input: '輸入格式錯誤', rate_limited: '嘗試次數過多', deleted_account: '帳號已刪除', bad_credentials: '帳號或密碼錯誤' };
+  const alertRow = a => `<li data-alert-id="${e(a.id)}">${timeText(a.at)}<span><b>${a.kind === 'global' ? '全站' : '帳號'} ${e(a.username)}</b> · 來源 ${e(a.client)} · 15 分鐘內 ${count(a.count)} 次失敗登入</span><button type="button" class="button small" data-action="acct-ack-alert" data-id="${e(a.id)}">確認</button></li>`;
+  const failRow = ev => `<li>${timeText(ev.at)}<span><b>${e(ev.username)}</b> · ${e(ev.client)} · ${e(reasonLabels[ev.reason] || ev.reason)}</span></li>`;
+  const securityHtml = () => {
+    if (errors.security) return errorBlock(errors.security);
+    if (!security) return loading;
+    const alerts = Array.isArray(security.alerts) ? security.alerts : [];
+    const fails = Array.isArray(security.events) ? security.events.slice(0, 200) : [];
+    const open = Number.isFinite(security.unacknowledged) ? security.unacknowledged : alerts.length;
+    const banner = open > 0 ? `<p class="acct-alert-banner" role="status">有 ${count(open)} 則尚未確認的登入警示</p>` : '';
+    return `${banner}<h3>登入警示</h3>${alerts.length ? `<ol class="acct-audit acct-alerts">${alerts.map(alertRow).join('')}</ol>` : '<p class="empty">目前沒有尚未確認的警示。</p>'}<h3>最近的失敗登入</h3>${fails.length ? `<ol class="acct-audit">${fails.map(failRow).join('')}</ol>` : '<p class="empty">目前沒有失敗登入紀錄。</p>'}`;
+  };
+  const paintSecurity = () => { app.querySelector('#admin-security').innerHTML = securityHtml(); };
+  const acknowledgeAlert = async button => {
+    const id = button.dataset.id;
+    button.disabled = true;
+    try {
+      const res = await api(`${ENDPOINTS.adminSecurity}/alerts/${encodeURIComponent(id)}/acknowledge`, { method: 'POST', body: {} });
+      security.alerts = (security.alerts || []).filter(a => String(a.id) !== id);
+      security.unacknowledged = Number.isFinite(res?.unacknowledged) ? res.unacknowledged : Math.max(0, (security.unacknowledged || 0) - 1);
+      paintSecurity();
+      toast('已確認這則登入警示');
+    } catch (err) {
+      if (err.status === 401) return expireToLogin();
+      button.disabled = false;
+      toast(`尚未確認：${err.message}`);
+      if (err.status === 404) await load();
+    }
+  };
   const paint = () => {
+    app.querySelector('#admin-settings').innerHTML = settingsHtml();
+    bindSettings();
+    app.querySelector('#admin-ai-usage').innerHTML = usageHtml();
+    paintSecurity();
     const stats = users && [['帳號總數', users.length], ['使用中', users.filter(u => !u.deleted).length], ['已刪除', users.filter(u => u.deleted).length], ['管理員', users.filter(u => u.role === 'admin' && !u.deleted).length], ['旅行總數', trips ? trips.length : '—']];
     app.querySelector('#admin-stats').innerHTML = stats ? `<dl class="acct-stats">${stats.map(([l, n]) => `<div><dt>${l}</dt><dd>${e(n)}</dd></div>`).join('')}</dl>` : '';
     app.querySelector('#admin-users').innerHTML = errors.users ? errorBlock(errors.users) : !users ? loading : users.length ? `<ul class="acct-user-list">${users.map(userRow).join('')}</ul>` : '<p class="empty">還沒有任何帳號。</p>';
@@ -562,8 +721,13 @@ async function renderAdmin(user) {
     app.querySelector('#admin-audit').innerHTML = errors.audit ? errorBlock(errors.audit) : !events ? loading : events.length ? `<ol class="acct-audit">${events.slice(0, 200).map(auditRow).join('')}</ol>` : '<p class="empty">目前還沒有操作紀錄。</p>';
   };
   const load = async () => {
-    const [u, a, t] = await Promise.allSettled([api(ENDPOINTS.adminUsers), api(ENDPOINTS.adminAudit), api(ENDPOINTS.trips)]);
+    const results = await Promise.allSettled([api(ENDPOINTS.adminUsers), api(ENDPOINTS.adminAudit), api(ENDPOINTS.trips), api(ENDPOINTS.adminSettings), api(ENDPOINTS.adminReceiptAiUsage), api(ENDPOINTS.adminSecurity)]);
+    if (results.some(r => r.status === 'rejected' && r.reason?.status === 401)) return expireToLogin();
+    const [u, a, t, s, g, c] = results;
     errors = {};
+    if (g.status === 'fulfilled') usage = g.value; else errors.usage = g.reason;
+    if (c.status === 'fulfilled') security = c.value; else errors.security = c.reason;
+    if (s.status === 'fulfilled') settings = s.value; else errors.settings = s.reason;
     if (u.status === 'fulfilled') users = Array.isArray(u.value.users) ? u.value.users : []; else errors.users = u.reason;
     if (a.status === 'fulfilled') events = Array.isArray(a.value.events) ? a.value.events : []; else errors.audit = a.reason;
     if (t.status === 'fulfilled') trips = Array.isArray(t.value.trips) ? t.value.trips : []; else errors.trips = t.reason;
@@ -620,13 +784,16 @@ async function renderAdmin(user) {
     else if (target.dataset.action === 'acct-delete-user') { const u = find(users); if (u && !u.deleted && u.id !== user.id) openDeleteUser(u); }
     else if (target.dataset.action === 'acct-edit-trip') { const t = find(trips); if (t?.canEdit) openTripDialog({ mode: 'edit', trip: t, onDone: load, user }); }
     else if (target.dataset.action === 'acct-delete-trip') { const t = find(trips); if (t) openDeleteTripDialog({ trip: t, user, onDone: load }); }
+    else if (target.dataset.action === 'acct-ack-alert') { if (find(security?.alerts)) acknowledgeAlert(target); }
   };
   paint();
   await load();
 }
 
 async function main() {
-  if (/^\/demo(?:\/|$)/.test(location.pathname)) { await import('./app.js'); return; }
+  // Published_Mode never starts the Local_Planner; /demo falls through to the not-found page (Req 9.2).
+  const published = document.querySelector('meta[name="camping-deployment"]')?.content === 'published';
+  if (!published && /^\/demo(?:\/|$)/.test(location.pathname)) { await import('./app.js'); return; }
   window.addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
   const route = parseRoute(location.pathname);
   app.innerHTML = '<main id="main" class="acct-page"><p class="acct-loading" role="status">正在確認登入狀態…</p></main>';
@@ -639,10 +806,17 @@ async function main() {
   }
   const user = session.user || null;
   if(user&&route.name!=='trip'){let checking=false,last=0;const check=async()=>{if(checking||Date.now()-last<1000)return;checking=true;last=Date.now();try{const now=await api(ENDPOINTS.session);if(now.user?.id!==user.id||now.user?.role!==user.role)go('/login');}catch{app.innerHTML='<main id="main" class="acct-page"><h1>無法確認目前帳號</h1><p>為保護旅行內容，請重新連線並整理頁面。</p><a class="button primary" href="/login">前往登入</a></main>';}finally{checking=false;}};window.addEventListener('focus',()=>void check());document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void check();});}
-  if (session.needsSetup && route.name !== 'setup') return go('/setup');
+  if (session.needsSetup) {
+    // Without web setup the first admin comes from the server-side CLI, so /setup would only 404 (Req 8.4).
+    if (!session.webSetup) {
+      setupChrome();
+      return messagePage(null, { title: '網站尚未完成設定', body: '管理員需要先在伺服器上執行建立管理員的指令。', actions: '<button type="button" class="button primary" data-act="reload">重新整理</button>' });
+    }
+    if (route.name !== 'setup') return go('/setup');
+  }
 
   if (route.name === 'trip') {
-    if (!user) return go('/login');
+    if (!user) return go(loginPath(location.pathname));
     if (route.slug !== user.username) { setupChrome(); return permissionPage(user, '旅行網址必須使用你自己的帳號名稱。請從你的首頁打開旅行。'); }
     let detail;
     try { detail = await api(`${ENDPOINTS.trips}/${encodeURIComponent(route.tripId)}`); }
@@ -654,13 +828,13 @@ async function main() {
 
   setupChrome();
   if (route.name === 'root') return go(user ? homePath(user) : '/login');
-  if (route.name === 'setup') return session.needsSetup ? renderAuth('setup') : go(user ? homePath(user) : '/login');
+  if (route.name === 'setup') return session.needsSetup ? renderAuth('setup', session) : go(user ? homePath(user) : '/login');
   if (route.name === 'login' || route.name === 'register') {
     if (user) return go(safeNext(new URLSearchParams(location.search).get('next')) || homePath(user));
-    return renderAuth(route.name);
+    return renderAuth(route.name, session);
   }
   if (route.name === 'home') return renderHome(user, route);
-  if (route.name === 'invite') return renderInvite(user, route);
+  if (route.name === 'invite') return renderInvite(user, route, session);
   if (route.name === 'admin') return renderAdmin(user);
   return messagePage(user, { title: '找不到這個頁面', body: '網址可能打錯了，或這個頁面已經不存在。', actions: `<a class="button primary" href="${user ? e(homePath(user)) : '/login'}">${user ? '回到我的旅行首頁' : '前往登入'}</a>` });
 }

@@ -7,7 +7,7 @@ const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const base='http://127.0.0.1:5181';
 const bun=process.env.CAMPING_BUN;
 if(!bun)throw new Error('CAMPING_BUN must name the installed Bun executable.');
-const server=spawn(bun,[resolve(root,'scripts/serve.mjs')],{cwd:root,env:{...process.env,PORT:'5181',CAMPING_DB:':memory:',CAMPING_BEDROCK_REGION:'',CAMPING_BEDROCK_MODEL_ID:'',CAMPING_BEDROCK_API_KEY:''},stdio:['ignore','pipe','pipe']});
+const server=spawn(bun,[resolve(root,'scripts/serve.mjs')],{cwd:root,env:{...process.env,PORT:'5181',CAMPING_DB:':memory:'},stdio:['ignore','pipe','pipe']});
 let browser;
 try{
  await new Promise((done,reject)=>{server.stdout.on('data',data=>{process.stdout.write(data);if(String(data).includes('Camping accounts ready:'))done();});server.stderr.on('data',d=>process.stderr.write(d));server.once('error',reject);server.once('exit',code=>reject(new Error(`Test server exited ${code}`)));});

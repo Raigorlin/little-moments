@@ -1,7 +1,8 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 import {seed,STORAGE_KEY} from '../src/model.js';
 const base=process.env.CAMPING_BASE_URL;
 const nav=(p,t)=>p.locator(`.section-tabs [data-tab="${t}"]`).click();
+const openTripMenu=page=>page.getByRole('button',{name:'旅行選單',exact:true}).click();
 const saved=p=>expect(p.locator('.sync-status')).toContainText('已儲存至本機伺服器');
 const submit=async p=>{await p.locator('#edit-form button[type=submit]').click();await expect(p.locator('#dialog')).not.toBeVisible();await saved(p);};
 const car=(p,id)=>p.locator(`[data-vehicle-departure="${id}"]`);
@@ -25,11 +26,11 @@ test('separate starts show sorted first-day cars and leave the shared schedule a
  expect(await p.evaluate(k=>localStorage.getItem(k),STORAGE_KEY)).toBeNull();
 });
 
-test('editing in the schedule syncs to crew and reload; editing in crew syncs back',async({page:p})=>{
- const {detail}=await fixture(p),before=await detail();await car(p,'v1').getByRole('button').click();
+test('editing in the schedule syncs to the trip menu and reload; editing in the trip menu syncs back',async({page:p})=>{
+ const {detail}=await fixture(p),before=await detail();await car(p,'v1').locator('[data-action=vehicle]').first().click();
  await expect(p.getByLabel('出發時間（選填）',{exact:true})).toHaveValue('09:00');await expect(p.getByLabel('出發地點',{exact:true})).toHaveValue('台北車站東三門');
  await p.getByLabel('出發時間（選填）',{exact:true}).fill('07:45');await p.getByLabel('出發地點',{exact:true}).fill('新竹高鐵站四號出口');await submit(p);
- await expect(p.locator('.departure-vehicle h3')).toHaveText(['山線小巴','海風號']);await nav(p,'crew');const crew=p.locator('.vehicle-card').filter({has:p.getByRole('heading',{name:'山線小巴',exact:true})});await expect(crew).toContainText('07:45 · 新竹高鐵站四號出口');
+ await expect(p.locator('.departure-vehicle h3')).toHaveText(['山線小巴','海風號']);await openTripMenu(p);const crew=p.locator('#trip-menu .vehicle-card').filter({has:p.getByRole('heading',{name:'山線小巴',exact:true})});await expect(crew).toContainText('07:45 · 新竹高鐵站四號出口');
  await crew.getByRole('button',{name:'編輯 山線小巴',exact:true}).click();await p.getByLabel('出發時間（選填）',{exact:true}).fill('10:10');await submit(p);
  await nav(p,'schedule');await expect(car(p,'v1')).toContainText('10:10');await p.reload();await expect(car(p,'v1')).toContainText('新竹高鐵站四號出口');
  const after=await detail();expect(after.state.vehicles.find(v=>v.id==='v1')).toEqual({...before.state.vehicles.find(v=>v.id==='v1'),meeting:'10:10 · 新竹高鐵站四號出口'});
@@ -48,13 +49,13 @@ test('empty fleet can add cars directly without creating duplicate activities, v
 
 test('free-form legacy meeting text is not guessed or overwritten on unrelated edits',async({page:p})=>{
  const original='早上在市府碰面（司機再通知）';const {detail}=await fixture(p,s=>s.vehicles[0].meeting=original);
- await expect(car(p,'v1')).toContainText(original);await expect(car(p,'v1')).toContainText('出發時間待確認');await car(p,'v1').getByRole('button').click();await expect(p.getByLabel('出發時間（選填）',{exact:true})).toHaveValue('');await p.getByLabel('車輛暱稱',{exact:true}).fill('山線慢慢號');await submit(p);
+ await expect(car(p,'v1')).toContainText(original);await expect(car(p,'v1')).toContainText('出發時間待確認');await car(p,'v1').locator('[data-action=vehicle]').first().click();await expect(p.getByLabel('出發時間（選填）',{exact:true})).toHaveValue('');await p.getByLabel('車輛暱稱',{exact:true}).fill('山線慢慢號');await submit(p);
  expect((await detail()).state.vehicles.find(v=>v.id==='v1').meeting).toBe(original);
 });
 
 test('unsaved vehicle drafts and stale saves never overwrite the newer server plan',async({page:p})=>{
- const {trip,detail}=await fixture(p),before=await detail();await car(p,'v1').getByRole('button').click();await p.getByLabel('出發地點',{exact:true}).fill('先不儲存的集合地點');p.once('dialog',d=>d.accept());await p.getByRole('button',{name:'取消',exact:true}).click();expect(await detail()).toEqual(before);
- await car(p,'v1').getByRole('button').click();await p.getByLabel('出發地點',{exact:true}).fill('要保留的草稿');
+ const {trip,detail}=await fixture(p),before=await detail();await car(p,'v1').locator('[data-action=vehicle]').first().click();await p.getByLabel('出發地點',{exact:true}).fill('先不儲存的集合地點');p.once('dialog',d=>d.accept());await p.getByRole('button',{name:'取消',exact:true}).click();expect(await detail()).toEqual(before);
+ await car(p,'v1').locator('[data-action=vehicle]').first().click();await p.getByLabel('出發地點',{exact:true}).fill('要保留的草稿');
  const serverState=structuredClone(before.state);serverState.vehicles[0].meeting='06:20 · 別人已更新的出發地點';await api(p,`/api/trips/${trip.id}`,'PUT',{revision:before.trip.revision,state:serverState});
  await p.locator('#edit-form button[type=submit]').click();await expect(p.locator('.save-warning')).toContainText('其他人已更新');await expect(car(p,'v1')).toContainText('要保留的草稿');expect((await detail()).state.vehicles[0].meeting).toBe('06:20 · 別人已更新的出發地點');
 });
@@ -65,7 +66,7 @@ test('collaborators can edit departures but cannot delete cars; strangers cannot
   await api(guest,'/api/register','POST',{username,displayName:'同行測試者',password:'Cars-Test-Only-Pass-2026'});
   const denied=await guest.request.get(base+`/api/trips/${trip.id}`);expect(denied.status()).toBe(404);
   await guest.goto(invite.urlPath);await guest.locator('[name=join-name]').fill('分車旅伴');await guest.locator('form button[type=submit]').click();await expect(guest).toHaveURL(new RegExp(`/${username}/trips/`));
-  await car(guest,'v2').getByRole('button').click();await expect(guest.getByRole('button',{name:'移除項目',exact:true})).toHaveCount(0);await guest.getByLabel('出發地點',{exact:true}).fill('嘉義高鐵站');await submit(guest);expect((await detail()).state.vehicles.find(v=>v.id==='v2').meeting).toBe('08:30 · 嘉義高鐵站');
+  await car(guest,'v2').locator('[data-action=vehicle]').first().click();await expect(guest.getByRole('button',{name:'移除項目',exact:true})).toHaveCount(0);await guest.getByLabel('出發地點',{exact:true}).fill('嘉義高鐵站');await submit(guest);expect((await detail()).state.vehicles.find(v=>v.id==='v2').meeting).toBe('08:30 · 嘉義高鐵站');
   const d=await api(guest,`/api/trips/${trip.id}`);d.state.vehicles=[];const deniedDelete=await guest.request.put(base+`/api/trips/${trip.id}`,{headers:{Origin:base,'Content-Type':'application/json'},data:{revision:d.trip.revision,state:d.state}});expect(deniedDelete.status()).toBe(403);
  }finally{await context.close();}
 });
@@ -82,7 +83,7 @@ test('cards fit mobile and desktop, long or untrusted text stays safe, print ret
 });
 
 test('demo can save departure changes and reload them offline',async({page:p,context})=>{
- await p.goto('/demo/#/trip');await car(p,'v1').getByRole('button').click();
+ await p.goto('/demo/#/trip');await car(p,'v1').locator('[data-action=vehicle]').first().click();
  await p.getByLabel('出發時間（選填）',{exact:true}).fill('06:50');await p.getByLabel('出發地點',{exact:true}).fill('家門口');await p.locator('#edit-form button[type=submit]').click();await expect(p.locator('#dialog')).not.toBeVisible();await expect(car(p,'v1')).toContainText('06:50');
  await p.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(r=>navigator.serviceWorker.addEventListener('controllerchange',r,{once:true}));});await context.setOffline(true);await p.reload();await expect(car(p,'v1')).toContainText('家門口');
  expect(await p.evaluate(k=>JSON.parse(localStorage.getItem(k)).vehicles[0].meeting,STORAGE_KEY)).toBe('06:50 · 家門口');
@@ -92,14 +93,14 @@ test('demo can save departure changes and reload them offline',async({page:p,con
 test('empty and time-only legacy locations can keep their data on an unrelated vehicle edit',async({page:p})=>{
  const {detail}=await fixture(p,s=>{s.vehicles[0].meeting='';s.vehicles[1].meeting='07:00';});
  for(const [id,name,meeting] of [['v1','還在討論的車',''],['v2','清晨小車','07:00']]){
-  await car(p,id).getByRole('button').click();await p.getByLabel('車輛暱稱',{exact:true}).fill(name);await submit(p);
+  await car(p,id).locator('[data-action=vehicle]').first().click();await p.getByLabel('車輛暱稱',{exact:true}).fill(name);await submit(p);
   expect((await detail()).state.vehicles.find(v=>v.id===id).meeting).toBe(meeting);
  }
 });
 
 
-test('owner removal from the schedule also removes the same car from crew without touching activities',async({page:p})=>{
- const {detail}=await fixture(p),before=await detail();await car(p,'v2').getByRole('button').click();await p.getByRole('button',{name:'移除項目',exact:true}).click();await p.getByRole('button',{name:'確認移除',exact:true}).click();await expect(p.locator('#dialog')).not.toBeVisible();await saved(p);
- await expect(p.locator('.departure-vehicle')).toHaveCount(1);await nav(p,'crew');await expect(p.locator('.vehicle-card')).toHaveCount(1);await expect(p.locator('.vehicle-card')).toContainText('山線小巴');
+test('owner removal from the schedule also removes the same car from the trip menu without touching activities',async({page:p})=>{
+ const {detail}=await fixture(p),before=await detail();await car(p,'v2').locator('[data-action=vehicle]').first().click();await p.getByRole('button',{name:'移除項目',exact:true}).click();await p.getByRole('button',{name:'確認移除',exact:true}).click();await expect(p.locator('#dialog')).not.toBeVisible();await saved(p);
+ await expect(p.locator('.departure-vehicle')).toHaveCount(1);await openTripMenu(p);await expect(p.locator('#trip-menu .vehicle-card')).toHaveCount(1);await expect(p.locator('#trip-menu .vehicle-card')).toContainText('山線小巴');
  const after=await detail();expect(after.state.vehicles).toEqual(before.state.vehicles.filter(v=>v.id!=='v2'));expect(after.state.activities).toEqual(before.state.activities);
 });

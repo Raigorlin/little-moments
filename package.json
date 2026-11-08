@@ -7,14 +7,11 @@
     "build": "bun scripts/build.mjs",
     "test": "bun test tests/*.test.js",
     "test:e2e": "playwright test",
-    "start": "bun scripts/serve.mjs"
+    "start": "bun scripts/serve.mjs",
+    "create-admin": "bun scripts/create-admin.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "1.56.1"
-  },
-  "dependencies": {
-    "@tesseract.js-data/chi_tra": "1.0.0",
-    "@tesseract.js-data/eng": "1.0.0",
-    "tesseract.js": "7.0.0"
+    "@playwright/test": "1.56.1",
+    "fast-check": "4.10.2"
   }
 }

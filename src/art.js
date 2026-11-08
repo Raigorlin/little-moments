@@ -128,6 +128,82 @@ function travel(className, options) {
   </g>`, 'illustration illustration--travel', options);
 }
 
+function lake(className, options) {
+  return svg(680, 250, className, `
+  <rect x="0" y="0" width="680" height="250" fill="${C.paper}"/>
+  ${sun(548, 58, 25)}
+  ${cloud(92, 40, 0.8)}
+  <g ${STROKE}>
+    <path d="M-10 172 L112 94 L202 154 L318 76 L430 154 L520 104 L690 176 Z" fill="${C.sky}"/>
+    <path d="M-10 176 Q150 154 330 174 T690 168 V260 H-10 Z" fill="${C.sky}"/>
+    <path d="M250 178 Q340 170 430 178 M205 193 Q330 184 470 194 M270 211 Q340 205 410 212 M130 228 Q300 219 520 230" fill="none"/>
+    <path d="M-10 170 Q90 150 178 172 L210 250 H-10 Z" fill="${C.green}"/>
+    <path d="M690 174 Q588 150 504 172 L470 250 H690 Z" fill="${C.green}"/>
+  </g>
+  ${pine(82, 174, 76)}
+  ${pine(122, 168, 56)}
+  ${pine(596, 174, 68)}
+  <g ${STROKE}><path d="M302 188 Q340 174 378 188 L368 212 H312 Z" fill="${C.coral}"/><path d="M302 188 L340 156 L378 188 Z" fill="${C.yellow}"/><line x1="340" y1="156" x2="340" y2="212"/></g>`, 'illustration illustration--lake', options);
+}
+
+function forest(className, options) {
+  return svg(680, 250, className, `
+  <rect x="0" y="0" width="680" height="250" fill="${C.paper}"/>
+  ${sun(552, 52, 23)}
+  <g ${STROKE}>
+    <path d="M-10 150 Q140 112 300 152 T690 140 V260 H-10 Z" fill="${C.green}"/>
+    <path d="M0 250 Q198 196 350 214 Q500 188 680 250 Z" fill="${C.yellow}"/>
+    <path d="M272 250 Q320 211 350 214 Q383 222 408 250" fill="none"/>
+  </g>
+  ${pine(52, 188, 140)}
+  ${pine(110, 178, 108)}
+  ${pine(174, 190, 145)}
+  ${pine(508, 182, 128)}
+  ${pine(574, 192, 154)}
+  ${pine(638, 180, 112)}
+  <g ${STROKE}>
+    <path d="M278 196 L340 140 L402 196 Z" fill="${C.coral}"/>
+    <path d="M340 140 L320 196 H360 Z" fill="${C.paper}"/>
+    <line x1="264" y1="196" x2="416" y2="196"/>
+    <path d="M438 226 Q444 210 450 226 M432 230 H456" fill="${C.coral}"/>
+  </g>`, 'illustration illustration--forest', options);
+}
+
+function beach(className, options) {
+  return svg(680, 250, className, `
+  <rect x="0" y="0" width="680" height="250" fill="${C.paper}"/>
+  ${sun(540, 56, 27)}
+  <g ${STROKE}>
+    <path d="M-10 140 Q140 120 270 142 T690 136 V210 H-10 Z" fill="${C.sky}"/>
+    <path d="M-10 154 Q120 140 250 158 T690 150 M-10 178 Q130 164 280 181 T690 174" fill="none"/>
+    <path d="M-10 188 Q180 166 330 190 T690 178 V260 H-10 Z" fill="${C.yellow}"/>
+    <path d="M510 250 Q532 202 568 180 Q607 202 628 250 Z" fill="${C.coral}"/>
+    <path d="M568 180 V250" fill="none"/>
+    <path d="M62 192 Q68 172 74 192 M56 196 H80" fill="${C.green}"/>
+    <path d="M600 100 Q586 145 604 178 M600 126 Q574 116 568 103 M600 139 Q626 122 639 112 M596 124 Q590 105 596 91" fill="none"/>
+  </g>
+  <path d="M600 101 Q578 93 568 103 Q582 118 599 118 M600 126 Q622 110 639 112 Q633 130 600 141 M598 124 Q582 103 596 91 Q608 105 602 126" fill="${C.green}" stroke="${C.ink}" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="142" cy="210" r="13" fill="${C.paper}" ${STROKE}/><path d="M130 210 H154 M142 197 V223" ${STROKE}/>
+  <path d="M264 215 Q280 197 296 215 M280 201 V229" ${STROKE}/><path d="M260 230 H300" ${STROKE}/>`, 'illustration illustration--beach', options);
+}
+
+function sunrise(className, options) {
+  return svg(680, 250, className, `
+  <rect x="0" y="0" width="680" height="250" fill="${C.paper}"/>
+  ${cloud(84, 48, 0.8)}
+  <g ${STROKE}>
+    <path d="M-10 172 L112 100 L210 160 L330 72 L448 164 L538 106 L690 178 Z" fill="${C.sky}"/>
+    <path d="M-10 180 Q160 158 340 178 T690 170 V260 H-10 Z" fill="${C.green}"/>
+    <path d="M284 178 A56 56 0 0 1 396 178" fill="${C.yellow}"/>
+    <path d="M-10 188 Q160 180 340 190 T690 184 V260 H-10 Z" fill="${C.sky}"/>
+    <path d="M270 207 H410 M244 224 H436 M296 240 H384" fill="none"/>
+    <path d="M-10 212 Q150 200 300 215 T690 208 V260 H-10 Z" fill="${C.green}"/>
+  </g>
+  ${pine(74, 190, 80)}
+  ${pine(604, 188, 94)}
+  <g ${STROKE}><path d="M284 194 Q340 178 396 194 L384 220 H296 Z" fill="${C.coral}"/><path d="M284 194 L340 162 L396 194 Z" fill="${C.yellow}"/><line x1="340" y1="162" x2="340" y2="220"/></g>`, 'illustration illustration--sunrise', options);
+}
+
 function meal(className) {
   return svg(240, 200, className, `
   <rect x="0" y="0" width="240" height="200" rx="20" fill="${C.paper}"/>
@@ -181,7 +257,7 @@ function night(className, options) {
   </g>`, 'illustration illustration--night', options);
 }
 
-const KINDS = { camp, travel, meal, market, night };
+const KINDS = { camp, travel, lake, forest, beach, sunrise, meal, market, night };
 
 export function illustration(kind = 'camp', className = '', options = {}) {
   const render = Object.prototype.hasOwnProperty.call(KINDS, kind) ? KINDS[kind] : camp;

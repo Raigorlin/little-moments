@@ -12,7 +12,7 @@ describe('dishIllustration',()=>{
   });
 
   test.each(KINDS)('%s renders a self-contained accessible wide svg',kind=>{
-    const html=dishIllustration(kind);
+    const html=dishIllustration(kind,'',()=>0);
     expect(html.startsWith('<span ')).toBe(true);
     expect(html.endsWith('</svg></span>')).toBe(true);
     expect(wrapperAttr(html,'class')).toBe(`dish-illustration dish-illustration--${kind}`);
@@ -33,7 +33,7 @@ describe('dishIllustration',()=>{
   });
 
   test.each(KINDS)('%s markup is balanced with no duplicate attributes',kind=>{
-    const html=dishIllustration(kind);
+    const html=dishIllustration(kind,'',()=>0);
     for(const name of ['span','svg','g']){
       const open=(html.match(new RegExp(`<${name}[\\s>]`,'g'))||[]).length;
       const close=(html.match(new RegExp(`</${name}>`,'g'))||[]).length;
@@ -47,28 +47,39 @@ describe('dishIllustration',()=>{
     expect(stripped.trim()).toBe('');
   });
 
-  test('every variant draws distinct artwork',()=>{
-    const bodies=KINDS.map(k=>svgOf(dishIllustration(k)));
-    expect(new Set(bodies).size).toBe(KINDS.length);
+  test('each named dish kind draws distinct artwork',()=>{
+    const kinds=KINDS.filter(kind=>kind!=='custom');
+    const bodies=kinds.map(k=>svgOf(dishIllustration(k,'',()=>0.999)));
+    expect(new Set(bodies).size).toBe(kinds.length);
   });
 
   test.each([undefined,'unknown','',null,42,'constructor','__proto__','toString','HOTPOT','hotpot"><script>'])('falls back to custom for %p',kind=>{
-    const html=dishIllustration(kind);
+    const html=dishIllustration(kind,'',()=>0);
     expect(wrapperAttr(html,'data-dish-kind')).toBe('custom');
     expect(wrapperAttr(html,'class')).toBe('dish-illustration dish-illustration--custom');
-    expect(svgOf(html)).toBe(svgOf(dishIllustration('custom')));
+    expect(svgOf(html)).toBe(svgOf(dishIllustration('custom','',()=>0)));
   });
 
   test('defaults to custom',()=>{
-    expect(dishIllustration()).toBe(dishIllustration('custom'));
+    expect(wrapperAttr(dishIllustration(),'data-dish-kind')).toBe('custom');
+  });
+
+  test('randomizes generic food art while keeping specific art stable',()=>{
+    const first=dishIllustration('custom','',()=>0);
+    const second=dishIllustration('custom','',()=>0.999);
+    expect(wrapperAttr(first,'data-dish-kind')).toBe('custom');
+    expect(wrapperAttr(second,'data-dish-kind')).toBe('custom');
+    expect(wrapperAttr(first,'data-dish-variation')).not.toBe(wrapperAttr(second,'data-dish-variation'));
+    expect(svgOf(first)).not.toBe(svgOf(second));
+    expect(svgOf(dishIllustration('pasta','',()=>0))).toBe(svgOf(dishIllustration('pasta','',()=>0.999)));
   });
 
   test('appends and escapes className on the wrapper only',()=>{
-    const html=dishIllustration('pasta',`hero "x" <b>&'\``);
+    const html=dishIllustration('pasta',`hero "x" <b>&'\``,()=>0);
     expect(wrapperAttr(html,'class')).toBe('dish-illustration dish-illustration--pasta hero &quot;x&quot; &lt;b&gt;&amp;&#39;&#96;');
     expect(html).not.toContain('<b>');
     expect(html).not.toContain('"x"');
-    expect(svgOf(html)).toBe(svgOf(dishIllustration('pasta')));
-    expect(dishIllustration('salad',null)).toBe(dishIllustration('salad'));
+    expect(svgOf(html)).toBe(svgOf(dishIllustration('pasta','',()=>0)));
+    expect(dishIllustration('salad',null,()=>0)).toBe(dishIllustration('salad','',()=>0));
   });
 });

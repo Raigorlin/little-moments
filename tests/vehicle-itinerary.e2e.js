@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './local-planner-fixture.js';
 import { seed, STORAGE_KEY } from '../src/model.js';
 import { fileURLToPath } from 'node:url';
 const preview = name => fileURLToPath(new URL('../previews/'+name,import.meta.url));
@@ -56,11 +56,11 @@ test('cars split shopping and pickup through separate arrivals; shared stops and
 
 test('legacy people stay exact on unrelated edits and may explicitly switch to one car, multiple cars, then all',async({page:p})=>{
   const f=await fixture(p,s=>s.activities=seed().activities);const before=await f.detail();
-  await card(p,'把好吃的，一起買齊').getByRole('button').click();await expect(p.getByLabel('這一站誰參加',{exact:true})).toHaveValue('legacy');
+  await card(p,'把好吃的，一起買齊').locator('[data-action=activity]').first().click();await expect(p.getByLabel('這一站誰參加',{exact:true})).toHaveValue('legacy');
   await form(p).locator('[name=note]').fill('保留原來三位旅伴');await submit(p);
   let a=(await f.detail()).state.activities.find(a=>a.id==='a2');expect(a.people).toEqual(before.state.activities.find(a=>a.id==='a2').people);expect(a).not.toHaveProperty('vehicleIds');
   for(const ids of [['v1'],['v1','v2'],[]]){
-    await card(p,'把好吃的，一起買齊').getByRole('button').click();await p.getByLabel('這一站誰參加',{exact:true}).selectOption(ids.length?'vehicles':'all');
+    await card(p,'把好吃的，一起買齊').locator('[data-action=activity]').first().click();await p.getByLabel('這一站誰參加',{exact:true}).selectOption(ids.length?'vehicles':'all');
     if(ids.length)for(const id of ['v1','v2'])await form(p).locator(`[name=vehicleIds][value=${id}]`).setChecked(ids.includes(id));
     await submit(p);a=(await f.detail()).state.activities.find(a=>a.id==='a2');expect(a.people).toEqual([]);if(ids.length)expect(a.vehicleIds).toEqual(ids);else expect(a).not.toHaveProperty('vehicleIds');
   }
@@ -73,10 +73,10 @@ test('empty vehicle selection and cancelled draft do not save; referenced car ca
   await form(p).locator('button[type=submit]').click();await expect(p.locator('.form-error')).toContainText('至少選擇一台');expect(await f.detail()).toEqual(before);
   p.once('dialog',d=>d.accept());await p.getByRole('button',{name:'取消',exact:true}).click();expect(await f.detail()).toEqual(before);
   await add(p,'買食材','13:30',['v1'],'market');const assigned=await f.detail();
-  await p.locator('[data-vehicle-departure=v1] button').click();await p.getByRole('button',{name:'移除項目',exact:true}).click();
+  await p.locator('[data-vehicle-departure=v1] [data-action=vehicle]').first().click();await p.getByRole('button',{name:'移除項目',exact:true}).click();
   await expect(p.locator('.form-error')).toContainText('先把那些行程改派');expect(await f.detail()).toEqual(assigned);
-  await p.getByRole('button',{name:'取消',exact:true}).click();await card(p,'買食材').getByRole('button').click();await p.getByLabel('這一站誰參加',{exact:true}).selectOption('all');await submit(p);
-  await p.locator('[data-vehicle-departure=v1] button').click();await p.getByRole('button',{name:'移除項目',exact:true}).click();await p.getByRole('button',{name:'確認移除',exact:true}).click();await saved(p);
+  await p.getByRole('button',{name:'取消',exact:true}).click();await card(p,'買食材').locator('[data-action=activity]').first().click();await p.getByLabel('這一站誰參加',{exact:true}).selectOption('all');await submit(p);
+  await p.locator('[data-vehicle-departure=v1] [data-action=vehicle]').first().click();await p.getByRole('button',{name:'移除項目',exact:true}).click();await p.getByRole('button',{name:'確認移除',exact:true}).click();await saved(p);
   expect((await f.detail()).state.vehicles.map(v=>v.id)).toEqual(['v2']);await expect(card(p,'買食材')).toContainText('全體旅伴');
 });
 
@@ -84,7 +84,7 @@ test('new stop respects selected car and day, draft survives conflict without ov
   const f=await fixture(p);await p.getByLabel('按車查看行程',{exact:true}).selectOption('v2');await p.locator('[data-day="2026-11-21"]').click();
   await p.getByRole('button',{name:'新增一站',exact:true}).click();await expect(p.getByLabel('這一站誰參加',{exact:true})).toHaveValue('vehicles');await expect(form(p).locator('[name=vehicleIds][value=v2]')).toBeChecked();
   await p.getByLabel('活動名稱',{exact:true}).fill('隔天補給');await submit(p);const before=await f.detail();expect(before.state.activities[0]).toMatchObject({date:'2026-11-21',vehicleIds:['v2']});
-  await card(p,'隔天補給').getByRole('button').click();await form(p).locator('[name=vehicleIds][value=v1]').check();
+  await card(p,'隔天補給').locator('[data-action=activity]').first().click();await form(p).locator('[name=vehicleIds][value=v1]').check();
   const remote=structuredClone(before.state);remote.activities[0].vehicleIds=['v1'];await api(p,`/api/trips/${f.trip.id}`,'PUT',{revision:before.trip.revision,state:remote});
   await form(p).locator('button[type=submit]').click();await expect(p.locator('.save-warning')).toContainText('其他人已更新');
   await expect(card(p,'隔天補給')).toContainText('TEST-CAR-A、TEST-CAR-B');expect((await f.detail()).state.activities[0].vehicleIds).toEqual(['v1']);
@@ -92,7 +92,7 @@ test('new stop respects selected car and day, draft survives conflict without ov
 
 test('no vehicles disables car choice',async({page:p})=>{
   const f=await fixture(p,s=>s.vehicles=[]);await expect(p.locator('#schedule-vehicle')).toHaveCount(0);await p.getByRole('button',{name:'新增一站',exact:true}).click();
-  await expect(form(p).locator('[name=participation] option[value=vehicles]')).toHaveJSProperty('disabled',true);await expect(form(p)).toContainText('請先到「旅伴與車輛」新增車輛');await p.getByRole('button',{name:'取消',exact:true}).click();
+  await expect(form(p).locator('[name=participation] option[value=vehicles]')).toHaveJSProperty('disabled',true);await expect(form(p)).toContainText('請先在「旅行選單」新增車輛');await p.getByRole('button',{name:'取消',exact:true}).click();
   expect((await f.detail()).state.activities).toEqual([]);
 });
 
@@ -127,7 +127,7 @@ test('mobile vehicle choices wrap untrusted names and remain keyboard accessible
 
 test('demo assignment survives reload offline and legacy backups remain usable',async({page:p,context})=>{
   await p.goto('/demo/#/trip');const before=await p.evaluate(k=>JSON.parse(localStorage.getItem(k)),STORAGE_KEY);
-  await card(p,'把好吃的，一起買齊').getByRole('button').click();await p.getByLabel('這一站誰參加',{exact:true}).selectOption('vehicles');await form(p).locator('[name=vehicleIds][value=v1]').check();await form(p).locator('button[type=submit]').click();await expect(p.locator('#dialog')).not.toBeVisible();
+  await card(p,'把好吃的，一起買齊').locator('[data-action=activity]').first().click();await p.getByLabel('這一站誰參加',{exact:true}).selectOption('vehicles');await form(p).locator('[name=vehicleIds][value=v1]').check();await form(p).locator('button[type=submit]').click();await expect(p.locator('#dialog')).not.toBeVisible();
   await p.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(r=>navigator.serviceWorker.addEventListener('controllerchange',r,{once:true}));});await context.setOffline(true);await p.reload();
   await expect(card(p,'把好吃的，一起買齊')).toContainText('山線小巴');const after=await p.evaluate(k=>JSON.parse(localStorage.getItem(k)),STORAGE_KEY);expect(after.activities.find(a=>a.id==='a2')).toMatchObject({vehicleIds:['v1'],people:[]});expect(after.vehicles).toEqual(before.vehicles);
 });
