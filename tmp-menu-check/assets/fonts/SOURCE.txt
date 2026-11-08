@@ -1,0 +1,11 @@
+Huninn (粉圓體), SIL Open Font License 1.1
+Source: https://github.com/google/fonts/tree/main/ofl/huninn
+Font: https://raw.githubusercontent.com/google/fonts/main/ofl/huninn/Huninn-Regular.ttf
+Downloaded for self-hosted headings, no system installation.
+
+Current whole-site font: jf open 粉圓 2.1 (jf-openhuninn-2.1.ttf)
+Official release: https://github.com/justfont/open-huninn-font/releases/tag/v2.1
+Font: https://github.com/justfont/open-huninn-font/releases/download/v2.1/jf-openhuninn-2.1.ttf
+License: https://raw.githubusercontent.com/justfont/open-huninn-font/master/LICENSE
+Self-hosted inside this project only. No system font installation.
+Huninn-Regular.ttf is retained for older cached clients.

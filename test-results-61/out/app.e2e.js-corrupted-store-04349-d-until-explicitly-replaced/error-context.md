@@ -1,0 +1,157 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e1]:
+  - link "跳到主要內容" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "日子拾光首頁" [ref=e6] [cursor=pointer]:
+          - /url: "#/home"
+          - img [ref=e7]
+          - generic [ref=e12]:
+            - text: 日子拾光
+            - generic [ref=e13]: LITTLE MOMENTS
+        - generic [ref=e14]:
+          - generic [ref=e15]: 本機模式
+          - button "切換深色模式" [ref=e17] [cursor=pointer]:
+            - img [ref=e18]
+          - button "切換旅伴身分" [ref=e20] [cursor=pointer]:
+            - generic "我" [ref=e21]
+            - generic [ref=e22]: 我
+            - generic [ref=e23]: ⌄
+    - alert [ref=e24]:
+      - text: 資料尚未儲存，或有另一分頁的變更。請先保留備份。
+      - button "匯出目前內容" [ref=e25] [cursor=pointer]
+      - button "處理儲存問題" [ref=e26] [cursor=pointer]
+    - main [ref=e27]:
+      - navigation "麵包屑" [ref=e28]:
+        - link "我的旅行" [ref=e29] [cursor=pointer]:
+          - /url: "#/home"
+        - generic [ref=e30]: /
+        - generic [ref=e31]: 我的露營旅行
+      - generic [ref=e32]:
+        - generic [ref=e33]:
+          - generic [ref=e34]: LITTLE MOMENTS
+          - generic [ref=e35]:
+            - heading "我的露營旅行" [level=1] [ref=e36]
+            - button "旅行選單" [ref=e37] [cursor=pointer]:
+              - img [ref=e38]
+          - paragraph
+          - generic [ref=e40]:
+            - generic [ref=e41]:
+              - img [ref=e42]
+              - text: 11/8 — 11/8
+            - generic [ref=e45]:
+              - img [ref=e46]
+              - text: 地點待確認
+            - generic [ref=e49]:
+              - img [ref=e50]
+              - text: 1 位旅伴
+          - generic [ref=e53]:
+            - img [ref=e54]
+            - text: 旅行前一起規劃，出發後專心玩。
+        - generic [ref=e56]:
+          - generic [ref=e57]: Let's go camping!
+          - generic [ref=e58]:
+            - img [ref=e59]
+            - generic [ref=e119]:
+              - generic [ref=e120]: 今天出發
+              - strong [ref=e121]: GO
+              - generic [ref=e122]: "!"
+      - generic [ref=e123]:
+        - navigation "旅行模式" [ref=e124]:
+          - link "規劃手冊" [ref=e125] [cursor=pointer]:
+            - /url: "#/trip"
+            - img [ref=e126]
+            - text: 規劃手冊
+          - link "出發模式" [ref=e128] [cursor=pointer]:
+            - /url: "#/go"
+            - img [ref=e129]
+            - text: 出發模式
+            - img [ref=e131]
+        - generic [ref=e133]:
+          - button "匯出手冊" [ref=e134] [cursor=pointer]:
+            - img [ref=e135]
+            - generic [ref=e137]: 匯出手冊
+          - button "邀請旅伴" [ref=e138] [cursor=pointer]:
+            - img [ref=e139]
+            - text: 邀請旅伴
+      - generic [ref=e142]:
+        - text: 尚未儲存
+        - generic [ref=e144]: ·
+        - text: 本機資料，不會同步至其他裝置
+      - navigation "旅行內容" [ref=e145]:
+        - button "行程表" [ref=e146] [cursor=pointer]
+        - button "料理菜單" [ref=e147] [cursor=pointer]
+        - button "採買清單" [active] [ref=e148] [cursor=pointer]
+        - button "裝備分工" [ref=e149] [cursor=pointer]
+        - button "分帳記帳" [ref=e150] [cursor=pointer]
+      - generic [ref=e151]:
+        - region "採買清單" [ref=e152]:
+          - generic [ref=e153]:
+            - generic [ref=e154]:
+              - generic [ref=e155]: GATHER INGREDIENTS, MAKE MEMORIES
+              - heading "把好吃的買齊" [level=2] [ref=e156]
+            - button "新增品項" [ref=e157] [cursor=pointer]:
+              - img [ref=e158]
+              - text: 新增品項
+          - paragraph [ref=e160]: 料理食材會自動分類到這裡；點選數量可直接修改，負責人與分類也能手動調整。
+          - generic [ref=e161]:
+            - generic [ref=e162]: 買好後，拍張收據逐項記帳。
+            - button "收據辨識與分帳" [ref=e163] [cursor=pointer]:
+              - text: 收據辨識與分帳
+              - img [ref=e164]
+          - generic [ref=e166]:
+            - generic [ref=e167]:
+              - button "全部 0" [pressed] [ref=e168] [cursor=pointer]
+              - button "我負責的" [ref=e169] [cursor=pointer]
+            - generic [ref=e170]:
+              - checkbox "隱藏已買" [ref=e171] [cursor=pointer]
+              - text: 隱藏已買
+          - generic [ref=e172]:
+            - generic [ref=e173]: 0 / 0 項已買齊
+            - progressbar "採買完成度" [ref=e174]
+          - generic [ref=e176]:
+            - img [ref=e177]
+            - heading "目前沒有品項" [level=3] [ref=e179]
+            - paragraph [ref=e180]: 切換篩選或新增採買品項。
+        - complementary [ref=e181]:
+          - generic [ref=e182]:
+            - generic [ref=e183]: OUR TRAVEL CREW
+            - heading "小隊準備好了嗎？" [level=2] [ref=e184]
+            - generic "我" [ref=e186]
+            - paragraph [ref=e187]: 1 位旅伴，一起收集回憶。
+            - generic [ref=e188]:
+              - generic [ref=e189]: 食材採買
+              - generic [ref=e190]: 0 / 0
+            - progressbar "食材採買進度" [ref=e191]
+            - generic [ref=e192]:
+              - generic [ref=e193]: 裝備準備
+              - generic [ref=e194]: 0 / 0
+            - progressbar "裝備準備進度" [ref=e195]
+            - link "看看我的行前清單" [ref=e196] [cursor=pointer]:
+              - /url: "#/go"
+              - text: 看看我的行前清單
+              - img [ref=e197]
+          - region "每日快樂小語" [ref=e199]:
+            - generic [ref=e201]: ✳
+            - generic [ref=e202]:
+              - text: 每日一語
+              - time [ref=e203]: 11/08
+            - paragraph [ref=e204]: 把腳步放慢，讓快樂有機會跟上。
+            - generic [ref=e205]: A LITTLE JOY, EVERY DAY
+          - generic [ref=e206]:
+            - img [ref=e207]
+            - text: 把垃圾帶走，把風景留下。
+    - contentinfo [ref=e209]:
+      - generic [ref=e210]:
+        - img [ref=e211]
+        - generic [ref=e213]: 日子拾光·把平凡的日子，留成喜歡的回憶。
+      - generic [ref=e214]:
+        - generic [ref=e215]: 本機版 · 資料只儲存在此瀏覽器
+        - link "資料與隱私" [ref=e216] [cursor=pointer]:
+          - /url: "#/privacy"
+  - status
+```

@@ -1,0 +1,5 @@
+Receipt OCR runs entirely in the browser from these same-origin files.
+tesseract.js 7.0.0 (Apache-2.0) - worker.min.js
+tesseract.js-core 7.0.0 (Apache-2.0; Tesseract OCR, Apache-2.0) - core/*.wasm.js (LSTM-only builds with embedded WebAssembly)
+@tesseract.js-data/chi_tra and @tesseract.js-data/eng 1.0.0 (package license MIT; data from tesseract-ocr tessdata_best integerized models, Apache-2.0) - lang/*.traineddata.gz
+wasm-feature-detect (Apache-2.0) and other components bundled in worker.min.js are listed in tesseract.js-worker-bundled-LICENSES.txt
