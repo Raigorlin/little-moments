@@ -8,7 +8,8 @@
     "test": "bun test tests/*.test.js",
     "test:e2e": "playwright test",
     "start": "bun scripts/serve.mjs",
-    "create-admin": "bun scripts/create-admin.mjs"
+    "create-admin": "bun scripts/create-admin.mjs",
+    "reset-password": "bun scripts/reset-password.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.56.1",

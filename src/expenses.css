@@ -71,6 +71,7 @@
 .xp-input:focus-visible{border-color:var(--ink)}
 .xp-input[aria-invalid=true]{border:1.5px solid var(--danger)}
 .xp-amount{text-align:right;font-variant-numeric:tabular-nums}
+.xp-cand .xp-category{grid-column:2/-1}
 .xp-cand-warn{grid-column:2/-1;color:var(--danger);font-size:13px;line-height:1.6;padding-bottom:4px}
 .xp-rc-summary{margin-top:14px;padding:10px 14px;border-radius:10px;background:var(--soft);font-size:15px}
 .xp-rc-summary b{font-variant-numeric:tabular-nums}
@@ -122,6 +123,8 @@
   .xp-toolbar>.xp-actions{width:100%}
   .xp-toolbar>.xp-actions>.button{flex:1 1 auto}
   .xp-form-actions>.button{flex:1 1 auto}
+  .xp-cand{grid-template-columns:36px minmax(0,1fr) 6.5em;padding-right:6px;gap:4px}
+  .xp-cand-check{width:36px}
   .xp-transfer{grid-template-columns:minmax(0,1fr) auto}
   .xp-transfer>.button{grid-column:1/-1;justify-self:start}
   .xp-row{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"main money" "meta meta" "actions actions"}

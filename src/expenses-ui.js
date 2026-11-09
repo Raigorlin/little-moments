@@ -1,8 +1,8 @@
 import { parseAmount, formatMoney, summarizeLedger } from './expense-model.js';
 import { parseReceiptText } from './receipt-parser.js';
+import { EXPENSE_CATEGORIES, suggestExpenseCategory } from './expense-categories.js';
 import { escape as e } from './model.js';
 
-const CATEGORIES = ['食材', '交通', '住宿', '其他'];
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const IMAGE_EXT_RE = /\.(jpe?g|png|webp)$/i;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -53,6 +53,13 @@ export function centsToInput(cents) {
 }
 function money(cents) {
   try { return formatMoney(cents); } catch { return `NT$${centsToInput(cents) || '0'}`; }
+}
+function commonReceiptCategory(rows, fallback = '食材') {
+  const counts = new Map();
+  for (const row of rows) {
+    if (EXPENSE_CATEGORIES.includes(row.category)) counts.set(row.category, (counts.get(row.category) || 0) + 1);
+  }
+  return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] || fallback;
 }
 function actionIcon(name) {
   return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ACTION_ICONS[name]}</svg>`;
@@ -290,7 +297,7 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
       S.form = expense ? {
         type: 'expense', mode: 'edit', id: expense.id, dirty: false, error: '',
         origin: { source: fromReceipt ? 'receipt' : 'manual', receiptId: fromReceipt ? String(expense.receiptId || '') : '', receiptLine: fromReceipt ? String(expense.receiptLine || '') : '' },
-        values: { title: expense.title || '', date: expense.date || '', amount: centsToInput(expense.amountCents), payerId: expense.payerId || '', participantIds: [...(expense.participantIds || [])], category: CATEGORIES.includes(expense.category) ? expense.category : '其他', note: expense.note || '', shoppingId: expense.shoppingId || '' }
+        values: { title: expense.title || '', date: expense.date || '', amount: centsToInput(expense.amountCents), payerId: expense.payerId || '', participantIds: [...(expense.participantIds || [])], category: EXPENSE_CATEGORIES.includes(expense.category) ? expense.category : '其他', note: expense.note || '', shoppingId: expense.shoppingId || '' }
       } : {
         type: 'expense', mode: 'new', id: '', dirty: false, error: '',
         origin: { source: 'manual', receiptId: '', receiptLine: '' },
@@ -318,7 +325,7 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
     if (!known.has(v.payerId)) return { error: '請選擇付款人。' };
     const participantIds = pool.map(p => p.id).filter(pid => v.participantIds.includes(pid));
     if (participantIds.length < 1 || participantIds.length > 100) return { error: '請至少選擇一位分攤的旅伴。' };
-    if (!CATEGORIES.includes(v.category)) return { error: '請選擇分類。' };
+    if (!EXPENSE_CATEGORIES.includes(v.category)) return { error: '請選擇分類。' };
     if (chars(v.note) > 500) return { error: '備註最多 500 字。' };
     const shoppingId = v.shoppingId || '';
     if (shoppingId && !shopping().some(s => s.id === shoppingId) && shoppingId !== (original?.shoppingId || '')) return { error: '連結的採買品項已不存在，請重新選擇。' };
@@ -379,8 +386,10 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
       const raw = Number.isSafeInteger(item?.amountCents) ? item.amountCents : item?.amount;
       const amount = Number.isSafeInteger(raw) ? centsToInput(raw) : String(raw ?? '').trim();
       const warning = cleanText(item?.warning);
-      return { lineId: safeLineId(item?.lineId, i, used), title: cleanText(item?.title).slice(0, 100), amount, warning, selected: !warning && toCents(amount) !== null };
+      const title = cleanText(item?.title).slice(0, 100);
+      return { lineId: safeLineId(item?.lineId, i, used), title, amount, category: suggestExpenseCategory(title), warning, selected: !warning && toCents(amount) !== null };
     });
+    R.category = commonReceiptCategory(R.rows, R.category);
     R.parsedTotal = Number.isSafeInteger(parsed.totalCents) && parsed.totalCents > 0 ? parsed.totalCents : null;
     R.totalInput = R.parsedTotal === null ? '' : centsToInput(R.parsedTotal);
     R.parseWarnings = (Array.isArray(parsed.warnings) ? parsed.warnings : []).map(cleanText).filter(Boolean);
@@ -449,9 +458,11 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
         lineId: safeLineId(item.lineId, index, usedLineIds),
         title: cleanText(item.title).slice(0, 100),
         amount: String(item.amount || ''),
+        category: EXPENSE_CATEGORIES.includes(item.category) ? item.category : suggestExpenseCategory(item.title),
         warning: cleanText(item.warning),
         selected: !item.warning && toCents(item.amount) !== null
       }));
+      R.category = commonReceiptCategory(R.rows, R.category);
       R.parsedTotal = Number.isSafeInteger(result.totalCents) && result.totalCents > 0 ? result.totalCents : null;
       R.totalInput = R.parsedTotal === null ? '' : centsToInput(R.parsedTotal);
       R.date = isIsoDate(result.date) ? result.date : R.date;
@@ -514,6 +525,7 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
       const t = cleanText(r.title);
       if (!t || chars(t) > 100) out.push(`第 ${i + 1} 列的品名需為 1–100 字。`);
       if (toCents(r.amount) === null) out.push(`第 ${i + 1} 列的金額無效。`);
+      if (!EXPENSE_CATEGORIES.includes(r.category)) out.push(`第 ${i + 1} 列的分類無效。`);
       if (seen.has(r.lineId)) out.push(`第 ${i + 1} 列的品項編號重複。`);
       seen.add(r.lineId);
     });
@@ -521,7 +533,7 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
     const known = new Set(people().map(p => p.id));
     if (!known.has(R.payerId)) out.push('請選擇付款人。');
     if (!R.participantIds.some(pid => known.has(pid))) out.push('請選擇分攤的旅伴。');
-    if (!CATEGORIES.includes(R.category)) out.push('請選擇分類。');
+    if (!EXPENSE_CATEGORIES.includes(R.category)) out.push('請選擇分類。');
     if (calc.totalInvalid) out.push('收據總額格式不正確。');
     if (!R.verified) out.push(`請勾選「${VERIFY_LABEL}」。`);
     if (!calc.discrepancyOk) out.push('選取品項合計與收據總額不一致：請修正總額，或勾選確認差異。');
@@ -535,7 +547,7 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
     const blockers = receiptBlockers(R, calc);
     if (blockers.length) { R.error = blockers[0]; render(); return; }
     const participantIds = people().map(p => p.id).filter(pid => R.participantIds.includes(pid));
-    const records = calc.selected.map(r => ({ id: newId(), date: R.date, title: cleanText(r.title), amountCents: toCents(r.amount), payerId: R.payerId, participantIds: [...participantIds], category: R.category, note: '', shoppingId: '', source: 'receipt', receiptId: R.id, receiptLine: r.lineId }));
+    const records = calc.selected.map(r => ({ id: newId(), date: R.date, title: cleanText(r.title), amountCents: toCents(r.amount), payerId: R.payerId, participantIds: [...participantIds], category: r.category, note: '', shoppingId: '', source: 'receipt', receiptId: R.id, receiptLine: r.lineId }));
     R.error = '';
     void submit({
       label: `收據 ${records.length} 筆品項`, expenses: [...S.ledger.expenses, ...records], settlements: S.ledger.settlements, check: { upsertExpenses: records },
@@ -553,7 +565,7 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
       kind: 'little-moments-expense-draft', exportedAt: new Date().toISOString(), tripId: tripId(), ledgerRevision: S.ledger?.revision ?? null,
       pending: S.pending ? { label: S.pending.label, status: S.pending.conflict ? 'conflict' : S.pending.state, request: pendingBody() } : null,
       form: S.form ? { type: S.form.type, mode: S.form.mode, id: S.form.id, origin: S.form.origin || null, values: S.form.values } : null,
-      receipt: R ? { receiptId: R.id, date: R.date, payerId: R.payerId, participantIds: R.participantIds, category: R.category, totalInput: R.totalInput, verified: R.verified, rows: R.rows.map(r => ({ lineId: r.lineId, selected: r.selected, title: r.title, amount: r.amount, warning: r.warning })) } : null
+      receipt: R ? { receiptId: R.id, date: R.date, payerId: R.payerId, participantIds: R.participantIds, category: R.category, totalInput: R.totalInput, verified: R.verified, rows: R.rows.map(r => ({ lineId: r.lineId, selected: r.selected, title: r.title, amount: r.amount, category: r.category, warning: r.warning })) } : null
     };
     download(`${fileSafe(state()?.trip?.title)}-分帳未存內容.json`, 'application/json', JSON.stringify(draft, null, 2));
   }
@@ -646,7 +658,7 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
 <label class="field" for="${id('f-date')}">日期<input id="${id('f-date')}" type="date" data-xp-field="date" value="${e(v.date)}" required></label>
 <label class="field" for="${id('f-amount')}">金額（新台幣）<input id="${id('f-amount')}" data-xp-field="amount" value="${e(v.amount)}" inputmode="decimal" autocomplete="off" required placeholder="例如 1280"></label>
 <label class="field" for="${id('f-payer')}">付款人<select id="${id('f-payer')}" data-xp-field="payerId" required>${personOptions(v.payerId, [original?.payerId, v.payerId].filter(Boolean))}</select></label>
-<label class="field" for="${id('f-category')}">分類<select id="${id('f-category')}" data-xp-field="category">${CATEGORIES.map(c => `<option${c === v.category ? ' selected' : ''}>${c}</option>`).join('')}</select></label>
+<label class="field" for="${id('f-category')}">分類<select id="${id('f-category')}" data-xp-field="category">${EXPENSE_CATEGORIES.map(c => `<option${c === v.category ? ' selected' : ''}>${c}</option>`).join('')}</select></label>
 <fieldset class="xp-wide xp-sub"><legend>分攤的旅伴（平均分攤）</legend>${participantChecks('f-part', v.participantIds, 'data-xp-field="participantIds"')}<div class="xp-actions">${btn('全選', 'form-all', { bid: 'f-all' })}${btn('清除', 'form-none', { bid: 'f-none' })}</div></fieldset>
 <label class="field xp-wide" for="${id('f-shop')}">連結採買品項（選填，只作標示，不會改變採買狀態）<select id="${id('f-shop')}" data-xp-field="shoppingId"><option value="">不連結</option>${items.map(s => `<option value="${e(s.id)}"${s.id === v.shoppingId ? ' selected' : ''}>${e(s.name)}</option>`).join('')}${missingLink ? `<option value="${e(v.shoppingId)}" selected>（原連結的採買品項已移除）</option>` : ''}</select></label>
 <label class="field xp-wide" for="${id('f-note')}">備註（選填）<textarea id="${id('f-note')}" data-xp-field="note" rows="2" maxlength="500">${e(v.note)}</textarea></label>
@@ -666,7 +678,7 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
 
   function receiptHtml() {
     const R = S.receipt;
-    const head = `<h3 id="${id('rc-heading')}">收據辨識</h3><p class="help">選擇收據照片後會自動傳送至 OpenAI（預設模型 GPT-6 Luna）辨識，可能依 OpenAI API 資料政策處理並產生費用。若不希望上傳，請勿選取照片。辨識失敗時不會改用本機 OCR；你可手動輸入文字或品項。照片不會由本應用程式儲存，只會儲存你核對後選取的品項與檔案指紋。</p>`;
+    const head = `<h3 id="${id('rc-heading')}">收據辨識</h3>`;
     const picker = `<div class="xp-picker"><label class="field" for="${id('rc-file')}">${R ? '換一張收據圖片（選取後會自動上傳辨識）' : '選擇收據圖片（選取後會自動上傳至 OpenAI；預設 GPT-6 Luna，JPEG／PNG／WebP，10 MB 內）'}<input type="file" id="${id('rc-file')}" class="xp-file" data-xp-file data-xp-receipt-file accept="image/jpeg,image/png,image/webp"${frozen() ? ' disabled' : ''}></label>${S.receiptError ? `<p class="form-error" role="alert" data-xp-receipt-error>${e(S.receiptError)}</p>` : ''}</div>`;
     const close = btn(R ? '放棄這張收據' : '關閉', 'close-receipt', { bid: 'rc-close' });
     if (!R) return `<div class="xp-editor xp-receipt" id="${id('receipt')}" role="group" aria-labelledby="${id('rc-heading')}">${head}${picker}<div class="xp-actions xp-form-actions">${close}</div></div>`;
@@ -686,7 +698,7 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
     };
     const rows = R.rows.map((r, i) => {
       const warns = [r.warning, soft(r) ? '帳本已有同名同金額的支出，請確認不是重複' : ''].filter(Boolean);
-      return `<li class="xp-cand${r.selected ? ' is-selected' : ''}" data-xp-receipt-row="${i}" data-xp-line="${e(r.lineId)}"><label class="xp-cand-check" for="${id(`row-${i}-sel`)}"><input type="checkbox" id="${id(`row-${i}-sel`)}" data-xp-row="${i}" data-xp-row-key="selected" data-xp-receipt-field="selected"${r.selected ? ' checked' : ''}><span class="xp-sr">選取第 ${i + 1} 列</span></label><input class="xp-input" id="${id(`row-${i}-title`)}" data-xp-row="${i}" data-xp-row-key="title" data-xp-receipt-field="title" value="${e(r.title)}" maxlength="100" aria-label="第 ${i + 1} 列品名"><input class="xp-input xp-amount" id="${id(`row-${i}-amount`)}" data-xp-row="${i}" data-xp-row-key="amount" data-xp-receipt-field="amount" value="${e(r.amount)}" inputmode="decimal" autocomplete="off" aria-label="第 ${i + 1} 列金額（新台幣）"${r.amount && toCents(r.amount) === null ? ' aria-invalid="true"' : ''}>${warns.length ? `<small class="xp-cand-warn">${e(warns.join('；'))}</small>` : ''}</li>`;
+      return `<li class="xp-cand${r.selected ? ' is-selected' : ''}" data-xp-receipt-row="${i}" data-xp-line="${e(r.lineId)}"><label class="xp-cand-check" for="${id(`row-${i}-sel`)}"><input type="checkbox" id="${id(`row-${i}-sel`)}" data-xp-row="${i}" data-xp-row-key="selected" data-xp-receipt-field="selected"${r.selected ? ' checked' : ''}><span class="xp-sr">選取第 ${i + 1} 列</span></label><input class="xp-input" id="${id(`row-${i}-title`)}" data-xp-row="${i}" data-xp-row-key="title" data-xp-receipt-field="title" value="${e(r.title)}" maxlength="100" aria-label="第 ${i + 1} 列品名"><input class="xp-input xp-amount" id="${id(`row-${i}-amount`)}" data-xp-row="${i}" data-xp-row-key="amount" data-xp-receipt-field="amount" value="${e(r.amount)}" inputmode="decimal" autocomplete="off" aria-label="第 ${i + 1} 列金額（新台幣）"${r.amount && toCents(r.amount) === null ? ' aria-invalid="true"' : ''}><select class="xp-input xp-category" data-xp-row="${i}" data-xp-row-key="category" aria-label="第 ${i + 1} 列分類">${EXPENSE_CATEGORIES.map(c => `<option${c === r.category ? ' selected' : ''}>${c}</option>`).join('')}</select>${warns.length ? `<small class="xp-cand-warn">${e(warns.join('；'))}</small>` : ''}</li>`;
     }).join('');
     return `<fieldset class="xp-fieldset"${frozen() ? ' disabled' : ''}><legend class="xp-sr">收據核對</legend>
 <details class="xp-raw"${R.rows.length ? '' : ' open'}><summary>AI 辨識結果</summary><p class="help">AI 不提供原始 OCR 文字；請核對下方候選品項與收據照片。也可以手動輸入辨識文字後重新解析。</p><label class="field" for="${id('rc-text')}"><span class="xp-sr">手動輸入收據辨識文字</span><textarea id="${id('rc-text')}" data-xp-receipt="text" data-xp-receipt-text rows="7" spellcheck="false">${e(R.text)}</textarea></label><div class="xp-actions">${btn('解析手動輸入文字', 'reparse', { bid: 'rc-reparse' })}</div></details>
@@ -697,7 +709,7 @@ ${R.parseWarnings.length ? `<ul class="xp-warn-list">${R.parseWarnings.map(w => 
 <div class="xp-grid">
 <label class="field" for="${id('rc-date')}">消費日期<input type="date" id="${id('rc-date')}" data-xp-receipt="date" value="${e(R.date)}" required></label>
 <label class="field" for="${id('rc-payer')}">付款人<select id="${id('rc-payer')}" data-xp-receipt="payerId">${personOptions(R.payerId)}</select></label>
-<label class="field" for="${id('rc-category')}">分類<select id="${id('rc-category')}" data-xp-receipt="category">${CATEGORIES.map(c => `<option${c === R.category ? ' selected' : ''}>${c}</option>`).join('')}</select></label>
+<label class="field" for="${id('rc-category')}">分類建議（套用至全部品項）<select id="${id('rc-category')}" data-xp-receipt="category">${EXPENSE_CATEGORIES.map(c => `<option${c === R.category ? ' selected' : ''}>${c}</option>`).join('')}</select><small class="help">AI 會逐項分類；變更此項目會套用至全部品項。</small></label>
 <label class="field" for="${id('rc-total')}">收據總額（新台幣，可修正）<input id="${id('rc-total')}" data-xp-receipt="totalInput" value="${e(R.totalInput)}" inputmode="decimal" autocomplete="off" placeholder="${R.parsedTotal === null ? '未辨識到總額' : ''}"></label>
 <fieldset class="xp-wide xp-sub"><legend>分攤的旅伴（每個品項平均分攤；儲存後可在明細逐筆調整）</legend>${participantChecks('rc-part', R.participantIds, 'data-xp-receipt="participantIds"')}<div class="xp-actions">${btn('全選', 'rc-all', { bid: 'rc-all' })}${btn('清除', 'rc-none', { bid: 'rc-none' })}</div></fieldset>
 </div>
@@ -854,7 +866,7 @@ ${transfers.length ? `<ul class="xp-transfers">${transfers.map((t, i) => `<li cl
       const used = new Set(R.rows.map(r => r.lineId));
       let lineId;
       do { lineId = `manual-${++R.manualSeq}`; } while (used.has(lineId));
-      R.rows.push({ lineId, title: '', amount: '', warning: '手動新增', selected: true });
+      R.rows.push({ lineId, title: '', amount: '', category: R.category, warning: '手動新增', selected: true });
       R.rowsEdited = true;
       S.focusId = id(`row-${R.rows.length - 1}-title`);
       render();
@@ -923,6 +935,7 @@ ${transfers.length ? `<ul class="xp-transfers">${transfers.map((t, i) => `<li cl
       if (key === 'selected') { row.selected = t.checked; t.closest('li')?.classList.toggle('is-selected', row.selected); }
       else if (key === 'title') row.title = t.value;
       else if (key === 'amount') { row.amount = t.value; if (t.value.trim() && toCents(t.value) === null) t.setAttribute('aria-invalid', 'true'); else t.removeAttribute('aria-invalid'); }
+      else if (key === 'category' && EXPENSE_CATEGORIES.includes(t.value)) { row.category = t.value; R.category = commonReceiptCategory(R.rows, R.category); }
       R.rowsEdited = true;
       R.error = '';
       refreshReceiptLive();
@@ -934,7 +947,10 @@ ${transfers.length ? `<ul class="xp-transfers">${transfers.map((t, i) => `<li cl
     else if (rk === 'verified') R.verified = t.checked;
     else if (rk === 'discrepancy') R.discrepancyKey = t.checked ? receiptCalc(R).key : '';
     else if (rk === 'text') { R.text = t.value; return; }
-    else R[rk] = t.value;
+    else if (rk === 'category' && EXPENSE_CATEGORIES.includes(t.value)) {
+      R.category = t.value;
+      R.rows.forEach(row => { row.category = t.value; });
+    } else R[rk] = t.value;
     R.error = '';
     refreshReceiptLive();
   }

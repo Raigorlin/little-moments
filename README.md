@@ -51,6 +51,8 @@ The first administrator must be created from the server computer using a loopbac
 
 You can also create the first administrator from a terminal on the server with `bun run create-admin`. When `CAMPING_PUBLISHED=1` is set for a public deployment, web setup at `/setup` is disabled and `bun run create-admin` is the only way to create the first administrator. See [docs/deploy-nginx.md](docs/deploy-nginx.md).
 
+If you forget an account password, run `bun run reset-password <account-name>` in an interactive terminal on the server. It prompts for a new password without echoing it, requires confirmation, and signs that account out of existing sessions. Use the same `CAMPING_DB` setting as the running server (the default is `data/accounts.sqlite`). This local command does not create a web password-reset endpoint.
+
 Once setup is complete:
 
 - Sign in at `/login`.
