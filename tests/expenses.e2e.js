@@ -88,13 +88,39 @@ test('receipt text is re-parsed, every corrected item is explicitly reviewed, th
  await expect(panel(p).locator('[data-xp-receipt-note]')).toContainText('辨識未完成',{timeout:20000});
  await expect(panel(p).locator('[data-xp="rerun-ocr"]')).toHaveCount(0);
  const raw=p.locator('textarea[data-xp-receipt="text"]');await raw.fill('高麗菜 80\n雞蛋 1O0\n牛肉片 210\n總計 390');await action(p,'reparse').click();
- const rows=panel(p).locator('li[data-xp-line]');await expect(rows).toHaveCount(3);await expect(rows.nth(1).locator('input[data-xp-row-key="amount"]')).toHaveValue('');await rows.nth(1).locator('input[data-xp-row-key="amount"]').fill('100');await rows.nth(1).locator('input[data-xp-row-key="selected"]').check();
+ const rows=panel(p).locator('li[data-xp-line]');await expect(rows).toHaveCount(3);await expect(rows.nth(0).locator('[data-xp-row-key="category"]')).toHaveValue('食材／蔬菜');await expect(rows.nth(1).locator('[data-xp-row-key="category"]')).toHaveValue('食材／蛋奶');await expect(rows.nth(2).locator('[data-xp-row-key="category"]')).toHaveValue('食材／肉類');await expect(rows.nth(1).locator('input[data-xp-row-key="amount"]')).toHaveValue('');await rows.nth(1).locator('input[data-xp-row-key="amount"]').fill('100');await rows.nth(1).locator('input[data-xp-row-key="selected"]').check();
  await panel(p).locator('[data-xp-receipt="date"]').fill('2026-11-19');await panel(p).locator('[data-xp-receipt="payerId"]').selectOption('p1');
  await panel(p).locator('[data-xp-receipt="participantIds"][value="p1"]').check();await panel(p).locator('[data-xp-receipt="participantIds"][value="p2"]').check();
  await panel(p).locator('[data-xp-receipt="verified"]').check();await expect(panel(p).locator('.xp-rc-summary')).toContainText('NT$390');
  await action(p,'commit-receipt').click();await expect(panel(p).locator('li[data-xp-expense]')).toHaveCount(3);
- const {ledger:l}=await f.ledger();expect(l.expenses.map(x=>x.amountCents)).toEqual([8000,10000,21000]);expect(l.expenses.every(x=>x.source==='receipt'&&x.receiptId===l.expenses[0].receiptId)).toBe(true);expect(new Set(l.expenses.map(x=>x.receiptLine)).size).toBe(3);await assertTripUnchanged(f);
+ const {ledger:l}=await f.ledger();expect(l.expenses.map(x=>x.amountCents)).toEqual([8000,10000,21000]);expect(l.expenses.map(x=>x.category)).toEqual(['食材／蔬菜','食材／蛋奶','食材／肉類']);expect(l.expenses.every(x=>x.source==='receipt'&&x.receiptId===l.expenses[0].receiptId)).toBe(true);expect(new Set(l.expenses.map(x=>x.receiptLine)).size).toBe(3);await assertTripUnchanged(f);
  await action(p,'open-receipt').click();await p.locator('.xp-receipt input[data-xp-file]').setInputFiles(image);await expect(panel(p).locator('[data-xp-receipt-error]')).toContainText('不能再次');expect((await f.ledger()).ledger.revision).toBe(1);
+});
+
+test('AI receipt categories are recognized per item and saved with each expense',async({page:p})=>{
+ const f=await fixture(p);await ready(p);await action(p,'open-receipt').click();
+ await p.route('**/api/trips/**/receipt-ai',route=>route.fulfill({
+  status:200,contentType:'application/json',
+  body:JSON.stringify(route.request().method()==='GET'
+   ?{enabled:true,provider:'OpenAI',modelId:'gpt-6-luna',maxImageBytes:3.5*1024*1024}
+   :{date:'2026-11-19',totalCents:30000,warnings:[],items:[
+    {lineId:'AI-1',title:'台灣啤酒',amount:'152',category:'食材／飲料',warning:''},
+    {lineId:'AI-2',title:'營位費',amount:'148',category:'住宿',warning:''}
+   ]})
+ }));
+ const png=await p.evaluate(()=>{const c=document.createElement('canvas');c.width=400;c.height=100;const ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,400,100);return c.toDataURL('image/png').split(',')[1];});
+ await p.locator('.xp-receipt input[data-xp-file]').setInputFiles({name:'receipt-categories.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
+ const rows=panel(p).locator('li[data-xp-line]');await expect(rows).toHaveCount(2);
+ await expect(rows.nth(0).locator('[data-xp-row-key="category"]')).toHaveValue('食材／飲料');
+ await expect(rows.nth(1).locator('[data-xp-row-key="category"]')).toHaveValue('住宿');
+ await expect(panel(p).locator('[data-xp-receipt="category"]')).toHaveValue('食材／飲料');
+ await rows.nth(1).locator('[data-xp-row-key="category"]').selectOption('其他');
+ await panel(p).locator('[data-xp-receipt="payerId"]').selectOption('p1');
+ await panel(p).locator('[data-xp-receipt="participantIds"][value="p1"]').check();
+ await panel(p).locator('[data-xp-receipt="verified"]').check();
+ await action(p,'commit-receipt').click();await expect(panel(p).locator('li[data-xp-expense]')).toHaveCount(2);
+ expect((await f.ledger()).ledger.expenses.map(x=>x.category)).toEqual(['食材／飲料','其他']);
+ await assertTripUnchanged(f);
 });
 
 test('desktop, mobile and dark theme expense view is readable without horizontal scroll',async({page:p})=>{

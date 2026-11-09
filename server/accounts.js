@@ -429,6 +429,7 @@ export function createAccountService({ dbPath, now, receiptAi = null, allowLoopb
     userById: db.query('SELECT * FROM users WHERE id = ?'),
     userByName: db.query('SELECT * FROM users WHERE username = ?'),
     insertUser: db.query('INSERT INTO users (id, username, display_name, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)'),
+    updatePassword: db.query('UPDATE users SET password_hash = ? WHERE id = ? AND deleted_at IS NULL'),
     activeAdmins: db.query("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND deleted_at IS NULL"),
     listUsers: db.query('SELECT u.*, (SELECT COUNT(*) FROM trip_members m WHERE m.user_id = u.id AND NOT EXISTS (SELECT 1 FROM trip_deletions d WHERE d.trip_id = m.trip_id)) AS trip_count FROM users u ORDER BY u.created_at, u.username'),
     updateUser: db.query('UPDATE users SET display_name = ?, role = ? WHERE id = ? AND deleted_at IS NULL'),
@@ -523,6 +524,19 @@ export function createAccountService({ dbPath, now, receiptAi = null, allowLoopb
       q.insertUser.run(id, username, displayName, 'admin', hash, clock());
       audit(username, auditAction, `user:${username}`);
       return q.userById.get(id);
+    });
+  }
+
+  async function resetPassword(username, password) {
+    const validUsername = validateUsername(username);
+    const hash = await hashPassword(validatePassword(password));
+    return tx(() => {
+      const user = q.userByName.get(validUsername);
+      if (!user || user.deleted_at !== null) fail(404, '找不到這個帳號。');
+      q.updatePassword.run(hash, user.id);
+      q.deleteUserSessions.run(user.id);
+      audit('local-cli', 'password.reset.cli', `user:${validUsername}`);
+      return validUsername;
     });
   }
 
@@ -1463,6 +1477,7 @@ export function createAccountService({ dbPath, now, receiptAi = null, allowLoopb
     handle,
     needsSetup,
     createFirstAdmin,
+    resetPassword,
     receiptAiPolicy,
     // A future notifier (for example a LINE webhook) attaches here without touching alert detection (Req 23.16).
     registerAlertNotifier(notifier) { alertDispatcher.register(notifier); },
