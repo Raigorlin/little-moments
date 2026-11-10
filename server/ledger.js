@@ -1,11 +1,7 @@
 import { createHash } from 'node:crypto';
 
-export const LEDGER_SCHEMA = `
-CREATE TABLE IF NOT EXISTS trip_ledgers (
-  trip_id TEXT PRIMARY KEY REFERENCES trips(id), revision INTEGER NOT NULL CHECK (revision >= 1),
-  ledger_json TEXT NOT NULL, requests_json TEXT NOT NULL, updated_by TEXT NOT NULL REFERENCES users(id),
-  updated_at INTEGER NOT NULL
-);`;
+// trip_ledgers 的 Schema 由 migrations/0001_initial.sql 建立（原 LEDGER_SCHEMA 已移除，沒有其他模組匯入它）。
+// 讀取的資料列（server/db/queries.js ledgerByTrip）已將 revision／updated_at 轉為 number。
 
 export const LEDGER_LIMITS = { rows: 1000, participants: 100, title: 100, note: 500, maxCents: 100000000, requests: 200 };
 import { EXPENSE_CATEGORIES as CATEGORIES } from '../src/expense-categories.js';

@@ -269,7 +269,8 @@ function selectField({ id, label, options, value, help = '', attrs = '', wide = 
 }
 const formError = () => '<p class="form-error" role="alert" tabindex="-1"></p>';
 
-function renderAuth(kind) {
+function renderAuth(kind, { setupTokenRequired = false } = {}) {
+  const needsToken = kind === 'setup' && setupTokenRequired === true;
   const next = safeNext(new URLSearchParams(location.search).get('next'));
   const nextQuery = next ? `?next=${encodeURIComponent(next)}` : '';
   const copy = {
@@ -285,7 +286,9 @@ function renderAuth(kind) {
     : field({ id: 'auth-username', label: '帳號名稱（網址用）', help: '3–32 個字元，小寫英文字母開頭，可用小寫英文字母、數字或連字號，例如 xiao-an。會出現在你的首頁網址 /帳號名稱/home。', attrs: 'required autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="32"' })
       + field({ id: 'auth-display', label: '顯示名稱', help: '旅伴看到的名字，最多 30 個字，可以使用中文。', attrs: 'required autocomplete="nickname" maxlength="30"' })
       + field({ id: 'auth-password', label: '密碼', type: 'password', help: '12–128 個字元。', attrs: 'required autocomplete="new-password" minlength="12" maxlength="128"' })
-      + field({ id: 'auth-confirm', label: '再次輸入密碼', type: 'password', attrs: 'required autocomplete="new-password" minlength="12" maxlength="128"' });
+      + field({ id: 'auth-confirm', label: '再次輸入密碼', type: 'password', attrs: 'required autocomplete="new-password" minlength="12" maxlength="128"' })
+      // 非 loopback 部署時，首次設定需要伺服器日誌中的一次性設定碼（Req 9.1、9.2）
+      + (needsToken ? field({ id: 'auth-setup-token', label: '設定碼', type: 'password', help: '伺服器啟動時輸出在主機日誌中的一次性設定碼，或由維運者提供。', attrs: 'required autocomplete="one-time-code" autocapitalize="none" spellcheck="false" maxlength="512"' }) : '');
   const links = kind === 'login'
     ? `<p class="help">還沒有帳號？<a class="text-link" href="/register${e(nextQuery)}">註冊旅伴帳號</a></p>`
     : kind === 'register' ? `<p class="help">已經有帳號了？<a class="text-link" href="/login${e(nextQuery)}">前往登入</a></p>` : '';
@@ -309,6 +312,11 @@ function renderAuth(kind) {
       const problem = validateAccount({ username, displayName, password, confirm: form.elements['auth-confirm'].value });
       if (problem) return showFormError(form, problem);
       body = { username, displayName: normalizeParticipantName(displayName), password };
+      if (needsToken) {
+        const setupToken = form.elements['auth-setup-token'].value;
+        if (!setupToken) return showFormError(form, '請輸入設定碼。');
+        body.setupToken = setupToken;
+      }
     }
     showFormError(form, '');
     setBusy(form, true, '處理中…');
@@ -654,7 +662,7 @@ async function main() {
 
   setupChrome();
   if (route.name === 'root') return go(user ? homePath(user) : '/login');
-  if (route.name === 'setup') return session.needsSetup ? renderAuth('setup') : go(user ? homePath(user) : '/login');
+  if (route.name === 'setup') return session.needsSetup ? renderAuth('setup', { setupTokenRequired: session.setupTokenRequired === true }) : go(user ? homePath(user) : '/login');
   if (route.name === 'login' || route.name === 'register') {
     if (user) return go(safeNext(new URLSearchParams(location.search).get('next')) || homePath(user));
     return renderAuth(route.name);

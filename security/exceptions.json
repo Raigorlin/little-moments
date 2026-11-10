@@ -1,0 +1,5 @@
+{
+  "$comment": "Approved_Exception 清單（Requirement 6.5、6.6、6.9、7.8、17.2；design.md Data Models「Finding 與 Approved_Exception」）。每個項目：{ \"id\": 漏洞或規則識別碼, \"location\": 套件名稱或檔案路徑（須與正規化後的 Finding 完全相同）, \"reason\": 理由, \"approver\": 核准人, \"expires\": \"YYYY-MM-DD\"（當日仍有效） }。缺少任一欄位或日期無效的例外不會套用。秘密（kind=secret）與安全測試套件（scanner=security-suite）的結果永遠不可豁免。由 ci/policy/evaluate.mjs 讀取。",
+  "version": 1,
+  "exceptions": []
+}

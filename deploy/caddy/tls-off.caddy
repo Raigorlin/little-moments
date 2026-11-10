@@ -1,0 +1,3 @@
+# LM_TLS_MODE=off：純 HTTP（LM_SITE_ADDRESS 必須以 http:// 開頭）。
+# 僅限 LAN 內使用；App 不會為 http: 請求的 Session Cookie 加上 Secure（Req 10.5）。
+# 不送 HSTS。

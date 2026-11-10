@@ -1,0 +1,58 @@
+# LAN Registry：CNCF Distribution（registry:3）設定
+#
+# 本服務只在 Compose 的 internal 網路 `backend` 上監聽，不發布任何連接埠；
+# TLS、帳號驗證與 HTTP 方法限制由前置的 Caddy（./Caddyfile）負責。
+# 使用的鍵值依 Distribution 設定文件：
+#   https://distribution.github.io/distribution/about/configuration/
+#
+# 設計依據：design.md「重要設計決策摘要 › Registry」、Req 15.9、16.10、17.5。
+version: 0.1
+
+log:
+  level: info
+  formatter: json
+  accesslog:
+    disabled: false
+
+storage:
+  filesystem:
+    # 由 compose.yaml 綁定至主機目錄 ${LM_REGISTRY_DATA_DIR}（0700，屬 10004:10004）。
+    rootdirectory: /var/lib/registry
+  # 關閉以 digest 刪除 manifest 與 blob 的 API（預設即為 false，此處明確寫出）。
+  # Release_Tag 建置依完整 Commit SHA 標籤解析 Image_Digest（Req 1.4、1.10），
+  # 因此 Registry 不允許刪除；Caddy 另對所有 DELETE 回應 405。
+  # 保留策略：Registry 端不做垃圾回收；可回滾映像的 3 個保留數量在 Deploy_Host 端
+  # 執行（Req 20.7），Registry 容量由維運者監控。
+  delete:
+    enabled: false
+  maintenance:
+    # 只清除未完成的上傳暫存目錄，不影響已推送的 manifest 或 blob。
+    uploadpurging:
+      enabled: true
+      age: 168h
+      interval: 24h
+      dryrun: false
+    readonly:
+      enabled: false
+  redirect:
+    # filesystem 驅動不會轉址；明確關閉，所有內容都經由 Registry 與 Caddy 提供。
+    disable: true
+
+http:
+  addr: :5000
+  net: tcp
+  relativeurls: false
+  draintimeout: 30s
+  # 未設定 http.secret：單一實例時 Registry 啟動時自動產生，不需存放秘密。
+  # 未設定 http.tls：TLS 在 Caddy 終止，Registry 只在 internal 網路上可達。
+  # 未設定 http.debug：不啟用除錯與 metrics 監聽埠。
+  headers:
+    X-Content-Type-Options: [nosniff]
+  http2:
+    disabled: false
+
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3

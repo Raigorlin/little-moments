@@ -1,16 +1,15 @@
 import {test,expect} from '@playwright/test';
 import {seed,STORAGE_KEY} from '../src/model.js';
-const base=process.env.CAMPING_BASE_URL,password='Assignment-Test-Pass-2026';
+import {poolMember} from './support/e2e-pool.js';
+const base=process.env.CAMPING_BASE_URL;
 const nav=(page,name)=>page.locator(`.section-tabs [data-tab="${name}"]`).click();
 const readDemo=page=>page.evaluate(key=>JSON.parse(localStorage.getItem(key)),STORAGE_KEY);
 async function api(page,path,method='GET',body){const r=await page.request.fetch(base+path,{method,data:body,headers:body?{Origin:base,'Content-Type':'application/json'}:{}});expect(r.status(),await r.text()).toBeLessThan(300);return r.json();}
 let workerOwner;
 async function fixture(page){
- // One isolated owner per worker, a fresh trip per test. Avoid exhausting real registration limits.
- if(!workerOwner){
-  const username=`assign-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
-  workerOwner=(await api(page,'/api/register','POST',{username,displayName:'分工測試主揪',password})).user;
- }else await api(page,'/api/login','POST',{username:workerOwner.username,password});
+ // One isolated owner per worker (from the harness account pool, see tests/support/e2e-pool.js), a fresh trip per test.
+ if(!workerOwner)workerOwner=await poolMember(page,base);
+ else await api(page,'/api/login','POST',{username:workerOwner.username,password:workerOwner.password});
  const user=workerOwner;
  const {trip}=await api(page,'/api/trips','POST',{legacyState:seed()});
  await page.goto(`/${user.username}/trips/${trip.id}`);await expect(page.locator('.hero h1')).toBeVisible();

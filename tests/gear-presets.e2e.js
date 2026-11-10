@@ -1,5 +1,6 @@
 import {test,expect} from '@playwright/test';
 import {seed,STORAGE_KEY} from '../src/model.js';
+import {poolMember} from './support/e2e-pool.js';
 
 const base=process.env.CAMPING_BASE_URL;
 const nav=p=>p.locator('.section-tabs [data-tab="gear"]').click();
@@ -45,8 +46,8 @@ test('tent can be shared and assigned; scope picker and grouped suggestions fit 
 });
 
 test('account trip suggestions never touch server until saved and preserve existing gear',async({page:p})=>{
- const username=`gear-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
- await api(p,'/api/register','POST',{username,displayName:'裝備測試',password:'Isolated-Gear-Test-2026'});
+ // 全新 member 帳號取自 harness 帳號池（註冊 API 依用戶端 IP 限速，見 tests/support/e2e-pool.js）。
+ const {username}=await poolMember(p,base);
  const {trip}=await api(p,'/api/trips','POST',{legacyState:seed()});await p.goto(`/${username}/trips/${trip.id}`);
  const before=await api(p,`/api/trips/${trip.id}`);await open(p);await form(p).locator('[name=scope]').selectOption('personal');
  await p.locator('#gear-preset').selectOption('充氣床墊');await expect(p.getByRole('textbox',{name:'裝備名稱'})).toHaveValue('充氣床墊');

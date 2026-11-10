@@ -1,0 +1,145 @@
+# 還原演練 Compose 專案（Requirement 14.6、14.7；design.md Components §13；tasks 14.5）。
+#
+# 只由 `lm-deploy <env> drill` 使用，每次演練一個獨立專案 `lm-drill-<env>-<8 hex>`：
+#
+#   docker compose -p lm-drill-prod-1a2b3c4d --project-directory <0700 暫存目錄> -f /srv/lm/prod/drill.yaml up -d ...
+#
+# 隔離（Req 14.6）：
+#   * 只有一個 `drill` 網路，`internal: true`：不連接 lm-<env>_edge／_app／_data，無對外路由，也不發布任何連接埠。
+#     網路名稱為 <專案>_drill，與正式環境的 Compose 專案不重疊。
+#   * Database 只使用匿名卷（不宣告任何具名卷），`docker compose down -v` 時一併刪除；不掛載 lm-<env>_pgdata。
+#   * 秘密只來自暫存目錄內的 drill-*.env（0600，每次演練以 /dev/urandom 產生，演練結束即刪除）；
+#     檔名與正式環境的 app.env／db.env 不同，誤設專案目錄時會因找不到檔案而失敗，不會讀到正式憑證。
+#   * 不使用 <env>.env 或 app.env：Allowed_Hosts、Database 位置等皆為下列固定值。雲端 AI 收據辨識強制停用。
+#
+# 映像：
+#   APP_IMAGE_DRILL  由 lm-deploy 提供，為目前 Production 作用中槽位的 repo@sha256:<digest>（App 與 tool 共用）。
+#   db               PLACEHOLDER 與 compose.yaml 的 db 相同；兩者必須是同一個 postgres 映像與 digest
+#                    （tests/ci-restore-drill.test.js 檢查），主要版本與 pg_dump 一致（17）。
+#
+# 服務：
+#   db    PostgreSQL；以 TCP pg_isready 作為 healthcheck（初始化期間的暫時伺服器不監聽 TCP），通過後才 pg_restore。
+#   app      App_Server（與正式環境相同的映像與強化設定），Allowed_Hosts 只含服務名稱 `app`。
+#   migrate  /app/server/migrate.js（profile ops）：還原後補齊遷移，與正式部署的 Migration_Runner 相同。
+#   tool     /app/tools/drill.js（profile ops）：插入臨時合成管理員、建立 smoke-fixture 行程並執行 Smoke_Test。
+
+name: ${LM_DRILL_PROJECT:?LM_DRILL_PROJECT 必須為 lm-drill-<env>-<8 hex>}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "2"
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging: *logging
+  labels:
+    lm.drill: ${LM_DRILL_ENV:?LM_DRILL_ENV 未設定}
+    lm.drill.project: ${LM_DRILL_PROJECT}
+
+x-app: &app
+  <<: *hardening
+  image: ${APP_IMAGE_DRILL:?APP_IMAGE_DRILL 未設定（repo@sha256:...）}
+  user: "10001:10001"
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=16m
+  networks: [drill]
+  restart: "no"
+  deploy:
+    resources:
+      limits:
+        cpus: "1.0"
+        memory: 512M
+        pids: 256
+
+x-app-env: &app-env
+  NODE_ENV: production
+  CAMPING_DATABASE_HOST: db
+  CAMPING_DATABASE_PORT: "5432"
+  CAMPING_DATABASE_NAME: lm_drill
+  CAMPING_DATABASE_USER: lm_drill
+  CAMPING_DATABASE_SSLMODE: disable
+
+services:
+  db:
+    <<: *hardening
+    # PLACEHOLDER：與 compose.yaml 的 db 映像相同；由維運者以 `docker buildx imagetools inspect postgres:17.6-bookworm`
+    # 填入 digest。未填入時映像解析失敗，演練不會進行（fail closed）。
+    image: postgres:17.6-bookworm@sha256:<digest>
+    user: "999:999"
+    env_file: [drill-db.env]
+    environment:
+      POSTGRES_USER: lm_drill
+      POSTGRES_DB: lm_drill
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      # 匿名卷：只屬於本次演練的容器，`down -v` 時刪除（Req 14.6）。
+      - /var/lib/postgresql/data
+    tmpfs:
+      - /var/run/postgresql:rw,noexec,nosuid,nodev,mode=1777,size=1m
+      - /tmp:rw,noexec,nosuid,nodev,mode=1777,size=64m
+    shm_size: 128m
+    networks: [drill]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -h 127.0.0.1 -p 5432 -U lm_drill -d lm_drill"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+          pids: 256
+
+  app:
+    <<: *app
+    env_file: [drill-app.env]
+    environment:
+      <<: *app-env
+      CAMPING_BIND_ADDRESS: 0.0.0.0
+      PORT: "5173"
+      CAMPING_ALLOWED_HOSTS: app
+      CAMPING_DIST: /app/dist
+      CAMPING_MIGRATIONS_DIR: /app/migrations
+      CAMPING_BEDROCK_REGION: ""
+      CAMPING_BEDROCK_MODEL_ID: ""
+      CAMPING_BEDROCK_API_KEY: ""
+    depends_on:
+      db:
+        condition: service_healthy
+    stop_grace_period: 10s
+
+  # 映像內的 Migration_Runner：補齊備份建立之後才套用的遷移（與正式部署相同的程式；已是最新時不做任何事）。
+  migrate:
+    <<: *app
+    entrypoint: ["bun", "/app/server/migrate.js"]
+    env_file: [drill-app.env]
+    environment:
+      <<: *app-env
+      CAMPING_MIGRATIONS_DIR: /app/migrations
+    profiles: [ops]
+
+  tool:
+    <<: *app
+    entrypoint: ["bun", "/app/tools/drill.js"]
+    env_file: [drill-tool.env]
+    environment:
+      <<: *app-env
+      CAMPING_DRILL_PROJECT: ${LM_DRILL_PROJECT}
+      CAMPING_SMOKE_BASE_URL: http://app:5173
+      CAMPING_SMOKE_FIXTURE: smoke-fixture
+    profiles: [ops]
+
+networks:
+  drill:
+    internal: true
+    labels:
+      lm.drill: ${LM_DRILL_ENV}
+      lm.drill.project: ${LM_DRILL_PROJECT}

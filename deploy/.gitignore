@@ -1,0 +1,5 @@
+# Deploy_Host 上的實際設定與秘密不得提交；只提交 *.example 範本。
+compose/*.env
+!compose/*.env.example
+caddy/upstream.caddy
+caddy/certs/

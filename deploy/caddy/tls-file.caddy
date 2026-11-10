@@ -1,0 +1,6 @@
+# LM_TLS_MODE=file：使用維運者提供的 LAN 憑證（LM_SITE_ADDRESS 必須以 https:// 開頭）。
+# 憑證與私鑰放在 /srv/lm/<env>/caddy/certs/（目錄 0700、私鑰 0600，擁有者 root），不得提交至 repository。
+# PLACEHOLDER：檔名可依實際憑證調整。
+tls /etc/caddy/certs/lan.crt /etc/caddy/certs/lan.key
+
+header Strict-Transport-Security "max-age=31536000"

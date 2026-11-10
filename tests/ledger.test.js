@@ -1,19 +1,18 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { mkdtempSync, mkdirSync, rmSync, existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { createAccountService } from '../server/accounts.js';
 import { summarizeLedger } from '../src/expense-model.js';
+import { useTestDatabase, resetTables, serviceDb } from './support/pg.js';
 
 const BASE = 'http://127.0.0.1:5181';
 const PASS = 'correct horse battery';
 const FP = 'a'.repeat(64);
 let svc, clockMs;
+const db = useTestDatabase();
 
-beforeEach(() => {
+beforeEach(async () => {
   clockMs = Date.parse('2026-11-04T00:00:00Z');
-  svc = createAccountService({ dbPath: ':memory:', now: () => clockMs });
+  await resetTables(db.sql);
+  svc = await createAccountService({ db: serviceDb(db.sql), now: () => clockMs });
 });
 afterEach(() => svc.close());
 
@@ -406,87 +405,83 @@ describe('re-authentication after slow bodies', () => {
   });
 });
 
-describe('database upgrade', () => {
-  const tables = ['users', 'trips', 'trip_members', 'sessions', 'invites', 'trip_deletions', 'audit'];
-  const readAll = db => Object.fromEntries(tables.map(t => [t, db.query(`SELECT * FROM ${t}`).all()]));
-  test('an existing database gains an empty trip_ledgers table without rewriting rows; GET writes nothing; corrupt rows are never overwritten', async () => {
-    const root = join(homedir(), '.aki', 'tmp'); mkdirSync(root, { recursive: true });
-    const dir = mkdtempSync(join(root, 'camping-ledger-upgrade-')), path = join(dir, 'fixture.sqlite');
-    let service, db;
-    try {
-      service = createAccountService({ dbPath: path, now: () => clockMs });
-      const post = (url, body, cookie) => service.handle(request('POST', url, { body, cookie }));
-      const setup = await post('/api/setup', { username: 'upgrade-admin', displayName: 'Upgrade', password: PASS });
-      const cookie = setup.headers.get('set-cookie').split(';')[0];
-      const trip = (await (await post('/api/trips', card, cookie)).json()).trip;
-      service.close(); service = null;
-      db = new Database(path); db.exec('DROP TABLE trip_ledgers'); const before = readAll(db); db.close(); db = null;
+describe('stored ledger rows', () => {
+  // 原 SQLite 版本以 bun:sqlite 直接修改資料列；PostgreSQL 版改以測試 schema 的連線池（db.sql）執行參數化 UPDATE。
+  // Schema 由 Migration_Runner 建立，因此原本「舊資料庫升級後新增 trip_ledgers」改為驗證遷移後的空表與 GET 不寫入。
+  const plain = rows => Array.from(rows, row => ({ ...row }));
+  const readAll = async () => ({
+    users: plain(await db.sql`SELECT * FROM users ORDER BY id`),
+    trips: plain(await db.sql`SELECT * FROM trips ORDER BY id`),
+    trip_members: plain(await db.sql`SELECT * FROM trip_members ORDER BY trip_id, user_id`),
+    sessions: plain(await db.sql`SELECT * FROM sessions ORDER BY token_hash`),
+    invites: plain(await db.sql`SELECT * FROM invites ORDER BY token_hash`),
+    trip_deletions: plain(await db.sql`SELECT * FROM trip_deletions ORDER BY trip_id`),
+    audit: plain(await db.sql`SELECT * FROM audit ORDER BY id`),
+  });
+  const ledgerCount = async () => Number((await db.sql`SELECT COUNT(*) AS n FROM trip_ledgers`)[0].n);
+  const ledgerRow = async () => {
+    const [row] = await db.sql`SELECT revision, ledger_json, requests_json FROM trip_ledgers`;
+    return { revision: Number(row.revision), ledger_json: row.ledger_json, requests_json: row.requests_json };
+  };
+  // 每次修改資料列後重新建立服務，對應原測試「關閉再重開」的流程。
+  const restart = async () => { svc.close(); svc = await createAccountService({ db: serviceDb(db.sql), now: () => clockMs }); return svc; };
 
-      service = createAccountService({ dbPath: path, now: () => clockMs });
-      const got = await send(request('GET', `/api/trips/${trip.id}/ledger`, { cookie }), service);
-      expect(got.status).toBe(200);
-      expect(got.body.ledger.revision).toBe(0);
-      service.close(); service = null;
+  test('migrated schema starts with an empty trip_ledgers table; GET writes nothing; corrupt rows are never overwritten', async () => {
+    const post = (url, body, cookie) => svc.handle(request('POST', url, { body, cookie }));
+    const setup = await post('/api/setup', { username: 'upgrade-admin', displayName: 'Upgrade', password: PASS });
+    const cookie = setup.headers.get('set-cookie').split(';')[0];
+    const trip = (await (await post('/api/trips', card, cookie)).json()).trip;
+    const before = await readAll();
 
-      db = new Database(path, { readonly: true });
-      expect(db.query("SELECT sql FROM sqlite_master WHERE name = 'trip_ledgers'").get().sql).toContain('trip_id TEXT PRIMARY KEY');
-      expect(db.query('SELECT COUNT(*) AS n FROM trip_ledgers').get().n).toBe(0);
-      expect(readAll(db)).toEqual(before);
-      expect(db.query('PRAGMA integrity_check').get().integrity_check).toBe('ok');
-      db.close(); db = null;
+    const columns = await db.sql`SELECT column_name, data_type FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'trip_ledgers' AND column_name = 'trip_id'`;
+    expect(plain(columns)).toEqual([{ column_name: 'trip_id', data_type: 'text' }]);
+    expect(await ledgerCount()).toBe(0);
 
-      db = new Database(path);
-      db.query('INSERT INTO trip_ledgers (trip_id, revision, ledger_json, requests_json, updated_by, updated_at) VALUES (?, 3, ?, ?, ?, 0)').run(trip.id, '{broken', '[]', trip.ownerId);
-      db.close(); db = null;
-      service = createAccountService({ dbPath: path, now: () => clockMs });
-      failed(await send(request('GET', `/api/trips/${trip.id}/ledger`, { cookie }), service), 500, /無法讀取/);
-      const put = await send(request('PUT', `/api/trips/${trip.id}/ledger`, { cookie, body: { expectedUserId: trip.ownerId, revision: 3, requestId: 'corrupt-1', expenses: [], settlements: [] } }), service);
-      failed(put, 500, /無法讀取/);
-      service.close(); service = null;
-      db = new Database(path, { readonly: true });
-      expect(db.query('SELECT ledger_json FROM trip_ledgers').get().ledger_json).toBe('{broken');
-      db.close(); db = null;
+    await restart();
+    const got = await send(request('GET', `/api/trips/${trip.id}/ledger`, { cookie }));
+    expect(got.status).toBe(200);
+    expect(got.body.ledger.revision).toBe(0);
+    expect(await ledgerCount()).toBe(0);
+    expect(await readAll()).toEqual(before);
 
-      const valid = { people: [{ id: 'p-a', name: 'A' }, { id: 'p-b', name: 'B' }], expenses: [expense('e1', { payerId: 'p-a', participantIds: ['p-a', 'p-b'] })], settlements: [settlement('s1', { fromId: 'p-b', toId: 'p-a' })] };
-      const damaged = [
-        d => { d.expenses[0].amountCents = -5; }, d => { d.expenses[0].amountCents = 1.5; }, d => { d.expenses[0].amountCents = '900'; },
-        d => { d.expenses[0].participantIds = []; }, d => { d.expenses[0].participantIds = ['p-a', 'p-a']; }, d => { d.expenses[0].participantIds = 'p-a'; },
-        d => { delete d.expenses[0].payerId; }, d => { d.expenses[0].date = '2026-02-30'; }, d => { d.expenses[0].source = 'receipt'; },
-        d => { d.expenses.push({ ...d.expenses[0] }); }, d => { d.settlements[0].amountCents = 0; }, d => { d.settlements[0].toId = 'p-b'; },
-        d => { d.people[0] = { id: 'p-a' }; }, d => { d.extra = 1; }
-      ];
-      for (const mutate of damaged) {
-        const data = structuredClone(valid); mutate(data);
-        const raw = JSON.stringify(data);
-        db = new Database(path); db.query('UPDATE trip_ledgers SET ledger_json = ?').run(raw); db.close(); db = null;
-        service = createAccountService({ dbPath: path, now: () => clockMs });
-        failed(await send(request('GET', `/api/trips/${trip.id}/ledger`, { cookie }), service), 500, /無法讀取/);
-        failed(await send(request('PUT', `/api/trips/${trip.id}/ledger`, { cookie, body: { expectedUserId: trip.ownerId, revision: 3, requestId: `corrupt-${++seq}`, expenses: [], settlements: [] } }), service), 500, /無法讀取/);
-        service.close(); service = null;
-        db = new Database(path, { readonly: true });
-        expect(db.query('SELECT revision, ledger_json FROM trip_ledgers').get()).toEqual({ revision: 3, ledger_json: raw });
-        db.close(); db = null;
-      }
-      db = new Database(path); db.query('UPDATE trip_ledgers SET ledger_json = ?').run(JSON.stringify(valid)); db.close(); db = null;
-      const goodRequest = { id: 'r-1', userId: trip.ownerId, hash: 'c'.repeat(64) };
-      for (const requests of ['{broken', 'null', '{}', '[null]', '[1]', JSON.stringify([{ id: 'r-1' }]), JSON.stringify([{ ...goodRequest, hash: 'x' }]), JSON.stringify([{ ...goodRequest, id: [] }]), JSON.stringify([{ ...goodRequest, extra: 1 }]), JSON.stringify(Array.from({ length: 201 }, (_, i) => ({ ...goodRequest, id: `r-${i}` })))]) {
-        db = new Database(path); db.query('UPDATE trip_ledgers SET requests_json = ?').run(requests); db.close(); db = null;
-        service = createAccountService({ dbPath: path, now: () => clockMs });
-        failed(await send(request('GET', `/api/trips/${trip.id}/ledger`, { cookie }), service), 500, /無法讀取/);
-        failed(await send(request('PUT', `/api/trips/${trip.id}/ledger`, { cookie, body: { expectedUserId: trip.ownerId, revision: 3, requestId: 'r-1', expenses: [], settlements: [] } }), service), 500, /無法讀取/);
-        service.close(); service = null;
-        db = new Database(path, { readonly: true });
-        expect(db.query('SELECT revision, ledger_json, requests_json FROM trip_ledgers').get()).toEqual({ revision: 3, ledger_json: JSON.stringify(valid), requests_json: requests });
-        db.close(); db = null;
-      }
-      db = new Database(path); db.query('UPDATE trip_ledgers SET requests_json = ?').run(JSON.stringify([goodRequest])); db.close(); db = null;
-      service = createAccountService({ dbPath: path, now: () => clockMs });
-      expect(ok(await send(request('GET', `/api/trips/${trip.id}/ledger`, { cookie }), service)).ledger.expenses).toHaveLength(1);
-      service.close(); service = null;
-    } finally {
-      service?.close(); db?.close();
-      rmSync(dir, { recursive: true, force: true });
+    await db.sql`INSERT INTO trip_ledgers (trip_id, revision, ledger_json, requests_json, updated_by, updated_at)
+      VALUES (${trip.id}, 3, ${'{broken'}, ${'[]'}, ${trip.ownerId}, 0)`;
+    await restart();
+    failed(await send(request('GET', `/api/trips/${trip.id}/ledger`, { cookie })), 500, /無法讀取/);
+    const put = await send(request('PUT', `/api/trips/${trip.id}/ledger`, { cookie, body: { expectedUserId: trip.ownerId, revision: 3, requestId: 'corrupt-1', expenses: [], settlements: [] } }));
+    failed(put, 500, /無法讀取/);
+    expect((await ledgerRow()).ledger_json).toBe('{broken');
+
+    const valid = { people: [{ id: 'p-a', name: 'A' }, { id: 'p-b', name: 'B' }], expenses: [expense('e1', { payerId: 'p-a', participantIds: ['p-a', 'p-b'] })], settlements: [settlement('s1', { fromId: 'p-b', toId: 'p-a' })] };
+    const damaged = [
+      d => { d.expenses[0].amountCents = -5; }, d => { d.expenses[0].amountCents = 1.5; }, d => { d.expenses[0].amountCents = '900'; },
+      d => { d.expenses[0].participantIds = []; }, d => { d.expenses[0].participantIds = ['p-a', 'p-a']; }, d => { d.expenses[0].participantIds = 'p-a'; },
+      d => { delete d.expenses[0].payerId; }, d => { d.expenses[0].date = '2026-02-30'; }, d => { d.expenses[0].source = 'receipt'; },
+      d => { d.expenses.push({ ...d.expenses[0] }); }, d => { d.settlements[0].amountCents = 0; }, d => { d.settlements[0].toId = 'p-b'; },
+      d => { d.people[0] = { id: 'p-a' }; }, d => { d.extra = 1; }
+    ];
+    for (const mutate of damaged) {
+      const data = structuredClone(valid); mutate(data);
+      const raw = JSON.stringify(data);
+      await db.sql`UPDATE trip_ledgers SET ledger_json = ${raw}`;
+      await restart();
+      failed(await send(request('GET', `/api/trips/${trip.id}/ledger`, { cookie })), 500, /無法讀取/);
+      failed(await send(request('PUT', `/api/trips/${trip.id}/ledger`, { cookie, body: { expectedUserId: trip.ownerId, revision: 3, requestId: `corrupt-${++seq}`, expenses: [], settlements: [] } })), 500, /無法讀取/);
+      const row = await ledgerRow();
+      expect({ revision: row.revision, ledger_json: row.ledger_json }).toEqual({ revision: 3, ledger_json: raw });
     }
-    expect(existsSync(dir)).toBe(false);
+    await db.sql`UPDATE trip_ledgers SET ledger_json = ${JSON.stringify(valid)}`;
+    const goodRequest = { id: 'r-1', userId: trip.ownerId, hash: 'c'.repeat(64) };
+    for (const requests of ['{broken', 'null', '{}', '[null]', '[1]', JSON.stringify([{ id: 'r-1' }]), JSON.stringify([{ ...goodRequest, hash: 'x' }]), JSON.stringify([{ ...goodRequest, id: [] }]), JSON.stringify([{ ...goodRequest, extra: 1 }]), JSON.stringify(Array.from({ length: 201 }, (_, i) => ({ ...goodRequest, id: `r-${i}` })))]) {
+      await db.sql`UPDATE trip_ledgers SET requests_json = ${requests}`;
+      await restart();
+      failed(await send(request('GET', `/api/trips/${trip.id}/ledger`, { cookie })), 500, /無法讀取/);
+      failed(await send(request('PUT', `/api/trips/${trip.id}/ledger`, { cookie, body: { expectedUserId: trip.ownerId, revision: 3, requestId: 'r-1', expenses: [], settlements: [] } })), 500, /無法讀取/);
+      expect(await ledgerRow()).toEqual({ revision: 3, ledger_json: JSON.stringify(valid), requests_json: requests });
+    }
+    await db.sql`UPDATE trip_ledgers SET requests_json = ${JSON.stringify([goodRequest])}`;
+    await restart();
+    expect(ok(await send(request('GET', `/api/trips/${trip.id}/ledger`, { cookie }))).ledger.expenses).toHaveLength(1);
   }, 20000);
 });

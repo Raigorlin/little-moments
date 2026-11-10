@@ -1,0 +1,34 @@
+# Little Moments — 開機套用 DOCKER-USER 規則（Requirement 8.6；design.md Components §12）。
+#
+# 由 deploy/host/install.sh 安裝為 /etc/systemd/system/lm-docker-user.service 並 enable。
+# 在 docker.service 之前執行：Docker 啟動並以 restart: unless-stopped 拉起容器時，DOCKER-USER
+# 已含 LAN 網段限制，不會有發布連接埠對網段外開放的空窗。Docker 啟動時保留既有 DOCKER-USER
+# 內容，只把 `-j DOCKER-USER` 放到 FORWARD 第一條。
+#
+# 停止本 unit 不會移除規則（fail closed）。修改 /etc/lm/docker-user.rules 後以
+# `systemctl reload lm-docker-user.service` 重新套用；不需要重新啟動 Docker 或容器。
+# 只依賴 Wants=（非 Requires=），重新套用規則不會連帶重啟 docker.service。
+# 規則檔不存在或套用失敗時本 unit 進入 failed 狀態，deploy/host/verify-host.sh 會回報 FAIL。
+
+[Unit]
+Description=Little Moments: restrict Docker published ports to the LAN CIDR (DOCKER-USER)
+Documentation=file:/etc/lm/docker-user.rules
+DefaultDependencies=no
+After=systemd-modules-load.service local-fs.target
+Wants=network-pre.target
+Before=network-pre.target docker.service shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/usr/sbin/iptables-restore --wait=10 --test --noflush /etc/lm/docker-user.rules
+ExecStart=/usr/sbin/iptables-restore --wait=10 --noflush /etc/lm/docker-user.rules
+ExecReload=/usr/sbin/iptables-restore --wait=10 --test --noflush /etc/lm/docker-user.rules
+ExecReload=/usr/sbin/iptables-restore --wait=10 --noflush /etc/lm/docker-user.rules
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target docker.service

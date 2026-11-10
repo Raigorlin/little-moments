@@ -2,7 +2,7 @@ import {test,expect} from '@playwright/test';
 import {seed,STORAGE_KEY} from '../src/model.js';
 const nav=async(page,tab)=>page.locator(`.section-tabs [data-tab="${tab}"]`).click();
 const saveDialog=async page=>page.locator('#edit-form button[type="submit"]').click();
-test('dashboard renders and all planning tabs work',async({page})=>{
+test('[TC-DEMO-001] dashboard renders and all planning tabs work',async({page})=>{
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto('/demo/');await expect(page.getByRole('heading',{name:'雲海裡，住一晚'})).toBeVisible();
   await expect(page.locator('.activity-card')).toHaveCount(5);

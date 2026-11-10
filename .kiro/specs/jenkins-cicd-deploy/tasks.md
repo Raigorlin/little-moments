@@ -1,0 +1,578 @@
+# Implementation Plan: Jenkins CI/CD 與 LAN Docker 部署
+
+## Overview
+
+依設計文件以 JavaScript（Bun 1.3.x）實作，逐步推進：先完成應用程式的設定、Host 檢查與首次管理員保護（暫時保留 SQLite，使既有測試持續通過），再將資料層遷移至 PostgreSQL 並建立 Migration_Runner 與 SQLite_Importer，接著補齊瀏覽器測試與 QA_Inventory、CI 政策工具、Dockerfile、Jenkinsfile、Deploy_Host 與 Registry 設定檔，最後更新 README。每個群組結束時設置檢查點，確保測試全綠後才進入下一步。
+
+實作注意事項：
+
+- PBT 使用 `fast-check@4.3.0`（精確版本 devDependency），每個 property test 以 `numRuns: 100` 起跳，並以 `// Feature: jenkins-cicd-deploy, Property N: <標題>` 標記。
+- 為了讓測試任務能平行執行，設計文件「Testing Strategy」中合併的測試檔（例如 `tests/ci-policy.test.js`）在本計畫中拆分為每個屬性一個檔案，屬性內容不變。
+- Requirement 16.5 已更新：App_Image 的 `org.opencontainers.image.version` 一律為 `main-<短 SHA>`，Release_Tag 名稱僅透過 Registry 版本標籤與 Build_Record 記錄。Property 39 的測試依更新後的需求實作（不再期待 Tag 建置的 `version` 等於 Tag 名稱）。
+- 無法在 repository 內完整自動化的基礎設施（Jenkins、Deploy_Host、Registry），任務產出設定檔、腳本與驗證腳本，不對真實主機執行部署動作。
+
+## Tasks
+
+- [x] 1. 應用程式設定模組
+  - [x] 1.1 實作 `server/config.js` 並加入 fast-check
+    - 實作 `parseConfig(env)`、`isLoopbackAddress`、`normalizeHost`、`hostAllowed`、`redactedSummary`、`parseCidrList`、`ipInCidrs`（含 IPv4-mapped IPv6 正規化）、`resolveClient(tcpIp, headers, url, trustedProxies)`
+    - 依設計的環境變數表驗證 `CAMPING_BIND_ADDRESS`、`PORT`、`CAMPING_ALLOWED_HOSTS`、`CAMPING_SETUP_TOKEN`、`CAMPING_TRUSTED_PROXIES`、`CAMPING_DATABASE_*`、`CAMPING_DATABASE_SSLMODE`；錯誤只回傳變數名與原因，不含值
+    - 本階段 `CAMPING_DATABASE_*` 驗證以 `requireDatabase` 選項控制，SQLite 期間預設不強制，任務 5.14 切換為必填
+    - 於 `package.json` 新增 `fast-check@4.3.0` devDependency 並更新 `bun.lock`
+    - _Requirements: 8.1, 8.2, 8.4, 8.5, 8.7, 9.3, 9.12, 11.8_
+
+  - [x] 1.2 撰寫 Property 12 的 property test（`tests/config.test.js`）
+    - **Property 12: 應用程式設定解析**
+    - **Validates: Requirements 8.1, 8.2, 8.4, 8.7, 9.3, 11.8**
+
+  - [x] 1.3 撰寫 Property 13 的 property test（`tests/config-secrets.test.js`）
+    - **Property 13: 設定錯誤與啟動訊息不洩漏秘密**
+    - **Validates: Requirements 8.5, 8.7, 9.3**
+
+  - [x] 1.4 撰寫 Property 46 的 property test（`tests/proxy-resolve.test.js`）
+    - **Property 46: 轉送標頭只採信 Trusted_Proxies**
+    - 含 /0、/32、/128 邊界與偽造 `127.0.0.1` 的 `X-Forwarded-For`，並以逐位元前綴比對的參考實作比對 `ipInCidrs`
+    - **Validates: Requirements 9.8, 9.12, 10.1, 10.5**
+
+- [x] 2. HTTP 處理器的 Host 檢查、健康端點與有效請求網址
+  - [x] 2.1 修改 `server/http.js` 與 `server/accounts.js`
+    - `createHttpHandler` 新增 `allowedHosts`、`health`、`trustedProxies` 參數；處理順序為 `GET /healthz` → Host 檢查（不通過回應 421 + `SECURITY_HEADERS`，不呼叫 `accounts.handle`、不讀檔）→ `resolveClient` 重建有效請求網址 → 既有 API／靜態路由
+    - `/healthz` 以 2 秒逾時呼叫 `health()`，成功 `200 {"status":"ok","database":"ok"}`、失敗 `503`
+    - `accounts.handle` 改用重建後的網址進行 Origin 比對與 Cookie `Secure` 判斷，並將 Cookie 組裝抽成可匯出的 `cookieHeader(url, token, maxAge)`
+    - 所有錯誤分支（400、403、404、405、421、500）皆附 `SECURITY_HEADERS`
+    - _Requirements: 8.3, 9.12, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 11.6_
+
+  - [x] 2.2 撰寫 Property 14 的 property test（`tests/http-host.test.js`）
+    - **Property 14: Host 檢查**
+    - **Validates: Requirements 8.3**
+
+  - [x] 2.3 撰寫 Property 15 的 property test（`tests/http-headers.test.js`）
+    - **Property 15: 所有回應皆帶安全標頭**
+    - **Validates: Requirements 10.6**
+
+  - [x] 2.4 撰寫 Property 21 的 property test（`tests/http-origin.test.js`）
+    - **Property 21: Origin 檢查**
+    - **Validates: Requirements 10.1, 10.2**
+
+  - [x] 2.5 撰寫 Property 22 的 property test（`tests/http-cookie.test.js`）
+    - **Property 22: Session Cookie 屬性**
+    - **Validates: Requirements 10.3, 10.4, 10.5**
+
+- [x] 3. 首次管理員設定保護
+  - [x] 3.1 實作 `server/setup-guard.js`
+    - `createSetupGuard({ bindAddress, setupToken, randomBytes, log })` 回傳 `{ required, verify, consume }`
+    - 非 loopback Bind_Address 時啟用；未提供 token 時以 `crypto.randomBytes(32)` 產生 base64url 並只 `log` 一次
+    - `verify` 先對雙方做 SHA-256 再以 `crypto.timingSafeEqual` 比較；`consume` 設定記憶體旗標
+    - _Requirements: 9.2, 9.3, 9.5, 9.7_
+
+  - [x] 3.2 改寫 `POST /api/setup` 流程（`server/accounts.js`）
+    - 依設計步驟：先 `limiter.hit('setup:client:<ip>')`（30 次／15 分，達上限回應 429 且不驗證 token）→ 使用者數 ≥ 1 回應 409 → 授權 `(loopbackHost && loopbackIp && !viaProxy) || guard.verify(token)`，不通過寫入只含原因類別與來源 IP 的稽核事件並回應 403 → 輸入驗證失敗回應 400 且 token 保持有效 → 交易內再次檢查使用者數後建立管理員 → `guard.consume()`
+    - `GET /api/session` 新增 `setupTokenRequired`
+    - _Requirements: 9.1, 9.4, 9.5, 9.6, 9.8, 9.9, 9.10, 9.11, 9.12_
+
+  - [x] 3.3 在 `src/accounts-ui.js` 加入設定碼欄位
+    - `setupTokenRequired` 為 true 時於首次設定表單顯示具 `<label>` 的「設定碼」密碼欄位，並隨請求送出 `setupToken`
+    - _Requirements: 9.1, 9.2_
+
+  - [x] 3.4 將 `scripts/serve.mjs` 接上設定模組（暫時保留 SQLite）
+    - 以 `parseConfig` 取得 bind、port、allowedHosts、trustedProxies；設定錯誤逐項輸出後 `process.exit(2)`
+    - 建立 setup guard 並傳入 `createAccountService`；`Bun.serve` 改用 `config.bindAddress`
+    - 啟動訊息保留 `Camping accounts ready:` 前綴，內容改為 `redactedSummary(config)`
+    - _Requirements: 8.1, 8.4, 8.5, 8.7, 9.2_
+
+  - [x] 3.5 撰寫 Property 16 的 property test（`tests/setup-guard.test.js`）
+    - **Property 16: 首次管理員設定授權**
+    - **Validates: Requirements 9.1, 9.4, 9.12**
+
+  - [x] 3.6 撰寫 Property 17 的 property test（`tests/setup-single-use.test.js`）
+    - **Property 17: Setup_Token 單次有效**
+    - **Validates: Requirements 9.5, 9.6**
+
+  - [x] 3.7 撰寫 Property 18 的 property test（`tests/setup-rate-limit.test.js`）
+    - **Property 18: 首次設定限速**
+    - **Validates: Requirements 9.8, 9.9**
+
+  - [x] 3.8 撰寫 Property 19 的 property test（`tests/setup-validation.test.js`）
+    - **Property 19: 輸入驗證失敗不消耗 Setup_Token**
+    - **Validates: Requirements 9.10**
+
+  - [x] 3.9 撰寫 Property 20 的 property test（`tests/setup-concurrency.test.js`）
+    - **Property 20: 並行首次設定只建立一個管理員**
+    - 任務 5.13 移植至 PostgreSQL 後須再次通過
+    - **Validates: Requirements 9.11**
+
+  - [x] 3.10 撰寫 Property 23 的 property test（`tests/password.test.js`）
+    - **Property 23: 密碼雜湊往返與損壞格式拒絕**
+    - **Validates: Requirements 10.7, 10.8**
+
+- [x] 4. Checkpoint - 確認應用程式基礎變更
+  - 執行 `bun run build` 與 `bun test tests/*.test.js`，確認既有 SQLite 測試與新增測試皆通過。Ensure all tests pass, ask the user if questions arise.
+
+- [x] 5. PostgreSQL 資料層
+  - [x] 5.1 建立測試用 Ephemeral_Database 輔助模組 `tests/support/pg.js`
+    - 讀取 `CAMPING_TEST_DATABASE_*`；每個測試檔建立 `t_<random>` schema、設定 `search_path`、執行遷移，`afterAll` 執行 `DROP SCHEMA … CASCADE`
+    - 未設定環境變數時明確失敗並指出變數名（不靜默略過）
+    - 於 `package.json` 新增 `test:unit` script（`bun test tests/*.test.js`）
+    - _Requirements: 4.1, 4.2, 4.3, 4.8_
+
+  - [x] 5.2 撰寫 `migrations/0001_initial.sql`
+    - 依設計的 PostgreSQL Schema 轉換 `SCHEMA` 與 `LEDGER_SCHEMA`（時間欄位 `BIGINT`、`audit.id` 為 `GENERATED BY DEFAULT AS IDENTITY`、JSON 欄位維持 `TEXT`）
+    - _Requirements: 11.1, 11.7, 13.10_
+
+  - [x] 5.3 實作 Migration_Runner（`server/db/migrations.js`、`scripts/migrate.mjs`）
+    - 純函式 `loadMigrations(files)`（檔名 `^(\d{4,})_[a-z0-9_]+\.sql$`、checksum、`-- lm:destructive` 標記，版本重複或非正整數即 throw）與 `planMigrations(repo, applied)`
+    - `runMigrations(sql, repo)`：`pg_advisory_lock(726362)`、建立 `schema_migrations`、checksum 不符結束碼 3、保留 `unknownApplied`、每個遷移獨立交易、失敗輸出版本號並以結束碼 4 結束、成功輸出 `applied` 清單與數量
+    - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.7_
+
+  - [x] 5.4 撰寫 Property 27 的 property test（`tests/migrations-plan.test.js`）
+    - **Property 27: 遷移規劃**
+    - **Validates: Requirements 12.1, 12.2**
+
+  - [x] 5.5 撰寫 Property 30 的 property test（`tests/migrations-validate.test.js`）
+    - **Property 30: 遷移集合驗證**
+    - **Validates: Requirements 12.7**
+
+  - [x] 5.6 撰寫 Property 28 的 property test（`tests/migrations-idempotent.test.js`）
+    - **Property 28: 遷移冪等**
+    - 需要 Ephemeral_Database，比對 `information_schema` 快照與版本紀錄
+    - **Validates: Requirements 12.3**
+
+  - [x] 5.7 撰寫 Property 29 的 property test（`tests/migrations-failure.test.js`）
+    - **Property 29: 遷移失敗隔離**
+    - **Validates: Requirements 12.4**
+
+  - [x] 5.8 實作破壞性遷移偵測 `scripts/lint-migrations.mjs`
+    - 匯出 `detectDestructive(sql)`：移除註解與字串常值後偵測 `DROP TABLE`、`DROP COLUMN`、`ALTER TABLE … RENAME`、`ALTER TABLE … DROP`
+    - 拒絕 `CREATE INDEX CONCURRENTLY` 等無法在交易內執行的語句；偵測到破壞性語句但缺少 `-- lm:destructive` 時以非零結束碼結束並列出檔名
+    - _Requirements: 12.6, 12.9_
+
+  - [x] 5.9 撰寫 Property 31 的 property test（`tests/lint-migrations.test.js`）
+    - **Property 31: 破壞性遷移偵測**
+    - **Validates: Requirements 12.6, 12.9**
+
+  - [x] 5.10 實作連線與交易模組（`server/db/connect.js`、`server/db/tx.js`）
+    - `createDatabase(config)` 以 `Bun.SQL` 建立連線池，提供 `sql`、`ping(ms)`、`close()`
+    - `retrySchedule()` 純函式（間隔 1–5 秒、累計 ≤ 30 秒）與 `connectWithRetry`；錯誤訊息只含主機與連接埠
+    - `withWriteTx(sql, fn)`：`BEGIN` → `pg_advisory_xact_lock(726361)` → `fn(t)` → `COMMIT`，例外時 `ROLLBACK`
+    - _Requirements: 11.1, 11.3, 11.5, 11.6, 11.9_
+
+  - [x] 5.11 撰寫 Property 26 的 property test（`tests/db-retry.test.js`）
+    - **Property 26: 啟動重連排程**
+    - **Validates: Requirements 11.5**
+
+  - [x] 5.12 將帳號與帳本查詢移植至 Bun.SQL（`server/db/queries.js`、`server/accounts.js`、`server/ledger.js`）
+    - 將現行 `q.*` prepared statement 一對一轉為接收 executor 的 async 函式，全部使用 tagged template 參數化，禁止 `sql.unsafe`
+    - `createAccountService({ db, … })` 改為 async，所有路由與 `tx` 呼叫點改為 `await withWriteTx(...)` 並保留交易內重新檢查
+    - `BIGINT` 與 `COUNT(*)` 讀取以 `Number()` 轉換並檢查 `Number.isSafeInteger`
+    - _Requirements: 11.1, 11.2, 11.3, 11.7_
+
+  - [x] 5.13 將既有測試移植至 PostgreSQL
+    - `tests/*.test.js`（含任務 3.5–3.9 的測試檔）改用 `tests/support/pg.js` 與 `await createAccountService`；直接以 `bun:sqlite` 修改資料列的測試（`ledger.test.js`、`trip-delete-upgrade.test.js` 等）改用 `t\`UPDATE …\``
+    - 「拒絕公開資料庫路徑」的測試改為 `tests/config.test.js` 的對應範例案例
+    - 回應比對排除 ID、時間戳記與 Session Token，作為 Req 11.7 的回歸基準
+    - _Requirements: 4.1, 4.3, 11.7_
+
+  - [x] 5.14 移除執行期 SQLite 並完成 `scripts/serve.mjs` 接線
+    - `parseConfig` 將 `CAMPING_DATABASE_*` 改為必填；啟動時 `connectWithRetry`（30 秒後 `exit(3)`），`health` 傳入 `() => db.ping(2000)`
+    - 移除 `bun:sqlite` 與 `CAMPING_DB` 讀取（仍設定時輸出「已忽略」警告）；SIGINT/SIGTERM 時 `await sql.close({ timeout: 5 })`
+    - _Requirements: 11.1, 11.5, 11.6, 11.8, 11.9_
+
+  - [x] 5.15 撰寫 Property 24 的 property test（`tests/pg-behavior.test.js`）
+    - **Property 24: SQL 特殊字元原文往返**
+    - **Validates: Requirements 11.2**
+
+  - [x] 5.16 撰寫 Property 25 的 property test（`tests/pg-transactions.test.js`）
+    - **Property 25: 寫入交易原子性**
+    - **Validates: Requirements 11.3**
+
+  - [x] 5.17 撰寫資料庫斷線恢復整合測試（`tests/pg-reconnect.test.js`）
+    - 以 `docker pause/unpause` 模擬斷線，驗證 `/healthz` 於 5 秒內回應 503、恢復後 30 秒內不重啟程序即回到 200
+    - _Requirements: 11.6, 11.9_
+
+- [x] 6. Checkpoint - 所有單元測試在 PostgreSQL 上通過
+  - 對 Ephemeral_Database 執行 `bun run build`、`bun test tests/*.test.js` 與 `bun scripts/lint-migrations.mjs`，並確認 runtime 程式碼已無 `bun:sqlite` 匯入。Ensure all tests pass, ask the user if questions arise.
+
+- [x] 7. SQLite_Importer
+  - [x] 7.1 實作匯入規劃純函式 `server/db/import-plan.js`
+    - `tableOrder()`（依外鍵順序列出 `users, sessions, trips, trip_members, invites, trip_deletions, audit, trip_ledgers`）、`convertRow(table, row)`（NULL 保留、整數保留 `number`/`bigint`、超出 int4 範圍的欄位報錯）、`compareCounts(source, target)`
+    - _Requirements: 13.1, 13.6, 13.7_
+
+  - [x] 7.2 實作 `scripts/import-sqlite.mjs`
+    - 依設計步驟：計算來源（含 `-wal`）SHA-256 → 複製到 0700 暫存目錄再讀取 → 驗證 SQLite 標頭與必要資料表（在連線目標前失敗）→ `runMigrations` → 單一交易內檢查目標為空 → 每批 500 列參數化寫入、`password_hash` 原樣 → 提交前比對筆數 → `setval` audit 序列 → 輸出 `table source target`
+    - 結束時刪除暫存目錄並再次比對來源雜湊；錯誤輸出表名與原因，不含資料列內容
+    - _Requirements: 10.9, 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.8, 13.9, 13.10_
+
+  - [x] 7.3 撰寫 Property 33 的 property test（`tests/import-sqlite-roundtrip.test.js`）
+    - **Property 33: SQLite 匯入往返**
+    - 含以原密碼登入成功的檢查；另以 `numRuns: 20`、每表 ≤ 1,000 列補充大型案例
+    - **Validates: Requirements 13.1, 13.7, 13.8, 10.9**
+
+  - [x] 7.4 撰寫 Property 34 的 property test（`tests/import-sqlite-source.test.js`）
+    - **Property 34: 匯入不改變來源**
+    - **Validates: Requirements 13.2**
+
+  - [x] 7.5 撰寫 Property 35 的 property test（`tests/import-sqlite-failure.test.js`）
+    - **Property 35: 匯入失敗時目標不變**
+    - **Validates: Requirements 13.3, 13.4, 13.6**
+
+  - [x] 7.6 撰寫 Property 36 的 property test（`tests/import-sqlite-identity.test.js`）
+    - **Property 36: 匯入後自動遞增主鍵不衝突**
+    - **Validates: Requirements 13.10**
+
+- [x] 8. 瀏覽器測試、QA_Inventory、安全測試套件與 Smoke_Test
+  - [x] 8.1 修改 `scripts/check-accounts.mjs` 與 `playwright.config.js`
+    - `CHROME_PATH`、`CAMPING_BUN` 皆必填，未設定、空字串、不存在或不可執行時拋出指出變數名的錯誤；移除 Windows Chrome 預設路徑
+    - 伺服器改以 `CAMPING_DATABASE_*` 指向 Ephemeral_Database
+    - Playwright 新增 `desktop`（1440×1000）與 `mobile`（390×844，`grep: /@critical/`）projects；reporter 加入 `junit`（`reports/e2e-junit.xml`）與 `json`（`reports/e2e.json`）；`retries: 0`；失敗時保留截圖與 trace，伺服器日誌寫入 `reports/server.log`
+    - _Requirements: 3.8, 3.9, 5.3, 5.6, 5.7, 5.9_
+
+  - [x] 8.2 為既有 E2E 測試加上測試案例 ID
+    - `tests/*.e2e.js` 的測試標題以 `[TC-<area>-<nnn>]` 開頭，重要頁面加 `@critical`；新增 member 與未登入者越權操作的 E2E 案例（含 Setup_Token 欄位顯示）
+    - _Requirements: 5.1, 5.2, 5.7_
+
+  - [x] 8.3 建立 `qa/inventory.json`
+    - 依設計格式列出頁面、控制項、角色（anonymous、member、admin）、情境、預期結果、對應測試案例 ID 與 `critical` 標記，涵蓋三種角色與兩類越權項目
+    - _Requirements: 5.1, 5.2_
+
+  - [x] 8.4 實作 `scripts/qa-inventory.mjs`
+    - 純函式 `validateInventory(doc)` 與 `compareInventory(inventory, results)`（讀取 Playwright JSON 報告，critical 項目需 desktop 與 mobile 皆通過）
+    - CLI 子命令 `validate` 與 `compare`，輸出機器可讀結果並在不合格、失敗或缺少測試時以非零結束碼結束，列出項目 ID 與原因
+    - _Requirements: 5.4, 5.5, 5.8_
+
+  - [x] 8.5 撰寫 Property 6 的 property test（`tests/qa-inventory-validate.test.js`）
+    - **Property 6: QA_Inventory 驗證**
+    - **Validates: Requirements 5.1, 5.2, 5.8**
+
+  - [x] 8.6 撰寫 Property 7 的 property test（`tests/qa-inventory-compare.test.js`）
+    - **Property 7: QA_Inventory 與測試結果比對**
+    - **Validates: Requirements 5.4, 5.5, 5.7**
+
+  - [x] 8.7 建立安全測試套件 `tests/security/*.sec.js`
+    - 以 `CAMPING_SECURITY_BASE_URL` 指定 Test_Environment，涵蓋 SQL injection、XSS（Playwright 確認 `window.__xss` 未被設定）、未登入存取、跨使用者存取、角色越權、Session 失效、Origin 檢查、登入限速、路徑穿越（`/../`、`%2e%2e%2f`、`..%5c`）九類
+    - 另一組案例在 `CAMPING_BIND_ADDRESS=0.0.0.0` 與非 loopback Host 名稱下驗證 Req 10 第 1–9 條；輸出 JUnit 報告
+    - _Requirements: 7.6, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8, 10.9, 10.10_
+
+  - [x] 8.8 實作 Smoke_Test `scripts/smoke.mjs`
+    - 步驟：GET `/login`（200 且含安全標頭）→ GET `/api/session` → POST `/api/login`（合成帳號由環境變數提供）→ GET `/api/trips` 確認 `smoke-fixture` 行程 → POST `/api/logout`
+    - 每步逾時 10 秒，輸出 JSON 僅含步驟名稱、狀態碼與耗時；任一步失敗以非零結束碼結束
+    - _Requirements: 14.6, 18.3, 20.5, 21.10_
+
+- [x] 9. Checkpoint - 測試基礎設施完成
+  - 對 Ephemeral_Database 執行 `bun test tests/*.test.js`、`scripts/check-accounts.mjs`、`bun scripts/qa-inventory.mjs validate` 與 `compare`，確認 QA_Inventory 全部項目為通過。Ensure all tests pass, ask the user if questions arise.
+
+- [x] 10. CI 工具與政策評估器（`ci/`）
+  - [x] 10.1 建立工具鏈定義與驗證腳本
+    - `ci/toolchain.json` 記錄 Bun 1.3.x、Node.js、Chromium 精確版本；`ci/build-image/Dockerfile` 以 digest 固定 Playwright 基底並安裝精確 Bun
+    - `ci/verify-toolchain.mjs` 匯出 `compareToolchain(expected, actual)` 並寫入 Build_Record 用的 JSON；`ci/verify-env.mjs` 匯出 `verifyEnv(env, fs)`，檢查 `CHROME_PATH`、`CAMPING_BUN`
+    - _Requirements: 3.1, 3.2, 3.3, 3.8, 3.9_
+
+  - [x] 10.2 撰寫 Property 3 的 property test（`tests/ci-toolchain.test.js`）
+    - **Property 3: 工具鏈版本不一致的回報完整且精確**
+    - **Validates: Requirements 3.3**
+
+  - [x] 10.3 撰寫 Property 4 的 property test（`tests/ci-verify-env.test.js`）
+    - **Property 4: 測試環境變數驗證只指出有問題的變數**
+    - **Validates: Requirements 3.9**
+
+  - [x] 10.4 實作掃描報告正規化 `ci/policy/normalize.mjs`
+    - 將 osv-scanner、Semgrep、Gitleaks、Trivy、ZAP、安全測試套件輸出轉為 `Finding[]`；CVSS 換算嚴重度、無分數為 `unknown`；Gitleaks 丟棄 `Match`／`Secret`
+    - 解析出的套件數為 0 時回報掃描無法完成
+    - _Requirements: 6.2, 6.3, 6.4, 6.8, 17.1_
+
+  - [x] 10.5 實作政策評估 `ci/policy/evaluate.mjs` 與 `security/exceptions.json`
+    - `evaluateFindings(findings, exceptions, today)` 依 Property 8 的規則判定，回傳 `{pass, unresolved, expired, invalidExceptions}`；CLI 讀取正規化報告並輸出含工具版本、commit SHA、是否套用例外的 JSON 報告
+    - 建立空的 `security/exceptions.json`（含 schema 註記）
+    - _Requirements: 6.5, 6.6, 6.7, 6.9, 7.8, 17.2_
+
+  - [x] 10.6 撰寫 Property 9 的 property test（`tests/ci-normalize.test.js`）
+    - **Property 9: 掃描報告正規化保留必要欄位**
+    - **Validates: Requirements 6.2, 6.3**
+
+  - [x] 10.7 撰寫 Property 8 的 property test（`tests/ci-evaluate.test.js`）
+    - **Property 8: 安全政策評估**
+    - 例外日期以評估日為中心 ±3 天，涵蓋到期日當日仍有效的邊界
+    - **Validates: Requirements 6.4, 6.5, 6.6, 6.9, 7.8, 17.2, 23.2**
+
+  - [x] 10.8 實作 Release_Tag 解析 `ci/policy/tag.mjs`
+    - `parseReleaseTag(name)` 與 `formatReleaseTag(parts)`；CLI 另以 `git merge-base --is-ancestor <sha> origin/main` 檢查 Tag commit 位於 `main` 歷史
+    - _Requirements: 1.5_
+
+  - [x] 10.9 撰寫 Property 2 的 property test（`tests/ci-tag.test.js`）
+    - **Property 2: Release_Tag 格式判定與往返**
+    - **Validates: Requirements 1.5**
+
+  - [x] 10.10 實作秘密遮罩 `ci/scrub.mjs`
+    - 由 0600 秘密檔讀取集合，產生原文、Base64、Base64URL（含／不含補齊）、URL 編碼（大小寫十六進位）形式；`scrub(text, S)` 由長到短取代為 `********`，`findLeaks(text, S)` 回傳（憑證 ID、形式）
+    - CLI 處理暫存目錄中待封存檔案；仍有命中時不輸出該檔案、改寫說明檔並以非零結束碼結束
+    - _Requirements: 6.4, 15.4, 21.9, 22.8_
+
+  - [x] 10.11 撰寫 Property 10 的 property test（`tests/ci-scrub.test.js`）
+    - **Property 10: 秘密遮罩**
+    - **Validates: Requirements 6.4, 15.4, 21.9, 22.8**
+
+  - [x] 10.12 建立 DAST 設定與目標驗證（`ci/dast/`）
+    - `ci/dast/zap-automation.yaml` 範本（`threadPerHost=5`、20 rps、`maxDuration` 60 分鐘，目標以變數注入）
+    - `ci/dast/targets.mjs` 匯出 `validateDastTargets(config, allowlist)`；`ci/dast/isolation-probe.sh` 在 `--internal` 網路內探測 Ephemeral_Database 以外位址，可連線時以非零結束碼結束並列出位址
+    - _Requirements: 7.2, 7.3, 7.4, 7.7, 7.9_
+
+  - [x] 10.13 撰寫 Property 11 的 property test（`tests/ci-dast-targets.test.js`）
+    - **Property 11: DAST 目標限定**
+    - **Validates: Requirements 7.2, 7.3**
+
+  - [x] 10.14 實作階段規劃、Release_Gate 與 Build_Record 模組
+    - `ci/stages.mjs`：`planStages(trigger)`，依 PR、其他分支、`main`、Release_Tag 與手動重跑回傳階段序列
+    - `ci/gates.mjs`：`junitGate(summary)`、`runGates(gates)`（依 QA → 安全 → 映像 → Staging → 正式核准 → 上線後，錯誤、逾時、缺報告視為未通過）
+    - `ci/record.mjs`：Build_Record 讀寫、`finalizeRecord(record)`（缺少欄位填「不適用」或「未執行」）、`lookupByDigest(records, digest)`
+    - _Requirements: 1.2, 1.3, 1.4, 1.8, 2.8, 4.4, 7.1, 21.1, 21.2, 21.7, 21.8, 21.11, 23.1, 23.2, 23.3, 23.5_
+
+  - [x] 10.15 撰寫 Property 1 的 property test（`tests/ci-stages.test.js`）
+    - **Property 1: 階段規劃只對 Trusted_Ref 包含推送與部署**
+    - **Validates: Requirements 1.2, 1.3, 1.4, 1.8, 2.8, 3.6, 7.1**
+
+  - [x] 10.16 撰寫 Property 5 的 property test（`tests/ci-junit-gate.test.js`）
+    - **Property 5: 測試結果關卡**
+    - **Validates: Requirements 4.4, 23.2**
+
+  - [x] 10.17 撰寫 Property 45 的 property test（`tests/ci-gates.test.js`）
+    - **Property 45: Release_Gate 依序評估並在第一個失敗處停止**
+    - **Validates: Requirements 1.3, 1.4, 16.1, 23.1, 23.2, 23.3**
+
+  - [x] 10.18 撰寫 Property 42 的 property test（`tests/ci-record.test.js`）
+    - **Property 42: Build_Record 完整性**
+    - **Validates: Requirements 21.2, 21.11**
+
+  - [x] 10.19 撰寫 Property 43 的 property test（`tests/ci-digest-lookup.test.js`）
+    - **Property 43: Digest 查詢只回傳相符紀錄**
+    - **Validates: Requirements 21.7, 21.8**
+
+  - [x] 10.20 實作保留策略與健康判定（`ci/retention.mjs`、`ci/health.mjs`）
+    - `pruneBackups(existing, newBackup, verified, keep=14)`、`retainImages(history, keep=3)`、`rollbackAllowed(digest, retained)`
+    - `healthyWithin(results, windowSec, n)`、`shouldRollback(observations)`（回傳第一個觸發點）
+    - _Requirements: 14.5, 14.7, 18.3, 18.5, 20.3, 20.4, 20.6, 20.7, 20.10, 20.11_
+
+  - [x] 10.21 撰寫 Property 37 的 property test（`tests/ci-backup-retention.test.js`）
+    - **Property 37: 備份保留修剪**
+    - **Validates: Requirements 14.5, 14.7**
+
+  - [x] 10.22 撰寫 Property 41 的 property test（`tests/ci-image-retention.test.js`）
+    - **Property 41: 可回滾映像保留**
+    - **Validates: Requirements 20.7, 20.10**
+
+  - [x] 10.23 撰寫 Property 40 的 property test（`tests/ci-health.test.js`）
+    - **Property 40: 健康檢查判定器**
+    - **Validates: Requirements 18.3, 18.5, 20.3, 20.4, 20.6, 20.11**
+
+  - [x] 10.24 實作 Release_Tag 的 digest 解析 `ci/resolve-digest.mjs`
+    - 純函式 `resolveReleaseDigest(...)` 與 `versionTagDecision(existing, digest)`；CLI 包裝 `crane digest`、`cosign verify`、`cosign verify-attestation` 與 `crane tag`
+    - 完整 SHA 標籤不存在時回報「查無 Image_Digest」，Registry 錯誤回報「Registry 查詢失敗」；版本標籤指向不同 digest 時拒絕覆寫
+    - _Requirements: 1.4, 1.10, 16.6, 16.10, 17.7, 19.5, 20.1_
+
+  - [x] 10.25 撰寫 Property 47 的 property test（`tests/ci-resolve-digest.test.js`）
+    - **Property 47: Release_Tag 的 digest 解析與版本標籤**
+    - **Validates: Requirements 1.4, 1.10, 16.6, 16.10, 19.5**
+
+  - [x] 10.26 實作映像內容檢查與 OCI 標籤（`ci/image-content-check.mjs`、`ci/image-labels.mjs`）
+    - `imageContentCheck(files, user, devDeps)`：禁止 `.env*`、憑證副檔名、`data/`、`tests/`、`src/`、資料庫檔、devDependency 套件目錄，且 UID ≠ 0；CLI 讀取 `docker export | tar -t` 清單與 `docker image inspect`
+    - `imageLabels({ commit, createdAt })`：`revision` 為 40 字元 SHA、`version` 為 `main-<短 SHA>`、`created` 為 RFC 3339 UTC
+    - _Requirements: 15.5, 16.2, 16.4, 16.5, 16.9_
+
+  - [x] 10.27 撰寫 Property 38 的 property test（`tests/ci-image-content.test.js`）
+    - **Property 38: 映像內容檢查**
+    - **Validates: Requirements 15.5, 16.2, 16.4, 16.9**
+
+  - [x] 10.28 撰寫 Property 39 的 property test（`tests/ci-image-labels.test.js`）
+    - **Property 39: OCI 標籤格式**
+    - 依更新後的 Req 16.5：`version` 一律為 `main-` 加 7 字元短 SHA
+    - **Validates: Requirements 16.5**
+
+  - [x] 10.29 實作核准人檢查 `ci/approval.mjs` 與 `ci/release-approvers.json`
+    - `isReleaseApprover(id, approvers)`、`destructiveApprovalAllowed(approver, approvers, authors)`；對照檔記錄 Jenkins ID 與 git email（僅佔位符）
+    - _Requirements: 12.6, 19.3, 20.10_
+
+  - [x] 10.30 撰寫 Property 32 的 property test（`tests/ci-approval.test.js`）
+    - **Property 32: 破壞性遷移核准人限制**
+    - **Validates: Requirements 12.6**
+
+  - [x] 10.31 實作通知模組（`ci/notify.mjs`、`ci/notify.groovy`）
+    - `notifyWithRetry(channels, status, result)` 純函式：每個管道最多嘗試 4 次，最終失敗只加入摘要，不改建置結果
+    - `notify.groovy` 提供 `notifyAll(status, context)`，註冊 `githubStatus` 與 `jenkinsSummary` 管道，各以 `retry(3)` 包裝；內容不含秘密或使用者資料
+    - _Requirements: 22.1, 22.2, 22.3, 22.4, 22.6, 22.7, 22.8_
+
+  - [x] 10.32 撰寫 Property 44 的 property test（`tests/ci-notify.test.js`）
+    - **Property 44: 通知重試不影響建置結果**
+    - **Validates: Requirements 22.7**
+
+  - [x] 10.33 建立 Semgrep 規則 `ci/semgrep/`
+    - vendored JavaScript 安全規則與自訂規則：禁止 `sql.unsafe`、`eval`、`new Function`、`child_process` 動態參數；嚴重度對照 `ERROR`→High、`WARNING`→Medium、`INFO`→Low
+    - 加入每條自訂規則的正反範例檔供 `semgrep --test` 使用
+    - _Requirements: 6.3, 11.2_
+
+- [x] 11. Checkpoint - CI 工具完成
+  - 執行 `bun test tests/*.test.js`，確認所有 `ci/` 純函式測試通過。Ensure all tests pass, ask the user if questions arise.
+
+- [x] 12. App_Image（Dockerfile）
+  - [x] 12.1 建立 `Dockerfile` 與 `.dockerignore`，並讓伺服器可打包
+    - `scripts/serve.mjs` 的靜態根目錄改由 `CAMPING_DIST` 解析，移除對原始碼目錄結構與 `import.meta.url` 相對路徑的依賴
+    - 依設計撰寫 multi-stage `Dockerfile`（每個 `FROM` 以 `@sha256:` 固定、`bun install --frozen-lockfile`、打包 `serve.js`、`migrate.js`、`import-sqlite.js`、production `node_modules`、檔案 0444 屬 root、`USER 10001:10001`、OCI 標籤由 build args 帶入）
+    - `.dockerignore` 依設計列出全部排除項目
+    - _Requirements: 3.1, 15.5, 16.2, 16.3, 16.4, 16.5, 16.7_
+
+  - [x] 12.2 建立映像建置腳本 `ci/scripts/build-image.sh`
+    - 以 `ci/image-labels.mjs` 產生標籤後 `docker build`，以完整 SHA 標記；執行 `ci/image-content-check.mjs`；任一步失敗以非零結束碼結束並保存建置日誌
+    - _Requirements: 16.1, 16.5, 16.6, 16.8, 16.9_
+
+  - [x] 12.3 撰寫映像層級 Smoke 測試 `ci/scripts/image-smoke.sh`
+    - 以建置的映像連線 Ephemeral_Database，執行 `migrate.js` 後啟動 App 並執行 `scripts/smoke.mjs`，驗證打包後的伺服器行為
+    - _Requirements: 16.2, 18.3_
+
+- [x] 13. Jenkinsfile 與 Jenkins 設定
+  - [x] 13.1 建立 `Jenkinsfile` 骨架與 Init、Toolchain、Install、Build 階段
+    - `options { skipDefaultCheckout(); timestamps(); disableResume() }`；`checkout scm` 後以 `git rev-parse HEAD` 固定 Commit SHA
+    - Init：建立 Build_Record、以 `ci/stages.mjs` 分類觸發、Release_Tag 時先執行 `ci/policy/tag.mjs`、呼叫 `notifyAll('pending')`
+    - Build_Image 以 digest 引用；依序執行 `verify-toolchain`、`bun install --frozen-lockfile`、`bun run build`
+    - 不提供任何可略過 Release_Gate 的參數
+    - _Requirements: 1.1, 1.5, 1.6, 1.7, 3.1, 3.3, 3.4, 3.5, 3.6, 3.7, 21.1, 22.1, 23.4_
+
+  - [x] 13.2 加入單元測試與瀏覽器測試階段
+    - 以建置標籤啟動 Ephemeral_Database（120 秒內就緒否則失敗）、執行 Migration_Runner、`verify-env`、`bun test`（15 分鐘逾時）並產生 JUnit；`qa-inventory validate` → `check-accounts.mjs`（60 分鐘逾時）→ `qa-inventory compare`；失敗時封存截圖、trace 與伺服器日誌；`post` 120 秒內銷毀資料庫
+    - 以 `ci/gates.mjs` 評估「QA」關卡
+    - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 5.3, 5.4, 5.5, 5.6, 5.8, 5.9, 23.1, 23.5_
+
+  - [x] 13.3 加入靜態安全掃描階段
+    - Gitleaks（`dir` + `git --log-opts`，Untrusted_PR 使用 merge base、Trusted_Ref 使用 `GIT_PREVIOUS_SUCCESSFUL_COMMIT`，`--redact`）、osv-scanner v2（`bun.lock`）、Trivy `node_modules` 交叉掃描、Semgrep；每項 15 分鐘逾時，經 `normalize`／`evaluate` 判定「安全」關卡（不含 DAST）
+    - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 6.9_
+
+  - [x] 13.4 加入 Trusted_Ref 專用的遷移相容性與 DAST 階段
+    - 遷移相容性：`git describe` 找最近 Release_Tag，在 Ephemeral_Database 上以舊映像套用遷移、再套用新增遷移、以舊映像執行 Smoke_Test；無 Tag 時記錄略過原因；執行 `lint-migrations`
+    - DAST：建立 `--internal` 網路、`isolation-probe.sh`、`validateDastTargets`、ZAP 與 `tests/security`（含 Req 10.10 非 loopback 設定），60 分鐘逾時；`post` 銷毀環境；評估含 DAST 的「安全」關卡
+    - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9, 7.10, 7.11, 10.10, 10.11, 12.5, 12.8, 12.9_
+
+  - [x] 13.5 加入映像建置、掃描、SBOM、推送與簽章階段（僅 `main`）
+    - `ci/scripts/build-image.sh` → Trivy 映像掃描（15 分鐘逾時）→ Syft SBOM → 評估「映像」關卡推送前部分 → `docker push` → 比對 Registry digest → `cosign sign --tlog-upload=false`；封存 `image-digest.txt` 並 fingerprint
+    - 推送與簽章憑證僅在 `withCredentials` 區塊內提供
+    - _Requirements: 15.1, 15.2, 15.3, 16.1, 16.8, 16.10, 17.1, 17.2, 17.3, 17.4, 17.5, 17.6, 21.2_
+
+  - [x] 13.6 加入 Staging 部署階段（僅 `main`）
+    - `lock('lm-staging')` 排隊；`cosign verify` 後以 SSH 受限金鑰呼叫 `lm-deploy staging deploy <digest>`（備份 → 遷移 → 啟動 → 每 10 秒健康檢查 → Smoke_Test 10 分鐘內）；失敗時 5 分鐘內還原至前一個 staging-verified digest，無可還原者停止新容器
+    - 成功時 `cosign attest` staging-verified predicate 並寫入 Build_Record；評估「Staging」關卡
+    - _Requirements: 14.1, 14.2, 14.3, 14.8, 17.7, 17.8, 18.1, 18.2, 18.3, 18.4, 18.5, 18.7, 18.8, 18.9_
+
+  - [x] 13.7 加入 Release_Tag 的 digest 解析、核准與 Production 部署階段
+    - `ci/resolve-digest.mjs`（查無 digest 時於核准前失敗並寫入摘要）→「映像」與「Staging」關卡 → 24 小時 `input` 迴圈（顯示 Tag、SHA、digest、Staging 結果、報告連結；記錄非核准人嘗試）→ 破壞性遷移另一次核准（`destructiveApprovalAllowed`）→ `git ls-remote` 確認 Tag 未變更
+    - `lock(resource: 'lm-prod', skipIfLocked: true)`；`lm-deploy prod` 執行備份、遷移、啟動、健康檢查、切換；10 分鐘觀察期（每 10 秒健康檢查、切換後與結束前各一次 Smoke_Test），以 `shouldRollback` 判定回滾或 finalize；評估「上線後」關卡
+    - _Requirements: 1.4, 1.10, 12.6, 14.1, 14.2, 14.3, 19.1, 19.2, 19.3, 19.4, 19.5, 19.6, 19.7, 19.8, 20.1, 20.2, 20.3, 20.4, 20.5, 20.6, 20.7, 20.9, 20.11, 20.12, 22.5_
+
+  - [x] 13.8 加入 `post { always }` 收尾處理
+    - 經 `ci/scrub.mjs` 遮罩並掃描所有待封存檔案後 `archiveArtifacts`；以 `finalizeRecord` 寫入結果、結束時間與第一個失敗階段；清除該建置的容器、網路與卷；`cleanWs()`；呼叫 `notifyAll` 最終狀態
+    - 在 Production 執行中或屬保留集合的建置以 Jenkins API 設定 `keepLog`
+    - _Requirements: 2.6, 15.4, 21.2, 21.6, 21.9, 21.11, 22.2, 22.3, 22.4, 22.7, 22.8, 23.1_
+
+  - [x] 13.9 建立 Jenkins 設定即程式碼 `ci/jenkins/`
+    - `casc.yaml`：GitHub webhook secret、Matrix Authorization（非管理員無 `Run/Delete`、`Run/Update`、`Job/Configure`、`Run/Replay`）、Release_Approver 群組、Lockable Resources `lm-staging`／`lm-prod`
+    - `jobs.groovy`（Job DSL）：`ci/little-moments`（PR 與非 `main` 分支、PR 信任策略「Admin or Write」、14 天保留）、`release/little-moments`（`main` 90 天、Tag 365 天、Tag build strategy）、`release/rollback`、`release/restore-drill`（cron `H 3 1,15 * *`）、`release/digest-lookup`、`infra/build-image`；憑證只定義於 `release/` 資料夾範圍
+    - `ci/jenkins/README.md` 列出必要 plugins、憑證 ID 與 Untrusted Agent 網路隔離、webhook 拒絕日誌的驗證步驟
+    - _Requirements: 1.1, 1.9, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 15.1, 15.7, 15.8, 19.3, 21.3, 21.4, 21.5, 21.12_
+
+  - [x] 13.10 建立 Build_Image 建置管線 `ci/jenkins/pipelines/build-image.Jenkinsfile`
+    - 建置 `ci/build-image/Dockerfile`、推送後輸出 digest，並驗證實際版本與 `ci/toolchain.json` 相符
+    - _Requirements: 3.1, 3.2_
+
+- [x] 14. Deploy_Host 設定與部署腳本（`deploy/`）
+  - [x] 14.1 建立 Compose 與 Caddy 設定
+    - `deploy/compose/compose.yaml`（`name: lm-${ENV}`、proxy、app-blue、app-green、migrate、db，`app` 網路為 `internal` 且固定子網、db 不發布連接埠、`pgdata` 具名卷、`read_only`、`cap_drop`、`CAMPING_BEDROCK_*` 預設空字串）
+    - `deploy/compose/staging.env.example`、`prod.env.example`（僅佔位符）；`deploy/caddy/Caddyfile`（`grace_period 30s`、外部 `/healthz` 回應 404）與 `upstream.caddy.tmpl`
+    - _Requirements: 11.4, 11.10, 15.6, 18.6, 20.2, 20.3_
+
+  - [x] 14.2 實作 `deploy/bin/lm-deploy`
+    - bash 腳本，子命令 `backup|migrate|start|health|switch|rollback|finalize|status|prune`，以 `flock -n /run/lm-<env>.lock` 防止並行
+    - `backup`：30 分鐘逾時 `pg_dump -Fc` → 驗證大小、`pg_restore --list`、`sha256sum` → rename → 輸出 JSON → Production 依 `pruneBackups` 規則保留 14 份
+    - `start` 以 `repo@digest` 啟動另一個槽位；`health` 5 秒逾時；`switch` 原子寫入 upstream 後 `caddy reload`；`finalize` 停止舊槽位並保留 3 個映像；`rollback` 不執行遷移
+    - `app.env` 由 stdin 寫入、權限 0600
+    - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 14.8, 18.2, 18.7, 20.2, 20.3, 20.4, 20.6, 20.7, 20.9, 20.12_
+
+  - [x] 14.3 建立主機安全設定 `deploy/host/`
+    - `docker-user.rules` 與 `lm-docker-user.service`（開機套用 `DOCKER-USER` 規則，僅允許 `LAN_CIDR`）、`sudoers.d/lm-deploy`（每環境只允許對應固定腳本）、`authorized_keys.tmpl`（forced command、`from=`、`no-pty`）、`install.sh`（建立 0700 `lm-ops` 備份目錄）
+    - `verify-host.sh`：檢查規則已載入、備份目錄權限、db 無發布連接埠、部署帳號不在 `docker` 群組
+    - _Requirements: 8.6, 11.10, 14.4, 15.9_
+
+  - [x] 14.4 撰寫 `lm-deploy` 的 bats 測試（`deploy/tests/lm-deploy.bats`）
+    - 以假的 `docker`／`pg_dump` 驗證備份失敗不遷移、14 份修剪、鎖衝突、健康失敗時不切換、回滾不執行遷移
+    - _Requirements: 14.3, 14.5, 18.7, 20.4, 20.9, 20.12_
+
+  - [x] 14.5 實作還原演練
+    - `deploy/compose/drill.yaml`（獨立 internal 網路與匿名卷）與 `lm-deploy drill` 子命令：還原最新已驗證備份、插入臨時合成管理員、以目前 prod digest 啟動並執行 Smoke_Test、`down -v`
+    - `ci/jenkins/pipelines/restore-drill.Jenkinsfile` 記錄備份 ID、還原秒數與結果；失敗時保留所有備份
+    - _Requirements: 14.6, 14.7, 21.10_
+
+  - [x] 14.6 實作手動回滾管線 `ci/jenkins/pipelines/rollback.Jenkinsfile`
+    - 參數 `digest`（選項來自 `lm-deploy status prod`）與 `reason`；以 `isReleaseApprover` 與 `rollbackAllowed` 檢查；`lock('lm-prod', skipIfLocked)`；依 start／health／switch 流程切換且不執行遷移；回滾後未健康時標記需人工介入；記錄觸發方式、帳號、來源與目標 digest、原因與完成時間
+    - _Requirements: 20.8, 20.9, 20.10, 20.11, 20.12_
+
+  - [x] 14.7 實作 digest 查詢管線
+    - `ci/digest-lookup.mjs` 以 MD5(`<digest>\n`) 查詢 Jenkins fingerprint API 並套用 `lookupByDigest`；`ci/jenkins/pipelines/digest-lookup.Jenkinsfile` 顯示 Commit SHA、Release_Tag、核准人、核准時間與部署時間，查無時明確回報
+    - _Requirements: 21.7, 21.8_
+
+- [x] 15. LAN Registry 設定（`deploy/registry/`）
+  - [x] 15.1 建立 Registry 設定檔
+    - `compose.yaml`（Distribution `registry:3` 與 Caddy，皆 digest 固定）、`config.yml`（關閉刪除）、`Caddyfile`（內部 CA TLS、每帳號 basic auth、拉取帳號僅允許 GET/HEAD、推送帳號僅供 `release/`）、`htpasswd.example`（佔位符）
+    - _Requirements: 15.9, 16.10, 17.5_
+
+  - [x] 15.2 建立 Registry 驗證腳本 `deploy/registry/verify-registry.sh`
+    - 驗證拉取帳號無法 PUT/DELETE、未認證請求被拒、刪除 API 已關閉
+    - _Requirements: 15.9_
+
+- [x] 16. 設定檢查與文件
+  - [x] 16.1 撰寫設定 lint 測試 `tests/ci-lint.test.js`
+    - `Dockerfile` 與 `ci/build-image/Dockerfile` 每個 `FROM` 含 `@sha256:`、`Jenkinsfile` 的 Build_Image 引用含 digest、`.dockerignore` 含所有必要項目、`Jenkinsfile` 無略過關卡的參數、`compose.yaml` 的 db 無 `ports`、`CAMPING_BEDROCK_*` 預設空字串
+    - _Requirements: 3.1, 11.10, 15.6, 16.3, 16.7, 23.4_
+
+  - [x] 16.2 更新 `README.md`
+    - 環境變數表（名稱、用途、必填、預設值、未設定行為，含非 loopback 未設 Allowed_Hosts 拒絕啟動、Setup_Token 自動產生只輸出至本機日誌）
+    - LAN 僅限網段存取與不支援公開曝露；SQLite_Importer 編號步驟與失敗處理；手動回滾與備份還原編號步驟；本機 Ephemeral_Database 建立、測試與銷毀指令；憑證僅由 Credential_Store 提供；所有範例值使用佔位符
+    - _Requirements: 24.1, 24.2, 24.3, 24.4, 24.5, 24.6, 24.7, 24.8, 24.9, 24.10_
+
+  - [x] 16.3 撰寫 README 檢查測試（`tests/readme.test.js`）
+    - 預設值與 `parseConfig` 一致、不含符合秘密模式的字串
+    - _Requirements: 24.2, 24.9_
+
+- [x] 17. Final checkpoint - 確認所有測試通過
+  - 執行 `bun run build`、`bun test tests/*.test.js`、`scripts/check-accounts.mjs`、`bun scripts/lint-migrations.mjs` 與 `semgrep --test ci/semgrep`，確認全部通過。Ensure all tests pass, ask the user if questions arise.
+
+## Notes
+
+- 標記 `*` 的子任務為選用（property test、整合測試與額外檢查），可為加快 MVP 而略過。
+- 每個任務都標註對應的需求編號以便追蹤；Property 編號對應設計文件「Correctness Properties」。
+- 任務 1–3 期間仍使用 SQLite，使既有測試保持綠燈；任務 5 完成後 runtime 不再載入 `bun:sqlite`（SQLite_Importer 為獨立維運工具）。
+- 需要 PostgreSQL 的測試透過 `CAMPING_TEST_DATABASE_*` 連線至 Ephemeral_Database，本機建立方式見 README。
+- Jenkins、Deploy_Host 與 Registry 任務只產出設定檔、腳本與驗證腳本，實際套用到主機由維運者執行。
+
+## Task Dependency Graph
+
+```json
+{
+  "waves": [
+    { "id": 0, "tasks": ["1.1", "3.1", "5.2", "10.1", "10.8", "10.10"] },
+    { "id": 1, "tasks": ["1.2", "1.3", "1.4", "2.1", "3.10", "5.3", "10.2", "10.3", "10.4", "10.9", "10.11"] },
+    { "id": 2, "tasks": ["2.2", "2.3", "2.4", "2.5", "3.2", "3.3", "5.4", "5.5", "5.8", "10.5", "10.6"] },
+    { "id": 3, "tasks": ["3.4", "3.5", "3.6", "3.7", "3.8", "3.9", "5.9", "10.7", "10.12"] },
+    { "id": 4, "tasks": ["5.1", "5.10", "10.13", "10.14"] },
+    { "id": 5, "tasks": ["5.6", "5.7", "5.11", "5.12", "7.1", "10.15", "10.16", "10.17", "10.18", "10.19", "10.20"] },
+    { "id": 6, "tasks": ["5.13", "5.14", "10.21", "10.22", "10.23", "10.24", "10.26", "10.29", "10.31", "10.33"] },
+    { "id": 7, "tasks": ["5.15", "5.16", "5.17", "7.2", "10.25", "10.27", "10.28", "10.30", "10.32"] },
+    { "id": 8, "tasks": ["7.3", "7.4", "7.5", "7.6", "8.1", "8.3", "8.4"] },
+    { "id": 9, "tasks": ["8.2", "8.5", "8.6", "8.7", "8.8", "12.1"] },
+    { "id": 10, "tasks": ["12.2", "14.1", "15.1"] },
+    { "id": 11, "tasks": ["12.3", "13.1", "14.2", "15.2"] },
+    { "id": 12, "tasks": ["13.2", "14.3", "14.6", "14.7"] },
+    { "id": 13, "tasks": ["13.3", "14.5"] },
+    { "id": 14, "tasks": ["13.4", "14.4"] },
+    { "id": 15, "tasks": ["13.5"] },
+    { "id": 16, "tasks": ["13.6"] },
+    { "id": 17, "tasks": ["13.7"] },
+    { "id": 18, "tasks": ["13.8"] },
+    { "id": 19, "tasks": ["13.9", "13.10"] },
+    { "id": 20, "tasks": ["16.1", "16.2"] },
+    { "id": 21, "tasks": ["16.3"] }
+  ]
+}
+```

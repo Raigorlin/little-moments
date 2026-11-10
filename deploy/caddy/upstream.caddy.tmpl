@@ -1,0 +1,21 @@
+# 由 lm-deploy switch 產生 upstream.caddy：將 __COLOR__ 替換為 blue 或 green（只接受這兩個值），
+# 寫入同目錄暫存檔後 rename 為 upstream.caddy，再執行 caddy reload。請勿手動編輯 upstream.caddy。
+reverse_proxy app-__COLOR__:5173 {
+	# 不採信用戶端送來的轉送標頭：以 TCP 來源與實際協定覆寫。App 只採信 proxy 固定 IP 的這兩個標頭（Req 9.12）。
+	header_up X-Forwarded-For {remote_host}
+	header_up X-Forwarded-Proto {scheme}
+	# Host 標頭原樣轉送（Caddy 預設），由 App 依 Allowed_Hosts 檢查（Req 8.3）。
+
+	# 主動健康檢查：Host 必須在 Allowed_Hosts 內，否則 App 回應 421。
+	health_uri /healthz
+	health_interval 10s
+	health_timeout 5s
+	health_status 200
+	health_headers {
+		Host {$LM_HEALTH_HOST}
+	}
+
+	transport http {
+		dial_timeout 5s
+	}
+}

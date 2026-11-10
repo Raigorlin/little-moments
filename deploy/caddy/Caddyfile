@@ -1,0 +1,54 @@
+# LM reverse proxy（Requirement 20.2、20.3；design.md Components §12）。
+# 安裝於 /srv/lm/<env>/caddy/Caddyfile，唯讀掛載至 proxy 容器 /etc/caddy。
+#
+# 環境變數（由 compose.yaml 提供；{$VAR} 在解析前替換）：
+#   LM_SITE_ADDRESS  站台位址，預設 http://:8080；HTTPS 時例如 https://<lan-hostname>:8443
+#   LM_TLS_MODE      off｜internal｜file，選擇 import 的 tls-<mode>.caddy
+#   LM_HEALTH_HOST   主動健康檢查送出的 Host 標頭（必須在 App 的 Allowed_Hosts 內）
+#
+# Blue/green：實際上游只寫在 upstream.caddy（由 lm-deploy 以 upstream.caddy.tmpl 產生並以 rename 原子替換），
+# 之後執行 `caddy reload --config /etc/caddy/Caddyfile`。upstream.caddy 一次只指向一個顏色，
+# 使用者請求只會導向目前作用中的槽位；新槽位在切換前不接收任何使用者請求（Req 20.2）。
+
+{
+	# 管理 API 只在容器自身的 loopback 上，供 `caddy reload` 使用；不對任何網路公開。
+	admin localhost:2019
+	# reload 時舊設定的既有連線最多 30 秒內完成（Req 20.3）。
+	grace_period 30s
+	# 不使用 ACME、不自動產生 http→https 轉址；TLS 由 tls-<mode>.caddy 明確決定。
+	auto_https disable_redirects
+	servers {
+		timeouts {
+			read_header 10s
+			read_body 60s
+			idle 2m
+		}
+	}
+	log {
+		output stdout
+		format json
+	}
+}
+
+{$LM_SITE_ADDRESS:http://:8080} {
+	import /etc/caddy/tls-{$LM_TLS_MODE:off}.caddy
+
+	# 與 App 的 maxRequestBodySize（4 MiB）一致。
+	request_body {
+		max_size 4MB
+	}
+
+	header -Server
+
+	# /healthz 只供 Deploy_Host 從容器網路內部呼叫；對外一律 404（design Components §2）。
+	@healthz path /healthz /healthz/*
+	handle @healthz {
+		respond 404
+	}
+
+	handle {
+		import /etc/caddy/upstream.caddy
+	}
+
+	log
+}

@@ -1,12 +1,14 @@
 node_modules/
 dist/
 dist-*/
+build-server/
 data/
 backups/
 uploads/
 previews/
 test-results/
 playwright-report/
+reports/
 coverage/
 .env
 .env.*

@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { validActivityVehicles, activityForVehicle, activityForPerson, activityParticipantLabel } from '../src/vehicle-itinerary.js';
 import { createAccountService } from '../server/accounts.js';
 import { seed, isValidState } from '../src/model.js';
+import { useTestDatabase, resetTables, serviceDb } from './support/pg.js';
 
 const activity = (state, id) => state.activities.find(a => a.id === id);
 const withCars = (state, id, vehicleIds) => Object.assign(activity(state, id), { people: [], vehicleIds });
@@ -177,9 +178,11 @@ describe('account API round-trip', () => {
   const BASE = 'http://127.0.0.1:5181';
   const PASS = 'correct horse battery';
   let svc, clockMs;
-  beforeEach(() => {
+  const db = useTestDatabase();
+  beforeEach(async () => {
     clockMs = Date.parse('2026-11-04T00:00:00Z');
-    svc = createAccountService({ dbPath: ':memory:', now: () => clockMs });
+    await resetTables(db.sql);
+    svc = await createAccountService({ db: serviceDb(db.sql), now: () => clockMs });
   });
   afterEach(() => svc.close());
 

@@ -1,0 +1,92 @@
+# LAN Registry：CNCF Distribution + 前置 Caddy（TLS、basic auth、方法 ACL）
+#
+# 只在 LAN 上提供服務：proxy 只綁定 Registry 主機的 LAN 介面位址；registry
+# 服務只接在 internal 網路，不發布任何連接埠。主機端另以 DOCKER-USER 規則
+# 只允許 LAN_CIDR（與 Deploy_Host 相同做法，見 design.md Components 第 12 節）。
+# 不支援公開網際網路曝露。
+#
+# 映像以 digest 固定。`sha256:<digest>` 為佔位符：在離線環境無法確認正確 digest，
+# 安裝前須由維運者以 `crane digest <image>:<tag>` 取得並替換。佔位符不是合法的
+# 映像參考，`docker compose up` 會直接失敗（fail closed），不會退回可變 tag。
+#
+# 安裝時提供的檔案（皆不在 repository 中，見 .gitignore）：
+#   secrets/htpasswd           0440 root:10003   帳號與 bcrypt 雜湊（格式見 htpasswd.example）
+#   secrets/tls/registry.crt   0444 root:root    內部 CA 簽發的伺服器憑證（含中繼憑證鏈）
+#   secrets/tls/registry.key   0440 root:10003   伺服器私鑰
+#   ${LM_REGISTRY_DATA_DIR}    0700 10004:10004  映像資料目錄（不屬於 Docker 卷，便於備份）
+# 用戶端（Deploy_Host、Build_Agent）須將內部 CA 放入
+# /etc/docker/certs.d/<LM_REGISTRY_HOST>/ca.crt。
+#
+# 必要環境變數（未設定時 compose 直接報錯）：
+#   LM_REGISTRY_LAN_IP     Registry 主機的 LAN 介面 IP（例如 <10.0.0.10>）
+#   LM_REGISTRY_HOST       憑證上的主機名稱（例如 <registry.lan.example>）
+#   LM_REGISTRY_DATA_DIR   主機上的資料目錄絕對路徑（例如 </srv/lm-registry/data>）
+name: lm-registry
+
+services:
+  proxy:
+    image: caddy:2.10.2@sha256:<digest>
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    user: "10003:10003"
+    environment:
+      LM_REGISTRY_HOST: ${LM_REGISTRY_HOST:?LM_REGISTRY_HOST is required}
+    ports:
+      - "${LM_REGISTRY_LAN_IP:?LM_REGISTRY_LAN_IP is required}:443:8443"
+    volumes:
+      - type: bind
+        source: ./Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets/htpasswd
+        target: /etc/caddy/htpasswd
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets/tls
+        target: /etc/caddy/tls
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /data:uid=10003,gid=10003,mode=0700
+      - /config:uid=10003,gid=10003,mode=0700
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [edge, backend]
+    depends_on: [registry]
+    restart: unless-stopped
+
+  registry:
+    image: registry:3.0.0@sha256:<digest>
+    command: ["serve", "/etc/distribution/config.yml"]
+    user: "10004:10004"
+    volumes:
+      - type: bind
+        source: ./config.yml
+        target: /etc/distribution/config.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LM_REGISTRY_DATA_DIR:?LM_REGISTRY_DATA_DIR is required}
+        target: /var/lib/registry
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:uid=10004,gid=10004,mode=0700
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [backend]
+    # 不宣告 ports：只有同一 backend 網路上的 proxy 可連線。
+    restart: unless-stopped
+
+networks:
+  edge: {}
+  backend:
+    internal: true

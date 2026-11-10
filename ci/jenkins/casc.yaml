@@ -1,0 +1,154 @@
+# 日子拾光 · LITTLE MOMENTS — Jenkins Configuration as Code（Requirement 1.9、2.1–2.3、2.6、15.1、18.9、19.3、20.12、21.12；
+# Design「信任邊界」「Jenkins Job 配置」）。
+#
+# 載入方式：controller 設定 CASC_JENKINS_CONFIG 指向本檔（或其所在目錄），LM_CASC_DIR 指向同一目錄（jobs.groovy 所在處）。
+#
+# 秘密：本檔不含任何秘密值。`${NAME}` 由 Configuration as Code 的秘密來源於載入時解析
+# （環境變數，或 SECRETS 目錄（預設 /run/secrets）下的同名檔案，例如 Docker／Kubernetes secret 掛載）。
+# 未提供時 Configuration as Code 載入失敗，不以空值建立憑證。請勿提交真實值。
+#
+# PLACEHOLDER：jenkins.lan.example、agent 名稱與數量、管理員群組名稱須由維運者依實際環境取代。
+# security realm（LDAP／OIDC 等）依組織環境另行設定；它必須提供下列群組：
+#   lm-jenkins-admins     Jenkins 管理員
+#   lm-developers         開發者（ci/ 的 Job/Build、Job/Cancel）
+#   lm-release-approvers  Release_Approver（成員須與 ci/release-approvers.json 的 jenkinsId 一致，見 README）
+#   lm-auditors           稽核者（release/digest-lookup 的 Job/Build）
+#
+# 注意：本檔無法在本機套用；各 plugin 的 Configuration as Code 屬性名稱未經 Jenkins 實際驗證。
+# 部署前請以「Manage Jenkins → Configuration as Code → Reference」對照安裝的 plugin 版本。
+
+jenkins:
+  systemMessage: "日子拾光 · LITTLE MOMENTS CI/CD（設定由 ci/jenkins/casc.yaml 管理，請勿在 UI 修改）"
+  # controller 不執行任何建置；所有建置只在帶標籤的 agent 執行。
+  numExecutors: 0
+  mode: EXCLUSIVE
+  # webhook 事件於數秒內排入佇列（Req 1.9 的 60 秒上限）。
+  quietPeriod: 5
+  scmCheckoutRetryCount: 2
+  disableRememberMe: true
+  # 建置摘要使用 <br>；OWASP Markup Formatter 只允許安全的 HTML 子集。
+  markupFormatter:
+    rawHtml:
+      disableSyntaxHighlighting: true
+  crumbIssuer:
+    standard:
+      excludeClientIPFromCrumb: false
+  remotingSecurity:
+    enabled: true
+
+  # Matrix Authorization（Req 21.12）：非管理員沒有 Run/Delete、Run/Update、Job/Configure、Run/Replay，
+  # 也沒有 Credentials/*、Lockable Resources/* 與 Overall/Administer。
+  # 資料夾與 Job 層級的額外授權（只增加 Job/Build、Job/Cancel，以及 lm-retention-bot 在 release/little-moments 的
+  # Run/Update 例外）定義於 ci/jenkins/jobs.groovy。
+  authorizationStrategy:
+    projectMatrix:
+      entries:
+        - group:
+            name: "lm-jenkins-admins"
+            permissions:
+              - "Overall/Administer"
+        - group:
+            name: "authenticated"
+            permissions:
+              - "Overall/Read"
+              - "Job/Read"
+              - "View/Read"
+        # Release_Approver 群組：全域只有讀取；回滾與還原演練的 Job/Build 只在 release/ 下各 Job 授與。
+        # 正式核准 input 以 ci/release-approvers.json 的 jenkinsId 限定 submitter，並由 ci/approval.mjs 再驗證（Req 19.3）。
+        - group:
+            name: "lm-release-approvers"
+            permissions:
+              - "Overall/Read"
+              - "Job/Read"
+        - group:
+            name: "lm-developers"
+            permissions:
+              - "Overall/Read"
+              - "Job/Read"
+        - group:
+            name: "lm-auditors"
+            permissions:
+              - "Overall/Read"
+              - "Job/Read"
+
+  # Build_Agent（Req 2.6）：標籤與 Jenkinsfile 的 agent 選擇一致。
+  #   lm-trusted    release/ 與 infra/ 的建置（可連線 Deploy_Host、Registry 推送）
+  #   lm-untrusted  ci/ 的建置（隔離 VLAN，防火牆拒絕連線至 Deploy_Host、Staging／Production 與其 Database）
+  # Job Restrictions 再限制「哪些 Job 可以使用哪個 agent」，使 PR 的 Jenkinsfile 即使改寫 label 也無法在 Trusted Agent 執行。
+  nodes:
+    - permanent:
+        name: "lm-trusted-1"
+        labelString: "lm-trusted"
+        mode: EXCLUSIVE
+        numExecutors: 2
+        remoteFS: "/var/lib/jenkins-agent"
+        retentionStrategy: "always"
+        launcher:
+          inbound:
+            webSocket: true
+        nodeProperties:
+          - jobRestrictionProperty:
+              jobRestriction:
+                regexNameRestriction:
+                  regexExpression: "^(release|infra)/.*"
+                  checkShortName: false
+    - permanent:
+        name: "lm-untrusted-1"
+        labelString: "lm-untrusted"
+        mode: EXCLUSIVE
+        numExecutors: 2
+        remoteFS: "/var/lib/jenkins-agent"
+        retentionStrategy: "always"
+        launcher:
+          inbound:
+            webSocket: true
+        nodeProperties:
+          - jobRestrictionProperty:
+              jobRestriction:
+                regexNameRestriction:
+                  regexExpression: "^ci/.*"
+                  checkShortName: false
+
+# 系統憑證：只有 SYSTEM 範圍（只供 Jenkins 本身使用，任何 Job 都無法以 withCredentials 取得）。
+# 建置用憑證全部定義在資料夾範圍（ci/jenkins/jobs.groovy）；這裡不定義任何 GLOBAL 範圍的憑證。
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - string:
+              scope: SYSTEM
+              id: "lm-github-webhook-secret"
+              description: "GitHub Webhook shared secret（X-Hub-Signature-256 HMAC 驗證，Req 2.1）"
+              secret: "${GITHUB_WEBHOOK_SECRET}"
+
+unclassified:
+  location:
+    url: "https://jenkins.lan.example/"   # PLACEHOLDER
+
+  # GitHub plugin：webhook 以 lm-github-webhook-secret 驗證 HMAC-SHA256 簽章（常數時間比較）；
+  # 缺少簽章或簽章不一致時回應 4xx 且不觸發建置（Req 2.1、2.2）。Jenkins 不自行管理 GitHub 上的 hook。
+  gitHubPluginConfig:
+    hookUrl: "https://jenkins.lan.example/github-webhook/"   # PLACEHOLDER
+    hookSecretConfigs:
+      - credentialsId: "lm-github-webhook-secret"
+        signatureAlgorithm: "SHA256"
+    configs: []
+
+  # Lockable Resources（Req 18.9、20.12）：
+  #   lm-staging  Staging 部署排隊等待（lock(resource: 'lm-staging')）
+  #   lm-prod     Production 部署與回滾互斥（lock(resource: 'lm-prod', skipIfLocked: true)）
+  lockableResourcesManager:
+    declaredResources:
+      - name: "lm-staging"
+        description: "Staging_Environment 部署與驗證（同一時間最多 1 個建置）"
+        labels: ""
+      - name: "lm-prod"
+        description: "Production_Environment 部署或回滾（進行中時拒絕其他請求）"
+        labels: ""
+
+  timestamper:
+    allPipelines: true
+
+# Job 定義（Job DSL）。jobs.groovy 自 SECRETS 目錄讀取資料夾範圍憑證的值；缺少任何一個即失敗。
+jobs:
+  - file: "${LM_CASC_DIR:-/var/jenkins_home/casc}/jobs.groovy"

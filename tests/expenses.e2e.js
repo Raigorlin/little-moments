@@ -13,7 +13,7 @@ async function draft(p,title='營地晚餐食材',amount='300'){
 async function save(p){await form(p).getByRole('button',{name:'儲存支出',exact:true}).click();await expect(form(p)).toHaveCount(0);await expect(panel(p).locator('.xp-notice')).toContainText('已儲存');}
 test.beforeEach(async({baseURL})=>expect(new URL(baseURL).port).toBe('5181'));
 
-test('manual expense saves cents and chosen participants, shopping link never changes purchased status',async({page:p})=>{
+test('[TC-EXP-001] manual expense saves cents and chosen participants, shopping link never changes purchased status',async({page:p})=>{
  const f=await fixture(p);await draft(p,'牛肉片','300.01');await field(p,'shoppingId').selectOption('s1');await save(p);
  const {ledger:l}=await f.ledger();expect(l.revision).toBe(1);expect(l.expenses).toHaveLength(1);expect(l.expenses[0]).toMatchObject({title:'牛肉片',amountCents:30001,payerId:'p1',participantIds:['p1','p2'],shoppingId:'s1',source:'manual'});
  await expect(panel(p).locator('.xp-total')).toContainText('NT$300.01');await assertTripUnchanged(f);

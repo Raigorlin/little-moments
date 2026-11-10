@@ -28,7 +28,7 @@ test('existing meals retain automatic or explicitly saved images while the image
  await page.getByRole('textbox',{name:'料理筆記',exact:true}).fill('保留原有配圖');await save(page);expect((await state(page)).meals[0].imageKind).toBe('salad');
  await page.reload();await nav(page,'meals');await expect(page.locator('.meal-card').first().locator('[data-dish-kind]')).toHaveAttribute('data-dish-kind','salad');
 });
-test('invitation button leads to self-entry and duplicate names cannot take over identities',async({page})=>{
+test('[TC-INVITE-002] invitation button leads to self-entry and duplicate names cannot take over identities',async({page})=>{
  await page.goto('/demo/');await expect.poll(()=>state(page)).not.toBeNull();const before=await state(page);await page.getByRole('button',{name:'邀請旅伴',exact:true}).click();await expect(page.locator('#dialog')).toContainText('自行填寫名字');await page.getByRole('link',{name:'預覽邀請頁',exact:false}).click();await expect(page.locator('#invite-form select')).toHaveCount(0);
  await page.getByLabel('你的名字或暱稱',{exact:true}).fill('   ');await expect(page.locator('#join-button')).toBeDisabled();await page.getByLabel('你的名字或暱稱',{exact:true}).fill('小安');await page.locator('#join-button').click();await expect(page.locator('#invite-form .form-error')).toContainText('已在小隊');expect(await state(page)).toEqual(before);
  await page.getByLabel('你的名字或暱稱',{exact:true}).fill('旅伴小光');await page.locator('#join-button').click();await expect(page).toHaveURL(/#\/trip/);const after=await state(page);expect(after.people).toHaveLength(before.people.length+1);expect(after.people.find(p=>p.id===after.currentUser).name).toBe('旅伴小光');expect(after.people.find(p=>p.id==='p1').name).toBe('小安');

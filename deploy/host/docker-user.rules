@@ -1,0 +1,30 @@
+# Little Moments — DOCKER-USER 規則（Requirement 8.6；design.md Components §12、Security Boundaries）。
+#
+# 由 deploy/host/install.sh 以 --lan-cidr 的值取代 __LAN_CIDR__ 後安裝為 /etc/lm/docker-user.rules
+# （0644 root），lm-docker-user.service 於開機時、docker.service 之前以
+# `iptables-restore --noflush` 套用；只取代 DOCKER-USER 這一個 chain，不影響其他規則。
+# 指定多個 LAN 網段時，install.sh 會為每個網段複製一行含 __LAN_CIDR__ 的規則。
+#
+# 為什麼放在 DOCKER-USER：Docker 發布連接埠的流量在 nat PREROUTING 做 DNAT 後走 FORWARD，
+# 不經過 INPUT，因此 UFW／INPUT 規則擋不住。Docker 會把 `-j DOCKER-USER` 放在 FORWARD 第一條，
+# 且從不改寫此 chain 的內容。
+#
+# 規則語意：
+#   1. 已建立／相關連線（含容器對外連線的回應封包）直接交回 Docker 的規則。
+#   2. 經 DNAT 的連線（= 連到 Docker 發布連接埠，包含 proxy 的 80／443／8081 與 Registry 443）
+#      只在來源位於 LAN 網段時交回 Docker 的規則。
+#   3. 其餘經 DNAT 的連線一律 DROP：網段外來源無法與任何發布連接埠建立 TCP 連線。
+#   4. 非 DNAT 流量（容器之間、容器對外）不在此處理，交回 Docker 的規則。
+#
+# 以 conntrack 狀態 DNAT 判斷而非列舉連接埠：日後新增發布連接埠也自動受限，且不會誤擋容器對外
+# 連到同號連接埠（例如 443）的流量。比對不限介面：經 VPN、Wi-Fi 等其他介面進入的網段外來源同樣被擋。
+#
+# 規則以 `iptables -S` 的正規化形式撰寫（-s 在 -m 之前、網段為網路位址），verify-host.sh 依此比對順序。
+# 本檔可重複套用（chain 宣告會先清空 DOCKER-USER 再整批寫入，iptables-restore 以單一交易提交）。
+*filter
+:DOCKER-USER - [0:0]
+-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
+-A DOCKER-USER -s __LAN_CIDR__ -m conntrack --ctstate DNAT -j RETURN
+-A DOCKER-USER -m conntrack --ctstate DNAT -j DROP
+-A DOCKER-USER -j RETURN
+COMMIT

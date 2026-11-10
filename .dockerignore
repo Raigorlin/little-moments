@@ -1,0 +1,36 @@
+# App_Image 建置內容排除清單（Requirement 15.5、16.7；design.md Components §11）。
+# 必要項目（Req 16.7）
+data/
+.env*
+tests/
+node_modules/
+.git/
+*.log
+*.sqlite*
+test-results/
+playwright-report/
+# 本機產物與工作檔
+previews/
+reports/
+dist/
+build-server/
+.kiro/
+.agents/
+.worktrees/
+# 憑證與金鑰（Req 15.5）
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.db
+# 映像不需要的 CI／部署設定與文件
+ci/
+deploy/
+qa/
+security/
+Jenkinsfile
+Dockerfile
+.dockerignore
+.gitignore
+README.md

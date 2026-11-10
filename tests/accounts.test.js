@@ -1,15 +1,18 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createAccountService } from '../server/accounts.js';
 import { seed, isValidState } from '../src/model.js';
+import { useTestDatabase, resetTables, serviceDb } from './support/pg.js';
 
 const BASE = 'http://127.0.0.1:5181';
 const PASS = 'correct horse battery';
 let svc, clockMs, seen;
+const db = useTestDatabase();
 
-beforeEach(() => {
+beforeEach(async () => {
   clockMs = Date.parse('2026-11-04T00:00:00Z');
   seen = [];
-  svc = createAccountService({ dbPath: ':memory:', now: () => clockMs });
+  await resetTables(db.sql);
+  svc = await createAccountService({ db: serviceDb(db.sql), now: () => clockMs });
 });
 afterEach(() => svc.close());
 
@@ -67,7 +70,7 @@ describe('routing and transport', () => {
     const res = ok(await call('GET', '/api/session'));
     expect(res.headers.get('content-type')).toContain('application/json');
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(res.body).toEqual({ user: null, needsSetup: true });
+    expect(res.body).toEqual({ user: null, needsSetup: true, setupTokenRequired: false });
   });
   test('mutations need the exact request origin (CSRF)', async () => {
     const body = { username: 'admin-one', displayName: '管理員', password: PASS };
@@ -104,8 +107,20 @@ describe('first-admin setup', () => {
     const res = ok(await call('POST', '/api/setup', { body: { username: 'admin-one', displayName: ' 管理員  小安 ', password: PASS } }));
     expect(res.body).toEqual({ user: { id: expect.any(String), username: 'admin-one', displayName: '管理員 小安', role: 'admin' }, needsSetup: false });
     expect(res.setCookie).toMatch(/^ggc_session=[a-f0-9]{64}; HttpOnly; SameSite=Strict; Path=\/; Max-Age=604800$/);
-    expect(ok(await call('GET', '/api/session', { cookie: res.cookie })).body).toEqual({ user: res.body.user, needsSetup: false });
+    expect(ok(await call('GET', '/api/session', { cookie: res.cookie })).body).toEqual({ user: res.body.user, needsSetup: false, setupTokenRequired: false });
     failed(await call('POST', '/api/setup', { body: { username: 'admin-two', displayName: 'x', password: PASS } }), 409);
+  });
+  test('setup via a trusted proxy is never treated as loopback', async () => {
+    const body = { username: 'admin-one', displayName: '管理員', password: PASS };
+    failed(await call('POST', '/api/setup', { body, info: { ip: '127.0.0.1', tcpIp: '127.0.0.1', viaProxy: true } }), 403);
+    expect(ok(await call('GET', '/api/session')).body.needsSetup).toBe(true);
+  });
+  test('effective URL from the HTTP layer drives Origin and Secure', async () => {
+    const body = { username: 'admin-one', displayName: '管理員', password: PASS };
+    const info = { ip: '127.0.0.1', tcpIp: '127.0.0.1', viaProxy: false, url: new URL(`https://localhost:5181/api/setup`) };
+    failed(await call('POST', '/api/setup', { body, base: 'http://localhost:5181', origin: 'http://localhost:5181', info }), 403);
+    const res = ok(await call('POST', '/api/setup', { body, base: 'http://localhost:5181', origin: 'https://localhost:5181', info }));
+    expect(res.setCookie).toContain('; Secure');
   });
   test('cookie is Secure on https', async () => {
     const res = ok(await call('POST', '/api/setup', { base: 'https://localhost:5181', origin: 'https://localhost:5181', body: { username: 'admin-one', displayName: '管理員', password: PASS } }));
@@ -664,17 +679,19 @@ describe('admin user management', () => {
   });
 });
 
-test('service rejects public database locations and closes cleanly', () => {
-  expect(() => createAccountService({ dbPath: 'dist/accounts.sqlite' })).toThrow();
-  expect(() => createAccountService({ dbPath: 'some/public/a.db' })).toThrow();
-  expect(() => createAccountService({})).toThrow();
-  const extra = createAccountService({ dbPath: ':memory:' });
+// 「拒絕公開資料庫路徑」改由 tests/config.test.js 驗證（設定不會產生任何 SQLite 檔案路徑）。
+test('service requires a Database pool, never a file path, and closes cleanly', async () => {
+  await expect(createAccountService({ dbPath: 'dist/accounts.sqlite' })).rejects.toThrow(TypeError);
+  await expect(createAccountService({})).rejects.toThrow(TypeError);
+  const extra = await createAccountService({ db: serviceDb(db.sql) });
   extra.close();
   extra.close();
+  // service.close() 不關閉注入的連線池
+  expect(Number((await db.sql`SELECT 1 AS ok`)[0].ok)).toBe(1);
 });
 
 test('requests after close fail closed', async () => {
-  const extra = createAccountService({ dbPath: ':memory:' });
+  const extra = await createAccountService({ db: serviceDb(db.sql) });
   extra.close();
   const res = await extra.handle(new Request(`${BASE}/api/session`));
   expect(res.status).toBe(503);

@@ -1,13 +1,13 @@
 import {test,expect} from '@playwright/test';
 import {STORAGE_KEY} from '../src/model.js';
+import {poolMember} from './support/e2e-pool.js';
 const testBase=process.env.CAMPING_BASE_URL;
 const password='Local-Only-Test-Pass-2026';
 const adminName='qa-admin';
-let serial=0;
-const slug=()=>`qa-${Date.now().toString(36)}-${++serial}-${Math.random().toString(36).slice(2,6)}`;
 const fields={title:'山間週末測試',destination:'松林營地',startDate:'2026-10-02',endDate:'2026-10-04',description:'好好吃飯，慢慢露營。',note:'帶保暖衣物',coverKind:'camp',status:'completed'};
 async function api(page,path,method='GET',body){const res=await page.request.fetch(testBase+path,{method,headers:body?{'Content-Type':'application/json','Origin':testBase}:{},data:body});return {status:res.status(),data:await res.json()};}
-async function member(page){const username=slug();const r=await api(page,'/api/register','POST',{username,displayName:'測試露友',password});expect(r.status).toBeLessThan(300);return r.data.user;}
+// 全新 member 帳號由 harness 預先建立的帳號池提供（註冊 API 依用戶端 IP 限速，見 tests/support/e2e-pool.js）。
+const member=page=>poolMember(page,testBase);
 async function administrator(page){const r=await api(page,'/api/login','POST',{username:adminName,password});expect(r.status).toBe(200);return r.data.user;}
 async function createTrip(page,extra={}){const r=await api(page,'/api/trips','POST',{...fields,...extra});expect(r.status).toBeLessThan(300);return r.data.trip;}
 async function detail(page,id){return (await api(page,`/api/trips/${id}`)).data;}
@@ -22,7 +22,7 @@ test.beforeAll(async({browser,baseURL})=>{
  await page.close();
 });
 
-test('account home clean URL, multiple cards, edit history and no demo storage writes',async({page})=>{
+test('[TC-HOME-001] account home clean URL, multiple cards, edit history and no demo storage writes @critical',async({page})=>{
  const user=await member(page);await page.goto(`/${user.username}/home`);await expect(page.getByRole('heading',{name:/旅行|故事|露營/}).first()).toBeVisible();
  await expect(page.getByText('你的首頁網址：',{exact:false})).toHaveCount(0);await expect(page.locator('.acct-url')).toHaveCount(0);
  await expect(page.getByRole('link',{name:'日子拾光首頁',exact:true})).toHaveAttribute('href',`/${user.username}/home`);
@@ -35,18 +35,18 @@ test('account home clean URL, multiple cards, edit history and no demo storage w
  await createTrip(page,{title:'下一趟海邊',status:'planning'});await page.reload();await expect(page.getByRole('heading',{name:'下一趟海邊',exact:true})).toBeVisible();await expect(page.getByRole('heading',{name:'松林裡的回憶',exact:true})).toBeVisible();
 });
 
-test('owner recipe template saves isolated server state and shopping with inline assignment selector',async({page})=>{
+test('[TC-TRIP-001] owner recipe template saves isolated server state and shopping with inline assignment selector @critical',async({page})=>{
  const user=await member(page),trip=await createTrip(page);await page.goto(`/${user.username}/trips/${trip.id}`);await nav(page,'meals');await page.getByRole('button',{name:'新增餐次',exact:true}).click();
  await page.getByLabel('常用料理範本',{exact:true}).selectOption('curry');await page.getByRole('button',{name:'套用範本',exact:true}).click();await page.locator('#edit-form button[type="submit"]').click();await saved(page);
  const d=await detail(page,trip.id);expect(d.state.meals).toHaveLength(1);expect(d.state.shopping.some(s=>s.name==='咖哩塊')).toBe(true);
  await nav(page,'shopping');await expect(page.locator('[data-shopping-assignee]').first()).toHaveValue('');await page.reload();await nav(page,'meals');await expect(page.getByRole('heading',{name:'野炊雞肉咖哩飯',exact:true})).toBeVisible();expect(await page.evaluate(key=>localStorage.getItem(key),STORAGE_KEY)).toBeNull();
 });
 
-test('two accounts cannot view each others home or trip or call admin APIs',async({page,context})=>{
+test('[TC-ACCT-001] two accounts cannot view each others home or trip or call admin APIs',async({page,context})=>{
  const owner=await member(page),trip=await createTrip(page,{title:'私人的山林回憶'});const other=await context.browser().newContext({baseURL:testBase});try{const p=await other.newPage();const stranger=await member(p);await p.goto(`/${owner.username}/home`);await expect(p.getByRole('heading',{name:'私人的山林回憶'})).toHaveCount(0);expect((await api(p,`/api/trips/${trip.id}`)).status).toBeGreaterThanOrEqual(400);expect((await api(p,`/api/trips/${trip.id}`,'PATCH',{revision:0,title:'入侵'})).status).toBeGreaterThanOrEqual(400);expect((await api(p,'/api/admin/users')).status).toBe(403);await p.goto(`/${stranger.username}/home`);await expect(p.getByRole('heading',{name:'私人的山林回憶'})).toHaveCount(0);}finally{await other.close();}
 });
 
-test('invited guest edits shared content but cannot delete trip, remove items or invite others',async({page,browser})=>{
+test('[TC-INVITE-001] invited guest edits shared content but cannot delete trip, remove items or invite others',async({page,browser})=>{
  const owner=await member(page),trip=await createTrip(page);const invite=(await api(page,`/api/trips/${trip.id}/invites`,'POST',{})).data;
  const other=await browser.newContext({baseURL:testBase});try{
   const p=await other.newPage();const guest=await member(p);await p.goto(invite.urlPath);await p.locator('form [name="join-name"]').fill('米米');await p.locator('form [name="join-role"]').fill('採買擔當');await p.locator('form button[type="submit"]').click();await expect(p).toHaveURL(new RegExp(`/${guest.username}/trips/`));
@@ -65,7 +65,7 @@ test('invited guest edits shared content but cannot delete trip, remove items or
  }finally{await other.close();}
 });
 
-test('admin edits another owner trip and disables account without deleting travel history',async({page,browser})=>{
+test('[TC-ADMIN-001] admin edits another owner trip and disables account without deleting travel history @critical',async({page,browser})=>{
  const user=await member(page),trip=await createTrip(page,{title:'要保留的露營歷史'});const adminContext=await browser.newContext({baseURL:testBase});try{const p=await adminContext.newPage();await administrator(p);await p.goto('/admin');await expect(p.locator('body')).toContainText(user.username);
  await p.goto(`/${adminName}/trips/${trip.id}`);await nav(p,'settings');await p.getByRole('button',{name:'編輯旅行',exact:true}).click();await p.getByLabel('旅行名稱',{exact:true}).fill('管理員修正的歷史');await p.locator('#edit-form button[type="submit"]').click();await saved(p);
  await p.goto('/admin');await p.locator(`[data-action="acct-delete-user"][data-id="${user.id}"]`).click();await p.locator('#dialog input[name="delete-confirm"]').fill(user.username);await p.locator('#dialog button[type="submit"]').click();await expect(p.locator('#dialog')).not.toBeVisible();expect((await api(page,'/api/trips')).status).toBe(401);
@@ -74,16 +74,50 @@ test('admin edits another owner trip and disables account without deleting trave
  }finally{await adminContext.close();}
 });
 
-test('stale revisions preserve unsaved planner edits instead of overwriting newer data',async({page})=>{
+test('[TC-TRIP-002] stale revisions preserve unsaved planner edits instead of overwriting newer data',async({page})=>{
  const user=await member(page),trip=await createTrip(page);await page.goto(`/${user.username}/trips/${trip.id}`);await nav(page,'settings');await page.getByRole('button',{name:'編輯旅行',exact:true}).click();await page.getByLabel('旅行名稱',{exact:true}).fill('這份草稿要保留');
  expect((await api(page,`/api/trips/${trip.id}`,'PATCH',{revision:trip.revision,title:'其他分頁已存'})).status).toBe(200);await page.locator('#edit-form button[type="submit"]').click();await expect(page.locator('.save-warning')).toContainText('其他人已更新');expect((await detail(page,trip.id)).trip.title).toBe('其他分頁已存');await expect(page.locator('.hero h1')).toHaveText('這份草稿要保留');
  page.once('dialog',d=>d.accept());await page.locator('[data-action="account-reload"]').click();await expect(page.locator('.hero h1')).toHaveText('其他分頁已存');
 });
 
-test('protected API responses are absent from offline caches and logout revokes access',async({page,context})=>{
+test('[TC-ACCT-002] protected API responses are absent from offline caches and logout revokes access',async({page,context})=>{
  const user=await member(page),trip=await createTrip(page);await page.goto(`/${user.username}/trips/${trip.id}`);await page.evaluate(async()=>{await navigator.serviceWorker.ready;});
  const cached=await page.evaluate(async()=>{const result=[];for(const key of await caches.keys())for(const request of await(await caches.open(key)).keys())result.push(request.url);return result;});expect(cached.every(x=>!x.includes('/api/'))).toBe(true);
  await context.setOffline(true);await page.reload();await expect(page.locator('.hero h1')).toHaveCount(0);await context.setOffline(false);await page.goto(`/${user.username}/home`);await page.getByRole('button',{name:'登出',exact:true}).click();await expect(page).toHaveURL(/\/login/);expect((await api(page,`/api/trips/${trip.id}`)).status).toBe(401);
+});
+
+// 越權操作（Req 5.2）：每個案例都驗證「操作被拒絕」與「資料未被變更」兩件事。
+test('[TC-UNAUTH-001] anonymous visitor cannot open an owner home or create trips, and the owner trip list is unchanged @critical',async({page,browser})=>{
+ const owner=await member(page);await createTrip(page,{title:'只有主人看得到的首頁'});const before=(await api(page,'/api/trips')).data.trips.length;
+ const anon=await browser.newContext({baseURL:testBase});try{const p=await anon.newPage();
+  await p.goto(`/${owner.username}/home`);await expect(p).toHaveURL(/\/login$/);await expect(p.getByRole('heading',{name:'只有主人看得到的首頁'})).toHaveCount(0);
+  const created=await api(p,'/api/trips','POST',{...fields,title:'匿名建立的旅行'});expect(created.status).toBe(401);expect(JSON.stringify(created.data)).not.toContain('匿名建立的旅行');
+  expect((await api(p,'/api/trips')).status).toBe(401);
+ }finally{await anon.close();}
+ const after=(await api(page,'/api/trips')).data.trips;expect(after).toHaveLength(before);expect(after.some(t=>t.title==='匿名建立的旅行')).toBe(false);
+});
+
+test('[TC-UNAUTH-002] anonymous visitor cannot read or edit a trip by URL or API, and title and revision are unchanged @critical',async({page,browser})=>{
+ const owner=await member(page),trip=await createTrip(page,{title:'不公開的森林小旅行'});
+ const anon=await browser.newContext({baseURL:testBase});try{const p=await anon.newPage();
+  await p.goto(`/${owner.username}/trips/${trip.id}`);await expect(p).toHaveURL(/\/login$/);await expect(p.locator('body')).not.toContainText('不公開的森林小旅行');
+  const read=await api(p,`/api/trips/${trip.id}`);expect(read.status).toBe(401);expect(JSON.stringify(read.data)).not.toContain('不公開的森林小旅行');
+  const edit=await api(p,`/api/trips/${trip.id}`,'PATCH',{revision:trip.revision,title:'匿名改名'});expect(edit.status).toBe(401);expect(JSON.stringify(edit.data)).not.toContain('不公開的森林小旅行');
+ }finally{await anon.close();}
+ const d=await detail(page,trip.id);expect(d.trip.title).toBe('不公開的森林小旅行');expect(d.trip.revision).toBe(trip.revision);
+});
+
+test('[TC-UNAUTH-003] member cannot open the admin console or call admin APIs, and the target account stays active @critical',async({page,browser})=>{
+ const user=await member(page);
+ await page.goto('/admin');await expect(page.locator('body')).toContainText('管理後台只開放給管理員');await expect(page.locator('#admin-users')).toHaveCount(0);await expect(page.locator('[data-action="acct-delete-user"]')).toHaveCount(0);
+ expect((await api(page,'/api/admin/users')).status).toBe(403);
+ const adminContext=await browser.newContext({baseURL:testBase});try{const a=await adminContext.newPage();await administrator(a);
+  const target=(await api(a,'/api/admin/users')).data.users.find(u=>u.username===adminName);expect(target.deleted).toBe(false);
+  expect((await api(page,`/api/admin/users/${target.id}/delete`,'POST',{expectedUserId:user.id,confirmUsername:adminName})).status).toBe(403);
+  expect((await api(page,`/api/admin/users/${target.id}`,'PATCH',{expectedUserId:user.id,role:'member'})).status).toBe(403);
+  const after=(await api(a,'/api/admin/users')).data.users.find(u=>u.id===target.id);expect(after.deleted).toBe(false);expect(after.role).toBe('admin');
+  expect((await api(a,'/api/session')).data.user.role).toBe('admin');
+ }finally{await adminContext.close();}
 });
 
 test('responsive home, admin and assignee selectors fit 320px through desktop',async({page})=>{

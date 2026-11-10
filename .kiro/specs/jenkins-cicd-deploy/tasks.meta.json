@@ -1,0 +1,2337 @@
+{
+  "pbtResults": {
+    "1.3 撰寫 Property 13 的 property test（`tests/config-secrets.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794236467551
+    },
+    "1.2 撰寫 Property 12 的 property test（`tests/config.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794236493156
+    },
+    "1.4 撰寫 Property 46 的 property test（`tests/proxy-resolve.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794236727315
+    },
+    "10.2 撰寫 Property 3 的 property test（`tests/ci-toolchain.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794237404816
+    },
+    "10.3 撰寫 Property 4 的 property test（`tests/ci-verify-env.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794237418968
+    },
+    "10.9 撰寫 Property 2 的 property test（`tests/ci-tag.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794237452569
+    },
+    "3.10 撰寫 Property 23 的 property test（`tests/password.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794237465450
+    },
+    "10.11 撰寫 Property 10 的 property test（`tests/ci-scrub.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794237905780
+    },
+    "2.2 撰寫 Property 14 的 property test（`tests/http-host.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794238000564
+    },
+    "2.3 撰寫 Property 15 的 property test（`tests/http-headers.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794238032002
+    },
+    "5.4 撰寫 Property 27 的 property test（`tests/migrations-plan.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794238032132
+    },
+    "2.5 撰寫 Property 22 的 property test（`tests/http-cookie.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794242366953
+    },
+    "5.5 撰寫 Property 30 的 property test（`tests/migrations-validate.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794238320092
+    },
+    "2.4 撰寫 Property 21 的 property test（`tests/http-origin.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794242366522
+    },
+    "10.6 撰寫 Property 9 的 property test（`tests/ci-normalize.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794238678914
+    },
+    "3.5 撰寫 Property 16 的 property test（`tests/setup-guard.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794242361522
+    },
+    "3.6 撰寫 Property 17 的 property test（`tests/setup-single-use.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794242362847
+    },
+    "3.7 撰寫 Property 18 的 property test（`tests/setup-rate-limit.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794242364044
+    },
+    "3.8 撰寫 Property 19 的 property test（`tests/setup-validation.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794242365024
+    },
+    "3.9 撰寫 Property 20 的 property test（`tests/setup-concurrency.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794242360527
+    },
+    "10.7 撰寫 Property 8 的 property test（`tests/ci-evaluate.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794238976012
+    },
+    "5.9 撰寫 Property 31 的 property test（`tests/lint-migrations.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794238976917
+    },
+    "10.13 撰寫 Property 11 的 property test（`tests/ci-dast-targets.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794239553714
+    },
+    "5.11 撰寫 Property 26 的 property test（`tests/db-retry.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794240601376
+    },
+    "10.15 撰寫 Property 1 的 property test（`tests/ci-stages.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794240601794
+    },
+    "5.7 撰寫 Property 29 的 property test（`tests/migrations-failure.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794240643882
+    },
+    "5.6 撰寫 Property 28 的 property test（`tests/migrations-idempotent.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794240658227
+    },
+    "10.17 撰寫 Property 45 的 property test（`tests/ci-gates.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794241241646
+    },
+    "10.16 撰寫 Property 5 的 property test（`tests/ci-junit-gate.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794241250252
+    },
+    "10.19 撰寫 Property 43 的 property test（`tests/ci-digest-lookup.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794284650141
+    },
+    "10.18 撰寫 Property 42 的 property test（`tests/ci-record.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794241280846
+    },
+    "10.21 撰寫 Property 37 的 property test（`tests/ci-backup-retention.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794241627838
+    },
+    "10.23 撰寫 Property 40 的 property test（`tests/ci-health.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794241635449
+    },
+    "10.22 撰寫 Property 41 的 property test（`tests/ci-image-retention.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794241658714
+    },
+    "5.15 撰寫 Property 24 的 property test（`tests/pg-behavior.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794243161731
+    },
+    "10.25 撰寫 Property 47 的 property test（`tests/ci-resolve-digest.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794243231078
+    },
+    "5.16 撰寫 Property 25 的 property test（`tests/pg-transactions.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794243257614
+    },
+    "10.28 撰寫 Property 39 的 property test（`tests/ci-image-labels.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794243557501
+    },
+    "10.32 撰寫 Property 44 的 property test（`tests/ci-notify.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794243558763
+    },
+    "10.27 撰寫 Property 38 的 property test（`tests/ci-image-content.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794243576052
+    },
+    "10.30 撰寫 Property 32 的 property test（`tests/ci-approval.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794243610562
+    },
+    "7.4 撰寫 Property 34 的 property test（`tests/import-sqlite-source.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794243807304
+    },
+    "7.6 撰寫 Property 36 的 property test（`tests/import-sqlite-identity.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794243837022
+    },
+    "7.5 撰寫 Property 35 的 property test（`tests/import-sqlite-failure.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794244004954
+    }
+  },
+  "executionHistory": {
+    "1.1 實作 `server/config.js` 並加入 fast-check": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235881111
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235899903
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794236151758
+      }
+    ],
+    "1.2 撰寫 Property 12 的 property test（`tests/config.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235881229
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794236379526
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237336486
+      }
+    ],
+    "1.3 撰寫 Property 13 的 property test（`tests/config-secrets.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235881310
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794236380446
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237337453
+      }
+    ],
+    "1.4 撰寫 Property 46 的 property test（`tests/proxy-resolve.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235881388
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794236381819
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237338420
+      }
+    ],
+    "2.1 修改 `server/http.js` 與 `server/accounts.js`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235881447
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794236382429
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237339410
+      }
+    ],
+    "2.2 撰寫 Property 14 的 property test（`tests/http-host.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235881512
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237935184
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238189138
+      }
+    ],
+    "2.3 撰寫 Property 15 的 property test（`tests/http-headers.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235881575
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237935311
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238189750
+      }
+    ],
+    "2.4 撰寫 Property 21 的 property test（`tests/http-origin.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235881639
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238199433
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238573456
+      }
+    ],
+    "2.5 撰寫 Property 22 的 property test（`tests/http-cookie.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235881703
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238200449
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238573959
+      }
+    ],
+    "3.1 實作 `server/setup-guard.js`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235881762
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235900050
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794236151859
+      }
+    ],
+    "3.2 改寫 `POST /api/setup` 流程（`server/accounts.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235881886
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237936347
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238191264
+      }
+    ],
+    "3.3 在 `src/accounts-ui.js` 加入設定碼欄位": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235881946
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238202035
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238575208
+      }
+    ],
+    "3.4 將 `scripts/serve.mjs` 接上設定模組（暫時保留 SQLite）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882007
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238702059
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238868460
+      }
+    ],
+    "3.5 撰寫 Property 16 的 property test（`tests/setup-guard.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882072
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238702824
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238869376
+      }
+    ],
+    "3.6 撰寫 Property 17 的 property test（`tests/setup-single-use.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882135
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238704347
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238870379
+      }
+    ],
+    "3.7 撰寫 Property 18 的 property test（`tests/setup-rate-limit.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882200
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238705359
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238871380
+      }
+    ],
+    "3.8 撰寫 Property 19 的 property test（`tests/setup-validation.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882277
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238706342
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238872569
+      }
+    ],
+    "3.9 撰寫 Property 20 的 property test（`tests/setup-concurrency.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882344
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238879302
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794239383843
+      }
+    ],
+    "3.10 撰寫 Property 23 的 property test（`tests/password.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882405
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237351556
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237716176
+      }
+    ],
+    "4. Checkpoint - 確認應用程式基礎變更": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882476
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282629583
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794301899456
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794303308186
+      }
+    ],
+    "5.1 建立測試用 Ephemeral_Database 輔助模組 `tests/support/pg.js`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882534
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794239408351
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794239774588
+      }
+    ],
+    "5.2 撰寫 `migrations/0001_initial.sql`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882589
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235900749
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794236152462
+      }
+    ],
+    "5.3 實作 Migration_Runner（`server/db/migrations.js`、`scripts/migrate.mjs`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882643
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794236383273
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237340325
+      }
+    ],
+    "5.4 撰寫 Property 27 的 property test（`tests/migrations-plan.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882708
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237937346
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238192255
+      }
+    ],
+    "5.5 撰寫 Property 30 的 property test（`tests/migrations-validate.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882783
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238202944
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238576198
+      }
+    ],
+    "5.6 撰寫 Property 28 的 property test（`tests/migrations-idempotent.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882838
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794240473516
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241146319
+      }
+    ],
+    "5.7 撰寫 Property 29 的 property test（`tests/migrations-failure.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882900
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794240473611
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241146436
+      }
+    ],
+    "5.8 實作破壞性遷移偵測 `scripts/lint-migrations.mjs`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235882958
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238203565
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238577028
+      }
+    ],
+    "5.9 撰寫 Property 31 的 property test（`tests/lint-migrations.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235883059
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238880437
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794239384745
+      }
+    ],
+    "5.10 實作連線與交易模組（`server/db/connect.js`、`server/db/tx.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235883118
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794239408627
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794239774759
+      }
+    ],
+    "5.11 撰寫 Property 26 的 property test（`tests/db-retry.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235883184
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794240473852
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241146526
+      }
+    ],
+    "5.12 將帳號與帳本查詢移植至 Bun.SQL（`server/db/queries.js`、`server/accounts.js`、`server/ledger.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235883251
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794240475346
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241146639
+      }
+    ],
+    "5.13 將既有測試移植至 PostgreSQL": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235883310
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241470300
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242403870
+      }
+    ],
+    "5.14 移除執行期 SQLite 並完成 `scripts/serve.mjs` 接線": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235883365
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242417407
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242973048
+      }
+    ],
+    "5.15 撰寫 Property 24 的 property test（`tests/pg-behavior.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235883429
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242989543
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243450639
+      }
+    ],
+    "5.16 撰寫 Property 25 的 property test（`tests/pg-transactions.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235883493
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242989718
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243450749
+      }
+    ],
+    "5.17 撰寫資料庫斷線恢復整合測試（`tests/pg-reconnect.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235883556
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242989822
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243450859
+      }
+    ],
+    "6. Checkpoint - 所有單元測試在 PostgreSQL 上通過": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235883695
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282629665
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794303315201
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794303716320
+      }
+    ],
+    "7.1 實作匯入規劃純函式 `server/db/import-plan.js`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235883760
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241157217
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241299568
+      }
+    ],
+    "7.2 實作 `scripts/import-sqlite.mjs`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235883823
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242989921
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243451302
+      }
+    ],
+    "7.3 撰寫 Property 33 的 property test（`tests/import-sqlite-roundtrip.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235883885
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243647146
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794244488520
+      }
+    ],
+    "7.4 撰寫 Property 34 的 property test（`tests/import-sqlite-source.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235883941
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243647416
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794244488654
+      }
+    ],
+    "7.5 撰寫 Property 35 的 property test（`tests/import-sqlite-failure.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235883998
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243648054
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794244489038
+      }
+    ],
+    "7.6 撰寫 Property 36 的 property test（`tests/import-sqlite-identity.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235884062
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243649101
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794244490537
+      }
+    ],
+    "8.1 修改 `scripts/check-accounts.mjs` 與 `playwright.config.js`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235884124
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243649822
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794244491587
+      }
+    ],
+    "8.2 為既有 E2E 測試加上測試案例 ID": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235884191
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794278560192
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794281325048
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282602320
+      }
+    ],
+    "8.3 建立 `qa/inventory.json`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235884251
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794244502138
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794278544082
+      }
+    ],
+    "8.4 實作 `scripts/qa-inventory.mjs`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235884360
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794244502415
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794278544204
+      }
+    ],
+    "8.5 撰寫 Property 6 的 property test（`tests/qa-inventory-validate.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235884424
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794278560381
+      }
+    ],
+    "8.6 撰寫 Property 7 的 property test（`tests/qa-inventory-compare.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235884484
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794278560463
+      }
+    ],
+    "8.7 建立安全測試套件 `tests/security/*.sec.js`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235884541
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794278560559
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794281325740
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282602523
+      }
+    ],
+    "8.8 實作 Smoke_Test `scripts/smoke.mjs`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235884599
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794278560986
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794281326603
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282602674
+      }
+    ],
+    "9. Checkpoint - 測試基礎設施完成": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235884661
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282629742
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794303722737
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794304065884
+      }
+    ],
+    "10.1 建立工具鏈定義與驗證腳本": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235884723
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235902240
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794236153740
+      }
+    ],
+    "10.2 撰寫 Property 3 的 property test（`tests/ci-toolchain.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235884791
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237352556
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237713873
+      }
+    ],
+    "10.3 撰寫 Property 4 的 property test（`tests/ci-verify-env.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235884851
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237354083
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237716733
+      }
+    ],
+    "10.4 實作掃描報告正規化 `ci/policy/normalize.mjs`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235884910
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237355054
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237714653
+      }
+    ],
+    "10.5 實作政策評估 `ci/policy/evaluate.mjs` 與 `security/exceptions.json`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235884973
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237937871
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238192902
+      }
+    ],
+    "10.6 撰寫 Property 9 的 property test（`tests/ci-normalize.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235885033
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238587819
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238695561
+      }
+    ],
+    "10.7 撰寫 Property 8 的 property test（`tests/ci-evaluate.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235885094
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238881815
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794239386231
+      }
+    ],
+    "10.8 實作 Release_Tag 解析 `ci/policy/tag.mjs`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235885163
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235902648
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794236154293
+      }
+    ],
+    "10.9 撰寫 Property 2 的 property test（`tests/ci-tag.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235885225
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237355862
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237713770
+      }
+    ],
+    "10.10 實作秘密遮罩 `ci/scrub.mjs`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235885286
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794236164910
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794236372548
+      }
+    ],
+    "10.11 撰寫 Property 10 的 property test（`tests/ci-scrub.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235885351
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237728332
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237925966
+      }
+    ],
+    "10.12 建立 DAST 設定與目標驗證（`ci/dast/`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235885414
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238882268
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794239387084
+      }
+    ],
+    "10.13 撰寫 Property 11 的 property test（`tests/ci-dast-targets.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235885475
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794239408754
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794239774962
+      }
+    ],
+    "10.14 實作階段規劃、Release_Gate 與 Build_Record 模組": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235885539
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794239408912
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794239775993
+      }
+    ],
+    "10.15 撰寫 Property 1 的 property test（`tests/ci-stages.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235885601
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794240476120
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241147298
+      }
+    ],
+    "10.16 撰寫 Property 5 的 property test（`tests/ci-junit-gate.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235885662
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241157397
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241300563
+      }
+    ],
+    "10.17 撰寫 Property 45 的 property test（`tests/ci-gates.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235885817
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241157880
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241302164
+      }
+    ],
+    "10.18 撰寫 Property 42 的 property test（`tests/ci-record.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235885878
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241159178
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241303050
+      }
+    ],
+    "10.19 撰寫 Property 43 的 property test（`tests/ci-digest-lookup.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235885945
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241159855
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241303846
+      }
+    ],
+    "10.20 實作保留策略與健康判定（`ci/retention.mjs`、`ci/health.mjs`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235886005
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241317696
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241456407
+      }
+    ],
+    "10.21 撰寫 Property 37 的 property test（`tests/ci-backup-retention.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235886068
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241470485
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242404451
+      }
+    ],
+    "10.22 撰寫 Property 41 的 property test（`tests/ci-image-retention.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235886139
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241470657
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242405536
+      }
+    ],
+    "10.23 撰寫 Property 40 的 property test（`tests/ci-health.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235886207
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241470761
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242406926
+      }
+    ],
+    "10.24 實作 Release_Tag 的 digest 解析 `ci/resolve-digest.mjs`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235886269
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794241471004
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242407488
+      }
+    ],
+    "10.25 撰寫 Property 47 的 property test（`tests/ci-resolve-digest.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235886326
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242990473
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243452297
+      }
+    ],
+    "10.26 實作映像內容檢查與 OCI 標籤（`ci/image-content-check.mjs`、`ci/image-labels.mjs`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235886389
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242417625
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242973843
+      }
+    ],
+    "10.27 撰寫 Property 38 的 property test（`tests/ci-image-content.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235886456
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243460060
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243633042
+      }
+    ],
+    "10.28 撰寫 Property 39 的 property test（`tests/ci-image-labels.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235886516
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243461007
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243633826
+      }
+    ],
+    "10.29 實作核准人檢查 `ci/approval.mjs` 與 `ci/release-approvers.json`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235886582
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242418944
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242974353
+      }
+    ],
+    "10.30 撰寫 Property 32 的 property test（`tests/ci-approval.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235886643
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243462523
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243635258
+      }
+    ],
+    "10.31 實作通知模組（`ci/notify.mjs`、`ci/notify.groovy`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235886742
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242419961
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242975853
+      }
+    ],
+    "10.32 撰寫 Property 44 的 property test（`tests/ci-notify.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235886846
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243463184
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243635822
+      }
+    ],
+    "10.33 建立 Semgrep 規則 `ci/semgrep/`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235886902
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242420602
+      },
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794242976506
+      }
+    ],
+    "11. Checkpoint - CI 工具完成": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235886965
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282629832
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794304072631
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794304132489
+      }
+    ],
+    "12.1 建立 `Dockerfile` 與 `.dockerignore`，並讓伺服器可打包": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887030
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794281327571
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282602916
+      }
+    ],
+    "12.2 建立映像建置腳本 `ci/scripts/build-image.sh`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887093
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282629987
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282650216
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794283135306
+      }
+    ],
+    "12.3 撰寫映像層級 Smoke 測試 `ci/scripts/image-smoke.sh`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887158
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282630064
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794283155626
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794284180873
+      }
+    ],
+    "13.1 建立 `Jenkinsfile` 骨架與 Init、Toolchain、Install、Build 階段": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887223
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282630138
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794283155873
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794284181274
+      }
+    ],
+    "13.2 加入單元測試與瀏覽器測試階段": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887284
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282630215
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794284196337
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794286289591
+      }
+    ],
+    "13.3 加入靜態安全掃描階段": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887346
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282630282
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794286303972
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794288322477
+      }
+    ],
+    "13.4 加入 Trusted_Ref 專用的遷移相容性與 DAST 階段": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887409
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282630380
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794288328333
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794289830257
+      }
+    ],
+    "13.5 加入映像建置、掃描、SBOM、推送與簽章階段（僅 `main`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887476
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282630483
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794289842124
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794291389976
+      }
+    ],
+    "13.6 加入 Staging 部署階段（僅 `main`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887542
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282630589
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794291396500
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794293310267
+      }
+    ],
+    "13.7 加入 Release_Tag 的 digest 解析、核准與 Production 部署階段": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887601
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282630669
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794293316297
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794297173301
+      }
+    ],
+    "13.8 加入 `post { always }` 收尾處理": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887665
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282630749
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794297180078
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794299052636
+      }
+    ],
+    "13.9 建立 Jenkins 設定即程式碼 `ci/jenkins/`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887735
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282630830
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794299059764
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794300445569
+      }
+    ],
+    "13.10 建立 Build_Image 建置管線 `ci/jenkins/pipelines/build-image.Jenkinsfile`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887797
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282630907
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794299060728
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794300445847
+      }
+    ],
+    "14.1 建立 Compose 與 Caddy 設定": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887860
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282630971
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282650710
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794283136190
+      }
+    ],
+    "14.2 實作 `deploy/bin/lm-deploy`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887922
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282631049
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794283159755
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794284182489
+      }
+    ],
+    "14.3 建立主機安全設定 `deploy/host/`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235887986
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282631146
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794284197347
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794286289803
+      }
+    ],
+    "14.4 撰寫 `lm-deploy` 的 bats 測試（`deploy/tests/lm-deploy.bats`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235888050
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282631210
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794288329365
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794289830448
+      }
+    ],
+    "14.5 實作還原演練": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235888128
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282631289
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794286304298
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794288322816
+      }
+    ],
+    "14.6 實作手動回滾管線 `ci/jenkins/pipelines/rollback.Jenkinsfile`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235888183
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282631366
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794284198575
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794286289929
+      }
+    ],
+    "14.7 實作 digest 查詢管線": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235888242
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282631466
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794284199205
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794286291086
+      }
+    ],
+    "15.1 建立 Registry 設定檔": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235888308
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282631543
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282651349
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794283137011
+      }
+    ],
+    "15.2 建立 Registry 驗證腳本 `deploy/registry/verify-registry.sh`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235888372
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282631669
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794283159961
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794284183376
+      }
+    ],
+    "16.1 撰寫設定 lint 測試 `tests/ci-lint.test.js`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235888438
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282631750
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794300459530
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794301309841
+      }
+    ],
+    "16.2 更新 `README.md`": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235888506
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282631832
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794300460701
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794301310024
+      }
+    ],
+    "16.3 撰寫 README 檢查測試（`tests/readme.test.js`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235888596
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282631912
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794301317203
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794301887428
+      }
+    ],
+    "17. Final checkpoint - 確認所有測試通過": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794235888708
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282631983
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794304139669
+      },
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794304905775
+      }
+    ],
+    "1. 應用程式設定模組": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794237338561
+      }
+    ],
+    "2. HTTP 處理器的 Host 檢查、健康端點與有效請求網址": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794238574073
+      }
+    ],
+    "3. 首次管理員設定保護": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794239383933
+      }
+    ],
+    "5. PostgreSQL 資料層": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243450945
+      }
+    ],
+    "10. CI 工具與政策評估器（`ci/`）": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794243636031
+      }
+    ],
+    "7. SQLite_Importer": [
+      {
+        "executionId": "549e4a89-eb34-4a08-9816-439d4b3410b3",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794244490634
+      }
+    ],
+    "8. 瀏覽器測試、QA_Inventory、安全測試套件與 Smoke_Test": [
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794282602812
+      }
+    ],
+    "12. App_Image（Dockerfile）": [
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794284181097
+      }
+    ],
+    "15. LAN Registry 設定（`deploy/registry/`）": [
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794284183455
+      }
+    ],
+    "14. Deploy_Host 設定與部署腳本（`deploy/`）": [
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794289830566
+      }
+    ],
+    "13. Jenkinsfile 與 Jenkins 設定": [
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794300445937
+      }
+    ],
+    "16. 設定檢查與文件": [
+      {
+        "executionId": "7b9063d8-bfba-42b6-8fda-e36bac5d606a",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794301887624
+      }
+    ]
+  }
+}

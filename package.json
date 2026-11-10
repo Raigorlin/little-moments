@@ -5,12 +5,17 @@
   "type": "module",
   "scripts": {
     "build": "bun scripts/build.mjs",
+    "build:server": "bun scripts/build-server.mjs",
     "test": "bun test tests/*.test.js",
+    "test:unit": "bun test tests/*.test.js",
     "test:e2e": "playwright test",
+    "test:security": "bun tests/security/run.mjs",
+    "test:security:local": "bun scripts/security-suite.mjs",
     "start": "bun scripts/serve.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "1.56.1"
+    "@playwright/test": "1.56.1",
+    "fast-check": "4.3.0"
   },
   "dependencies": {
     "@tesseract.js-data/chi_tra": "1.0.0",

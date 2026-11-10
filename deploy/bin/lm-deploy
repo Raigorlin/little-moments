@@ -1,0 +1,1237 @@
+#!/usr/bin/env bash
+# lm-deploy — Deploy_Host 部署腳本（design.md Components §12、§13；Requirements 14、18、20）。
+#
+# 安裝於 /opt/lm/bin/lm-deploy（root 擁有、0755），由部署帳號以 sudo 執行（sudoers 只允許固定環境參數）。
+#
+# 用法（環境參數兩種位置皆可）：
+#   lm-deploy <env> <subcommand> [args...]
+#   lm-deploy <subcommand> <env> [args...]
+#   lm-deploy <env>             # SSH forced command：子命令取自 $SSH_ORIGINAL_COMMAND
+#
+#   <env>：staging | prod
+#   <digest>：sha256:<64 hex> 或 <LM_IMAGE_REPO>@sha256:<64 hex>（repo 必須等於 <env>.env 的 LM_IMAGE_REPO）
+#
+# 子命令（會改變狀態者皆先取得 flock -n <LM_LOCK_DIR>/lm-<env>.lock，取不到即以結束碼 4 失敗，Req 20.12）：
+#   backup                   pg_dump -Fc（30 分鐘逾時）→ 驗證大小／pg_restore --list／sha256 → rename → 修剪至 14 份
+#   migrate <digest>         以新映像執行 Migration_Runner；需要 LM_BACKUP_MAX_AGE 秒內的已驗證備份（Req 14.3）
+#   start <digest>           以 repo@digest 在閒置槽位（blue/green）啟動新 App 容器；不改 proxy（Req 20.2）
+#   health [color] [--wait]  經 proxy 容器 GET http://app-<color>:5173/healthz（5 秒逾時）；--wait 為 120 秒內
+#                            每 5 秒（prod，Req 20.3、20.4）或每 10 秒（staging，Req 18.3）一次、連續 3 次成功。
+#                            不取鎖（觀察期由 Pipeline 呼叫）
+#   switch                   健康檢查新槽位 → 原子 rename upstream.caddy → caddy reload（grace 30s，Req 20.3）
+#   rollback                 自動回滾：未切換 → 移除新槽位；已切換 → upstream 切回舊槽位並停止新槽位（Req 20.6）
+#   rollback <digest>        手動回滾：digest 必須在保留的 3 個映像中（Req 20.10），以 start/health/switch 流程切換
+#                            兩者皆不執行 Migration_Runner（Req 20.9）
+#   finalize                 停止舊槽位、記錄目前版本、保留最近 3 個映像並移除其餘（Req 20.7）
+#   status                   輸出機器可讀 JSON（active/candidate/previous/history/retained/backups），不取鎖
+#   prune                    依保留規則修剪備份（14 份）與本機映像（3 個），並清除殘留 .partial
+#   app-env                  由 stdin 讀取 app.env 內容，驗證鍵名後以 0600 原子寫入（不輸出任何值）
+#   deploy <digest> [--app-env-stdin]
+#                            backup → (app.env) → migrate → start → health --wait → switch；任一步失敗即停止
+#   drill                    還原演練（Req 14.6、14.7）：取最新已驗證備份並重算 sha256 → 以 <env>/drill.yaml 建立獨立
+#                            Compose 專案 lm-drill-<env>-<8 hex>（只有 internal 網路與匿名卷）→ pg_restore → 以映像的
+#                            Migration_Runner 補齊遷移 → 以目前作用中 digest 啟動 App → /app/tools/drill.js 插入臨時合成
+#                            管理員、建立 smoke-fixture 並執行 Smoke_Test → `down -v`。不取部署鎖（改取
+#                            lm-<env>-drill.lock，不阻擋部署）、不寫入狀態檔、不修剪或刪除任何備份（失敗時亦同）。
+#                            docker／pg_restore 輸出寫入 state/drill-last.log（0600），不輸出到 stdout／stderr。
+#
+# 輸出：stdout 每個步驟一行 JSON 物件（失敗時 {"ok":false,"reason":...}）；docker 與診斷訊息只寫 stderr。
+# 結束碼：0 成功；1 操作失敗；2 參數／設定錯誤；3 狀態不允許（例如已有未完成的部署）；4 鎖已被持有。
+#
+# 檔案（<LM_ROOT>/<env>/）：compose.yaml、<env>.env（含 LM_IMAGE_REPO、LM_HEALTH_HOST）、app.env、db.env、
+#   caddy/{Caddyfile,upstream.caddy.tmpl,upstream.caddy}、state/lm.state（唯一狀態來源，key=value，
+#   讀取時逐項驗證、從不 source）與 state/active.json（每次寫入狀態時產生的 JSON 快照）。
+#
+# 保留規則：與 ci/retention.mjs 的 pruneBackups／retainImages 相同（Deploy_Host 不安裝 Bun，因此在此以 bash
+#   重現；修改任一方時必須同步修改另一方，deploy/tests/lm-deploy.bats 驗證此行為）：
+#   - 備份：新備份通過驗證後才修剪；保留新備份與依建立時間最新的 13 份既有已驗證備份，其餘刪除；建立時間
+#     相同時以 id 字典序遞減決定。新備份未通過驗證 → 不刪除任何備份。
+#   - 映像：history 由舊到新；由新到舊取前 3 個相異 digest 為 retained，其餘為 removed。
+#
+# 測試覆寫（僅在「非 sudo 執行」時採用；以 root 經 sudo 執行時一律忽略並重設 PATH）：
+#   LM_ROOT=/srv/lm  LM_BACKUP_ROOT=/var/backups/little-moments  LM_LOCK_DIR=/run
+#   LM_BACKUP_TIMEOUT=30m  LM_VERIFY_TIMEOUT=10m  LM_MIGRATE_TIMEOUT=30m  LM_BACKUP_MAX_AGE=3600
+#   LM_BACKUP_KEEP=14  LM_IMAGE_KEEP=3  LM_HEALTH_TIMEOUT=5  LM_HEALTH_INTERVAL=5（staging 為 10）  LM_HEALTH_WINDOW=120
+#   LM_HEALTH_NEED=3  LM_RESTORE_TIMEOUT=60m  LM_DRILL_UP_TIMEOUT=5m  LM_DRILL_TOOL_TIMEOUT=15m  LM_DRILL_DOWN_TIMEOUT=2m
+#   docker、timeout、flock、sha256sum、sleep、date 皆經 PATH 呼叫，可由測試替換。
+#
+# SSH forced command 經 sudo 時需在 sudoers 保留 SSH_ORIGINAL_COMMAND（deploy/host/sudoers.d/lm-deploy）。
+# 每個 token 只允許 [A-Za-z0-9@:/._=-]，且不得指向另一個環境。
+
+set -euo pipefail
+umask 077
+export LC_ALL=C
+
+readonly EX_FAIL=1 EX_USAGE=2 EX_STATE=3 EX_LOCKED=4
+readonly ENV_RE='^(staging|prod)$'
+readonly COLOR_RE='^(blue|green)$'
+readonly DIGEST_RE='^sha256:[0-9a-f]{64}$'
+readonly REPO_RE='^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?(/[a-z0-9]+([._-][a-z0-9]+)*)+$'
+readonly BACKUP_ID_RE='^(staging|prod)-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{7}$'
+readonly HOST_RE='^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)$'
+readonly DBNAME_RE='^[A-Za-z_][A-Za-z0-9_]{0,62}$'
+readonly ZERO_DIGEST="sha256:0000000000000000000000000000000000000000000000000000000000000000"
+# app.env 只接受這些鍵（CAMPING_BEDROCK_* 由 compose environment 決定，不經 app.env）。
+readonly APP_ENV_KEYS=" CAMPING_DATABASE_NAME CAMPING_DATABASE_USER CAMPING_DATABASE_PASSWORD CAMPING_SETUP_TOKEN "
+readonly APP_ENV_REQUIRED="CAMPING_DATABASE_NAME CAMPING_DATABASE_USER CAMPING_DATABASE_PASSWORD"
+readonly APP_ENV_MAX_BYTES=65536
+
+# ---------------------------------------------------------------------------------------------
+# 設定
+# ---------------------------------------------------------------------------------------------
+
+if [[ ${EUID} -eq 0 && -n ${SUDO_USER:-} ]]; then
+  LM_TRUST_ENV=0
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  export PATH
+else
+  LM_TRUST_ENV=1
+fi
+# 呼叫端環境中的這些值會覆寫 <env>.env，一律移除，讓 Compose 專案設定只來自 Deploy_Host 上的檔案。
+unset CAMPING_BEDROCK_REGION CAMPING_BEDROCK_MODEL_ID CAMPING_BEDROCK_API_KEY \
+  COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_PROFILES COMPOSE_ENV_FILES APP_IMAGE_BLUE APP_IMAGE_GREEN APP_IMAGE_NEW
+
+CMD=""
+ENVN=""
+TMP_FILES=()
+# 還原演練（do_drill）的清理狀態：DRILL_UP=1 表示 drill 專案可能有容器／網路／匿名卷需要 `down -v`。
+DRILL_UP=0
+DRILL_DIR=""
+
+log() { printf '[lm-deploy] %s\n' "$*" >&2; }
+
+jstr() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\r'/\\r}
+  s=${s//$'\t'/\\t}
+  printf '"%s"' "$s"
+}
+
+jarr() {
+  local out="" x
+  for x in "$@"; do out+="${out:+,}$(jstr "$x")"; done
+  printf '[%s]' "$out"
+}
+
+slot_json() {
+  if [[ -z $1 ]]; then printf 'null'; else printf '{"color":%s,"digest":%s}' "$(jstr "$1")" "$(jstr "$2")"; fi
+}
+
+emit() { printf '%s\n' "$1"; }
+
+# die <exit> <reason> <message> [extra-json-fields]
+die() {
+  local code=$1 reason=$2 msg=$3 extra=${4:-}
+  log "${reason}：${msg}"
+  printf '{"ok":false,"command":%s,"env":%s,"reason":%s,"message":%s%s}\n' \
+    "$(jstr "$CMD")" "$(jstr "$ENVN")" "$(jstr "$reason")" "$(jstr "$msg")" "${extra:+,$extra}"
+  exit "$code"
+}
+
+cleanup() {
+  local f
+  # 任何結束路徑（含失敗、HUP／INT／TERM）都先銷毀 drill 專案，再刪除其秘密暫存目錄。
+  if [[ $DRILL_UP == 1 ]]; then drill_down || true; fi
+  if [[ -n $DRILL_DIR ]]; then drill_remove_dir || true; fi
+  for f in "${TMP_FILES[@]}"; do [[ -n $f ]] && rm -f -- "$f"; done
+  return 0
+}
+trap cleanup EXIT
+
+untrack() {
+  local keep=() f
+  for f in "${TMP_FILES[@]}"; do [[ $f == "$1" ]] || keep+=("$f"); done
+  TMP_FILES=("${keep[@]}")
+}
+
+# cfg <name> <default> <regex>：只有在非 sudo 執行時才採用環境覆寫。
+cfg() {
+  local name=$1 def=$2 re=$3 val
+  val=$def
+  if [[ $LM_TRUST_ENV == 1 && -n ${!name:-} ]]; then val=${!name}; fi
+  if [[ ! $val =~ $re || $val == *..* ]]; then
+    printf '[lm-deploy] 設定 %s 格式無效\n' "$name" >&2
+    exit "$EX_USAGE"
+  fi
+  REPLY=$val
+}
+
+readonly PATH_RE='^/[A-Za-z0-9._/-]*$'
+readonly DUR_RE='^[0-9]+[smh]?$'
+readonly NUM_RE='^[1-9][0-9]{0,5}$'
+cfg LM_ROOT /srv/lm "$PATH_RE"; LM_ROOT=$REPLY
+cfg LM_BACKUP_ROOT /var/backups/little-moments "$PATH_RE"; LM_BACKUP_ROOT=$REPLY
+cfg LM_LOCK_DIR /run "$PATH_RE"; LM_LOCK_DIR=$REPLY
+cfg LM_BACKUP_TIMEOUT 30m "$DUR_RE"; BACKUP_TIMEOUT=$REPLY
+cfg LM_VERIFY_TIMEOUT 10m "$DUR_RE"; VERIFY_TIMEOUT=$REPLY
+cfg LM_MIGRATE_TIMEOUT 30m "$DUR_RE"; MIGRATE_TIMEOUT=$REPLY
+cfg LM_BACKUP_MAX_AGE 3600 "$NUM_RE"; BACKUP_MAX_AGE=$REPLY
+cfg LM_BACKUP_KEEP 14 "$NUM_RE"; BACKUP_KEEP=$REPLY
+cfg LM_IMAGE_KEEP 3 "$NUM_RE"; IMAGE_KEEP=$REPLY
+cfg LM_HEALTH_TIMEOUT 5 "$NUM_RE"; HEALTH_TIMEOUT=$REPLY
+cfg LM_HEALTH_INTERVAL 5 "$NUM_RE"; HEALTH_INTERVAL=$REPLY
+# 未以 LM_HEALTH_INTERVAL 覆寫（測試）時，init_env 依環境決定間隔：staging 10 秒（Req 18.3）、prod 5 秒。
+HEALTH_INTERVAL_OVERRIDE=0
+if [[ $LM_TRUST_ENV == 1 && -n ${LM_HEALTH_INTERVAL:-} ]]; then HEALTH_INTERVAL_OVERRIDE=1; fi
+cfg LM_HEALTH_WINDOW 120 "$NUM_RE"; HEALTH_WINDOW=$REPLY
+cfg LM_HEALTH_NEED 3 "$NUM_RE"; HEALTH_NEED=$REPLY
+cfg LM_RESTORE_TIMEOUT 60m "$DUR_RE"; RESTORE_TIMEOUT=$REPLY
+cfg LM_DRILL_UP_TIMEOUT 5m "$DUR_RE"; DRILL_UP_TIMEOUT=$REPLY
+cfg LM_DRILL_TOOL_TIMEOUT 15m "$DUR_RE"; DRILL_TOOL_TIMEOUT=$REPLY
+cfg LM_DRILL_DOWN_TIMEOUT 2m "$DUR_RE"; DRILL_DOWN_TIMEOUT=$REPLY
+
+usage() {
+  printf '%s\n' '用法：lm-deploy <staging|prod> <backup|migrate|start|health|switch|rollback|finalize|status|prune|app-env|deploy|drill> [args]' >&2
+  CMD=${CMD:-usage}
+  die "$EX_USAGE" usage "${1:-參數無效}"
+}
+
+# env_get <file> <key>：讀取 KEY=VALUE（最後一筆為準，去除成對引號），結果放在 REPLY。從不 source 檔案。
+env_get() {
+  local file=$1 key=$2 line val=""
+  REPLY=""
+  [[ -f $file && -r $file ]] || return 0
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=${line%$'\r'}
+    [[ $line == "$key="* ]] && val=${line#"$key="}
+  done <"$file"
+  if [[ $val =~ ^\"(.*)\"$ || $val =~ ^\'(.*)\'$ ]]; then val=${BASH_REMATCH[1]}; fi
+  REPLY=$val
+}
+
+now_iso() { date -u +%Y-%m-%dT%H:%M:%S+00:00; }
+now_ms() { local n; n=$(date -u +%s%N); printf '%s' "$((n / 1000000))"; }
+
+# ---------------------------------------------------------------------------------------------
+# 環境與狀態
+# ---------------------------------------------------------------------------------------------
+
+init_env() {
+  ENVN=$1
+  ENV_DIR="$LM_ROOT/$ENVN"
+  STATE_DIR="$ENV_DIR/state"
+  STATE_FILE="$STATE_DIR/lm.state"
+  BACKUP_DIR="$LM_BACKUP_ROOT/$ENVN"
+  LOCK_FILE="$LM_LOCK_DIR/lm-$ENVN.lock"
+  CADDY_DIR="$ENV_DIR/caddy"
+  IMAGE_REPO=""
+  HEALTH_HOST=""
+  if [[ $HEALTH_INTERVAL_OVERRIDE == 0 ]]; then
+    if [[ $ENVN == staging ]]; then HEALTH_INTERVAL=10; else HEALTH_INTERVAL=5; fi
+  fi
+}
+
+# 讀取 <env>.env 的非秘密設定；需要 Compose 的子命令才呼叫。
+load_env_config() {
+  local envfile="$ENV_DIR/$ENVN.env" v
+  [[ -f "$ENV_DIR/compose.yaml" ]] || die "$EX_USAGE" config_missing "找不到 compose.yaml"
+  [[ -f $envfile ]] || die "$EX_USAGE" config_missing "找不到 $ENVN.env"
+  env_get "$envfile" LM_ENV
+  [[ -z $REPLY || $REPLY == "$ENVN" ]] || die "$EX_USAGE" config_invalid "$ENVN.env 的 LM_ENV 與環境參數不一致"
+  env_get "$envfile" LM_IMAGE_REPO
+  [[ $REPLY =~ $REPO_RE ]] || die "$EX_USAGE" config_invalid "LM_IMAGE_REPO 未設定或格式無效"
+  IMAGE_REPO=$REPLY
+  env_get "$envfile" LM_HEALTH_HOST
+  v=$REPLY
+  if [[ -z $v ]]; then
+    env_get "$envfile" ALLOWED_HOSTS
+    v=${REPLY%%,*}
+  fi
+  [[ $v =~ $HOST_RE ]] || die "$EX_USAGE" config_invalid "LM_HEALTH_HOST 未設定或格式無效"
+  HEALTH_HOST=$v
+  env_get "$envfile" LM_CADDY_DIR
+  v=${REPLY:-./caddy}
+  [[ $v =~ ^(\./)?[A-Za-z0-9._/-]+$|^/[A-Za-z0-9._/-]+$ && $v != *..* ]] || die "$EX_USAGE" config_invalid "LM_CADDY_DIR 格式無效"
+  if [[ $v == /* ]]; then CADDY_DIR=$v; else CADDY_DIR="$ENV_DIR/${v#./}"; fi
+  CADDY_DIR=${CADDY_DIR%/}
+}
+
+# 正規化 digest 參數 → DIGEST（sha256:...）。
+parse_digest() {
+  local arg=$1
+  if [[ $arg =~ $DIGEST_RE ]]; then
+    DIGEST=$arg
+  elif [[ $arg == *@* ]]; then
+    local repo=${arg%@*} d=${arg##*@}
+    [[ $repo =~ $REPO_RE && $d =~ $DIGEST_RE ]] || die "$EX_USAGE" invalid_digest "digest 格式必須為 sha256:<64 hex> 或 repo@sha256:<64 hex>"
+    [[ $repo == "$IMAGE_REPO" ]] || die "$EX_USAGE" invalid_digest "映像 repository 與 LM_IMAGE_REPO 不符"
+    DIGEST=$d
+  else
+    die "$EX_USAGE" invalid_digest "digest 格式必須為 sha256:<64 hex> 或 repo@sha256:<64 hex>"
+  fi
+}
+
+S_PHASE=idle
+S_ACTIVE_COLOR="" S_ACTIVE_DIGEST=""
+S_CANDIDATE_COLOR="" S_CANDIDATE_DIGEST=""
+S_PREVIOUS_COLOR="" S_PREVIOUS_DIGEST=""
+S_HISTORY=()
+S_LAST_BACKUP_ID="" S_LAST_BACKUP_AT=""
+
+state_bad() { die "$EX_STATE" state_invalid "狀態檔 $STATE_FILE 無效：$1（需人工檢查）"; }
+
+load_state() {
+  local line k v d arr
+  [[ -e $STATE_FILE ]] || return 0
+  [[ -f $STATE_FILE && ! -L $STATE_FILE ]] || state_bad "不是一般檔案"
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ -z $line || $line == \#* ]] && continue
+    [[ $line == *=* ]] || state_bad "格式錯誤"
+    k=${line%%=*}
+    v=${line#*=}
+    case $k in
+      PHASE) [[ $v =~ ^(idle|started|switched)$ ]] || state_bad PHASE; S_PHASE=$v ;;
+      ACTIVE_COLOR | CANDIDATE_COLOR | PREVIOUS_COLOR)
+        [[ -z $v || $v =~ $COLOR_RE ]] || state_bad "$k"
+        printf -v "S_$k" '%s' "$v" ;;
+      ACTIVE_DIGEST | CANDIDATE_DIGEST | PREVIOUS_DIGEST)
+        [[ -z $v || $v =~ $DIGEST_RE ]] || state_bad "$k"
+        printf -v "S_$k" '%s' "$v" ;;
+      HISTORY)
+        read -r -a arr <<<"$v"
+        for d in "${arr[@]}"; do [[ $d =~ $DIGEST_RE ]] || state_bad HISTORY; done
+        S_HISTORY=("${arr[@]}") ;;
+      LAST_BACKUP_ID) [[ -z $v || $v =~ $BACKUP_ID_RE ]] || state_bad "$k"; S_LAST_BACKUP_ID=$v ;;
+      LAST_BACKUP_AT) [[ -z $v || $v =~ ^[0-9]{1,12}$ ]] || state_bad "$k"; S_LAST_BACKUP_AT=$v ;;
+      UPDATED_AT) ;;
+      *) state_bad "未知欄位 $k" ;;
+    esac
+  done <"$STATE_FILE"
+  if [[ -n $S_ACTIVE_COLOR && -z $S_ACTIVE_DIGEST || -z $S_ACTIVE_COLOR && -n $S_ACTIVE_DIGEST ]]; then state_bad ACTIVE; fi
+  if [[ -n $S_PREVIOUS_COLOR && -z $S_PREVIOUS_DIGEST || -z $S_PREVIOUS_COLOR && -n $S_PREVIOUS_DIGEST ]]; then state_bad PREVIOUS; fi
+  case $S_PHASE in
+    idle) [[ -z $S_CANDIDATE_COLOR && -z $S_PREVIOUS_COLOR ]] || state_bad "idle 不應有 candidate/previous" ;;
+    started)
+      [[ -n $S_CANDIDATE_COLOR && -n $S_CANDIDATE_DIGEST && $S_CANDIDATE_COLOR != "$S_ACTIVE_COLOR" ]] || state_bad "started 缺少 candidate"
+      [[ -z $S_PREVIOUS_COLOR ]] || state_bad "started 不應有 previous" ;;
+    switched)
+      [[ -n $S_ACTIVE_COLOR && -z $S_CANDIDATE_COLOR ]] || state_bad "switched 狀態不一致"
+      [[ -z $S_PREVIOUS_COLOR || $S_PREVIOUS_COLOR != "$S_ACTIVE_COLOR" ]] || state_bad "previous 與 active 同槽位" ;;
+  esac
+}
+
+# 映像保留（與 ci/retention.mjs retainImages 相同）：R_RETAINED 由新到舊、R_REMOVED 由新到舊。
+retain_images() {
+  R_RETAINED=()
+  R_REMOVED=()
+  local -A seen=()
+  local i d
+  for ((i = ${#S_HISTORY[@]} - 1; i >= 0; i--)); do
+    d=${S_HISTORY[i]}
+    [[ -n ${seen[$d]:-} ]] && continue
+    seen[$d]=1
+    if ((${#R_RETAINED[@]} < IMAGE_KEEP)); then R_RETAINED+=("$d"); else R_REMOVED+=("$d"); fi
+  done
+}
+
+status_json() {
+  retain_images
+  # 只有 status 子命令探測鎖；active.json 快照於持有鎖時寫入，該欄位為 null。
+  local locked=null
+  if [[ ${STATUS_PROBE_LOCK:-0} != 1 ]]; then
+    :
+  elif [[ -e $LOCK_FILE ]]; then
+    if flock -n "$LOCK_FILE" true 2>/dev/null; then locked=false; else locked=true; fi
+  elif [[ -d $LM_LOCK_DIR ]]; then
+    locked=false
+  fi
+  list_backups
+  local latest=null lastb=null
+  ((${#B_IDS[@]} > 0)) && latest=$(jstr "${B_IDS[0]}")
+  if [[ -n $S_LAST_BACKUP_ID ]]; then
+    lastb=$(printf '{"id":%s,"at":%s}' "$(jstr "$S_LAST_BACKUP_ID")" "$(jstr "$(date -u -d "@$S_LAST_BACKUP_AT" +%Y-%m-%dT%H:%M:%S+00:00)")")
+  fi
+  local rollback_targets=() d
+  for d in "${R_RETAINED[@]}"; do [[ $d == "$S_ACTIVE_DIGEST" ]] || rollback_targets+=("$d"); done
+  printf '{"ok":true,"command":"status","env":%s,"phase":%s,"active":%s,"candidate":%s,"previous":%s,"history":%s,"retained":%s,"rollbackTargets":%s,"deployInProgress":%s,"lastBackup":%s,"backups":{"count":%s,"latest":%s}}' \
+    "$(jstr "$ENVN")" "$(jstr "$S_PHASE")" \
+    "$(slot_json "$S_ACTIVE_COLOR" "$S_ACTIVE_DIGEST")" \
+    "$(slot_json "$S_CANDIDATE_COLOR" "$S_CANDIDATE_DIGEST")" \
+    "$(slot_json "$S_PREVIOUS_COLOR" "$S_PREVIOUS_DIGEST")" \
+    "$(jarr "${S_HISTORY[@]}")" "$(jarr "${R_RETAINED[@]}")" "$(jarr "${rollback_targets[@]}")" \
+    "$locked" "$lastb" "${#B_IDS[@]}" "$latest"
+}
+
+save_state() {
+  local tmp snap
+  mkdir -p -- "$STATE_DIR"
+  tmp=$(mktemp "$STATE_DIR/.lm.state.XXXXXX")
+  TMP_FILES+=("$tmp")
+  {
+    printf 'PHASE=%s\n' "$S_PHASE"
+    printf 'ACTIVE_COLOR=%s\nACTIVE_DIGEST=%s\n' "$S_ACTIVE_COLOR" "$S_ACTIVE_DIGEST"
+    printf 'CANDIDATE_COLOR=%s\nCANDIDATE_DIGEST=%s\n' "$S_CANDIDATE_COLOR" "$S_CANDIDATE_DIGEST"
+    printf 'PREVIOUS_COLOR=%s\nPREVIOUS_DIGEST=%s\n' "$S_PREVIOUS_COLOR" "$S_PREVIOUS_DIGEST"
+    printf 'HISTORY=%s\n' "${S_HISTORY[*]}"
+    printf 'LAST_BACKUP_ID=%s\nLAST_BACKUP_AT=%s\n' "$S_LAST_BACKUP_ID" "$S_LAST_BACKUP_AT"
+    printf 'UPDATED_AT=%s\n' "$(now_iso)"
+  } >"$tmp"
+  mv -f -- "$tmp" "$STATE_FILE"
+  untrack "$tmp"
+  snap=$(mktemp "$STATE_DIR/.active.json.XXXXXX")
+  TMP_FILES+=("$snap")
+  { status_json; printf '\n'; } >"$snap"
+  mv -f -- "$snap" "$STATE_DIR/active.json"
+  untrack "$snap"
+}
+
+acquire_lock() {
+  [[ -d $LM_LOCK_DIR ]] || die "$EX_USAGE" config_missing "鎖目錄不存在"
+  exec 9>>"$LOCK_FILE" || die "$EX_FAIL" lock_failed "無法開啟鎖檔"
+  if ! flock -n 9; then
+    die "$EX_LOCKED" deploy_in_progress "已有部署進行中（$ENVN）"
+  fi
+}
+
+require_phase() {
+  [[ $S_PHASE == "$1" ]] || die "$EX_STATE" invalid_phase "目前階段為 $S_PHASE，此操作需要 $1（已有未完成的部署時請先 finalize 或 rollback）"
+}
+
+# ---------------------------------------------------------------------------------------------
+# Docker Compose
+# ---------------------------------------------------------------------------------------------
+
+# build_compose [new-digest]：組出 COMPOSE_CMD。所有 APP_IMAGE_* 皆為 repo@sha256:<64 hex>。
+build_compose() {
+  local new=${1:-} fb
+  fb=${new:-${S_ACTIVE_DIGEST:-${S_CANDIDATE_DIGEST:-${S_PREVIOUS_DIGEST:-$ZERO_DIGEST}}}}
+  local -A slot=([blue]="" [green]="")
+  [[ -n $S_PREVIOUS_COLOR ]] && slot[$S_PREVIOUS_COLOR]=$S_PREVIOUS_DIGEST
+  [[ -n $S_ACTIVE_COLOR ]] && slot[$S_ACTIVE_COLOR]=$S_ACTIVE_DIGEST
+  [[ -n $S_CANDIDATE_COLOR ]] && slot[$S_CANDIDATE_COLOR]=$S_CANDIDATE_DIGEST
+  local blue=${slot[blue]:-$fb} green=${slot[green]:-$fb} nimg=${new:-$fb} d
+  for d in "$blue" "$green" "$nimg"; do [[ $d =~ $DIGEST_RE ]] || die "$EX_FAIL" internal "digest 驗證失敗"; done
+  COMPOSE_CMD=(env "LM_ENV=$ENVN"
+    "APP_IMAGE_BLUE=$IMAGE_REPO@$blue" "APP_IMAGE_GREEN=$IMAGE_REPO@$green" "APP_IMAGE_NEW=$IMAGE_REPO@$nimg"
+    docker compose --project-directory "$ENV_DIR" -f "$ENV_DIR/compose.yaml" --env-file "$ENV_DIR/$ENVN.env")
+}
+
+remove_slot() {
+  local color=$1
+  [[ $color =~ $COLOR_RE ]] || return 1
+  "${COMPOSE_CMD[@]}" --profile "$color" rm -s -f "app-$color" >&2
+}
+
+# 一次健康檢查；H_OK/H_MS 為結果。
+check_health_once() {
+  local color=$1 t0
+  [[ $color =~ $COLOR_RE ]] || die "$EX_USAGE" invalid_color "color 只接受 blue 或 green"
+  t0=$(now_ms)
+  if timeout -k 2s "$((HEALTH_TIMEOUT + 10))s" "${COMPOSE_CMD[@]}" exec -T proxy \
+    wget -q -O - --header "Host: $HEALTH_HOST" -T "$HEALTH_TIMEOUT" "http://app-$color:5173/healthz" >/dev/null 2>&1; then
+    H_OK=true
+  else
+    H_OK=false
+  fi
+  H_MS=$(($(now_ms) - t0))
+  if [[ $H_OK == true ]] && ((H_MS > HEALTH_TIMEOUT * 1000)); then H_OK=false; fi
+}
+
+# 啟動健康等待：視窗內每 interval 秒一次，連續 need 次成功即回傳 0。H_RESULTS 為 ci/health.mjs 的 HealthResult[]。
+health_wait() {
+  local color=$1 start t i=0 streak=0 out=""
+  start=$SECONDS
+  while :; do
+    # 第 i 次檢查排定於 i*interval 秒；實際經過時間較長時以實際時間為準。
+    t=$((SECONDS - start))
+    ((t >= i * HEALTH_INTERVAL)) || t=$((i * HEALTH_INTERVAL))
+    check_health_once "$color"
+    out+="${out:+,}{\"t\":$t,\"ok\":$H_OK,\"durationMs\":$H_MS}"
+    if [[ $H_OK == true ]]; then streak=$((streak + 1)); else streak=0; fi
+    if ((streak >= HEALTH_NEED)); then H_RESULTS="[$out]"; return 0; fi
+    i=$((i + 1))
+    if ((i * HEALTH_INTERVAL > HEALTH_WINDOW || SECONDS - start + HEALTH_INTERVAL > HEALTH_WINDOW)); then
+      H_RESULTS="[$out]"
+      return 1
+    fi
+    sleep "$HEALTH_INTERVAL"
+  done
+}
+
+# 以樣板產生 upstream.caddy 並原子替換，再 caddy reload；reload 失敗時還原舊檔並再次 reload。
+apply_upstream() {
+  local color=$1 tmpl="$CADDY_DIR/upstream.caddy.tmpl" target="$CADDY_DIR/upstream.caddy" tmp prev=""
+  [[ $color =~ $COLOR_RE ]] || die "$EX_USAGE" invalid_color "color 只接受 blue 或 green"
+  [[ -f $tmpl ]] || die "$EX_USAGE" config_missing "找不到 upstream.caddy.tmpl"
+  tmp=$(mktemp "$CADDY_DIR/.upstream.caddy.XXXXXX")
+  TMP_FILES+=("$tmp")
+  sed "s/__COLOR__/$color/g" -- "$tmpl" >"$tmp"
+  grep -q "reverse_proxy app-$color:5173" -- "$tmp" || die "$EX_FAIL" upstream_render_failed "upstream 樣板內容無效"
+  ! grep -q '__COLOR__' -- "$tmp" || die "$EX_FAIL" upstream_render_failed "upstream 樣板仍含 __COLOR__"
+  chmod 0644 -- "$tmp"
+  if [[ -f $target ]]; then
+    prev=$(mktemp "$CADDY_DIR/.upstream.caddy.prev.XXXXXX")
+    TMP_FILES+=("$prev")
+    cp -p -- "$target" "$prev"
+  fi
+  mv -f -- "$tmp" "$target"
+  untrack "$tmp"
+  if "${COMPOSE_CMD[@]}" exec -T proxy caddy reload --config /etc/caddy/Caddyfile >&2; then
+    return 0
+  fi
+  log "caddy reload 失敗，還原先前的 upstream.caddy"
+  if [[ -n $prev ]]; then
+    mv -f -- "$prev" "$target"
+    untrack "$prev"
+    "${COMPOSE_CMD[@]}" exec -T proxy caddy reload --config /etc/caddy/Caddyfile >&2 || log "還原後 reload 仍失敗，需人工介入"
+  fi
+  return 1
+}
+
+# 移除不在保留集合（retained ∪ 目前所有槽位）內的本機映像。I_REMOVED 為已移除的 digest。
+prune_images() {
+  retain_images
+  local -A keep=()
+  local d
+  for d in "${R_RETAINED[@]}" "$S_ACTIVE_DIGEST" "$S_CANDIDATE_DIGEST" "$S_PREVIOUS_DIGEST"; do [[ -n $d ]] && keep[$d]=1; done
+  local -A cand=()
+  for d in "${R_REMOVED[@]}"; do cand[$d]=1; done
+  local listing
+  if listing=$(docker image ls --digests --format '{{.Digest}}' "$IMAGE_REPO" 2>/dev/null); then
+    while IFS= read -r d; do [[ $d =~ $DIGEST_RE ]] && cand[$d]=1; done <<<"$listing"
+  else
+    log "無法列出本機映像，只處理 history 中的 removed"
+  fi
+  I_REMOVED=()
+  for d in "${!cand[@]}"; do
+    [[ -n ${keep[$d]:-} ]] && continue
+    if docker image rm "$IMAGE_REPO@$d" >&2; then I_REMOVED+=("$d"); else log "移除映像失敗：$d"; fi
+  done
+  # history 只保留 retained（由舊到新），被移除的映像不再是回滾目標。
+  local i nh=()
+  for ((i = ${#R_RETAINED[@]} - 1; i >= 0; i--)); do nh+=("${R_RETAINED[i]}"); done
+  S_HISTORY=("${nh[@]}")
+}
+
+# ---------------------------------------------------------------------------------------------
+# 備份
+# ---------------------------------------------------------------------------------------------
+
+check_backup_dir() {
+  [[ -d $BACKUP_DIR && ! -L $BACKUP_DIR ]] || die "$EX_FAIL" backup_create_failed "備份目錄不存在"
+  local mode
+  mode=$(stat -c %a -- "$BACKUP_DIR")
+  (((8#$mode & 8#077) == 0)) || die "$EX_FAIL" backup_create_failed "備份目錄權限必須只允許擁有者存取（目前 $mode）"
+}
+
+# B_IDS：已驗證備份（.dump 與 .dump.sha256 皆存在）id，由新到舊。
+list_backups() {
+  B_IDS=()
+  [[ -d $BACKUP_DIR && -r $BACKUP_DIR && -x $BACKUP_DIR ]] || return 0
+  local f id ids=()
+  for f in "$BACKUP_DIR/$ENVN"-*.dump; do
+    [[ -f $f && ! -L $f ]] || continue
+    id=${f##*/}
+    id=${id%.dump}
+    [[ $id =~ $BACKUP_ID_RE && $id == "$ENVN"-* && -f "$f.sha256" ]] || continue
+    ids+=("$id")
+  done
+  ((${#ids[@]} > 0)) || return 0
+  mapfile -t B_IDS < <(printf '%s\n' "${ids[@]}" | sort -r)
+}
+
+# 與 ci/retention.mjs pruneBackups(existing, newBackup, verified=true, keep) 相同：保留新備份與最新的
+# keep-1 份其他備份。id 內含固定寬度 UTC 時間，依 id 遞減即依建立時間遞減、相同時間依 id 遞減。
+prune_backups() {
+  local new=$1 id i=0 others=()
+  P_DELETED=()
+  list_backups
+  ((${#B_IDS[@]} > 0)) || return 0
+  [[ -n $new ]] || new=${B_IDS[0]}
+  for id in "${B_IDS[@]}"; do [[ $id == "$new" ]] || others+=("$id"); done
+  for id in "${others[@]}"; do
+    i=$((i + 1))
+    ((i <= BACKUP_KEEP - 1)) && continue
+    rm -f -- "$BACKUP_DIR/$id.dump.sha256" "$BACKUP_DIR/$id.json" "$BACKUP_DIR/$id.dump"
+    P_DELETED+=("$id")
+  done
+}
+
+own_like_dir() {
+  if ! chown --reference="$BACKUP_DIR" -- "$@" 2>/dev/null; then
+    [[ ${EUID} -ne 0 ]] || die "$EX_FAIL" backup_create_failed "無法設定備份檔擁有者"
+  fi
+}
+
+read_db_names() {
+  env_get "$ENV_DIR/db.env" POSTGRES_USER
+  [[ $REPLY =~ $DBNAME_RE ]] || die "$EX_USAGE" config_invalid "db.env 的 POSTGRES_USER 未設定或格式無效"
+  DB_USER=$REPLY
+  env_get "$ENV_DIR/db.env" POSTGRES_DB
+  [[ $REPLY =~ $DBNAME_RE ]] || die "$EX_USAGE" config_invalid "db.env 的 POSTGRES_DB 未設定或格式無效"
+  DB_NAME=$REPLY
+}
+
+do_backup() {
+  CMD=backup
+  check_backup_dir
+  read_db_names
+  build_compose ""
+  local epoch ts created partial listfile rc size total tdata tables sha id final meta shaf
+  epoch=$(date -u +%s)
+  ts=$(date -u -d "@$epoch" +%Y%m%dT%H%M%SZ)
+  created=$(date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%S+00:00)
+  partial="$BACKUP_DIR/$ENVN-$ts.dump.partial"
+  if ! (set -o noclobber; : >"$partial") 2>/dev/null; then
+    die "$EX_FAIL" backup_create_failed "無法建立暫存備份檔"
+  fi
+  TMP_FILES+=("$partial")
+
+  # 1. pg_dump -Fc：單一 repeatable-read 快照，涵蓋 schema、資料與序列值（Req 14.1）。
+  if timeout -k 30s "$BACKUP_TIMEOUT" "${COMPOSE_CMD[@]}" exec -T db \
+    pg_dump -Fc --no-password -U "$DB_USER" -d "$DB_NAME" >"$partial"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  if ((rc == 124 || rc == 137)); then die "$EX_FAIL" backup_timeout "備份未在 $BACKUP_TIMEOUT 內完成"; fi
+  ((rc == 0)) || die "$EX_FAIL" backup_create_failed "pg_dump 失敗（結束碼 $rc）"
+
+  # 2. 驗證（Req 14.2）：大小 > 0、pg_restore --list 成功、有資料表時至少一個 TABLE DATA、sha256。
+  size=$(stat -c %s -- "$partial")
+  ((size > 0)) || die "$EX_FAIL" backup_verify_failed "備份檔大小為 0"
+  listfile="$partial.list"
+  TMP_FILES+=("$listfile")
+  if timeout -k 10s "$VERIFY_TIMEOUT" "${COMPOSE_CMD[@]}" exec -T db pg_restore --list <"$partial" >"$listfile"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  ((rc == 0)) || die "$EX_FAIL" backup_verify_failed "pg_restore --list 失敗（結束碼 $rc）"
+  total=$(grep -cE '^[0-9]+; [0-9]+ [0-9]+ TABLE ' -- "$listfile" || true)
+  tdata=$(grep -cE '^[0-9]+; [0-9]+ [0-9]+ TABLE DATA ' -- "$listfile" || true)
+  tables=$((total - tdata))
+  # 資料庫尚無任何資料表（首次部署、遷移前）時 pg_dump 不會有 TABLE DATA；其餘情況必須至少一個。
+  if ((tables > 0 && tdata == 0)); then die "$EX_FAIL" backup_verify_failed "備份不含任何 TABLE DATA 條目"; fi
+  sha=$(sha256sum -- "$partial")
+  sha=${sha%% *}
+  [[ $sha =~ ^[0-9a-f]{64}$ ]] || die "$EX_FAIL" backup_verify_failed "無法計算校驗碼"
+
+  # 3. rename 去除 .partial；.sha256 最後寫入，存在即代表已驗證。
+  id="$ENVN-$ts-${sha:0:7}"
+  final="$BACKUP_DIR/$id.dump"
+  meta="$BACKUP_DIR/$id.json"
+  shaf="$final.sha256"
+  [[ ! -e $final && ! -e $shaf ]] || die "$EX_FAIL" backup_create_failed "備份 id 已存在"
+  mv -f -- "$partial" "$final"
+  untrack "$partial"
+  TMP_FILES+=("$final" "$meta")
+  B_JSON=$(printf '{"id":%s,"env":%s,"createdAt":%s,"sizeBytes":%s,"sha256":%s,"tables":%s,"emptyDatabase":%s}' \
+    "$(jstr "$id")" "$(jstr "$ENVN")" "$(jstr "$created")" "$size" "$(jstr "$sha")" "$tables" \
+    "$( ((tables == 0)) && printf true || printf false)")
+  printf '%s\n' "$B_JSON" >"$meta.tmp"
+  TMP_FILES+=("$meta.tmp")
+  mv -f -- "$meta.tmp" "$meta"
+  printf '%s  %s\n' "$sha" "$id.dump" >"$shaf.tmp"
+  TMP_FILES+=("$shaf.tmp")
+  own_like_dir "$final" "$meta" "$shaf.tmp"
+  mv -f -- "$shaf.tmp" "$shaf"
+  untrack "$meta.tmp"
+  untrack "$shaf.tmp"
+  untrack "$final"
+  untrack "$meta"
+
+  S_LAST_BACKUP_ID=$id
+  S_LAST_BACKUP_AT=$epoch
+  # 4. 新備份已驗證 → 修剪（Req 14.5）。
+  prune_backups "$id"
+  save_state
+  local inner=${B_JSON#\{}
+  inner=${inner%\}}
+  emit "{\"ok\":true,\"command\":\"backup\",$inner,\"pruned\":$(jarr "${P_DELETED[@]}")}"
+}
+
+# ---------------------------------------------------------------------------------------------
+# app.env
+# ---------------------------------------------------------------------------------------------
+
+# 由 stdin 讀入並驗證，放在 ENV_DIR 的 0600 暫存檔（APP_ENV_STAGED）；不輸出任何值。
+stage_app_env() {
+  [[ -d $ENV_DIR ]] || die "$EX_USAGE" config_missing "環境目錄不存在"
+  local tmp size line key seen=" " k
+  tmp=$(mktemp "$ENV_DIR/.app.env.XXXXXX")
+  TMP_FILES+=("$tmp")
+  head -c "$((APP_ENV_MAX_BYTES + 1))" >"$tmp"
+  size=$(stat -c %s -- "$tmp")
+  ((size > 0)) || die "$EX_USAGE" app_env_invalid "stdin 沒有內容"
+  ((size <= APP_ENV_MAX_BYTES)) || die "$EX_USAGE" app_env_invalid "內容超過 $APP_ENV_MAX_BYTES 位元組"
+  [[ $(tr -d '\000\r' <"$tmp" | wc -c) -eq $size ]] || die "$EX_USAGE" app_env_invalid "內容不得包含 NUL 或 CR"
+  APP_ENV_KEYS_SEEN=()
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ -z $line || $line == \#* ]] && continue
+    [[ $line =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]] || die "$EX_USAGE" app_env_invalid "每行必須為 KEY=VALUE"
+    key=${BASH_REMATCH[1]}
+    [[ $APP_ENV_KEYS == *" $key "* ]] || die "$EX_USAGE" app_env_invalid "不允許的鍵：$key"
+    [[ $seen != *" $key "* ]] || die "$EX_USAGE" app_env_invalid "重複的鍵：$key"
+    [[ -n ${BASH_REMATCH[2]} ]] || die "$EX_USAGE" app_env_invalid "鍵 $key 的值為空"
+    seen+="$key "
+    APP_ENV_KEYS_SEEN+=("$key")
+  done <"$tmp"
+  for k in $APP_ENV_REQUIRED; do
+    [[ $seen == *" $k "* ]] || die "$EX_USAGE" app_env_invalid "缺少必要的鍵：$k"
+  done
+  chmod 0600 -- "$tmp"
+  APP_ENV_STAGED=$tmp
+}
+
+install_app_env() {
+  mv -f -- "$APP_ENV_STAGED" "$ENV_DIR/app.env"
+  untrack "$APP_ENV_STAGED"
+  chmod 0600 -- "$ENV_DIR/app.env"
+  emit "{\"ok\":true,\"command\":\"app-env\",\"env\":$(jstr "$ENVN"),\"keys\":$(jarr "${APP_ENV_KEYS_SEEN[@]}")}"
+}
+
+# ---------------------------------------------------------------------------------------------
+# 子命令
+# ---------------------------------------------------------------------------------------------
+
+do_migrate() {
+  CMD=migrate
+  local digest=$1 now
+  require_phase idle
+  now=$(date -u +%s)
+  if [[ -z $S_LAST_BACKUP_ID || -z $S_LAST_BACKUP_AT ]] || ((now - S_LAST_BACKUP_AT > BACKUP_MAX_AGE)) ||
+    [[ ! -f "$BACKUP_DIR/$S_LAST_BACKUP_ID.dump.sha256" ]]; then
+    die "$EX_STATE" backup_required "執行 Migration_Runner 前需要 ${BACKUP_MAX_AGE} 秒內的已驗證備份"
+  fi
+  build_compose "$digest"
+  if ! timeout -k 30s "$MIGRATE_TIMEOUT" "${COMPOSE_CMD[@]}" --profile ops run --rm --no-deps -T migrate >&2; then
+    die "$EX_FAIL" migrate_failed "Migration_Runner 失敗；未啟動新容器，現有容器維持執行"
+  fi
+  emit "{\"ok\":true,\"command\":\"migrate\",\"env\":$(jstr "$ENVN"),\"digest\":$(jstr "$digest"),\"backupId\":$(jstr "$S_LAST_BACKUP_ID")}"
+}
+
+do_start() {
+  CMD=start
+  local digest=$1 color=blue
+  require_phase idle
+  [[ $S_ACTIVE_COLOR == blue ]] && color=green
+  S_CANDIDATE_COLOR=$color
+  S_CANDIDATE_DIGEST=$digest
+  S_PHASE=started
+  save_state
+  build_compose "$digest"
+  if ! "${COMPOSE_CMD[@]}" --profile "$color" pull "app-$color" >&2 ||
+    ! "${COMPOSE_CMD[@]}" --profile "$color" up -d --no-deps "app-$color" >&2; then
+    remove_slot "$color" || log "移除新槽位失敗：app-$color"
+    S_CANDIDATE_COLOR="" S_CANDIDATE_DIGEST="" S_PHASE=idle
+    save_state
+    die "$EX_FAIL" start_failed "無法啟動 app-$color"
+  fi
+  emit "{\"ok\":true,\"command\":\"start\",\"env\":$(jstr "$ENVN"),\"color\":$(jstr "$color"),\"digest\":$(jstr "$digest"),\"image\":$(jstr "$IMAGE_REPO@$digest")}"
+}
+
+do_health() {
+  CMD=health
+  local color=$1 wait=$2
+  build_compose ""
+  if [[ $wait == 1 ]]; then
+    if health_wait "$color"; then
+      emit "{\"ok\":true,\"command\":\"health\",\"env\":$(jstr "$ENVN"),\"color\":$(jstr "$color"),\"healthy\":true,\"results\":$H_RESULTS}"
+      return 0
+    fi
+    die "$EX_FAIL" health_failed "app-$color 未在 ${HEALTH_WINDOW} 秒內連續 ${HEALTH_NEED} 次健康" \
+      "\"color\":$(jstr "$color"),\"healthy\":false,\"results\":$H_RESULTS"
+  fi
+  check_health_once "$color"
+  local at
+  at=$(now_iso)
+  if [[ $H_OK == true ]]; then
+    emit "{\"ok\":true,\"command\":\"health\",\"env\":$(jstr "$ENVN"),\"color\":$(jstr "$color"),\"healthy\":true,\"at\":$(jstr "$at"),\"durationMs\":$H_MS}"
+    return 0
+  fi
+  die "$EX_FAIL" health_failed "app-$color 健康檢查失敗" "\"color\":$(jstr "$color"),\"healthy\":false,\"at\":$(jstr "$at"),\"durationMs\":$H_MS"
+}
+
+do_switch() {
+  CMD=switch
+  require_phase started
+  build_compose ""
+  local to=$S_CANDIDATE_COLOR
+  check_health_once "$to"
+  [[ $H_OK == true ]] || die "$EX_FAIL" health_failed "切換前健康檢查失敗；未變更 reverse proxy" "\"color\":$(jstr "$to")"
+  apply_upstream "$to" || die "$EX_FAIL" switch_failed "caddy reload 失敗；已還原 upstream"
+  local from_json
+  from_json=$(slot_json "$S_ACTIVE_COLOR" "$S_ACTIVE_DIGEST")
+  S_PREVIOUS_COLOR=$S_ACTIVE_COLOR S_PREVIOUS_DIGEST=$S_ACTIVE_DIGEST
+  S_ACTIVE_COLOR=$S_CANDIDATE_COLOR S_ACTIVE_DIGEST=$S_CANDIDATE_DIGEST
+  S_CANDIDATE_COLOR="" S_CANDIDATE_DIGEST="" S_PHASE=switched
+  save_state
+  emit "{\"ok\":true,\"command\":\"switch\",\"env\":$(jstr "$ENVN"),\"from\":$from_json,\"to\":$(slot_json "$S_ACTIVE_COLOR" "$S_ACTIVE_DIGEST"),\"at\":$(jstr "$(now_iso)")}"
+}
+
+# 自動回滾（不執行 Migration_Runner，Req 20.9）。
+do_rollback_auto() {
+  CMD=rollback
+  build_compose ""
+  local from_json to_json restored=false
+  case $S_PHASE in
+    started)
+      from_json=$(slot_json "$S_CANDIDATE_COLOR" "$S_CANDIDATE_DIGEST")
+      remove_slot "$S_CANDIDATE_COLOR" || die "$EX_FAIL" rollback_failed "無法移除 app-$S_CANDIDATE_COLOR"
+      S_CANDIDATE_COLOR="" S_CANDIDATE_DIGEST="" S_PHASE=idle
+      restored=$([[ -n $S_ACTIVE_COLOR ]] && echo true || echo false)
+      ;;
+    switched)
+      from_json=$(slot_json "$S_ACTIVE_COLOR" "$S_ACTIVE_DIGEST")
+      if [[ -n $S_PREVIOUS_COLOR ]]; then
+        apply_upstream "$S_PREVIOUS_COLOR" || die "$EX_FAIL" rollback_failed "切回 app-$S_PREVIOUS_COLOR 失敗，需人工介入"
+        restored=true
+      fi
+      remove_slot "$S_ACTIVE_COLOR" || log "停止 app-$S_ACTIVE_COLOR 失敗"
+      S_ACTIVE_COLOR=$S_PREVIOUS_COLOR S_ACTIVE_DIGEST=$S_PREVIOUS_DIGEST
+      S_PREVIOUS_COLOR="" S_PREVIOUS_DIGEST="" S_PHASE=idle
+      ;;
+    *)
+      die "$EX_STATE" nothing_to_rollback "目前沒有可自動回滾的部署（階段 idle）"
+      ;;
+  esac
+  save_state
+  to_json=$(slot_json "$S_ACTIVE_COLOR" "$S_ACTIVE_DIGEST")
+  emit "{\"ok\":true,\"command\":\"rollback\",\"env\":$(jstr "$ENVN"),\"mode\":\"auto\",\"from\":$from_json,\"to\":$to_json,\"restored\":$restored,\"migrationsRun\":false,\"at\":$(jstr "$(now_iso)")}"
+}
+
+# 手動回滾到保留中的 digest：start → health --wait → switch（不執行 Migration_Runner）。
+do_rollback_manual() {
+  CMD=rollback
+  local digest=$1 ok=0 d from_json
+  require_phase idle
+  retain_images
+  for d in "${R_RETAINED[@]}"; do [[ $d == "$digest" ]] && ok=1; done
+  ((ok == 1)) || die "$EX_USAGE" rollback_not_allowed "目標 digest 不在 Deploy_Host 保留的最近 ${IMAGE_KEEP} 個映像中" "\"retained\":$(jarr "${R_RETAINED[@]}")"
+  [[ $digest != "$S_ACTIVE_DIGEST" ]] || die "$EX_USAGE" rollback_not_allowed "目標 digest 已是目前版本"
+  from_json=$(slot_json "$S_ACTIVE_COLOR" "$S_ACTIVE_DIGEST")
+  local color=blue
+  [[ $S_ACTIVE_COLOR == blue ]] && color=green
+  S_CANDIDATE_COLOR=$color S_CANDIDATE_DIGEST=$digest S_PHASE=started
+  save_state
+  build_compose "$digest"
+  if ! "${COMPOSE_CMD[@]}" --profile "$color" up -d --no-deps "app-$color" >&2; then
+    remove_slot "$color" || true
+    S_CANDIDATE_COLOR="" S_CANDIDATE_DIGEST="" S_PHASE=idle
+    save_state
+    die "$EX_FAIL" start_failed "無法啟動 app-$color"
+  fi
+  if ! health_wait "$color"; then
+    remove_slot "$color" || log "移除新槽位失敗：app-$color"
+    S_CANDIDATE_COLOR="" S_CANDIDATE_DIGEST="" S_PHASE=idle
+    save_state
+    die "$EX_FAIL" health_failed "回滾目標未在 ${HEALTH_WINDOW} 秒內連續 ${HEALTH_NEED} 次健康；未變更 reverse proxy" "\"results\":$H_RESULTS"
+  fi
+  local results=$H_RESULTS
+  apply_upstream "$color" || die "$EX_FAIL" switch_failed "caddy reload 失敗；已還原 upstream"
+  S_PREVIOUS_COLOR=$S_ACTIVE_COLOR S_PREVIOUS_DIGEST=$S_ACTIVE_DIGEST
+  S_ACTIVE_COLOR=$color S_ACTIVE_DIGEST=$digest
+  S_CANDIDATE_COLOR="" S_CANDIDATE_DIGEST="" S_PHASE=switched
+  save_state
+  emit "{\"ok\":true,\"command\":\"rollback\",\"env\":$(jstr "$ENVN"),\"mode\":\"manual\",\"from\":$from_json,\"to\":$(slot_json "$color" "$digest"),\"results\":$results,\"migrationsRun\":false,\"at\":$(jstr "$(now_iso)")}"
+}
+
+do_finalize() {
+  CMD=finalize
+  require_phase switched
+  build_compose ""
+  local stopped=null
+  if [[ -n $S_PREVIOUS_COLOR ]]; then
+    remove_slot "$S_PREVIOUS_COLOR" || die "$EX_FAIL" finalize_failed "無法停止舊槽位 app-$S_PREVIOUS_COLOR"
+    stopped=$(slot_json "$S_PREVIOUS_COLOR" "$S_PREVIOUS_DIGEST")
+  fi
+  S_PREVIOUS_COLOR="" S_PREVIOUS_DIGEST="" S_PHASE=idle
+  S_HISTORY+=("$S_ACTIVE_DIGEST")
+  prune_images
+  save_state
+  emit "{\"ok\":true,\"command\":\"finalize\",\"env\":$(jstr "$ENVN"),\"current\":$(slot_json "$S_ACTIVE_COLOR" "$S_ACTIVE_DIGEST"),\"stopped\":$stopped,\"retained\":$(jarr "${R_RETAINED[@]}"),\"removedImages\":$(jarr "${I_REMOVED[@]}"),\"at\":$(jstr "$(now_iso)")}"
+}
+
+do_prune() {
+  CMD=prune
+  local f partials=()
+  if [[ -d $BACKUP_DIR ]]; then
+    check_backup_dir
+    # 持有鎖時不會有進行中的備份，殘留的 .partial 皆為中斷的備份。
+    for f in "$BACKUP_DIR"/*.partial "$BACKUP_DIR"/*.partial.list "$BACKUP_DIR"/*.tmp; do
+      [[ -f $f && ! -L $f ]] || continue
+      rm -f -- "$f"
+      partials+=("${f##*/}")
+    done
+  fi
+  prune_backups ""
+  build_compose ""
+  prune_images
+  save_state
+  emit "{\"ok\":true,\"command\":\"prune\",\"env\":$(jstr "$ENVN"),\"prunedBackups\":$(jarr "${P_DELETED[@]}"),\"removedPartials\":$(jarr "${partials[@]}"),\"retained\":$(jarr "${R_RETAINED[@]}"),\"removedImages\":$(jarr "${I_REMOVED[@]}")}"
+}
+
+do_deploy() {
+  local digest=$1 with_env=$2
+  CMD=deploy
+  require_phase idle
+  if [[ $with_env == 1 ]]; then CMD=app-env; stage_app_env; fi
+  do_backup
+  if [[ $with_env == 1 ]]; then CMD=app-env; install_app_env; fi
+  do_migrate "$digest"
+  do_start "$digest"
+  CMD=health
+  build_compose ""
+  if ! health_wait "$S_CANDIDATE_COLOR"; then
+    local color=$S_CANDIDATE_COLOR results=$H_RESULTS
+    remove_slot "$color" || log "移除新槽位失敗：app-$color"
+    S_CANDIDATE_COLOR="" S_CANDIDATE_DIGEST="" S_PHASE=idle
+    save_state
+    die "$EX_FAIL" health_failed "app-$color 未在 ${HEALTH_WINDOW} 秒內連續 ${HEALTH_NEED} 次健康；已移除新容器、未變更 reverse proxy" \
+      "\"color\":$(jstr "$color"),\"healthy\":false,\"results\":$results"
+  fi
+  emit "{\"ok\":true,\"command\":\"health\",\"env\":$(jstr "$ENVN"),\"color\":$(jstr "$S_CANDIDATE_COLOR"),\"healthy\":true,\"results\":$H_RESULTS}"
+  do_switch
+}
+
+# ---------------------------------------------------------------------------------------------
+# 還原演練（Req 14.6、14.7；design.md Components §13）
+# ---------------------------------------------------------------------------------------------
+#
+# 隔離：drill 專案只用 <env>/drill.yaml（internal 網路 `drill`、匿名卷），專案名稱 lm-drill-<env>-<8 hex> 與
+# 正式專案 lm-<env> 不同；不讀取 <env>.env、app.env、db.env，也不呼叫正式專案的任何 compose 指令。
+# 備份：只讀取。以 fd 8 開啟最新已驗證的 .dump 後，經 /proc/$$/fd/8 重算 sha256 並以同一個 inode 還原，
+# 即使同時有部署修剪備份也不受影響；任何失敗都不刪除、不修剪備份（Req 14.7）。
+# 秘密：drill DB 密碼、Setup_Token 與合成管理員密碼每次以 /dev/urandom 產生，只寫入 state/.drill.XXXXXX/（0700）
+# 內的 drill-*.env（0600），由 docker CLI 讀取；不出現在指令列、stdout、stderr 或 drill-last.log。
+
+readonly DRILL_PROJECT_RE='^lm-drill-(staging|prod)-[0-9a-f]{8}$'
+# tool 輸出（JSON.stringify 的單行結果）只允許這些字元，才嵌入 lm-deploy 的輸出（不含空白、反斜線或控制字元）。
+readonly DRILL_TOOL_JSON_RE='^\{[][{}"A-Za-z0-9_:,.-]*\}$'
+readonly DRILL_TOOL_MAX=16384
+readonly DRILL_CREATED_RE='"createdAt":"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\+00:00)"'
+
+DRILL_PROJECT="" DRILL_BACKUP_ID="" DRILL_DIGEST="" DRILL_LOG=/dev/null
+DRILL_RESTORE_SECONDS=null DRILL_TOOL=null DRILL_CLEANED=null DRILL_BACKUP_JSON=null
+DRILL_CMD=()
+
+jnull() { if [[ -z $1 ]]; then printf 'null'; else jstr "$1"; fi; }
+
+# rand_hex <bytes>：結果放在 REPLY（2*bytes 個小寫十六進位字元）。
+rand_hex() {
+  REPLY=$(od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n')
+  [[ $REPLY =~ ^[0-9a-f]+$ && ${#REPLY} -eq $(($1 * 2)) ]]
+}
+
+acquire_drill_lock() {
+  [[ -d $LM_LOCK_DIR ]] || die "$EX_USAGE" config_missing "鎖目錄不存在"
+  exec 7>>"$LM_LOCK_DIR/lm-$ENVN-drill.lock" || die "$EX_FAIL" lock_failed "無法開啟鎖檔"
+  flock -n 7 || die "$EX_LOCKED" drill_in_progress "已有還原演練進行中（$ENVN）"
+}
+
+drill_down() {
+  DRILL_UP=0
+  ((${#DRILL_CMD[@]} > 0)) || return 0
+  if timeout -k 10s "$DRILL_DOWN_TIMEOUT" "${DRILL_CMD[@]}" --profile ops down -v --remove-orphans --timeout 10 >>"$DRILL_LOG" 2>&1; then
+    DRILL_CLEANED=true
+  else
+    DRILL_CLEANED=false
+    log "無法銷毀 drill 專案 $DRILL_PROJECT；請依 label lm.drill=$ENVN 手動移除容器、網路與匿名卷"
+  fi
+}
+
+drill_remove_dir() {
+  local d=$DRILL_DIR
+  DRILL_DIR=""
+  if [[ -n $d && -d $d && ! -L $d && $d == "$STATE_DIR"/.drill.* ]]; then rm -rf -- "$d"; fi
+  return 0
+}
+
+drill_fields() {
+  local result=$1 step=$2 count
+  list_backups
+  count=${#B_IDS[@]}
+  printf '"project":%s,"backupId":%s,"backup":%s,"digest":%s,"restoreSeconds":%s,"result":%s,"failedStep":%s,"tool":%s,"cleanedUp":%s,"backupCount":%s' \
+    "$(jnull "$DRILL_PROJECT")" "$(jnull "$DRILL_BACKUP_ID")" "$DRILL_BACKUP_JSON" "$(jnull "$DRILL_DIGEST")" \
+    "$DRILL_RESTORE_SECONDS" "$(jstr "$result")" "$(jnull "$step")" "$DRILL_TOOL" "$DRILL_CLEANED" "$count"
+}
+
+# drill_fail <exit> <reason> <message> <failed-step>：先銷毀 drill 專案與秘密暫存目錄，再輸出失敗 JSON。
+drill_fail() {
+  local code=$1 reason=$2 msg=$3 step=$4
+  if [[ $DRILL_UP == 1 ]]; then drill_down; fi
+  drill_remove_dir
+  exec 8<&-
+  die "$code" "$reason" "$msg" "$(drill_fields fail "$step")"
+}
+
+# 先前中斷的演練可能留下容器／網路（只有 drill 資源帶 lm.drill=<env> label）；持有 drill 鎖時才清除。
+drill_purge_stale() {
+  local ids id
+  ids=$(docker ps -aq --filter "label=lm.drill=$ENVN" 2>>"$DRILL_LOG") || return 1
+  for id in $ids; do
+    [[ $id =~ ^[0-9a-f]{12,64}$ ]] || return 1
+    docker rm -fv "$id" >>"$DRILL_LOG" 2>&1 || return 1
+  done
+  ids=$(docker network ls -q --filter "label=lm.drill=$ENVN" 2>>"$DRILL_LOG") || return 1
+  for id in $ids; do
+    [[ $id =~ ^[0-9a-f]{12,64}$ ]] || return 1
+    docker network rm "$id" >>"$DRILL_LOG" 2>&1 || return 1
+  done
+}
+
+# 產生本次演練的秘密檔（只在函式區域變數中短暫存在）。
+drill_write_secrets() {
+  local dbpw token pw user
+  rand_hex 24 || return 1
+  dbpw=$REPLY
+  rand_hex 24 || return 1
+  token=$REPLY
+  rand_hex 24 || return 1
+  pw=$REPLY
+  rand_hex 4 || return 1
+  user="lm-drill-$REPLY"
+  REPLY=""
+  printf 'POSTGRES_PASSWORD=%s\n' "$dbpw" >"$DRILL_DIR/drill-db.env"
+  printf 'CAMPING_DATABASE_PASSWORD=%s\nCAMPING_SETUP_TOKEN=%s\n' "$dbpw" "$token" >"$DRILL_DIR/drill-app.env"
+  printf 'CAMPING_DATABASE_PASSWORD=%s\nCAMPING_SMOKE_USERNAME=%s\nCAMPING_SMOKE_PASSWORD=%s\n' "$dbpw" "$user" "$pw" >"$DRILL_DIR/drill-tool.env"
+  chmod 0600 -- "$DRILL_DIR/drill-db.env" "$DRILL_DIR/drill-app.env" "$DRILL_DIR/drill-tool.env"
+}
+
+do_drill() {
+  CMD=drill
+  local id dump shaf meta line="" expected actual size created=null started t0 ms rc out last step
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  started=$(now_iso)
+  [[ -n $S_ACTIVE_DIGEST ]] || die "$EX_STATE" no_active_slot "目前沒有作用中的版本，無法以目前 digest 執行還原演練"
+  [[ -f "$ENV_DIR/drill.yaml" && ! -L "$ENV_DIR/drill.yaml" ]] || die "$EX_USAGE" config_missing "找不到 drill.yaml"
+  DRILL_DIGEST=$S_ACTIVE_DIGEST
+  mkdir -p -- "$STATE_DIR"
+  DRILL_LOG="$STATE_DIR/drill-last.log"
+  rm -f -- "$DRILL_LOG"
+  : >"$DRILL_LOG"
+  chmod 0600 -- "$DRILL_LOG"
+
+  # 1. 最新已驗證備份（.dump.sha256 存在），重算校驗碼。
+  [[ -d $BACKUP_DIR && ! -L $BACKUP_DIR ]] || drill_fail "$EX_FAIL" backup_missing "備份目錄不存在" backup_select
+  list_backups
+  ((${#B_IDS[@]} > 0)) || drill_fail "$EX_FAIL" no_verified_backup "找不到已驗證的備份" backup_select
+  id=${B_IDS[0]}
+  DRILL_BACKUP_ID=$id
+  dump="$BACKUP_DIR/$id.dump"
+  shaf="$dump.sha256"
+  meta="$BACKUP_DIR/$id.json"
+  [[ -f $dump && ! -L $dump && -r $dump && -f $shaf && ! -L $shaf ]] || drill_fail "$EX_FAIL" backup_verify_failed "備份檔或校驗碼檔無法讀取" backup_verify
+  { exec 8<"$dump"; } 2>/dev/null || drill_fail "$EX_FAIL" backup_verify_failed "無法開啟備份檔" backup_verify
+  IFS= read -r line <"$shaf" || true
+  if [[ ! $line =~ ^([0-9a-f]{64})\ \ ([^/]+)$ || ${BASH_REMATCH[2]} != "$id.dump" ]]; then
+    drill_fail "$EX_FAIL" backup_verify_failed ".sha256 內容格式無效" backup_verify
+  fi
+  expected=${BASH_REMATCH[1]}
+  [[ ${expected:0:7} == "${id##*-}" ]] || drill_fail "$EX_FAIL" backup_verify_failed "校驗碼與備份 id 不符" backup_verify
+  actual=$(sha256sum <"/proc/$$/fd/8") || drill_fail "$EX_FAIL" backup_verify_failed "無法計算校驗碼" backup_verify
+  actual=${actual%% *}
+  [[ $actual == "$expected" ]] || drill_fail "$EX_FAIL" backup_checksum_mismatch "備份檔的 sha256 與 .sha256 不符" backup_verify
+  size=$(stat -L -c %s -- "/proc/$$/fd/8")
+  if [[ -f $meta && ! -L $meta ]]; then
+    line=$(head -c 4096 -- "$meta")
+    if [[ $line =~ $DRILL_CREATED_RE ]]; then created=$(jstr "${BASH_REMATCH[1]}"); fi
+  fi
+  DRILL_BACKUP_JSON=$(printf '{"id":%s,"createdAt":%s,"sizeBytes":%s,"sha256":%s}' "$(jstr "$id")" "$created" "$size" "$(jstr "$expected")")
+
+  # 2. drill 專案與秘密。
+  rand_hex 4 || drill_fail "$EX_FAIL" internal "無法產生亂數" setup
+  DRILL_PROJECT="lm-drill-$ENVN-$REPLY"
+  [[ $DRILL_PROJECT =~ $DRILL_PROJECT_RE && $DRILL_PROJECT != "lm-$ENVN" ]] || drill_fail "$EX_FAIL" internal "drill 專案名稱無效" setup
+  DRILL_DIR=$(mktemp -d "$STATE_DIR/.drill.XXXXXX") || drill_fail "$EX_FAIL" internal "無法建立暫存目錄" setup
+  chmod 0700 -- "$DRILL_DIR"
+  drill_write_secrets || drill_fail "$EX_FAIL" internal "無法產生演練用秘密" setup
+  DRILL_CMD=(env "LM_DRILL_PROJECT=$DRILL_PROJECT" "LM_DRILL_ENV=$ENVN" "APP_IMAGE_DRILL=$IMAGE_REPO@$DRILL_DIGEST"
+    docker compose -p "$DRILL_PROJECT" --project-directory "$DRILL_DIR" -f "$ENV_DIR/drill.yaml")
+  drill_purge_stale || drill_fail "$EX_FAIL" drill_cleanup_failed "無法清除先前殘留的 drill 資源" setup
+
+  # 3. 隔離 Database（TCP healthcheck 通過才算就緒）。
+  DRILL_UP=1
+  timeout -k 10s "$DRILL_UP_TIMEOUT" "${DRILL_CMD[@]}" up --detach --wait --no-deps db >>"$DRILL_LOG" 2>&1 ||
+    drill_fail "$EX_FAIL" drill_db_failed "drill Database 未在 $DRILL_UP_TIMEOUT 內就緒" db_start
+
+  # 4. 還原（計時，Req 14.6）。
+  t0=$(now_ms)
+  if timeout -k 30s "$RESTORE_TIMEOUT" "${DRILL_CMD[@]}" exec -T db \
+    pg_restore --no-owner --no-privileges --exit-on-error --single-transaction -U lm_drill -d lm_drill \
+    <"/proc/$$/fd/8" >>"$DRILL_LOG" 2>&1; then
+    rc=0
+  else
+    rc=$?
+  fi
+  ms=$(($(now_ms) - t0))
+  DRILL_RESTORE_SECONDS=$(printf '%d.%03d' "$((ms / 1000))" "$((ms % 1000))")
+  exec 8<&-
+  if ((rc == 124 || rc == 137)); then drill_fail "$EX_FAIL" restore_timeout "pg_restore 未在 $RESTORE_TIMEOUT 內完成" restore; fi
+  ((rc == 0)) || drill_fail "$EX_FAIL" restore_failed "pg_restore 失敗（結束碼 $rc）" restore
+
+  # 5. 以目前映像的 Migration_Runner 補齊備份之後才套用的遷移（已是最新時不做任何事）。
+  timeout -k 30s "$MIGRATE_TIMEOUT" "${DRILL_CMD[@]}" --profile ops run --rm --no-deps -T migrate >>"$DRILL_LOG" 2>&1 ||
+    drill_fail "$EX_FAIL" migrate_failed "Migration_Runner 在 drill Database 失敗" migrate
+
+  # 6. 以目前作用中 digest 啟動隔離 App_Server。
+  timeout -k 10s "$DRILL_UP_TIMEOUT" "${DRILL_CMD[@]}" up --detach --no-deps app >>"$DRILL_LOG" 2>&1 ||
+    drill_fail "$EX_FAIL" drill_app_failed "無法啟動 drill App" app_start
+
+  # 7. 合成管理員 + smoke-fixture + Smoke_Test（/app/tools/drill.js）。
+  out="$DRILL_DIR/tool.out"
+  if timeout -k 30s "$DRILL_TOOL_TIMEOUT" "${DRILL_CMD[@]}" --profile ops run --rm --no-deps -T tool run >"$out" 2>>"$DRILL_LOG"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  last=""
+  while IFS= read -r line || [[ -n $line ]]; do [[ -n $line ]] && last=$line; done <"$out"
+  if ((${#last} <= DRILL_TOOL_MAX)) && [[ $last =~ $DRILL_TOOL_JSON_RE ]]; then DRILL_TOOL=$last; fi
+  if ((rc != 0)) || [[ $DRILL_TOOL != '{"ok":true,"failedStep":null,'* ]]; then
+    step=drill_tool
+    if [[ $DRILL_TOOL =~ ^\{\"ok\":false,\"failedStep\":\"([a-z-]{1,32})\" ]]; then step=${BASH_REMATCH[1]}; fi
+    if ((rc == 124 || rc == 137)); then drill_fail "$EX_FAIL" smoke_timeout "還原演練工具未在 $DRILL_TOOL_TIMEOUT 內完成" "$step"; fi
+    drill_fail "$EX_FAIL" smoke_failed "還原演練的 Smoke_Test 未通過（步驟 $step）" "$step"
+  fi
+
+  # 8. 銷毀 drill 專案（容器、網路、匿名卷）與秘密暫存目錄。
+  drill_down
+  drill_remove_dir
+  [[ $DRILL_CLEANED == true ]] || die "$EX_FAIL" drill_cleanup_failed "Smoke_Test 通過，但 drill 專案未能銷毀，需人工清除" "$(drill_fields fail cleanup)"
+  emit "{\"ok\":true,\"command\":\"drill\",\"env\":$(jstr "$ENVN"),$(drill_fields pass ""),\"startedAt\":$(jstr "$started"),\"endedAt\":$(jstr "$(now_iso)")}"
+}
+
+# ---------------------------------------------------------------------------------------------
+# 參數解析
+# ---------------------------------------------------------------------------------------------
+
+ARGS=()
+
+parse_ssh_command() {
+  local bound=$1 raw=$2 tok toks=() i
+  ((${#raw} <= 1024)) || usage "SSH 指令過長"
+  read -r -a toks <<<"$raw"
+  ((${#toks[@]} >= 1 && ${#toks[@]} <= 8)) || usage "SSH 指令參數數量無效"
+  for tok in "${toks[@]}"; do
+    [[ $tok =~ ^[A-Za-z0-9@:/._=-]{1,200}$ ]] || usage "SSH 指令含不允許的字元"
+  done
+  [[ ${toks[0]##*/} == lm-deploy ]] && toks=("${toks[@]:1}")
+  if ((${#toks[@]} > 0)) && [[ ${toks[0]} == "$bound" ]]; then
+    toks=("${toks[@]:1}")
+  elif ((${#toks[@]} > 1)) && [[ ${toks[1]} == "$bound" ]]; then
+    toks=("${toks[0]}" "${toks[@]:2}")
+  fi
+  for ((i = 0; i < ${#toks[@]}; i++)); do
+    [[ ! ${toks[i]} =~ $ENV_RE ]] || usage "不得指定其他環境"
+  done
+  ARGS=("${toks[@]}")
+}
+
+main() {
+  (($# >= 1)) || usage "缺少參數"
+  local env cmd
+  if [[ $1 =~ $ENV_RE ]]; then
+    env=$1
+    shift
+    if (($# == 0)) && [[ -n ${SSH_ORIGINAL_COMMAND:-} ]]; then
+      init_env "$env"
+      parse_ssh_command "$env" "$SSH_ORIGINAL_COMMAND"
+      set -- "${ARGS[@]}"
+    fi
+    (($# >= 1)) || usage "缺少子命令"
+    cmd=$1
+    shift
+  elif (($# >= 2)) && [[ $2 =~ $ENV_RE ]]; then
+    cmd=$1
+    env=$2
+    shift 2
+  else
+    usage "第一或第二個參數必須是 staging 或 prod"
+  fi
+  local a
+  for a in "$@"; do [[ ! $a =~ $ENV_RE ]] || usage "不得同時指定多個環境"; done
+  init_env "$env"
+  CMD=$cmd
+
+  case $cmd in
+    status)
+      (($# == 0)) || usage "status 不接受參數"
+      load_state
+      STATUS_PROBE_LOCK=1
+      status_json
+      printf '\n'
+      ;;
+    health)
+      local color="" wait=0
+      for a in "$@"; do
+        case $a in
+          --wait) wait=1 ;;
+          blue | green) [[ -z $color ]] || usage "只能指定一個 color"; color=$a ;;
+          *) usage "health 參數無效" ;;
+        esac
+      done
+      load_state
+      load_env_config
+      color=${color:-$S_ACTIVE_COLOR}
+      [[ $color =~ $COLOR_RE ]] || die "$EX_STATE" no_active_slot "沒有作用中的槽位，請指定 blue 或 green"
+      do_health "$color" "$wait"
+      ;;
+    backup)
+      (($# == 0)) || usage "backup 不接受參數"
+      acquire_lock; load_state; load_env_config
+      do_backup
+      ;;
+    migrate | start)
+      (($# == 1)) || usage "$cmd 需要 <digest>"
+      acquire_lock; load_state; load_env_config
+      parse_digest "$1"
+      if [[ $cmd == migrate ]]; then do_migrate "$DIGEST"; else do_start "$DIGEST"; fi
+      ;;
+    switch | finalize)
+      (($# == 0)) || usage "$cmd 不接受參數"
+      acquire_lock; load_state; load_env_config
+      if [[ $cmd == switch ]]; then do_switch; else do_finalize; fi
+      ;;
+    rollback)
+      (($# <= 1)) || usage "rollback 最多接受一個 <digest>"
+      acquire_lock; load_state; load_env_config
+      if (($# == 1)); then
+        parse_digest "$1"
+        do_rollback_manual "$DIGEST"
+      else
+        do_rollback_auto
+      fi
+      ;;
+    prune)
+      (($# == 0)) || usage "prune 不接受參數"
+      acquire_lock; load_state; load_env_config
+      do_prune
+      ;;
+    app-env)
+      (($# == 0)) || usage "app-env 不接受參數"
+      acquire_lock
+      stage_app_env
+      install_app_env
+      ;;
+    deploy)
+      local with_env=0 d=""
+      for a in "$@"; do
+        case $a in
+          --app-env-stdin) with_env=1 ;;
+          *) [[ -z $d ]] || usage "deploy 只接受一個 <digest>"; d=$a ;;
+        esac
+      done
+      [[ -n $d ]] || usage "deploy 需要 <digest>"
+      acquire_lock; load_state; load_env_config
+      parse_digest "$d"
+      do_deploy "$DIGEST" "$with_env"
+      ;;
+    drill)
+      (($# == 0)) || usage "drill 不接受參數"
+      acquire_drill_lock; load_state; load_env_config
+      do_drill
+      ;;
+    *)
+      usage "未知的子命令"
+      ;;
+  esac
+}
+
+main "$@"

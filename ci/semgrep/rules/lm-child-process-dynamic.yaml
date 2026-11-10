@@ -1,0 +1,118 @@
+# 自訂 Semgrep 規則：禁止 `child_process` 以動態字串經 shell 執行命令（Requirement 6.3；Design §10 SAST 列）。
+#
+# 允許（不回報）：spawn / spawnSync / execFile / execFileSync 以「命令 + 參數陣列」呼叫且未啟用 shell，
+#   例如 spawnSync('git', ['merge-base', '--is-ancestor', sha, ref], { shell: false })。
+#   參數陣列不經 shell 解析，命令名稱來自變數（例如 CAMPING_BUN）也不構成注入；
+#   scripts/check-accounts.mjs、ci/policy/tag.mjs、ci/resolve-digest.mjs、ci/verify-toolchain.mjs 皆屬此類。
+# 禁止（ERROR，normalize.mjs 對應 High）：
+#   1. lm-child-process-exec-dynamic：exec / execSync 的命令不是純字串常值（變數、字串串接、含插值的
+#      template literal）。exec 系列一律經 /bin/sh 解析，動態內容即為命令注入面。
+#   2. lm-child-process-shell-option：spawn / spawnSync / execFile / execFileSync / fork 的選項
+#      含 `shell`（且不是常值 false）。啟用 shell 後參數陣列會被串接再交給 shell 解析。
+#
+# 只比對確實來自 `child_process`／`node:child_process` 的函式（named import、namespace／default import、
+# require），避免誤判 RegExp.prototype.exec 等同名方法。
+# 範例檔：同目錄 lm-child-process-dynamic.js（semgrep --test）。
+rules:
+  - id: lm-child-process-exec-dynamic
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      child_process 的 $FN 會經 shell 執行，命令不得含動態內容。請改用 spawn/execFile 搭配參數陣列且不啟用 shell。
+    metadata:
+      category: security
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      requirements: ["6.3"]
+      source: little-moments（自行撰寫）
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      import { $FN } from 'child_process';
+                      ...
+                  - pattern-inside: |
+                      import { $FN } from 'node:child_process';
+                      ...
+              - pattern: $FN($CMD, ...)
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      import * as $CP from 'child_process';
+                      ...
+                  - pattern-inside: |
+                      import * as $CP from 'node:child_process';
+                      ...
+                  - pattern-inside: |
+                      import $CP from 'child_process';
+                      ...
+                  - pattern-inside: |
+                      import $CP from 'node:child_process';
+                      ...
+                  - pattern-inside: |
+                      $CP = require('child_process');
+                      ...
+                  - pattern-inside: |
+                      $CP = require('node:child_process');
+                      ...
+              - pattern: $CP.$FN($CMD, ...)
+      - metavariable-regex:
+          metavariable: $FN
+          regex: ^(exec|execSync)$
+      # 純字串常值命令（無插值）不含外部輸入，允許。
+      - pattern-not: $FN("...", ...)
+      - pattern-not: $CP.$FN("...", ...)
+
+  - id: lm-child-process-shell-option
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      child_process 的 $FN 不得啟用 shell 選項；請移除 shell 或設為 false，並以參數陣列傳遞引數。
+    metadata:
+      category: security
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      requirements: ["6.3"]
+      source: little-moments（自行撰寫）
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      import { $FN } from 'child_process';
+                      ...
+                  - pattern-inside: |
+                      import { $FN } from 'node:child_process';
+                      ...
+              - pattern-either:
+                  - pattern: '$FN($CMD, {..., shell: $SHELL, ...})'
+                  - pattern: '$FN($CMD, $ARGS, {..., shell: $SHELL, ...})'
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      import * as $CP from 'child_process';
+                      ...
+                  - pattern-inside: |
+                      import * as $CP from 'node:child_process';
+                      ...
+                  - pattern-inside: |
+                      import $CP from 'child_process';
+                      ...
+                  - pattern-inside: |
+                      import $CP from 'node:child_process';
+                      ...
+                  - pattern-inside: |
+                      $CP = require('child_process');
+                      ...
+                  - pattern-inside: |
+                      $CP = require('node:child_process');
+                      ...
+              - pattern-either:
+                  - pattern: '$CP.$FN($CMD, {..., shell: $SHELL, ...})'
+                  - pattern: '$CP.$FN($CMD, $ARGS, {..., shell: $SHELL, ...})'
+      - metavariable-regex:
+          metavariable: $FN
+          regex: ^(spawn|spawnSync|execFile|execFileSync|fork)$
+      # shell: false 為明確停用，允許。
+      - metavariable-regex:
+          metavariable: $SHELL
+          regex: ^(?!false$)

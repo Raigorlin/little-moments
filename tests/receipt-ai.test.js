@@ -1,5 +1,6 @@
 import {test,expect} from 'bun:test';
 import {createAccountService} from '../server/accounts.js';
+import {useTestDatabase,resetTables,serviceDb} from './support/pg.js';
 import {createReceiptAi,normalizeAiReceipt,validateAiImage,readLimitedBytes,AI_IMAGE_LIMIT} from '../server/receipt-ai.js';
 import {EXPENSE_CATEGORIES,suggestExpenseCategory} from '../src/expense-categories.js';
 import {seed} from '../src/model.js';
@@ -60,8 +61,11 @@ test('provider cancellation/timeout aborts network, does not retry or return lat
  await expect(p.recognize(png,'image/png')).rejects.toThrow('無法撤回');expect(aborted).toBe(true);
 });
 
+const db=useTestDatabase();
+// 每個 fixture 都從空的資料表開始（同一測試內的多個 fixture 依序建立，前一個已關閉）。
 async function fixture(receiptAi){
- const service=createAccountService({dbPath:':memory:',receiptAi});
+ await resetTables(db.sql);
+ const service=await createAccountService({db:serviceDb(db.sql),receiptAi});
  const call=(path,{method='GET',cookie='',body,headers={},signal}={})=>service.handle(new Request(base+path,{method,headers:{...(cookie?{cookie}:{}),...(method!=='GET'?{Origin:base}:{}),...(body&&!Buffer.isBuffer(body)?{'Content-Type':'application/json'}:{}),...headers},body:body===undefined?undefined:Buffer.isBuffer(body)?body:JSON.stringify(body),signal}));
  const setup=await call('/api/setup',{method:'POST',body:{username:'test-admin',displayName:'測試',password:'Only-Test-Password-2026'}});expect(setup.status).toBe(200);const cookie=setup.headers.get('set-cookie').split(';')[0],{user}=await setup.json();
  const tr=await call('/api/trips',{method:'POST',cookie,body:{legacyState:seed()}});expect(tr.status).toBe(201);const {trip}=await tr.json(),path=`/api/trips/${trip.id}/receipt-ai`;

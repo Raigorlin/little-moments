@@ -1,0 +1,28 @@
+# Little Moments — 部署帳號的 sudo 權限（Requirement 15.9；design.md Security Boundaries）。
+#
+# 由 deploy/host/install.sh 以 `visudo -cf` 驗證後安裝為 /etc/sudoers.d/lm-deploy（0440 root:root）。
+# 檔名不含「.」也不以「~」結尾，sudo 才會讀取。
+#
+# 每個環境一個部署帳號，各自只能以 root 執行「lm-deploy <自己的環境>」這一個固定指令列：
+#   - sudoers 的指令參數為完整比對：多帶任何參數（例如另一個環境、子命令）都不符合，sudo 會拒絕。
+#   - 子命令由 SSH forced command 經 $SSH_ORIGINAL_COMMAND 傳入；lm-deploy 逐 token 驗證字元集，
+#     並拒絕任何指向另一個環境的 token。
+#   - 部署帳號不在 docker 群組（install.sh 會移除、verify-host.sh 會檢查），無法直接操作 Docker；
+#     拉取映像、Compose 部署、Migration_Runner 與寫入備份都只能經由 lm-deploy 進行。
+#   - staging 帳號無法執行 prod 指令，反之亦然（不同 SSH 金鑰、不同帳號）。
+#
+# /opt/lm/bin/lm-deploy 與其所有上層目錄必須為 root 擁有且群組／其他人不可寫，否則等同給予 root；
+# verify-host.sh 會檢查。
+
+User_Alias LM_DEPLOY_STAGING_USERS = lm-deploy-staging
+User_Alias LM_DEPLOY_PROD_USERS = lm-deploy-prod
+Cmnd_Alias LM_DEPLOY_STAGING_CMD = /opt/lm/bin/lm-deploy staging
+Cmnd_Alias LM_DEPLOY_PROD_CMD = /opt/lm/bin/lm-deploy prod
+
+# 只對 lm-deploy 保留 SSH_ORIGINAL_COMMAND（env_reset 仍清除其他變數）；lm-deploy 以 root 經 sudo
+# 執行時忽略所有 LM_* 覆寫並重設 PATH。
+Defaults!/opt/lm/bin/lm-deploy env_keep += "SSH_ORIGINAL_COMMAND"
+Defaults:LM_DEPLOY_STAGING_USERS,LM_DEPLOY_PROD_USERS !lecture,!requiretty
+
+LM_DEPLOY_STAGING_USERS ALL = (root) NOPASSWD: LM_DEPLOY_STAGING_CMD
+LM_DEPLOY_PROD_USERS ALL = (root) NOPASSWD: LM_DEPLOY_PROD_CMD

@@ -1,0 +1,6 @@
+# 安裝時才放入的秘密與憑證，不得提交
+secrets/
+htpasswd
+*.key
+*.crt
+*.pem

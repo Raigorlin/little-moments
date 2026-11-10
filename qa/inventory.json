@@ -1,0 +1,247 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "QA-AUTH-001",
+      "page": "/login",
+      "control": "login-form",
+      "role": "anonymous",
+      "scenario": "未登入者以正確帳號密碼登入，錯誤密碼被拒絕",
+      "expected": "正確密碼登入後導向 /<username>/home；錯誤密碼顯示錯誤訊息且不建立 Session",
+      "testCases": ["TC-AUTH-001"],
+      "critical": true,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-AUTH-002",
+      "page": "/register",
+      "control": "register-form",
+      "role": "anonymous",
+      "scenario": "未登入者註冊旅伴帳號，兩次密碼不一致時被拒絕",
+      "expected": "註冊成功後導向帳號專屬首頁網址；密碼不一致時顯示錯誤且不建立帳號",
+      "testCases": ["TC-AUTH-001"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-BRAND-001",
+      "page": "/login",
+      "control": "brand-header",
+      "role": "anonymous",
+      "scenario": "未登入者開啟登入與註冊頁",
+      "expected": "登入與註冊頁顯示「日子拾光 · LITTLE MOMENTS」品牌",
+      "testCases": ["TC-BRAND-001"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-SETUP-001",
+      "page": "/setup",
+      "control": "auth-setup-token",
+      "role": "anonymous",
+      "scenario": "尚無使用者且 /api/session 回報 setupTokenRequired 為 true 時開啟首次設定頁",
+      "expected": "首次設定表單顯示具 label「設定碼」的密碼欄位，送出時請求包含 setupToken；未填設定碼時顯示錯誤且不送出",
+      "testCases": ["TC-SETUP-001"],
+      "critical": true,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-DEMO-001",
+      "page": "/demo",
+      "control": "planning-tabs",
+      "role": "anonymous",
+      "scenario": "未登入者開啟示範模式並切換所有規劃分頁",
+      "expected": "儀表板與每個規劃分頁皆正常顯示，資料僅寫入瀏覽器本機",
+      "testCases": ["TC-DEMO-001"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-UNAUTH-001",
+      "page": "/<user>/home",
+      "control": "trip-list",
+      "role": "anonymous",
+      "scenario": "未登入者開啟他人的帳號首頁，並直接呼叫 POST /api/trips 建立行程",
+      "expected": "頁面導向 /login 且不顯示任何行程資料；API 請求被拒絕（HTTP 401）且未建立任何行程，資料未被變更",
+      "testCases": ["TC-UNAUTH-001"],
+      "critical": true,
+      "unauthorized": true
+    },
+    {
+      "id": "QA-UNAUTH-002",
+      "page": "/<user>/trips/<id>",
+      "control": "trip-edit",
+      "role": "anonymous",
+      "scenario": "未登入者開啟他人行程頁，並直接呼叫 GET 與 PATCH /api/trips/<id>",
+      "expected": "頁面不顯示行程內容並導向 /login；GET 與 PATCH 請求皆被拒絕（HTTP 401）且回應不含行程資料，行程內容與 revision 未被變更",
+      "testCases": ["TC-UNAUTH-002"],
+      "critical": true,
+      "unauthorized": true
+    },
+    {
+      "id": "QA-HOME-001",
+      "page": "/<user>/home",
+      "control": "trip-cards",
+      "role": "member",
+      "scenario": "member 開啟自己的帳號首頁並檢視多張行程卡片",
+      "expected": "首頁網址乾淨、顯示自己的多張行程卡片與編輯紀錄，且不寫入示範模式的本機資料",
+      "testCases": ["TC-HOME-001"],
+      "critical": true,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-HOME-002",
+      "page": "/<user>/home",
+      "control": "logout-button",
+      "role": "member",
+      "scenario": "member 在第二個分頁登出後回到原分頁",
+      "expected": "原分頁移除先前帳號的行程資料並導向 /login",
+      "testCases": ["TC-HOME-002"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-TRIP-001",
+      "page": "/<user>/trips/<id>",
+      "control": "meal-recipe-template",
+      "role": "member",
+      "scenario": "行程擁有者於餐點分頁套用料理範本並儲存",
+      "expected": "餐次與購物清單儲存至伺服器，購物項目可直接指派負責人",
+      "testCases": ["TC-TRIP-001"],
+      "critical": true,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-TRIP-002",
+      "page": "/<user>/trips/<id>",
+      "control": "trip-settings-edit",
+      "role": "member",
+      "scenario": "其他分頁已更新行程後，member 送出舊 revision 的編輯",
+      "expected": "顯示其他人已更新的警告，保留未儲存草稿且不覆寫伺服器上的新資料",
+      "testCases": ["TC-TRIP-002"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-TRIP-003",
+      "page": "/<user>/trips/<id>",
+      "control": "expense-form",
+      "role": "member",
+      "scenario": "member 新增一筆手動支出並選擇分攤參與者",
+      "expected": "支出以分為單位正確儲存並只套用所選參與者，購物連結不改變已購買狀態",
+      "testCases": ["TC-EXP-001"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-TRIP-004",
+      "page": "/<user>/trips/<id>",
+      "control": "vehicle-departures",
+      "role": "member",
+      "scenario": "行程協作者編輯出發車輛，陌生帳號嘗試讀取該行程",
+      "expected": "協作者可編輯出發資訊但無法刪除車輛；陌生帳號無法讀取行程",
+      "testCases": ["TC-VEH-001"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-INVITE-001",
+      "page": "/invite/<token>",
+      "control": "invite-self-entry",
+      "role": "member",
+      "scenario": "受邀旅伴透過邀請連結輸入自己的名字加入行程",
+      "expected": "受邀者以自己的名字加入行程，重複名稱無法冒用既有身分",
+      "testCases": ["TC-INVITE-002"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-INVITE-002",
+      "page": "/<user>/trips/<id>",
+      "control": "guest-permissions",
+      "role": "member",
+      "scenario": "受邀旅伴編輯共享內容，並嘗試刪除行程、移除項目或再邀請他人",
+      "expected": "共享內容編輯成功；刪除行程、移除項目與建立邀請皆被拒絕且資料未被變更",
+      "testCases": ["TC-INVITE-001"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ACCT-001",
+      "page": "/<user>/home",
+      "control": "cross-user-access",
+      "role": "member",
+      "scenario": "member 開啟其他帳號的首頁與行程，並呼叫 GET／PATCH /api/trips/<id>",
+      "expected": "頁面不顯示他人行程；GET 與 PATCH 請求皆被拒絕且他人行程資料未被變更",
+      "testCases": ["TC-ACCT-001"],
+      "critical": false,
+      "unauthorized": true
+    },
+    {
+      "id": "QA-ACCT-002",
+      "page": "/<user>/trips/<id>",
+      "control": "logout-session",
+      "role": "member",
+      "scenario": "member 登出後以原 Session 存取受保護 API，並檢查離線快取",
+      "expected": "受保護 API 回應不存在於離線快取；登出後原 Session 存取受保護資源被拒絕",
+      "testCases": ["TC-ACCT-002"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-UNAUTH-003",
+      "page": "/admin",
+      "control": "admin-users-list",
+      "role": "member",
+      "scenario": "member 開啟 /admin，並直接呼叫 GET /api/admin/users 與停用其他使用者的管理員 API",
+      "expected": "頁面不顯示使用者列表；所有管理員 API 請求皆被拒絕（HTTP 403），目標使用者仍為啟用狀態且資料未被變更",
+      "testCases": ["TC-UNAUTH-003"],
+      "critical": true,
+      "unauthorized": true
+    },
+    {
+      "id": "QA-UNAUTH-004",
+      "page": "/admin",
+      "control": "admin-trip-delete",
+      "role": "member",
+      "scenario": "member 呼叫僅限管理員的 API 刪除其他擁有者的行程",
+      "expected": "請求被拒絕（HTTP 403 或 404），該行程與其成員、邀請連結皆保持不變，資料未被變更",
+      "testCases": ["TC-UNAUTH-004"],
+      "critical": false,
+      "unauthorized": true
+    },
+    {
+      "id": "QA-ADMIN-001",
+      "page": "/admin",
+      "control": "admin-users-list",
+      "role": "admin",
+      "scenario": "管理員檢視使用者列表、編輯其他擁有者的行程並停用該帳號",
+      "expected": "列出所有使用者；行程修正成功；帳號停用後其旅行紀錄仍保留",
+      "testCases": ["TC-ADMIN-001"],
+      "critical": true,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ADMIN-002",
+      "page": "/<user>/trips/<id>",
+      "control": "admin-trip-delete",
+      "role": "admin",
+      "scenario": "管理員刪除其他擁有者的行程",
+      "expected": "後端刪除該行程並撤銷邀請連結，其他行程與帳號不受影響",
+      "testCases": ["TC-ADMIN-002"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ADMIN-003",
+      "page": "/<user>/home",
+      "control": "trip-delete-confirm",
+      "role": "admin",
+      "scenario": "管理員從首頁刪除自己的行程，先取消再確認",
+      "expected": "取消時行程保留；確認後行程自首頁移除",
+      "testCases": ["TC-ADMIN-003"],
+      "critical": false,
+      "unauthorized": false
+    }
+  ]
+}

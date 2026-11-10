@@ -1,0 +1,18 @@
+# Little Moments — 部署帳號 authorized_keys 樣板（Requirement 15.9；design.md Security Boundaries）。
+#
+# 由 deploy/host/install.sh 為每個環境各渲染一份，寫入 ~lm-deploy-<env>/.ssh/authorized_keys
+# （root:root 0644，.ssh 與家目錄皆 root 擁有 0755：部署帳號無法修改或替換此檔）。
+# 佔位符（install.sh 驗證格式後取代；不得提交實際值）：
+#   __ENV__         staging | prod
+#   __AGENT_FROM__  Trusted_Build_Agent 的 IP 或 CIDR（逗號分隔），例如 <10.0.20.5>
+#   __PUBKEY__      該環境專用的 Jenkins 部署公鑰（「類型 base64 [註解]」一行；不含任何選項）
+#
+# 選項：
+#   restrict             關閉所有轉送、PTY、X11、agent forwarding 與 ~/.ssh/rc（OpenSSH 7.2+）；
+#                        下列 no-* 為明確列出的同等限制，舊版 sshd 亦適用。
+#   command=...          forced command：不論用戶端送出什麼指令，只執行固定的 lm-deploy <env>；
+#                        用戶端指令以 $SSH_ORIGINAL_COMMAND 傳給 lm-deploy 驗證（sudoers 只保留此變數）。
+#                        `sudo -n`：不允許互動式輸入密碼，權限不符時立即失敗。
+#   from=...             只接受來自 Trusted_Build_Agent 的連線。
+#   no-pty               不配置終端機。
+restrict,command="/usr/bin/sudo -n /opt/lm/bin/lm-deploy __ENV__",from="__AGENT_FROM__",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-user-rc __PUBKEY__

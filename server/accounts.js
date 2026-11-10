@@ -1,12 +1,16 @@
-import { Database } from 'bun:sqlite';
+// 帳號、行程、邀請與帳本 API（資料層：PostgreSQL／Bun.SQL，Requirement 11.1–11.3、11.7）。
+// Schema 由 Migration_Runner（migrations/*.sql）建立；本模組不建立或修改 Schema。
 import { AI_IMAGE_LIMIT, ReceiptAiError, readLimitedBytes, validateAiImage } from './receipt-ai.js';
 import { createHash, randomBytes, randomUUID, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { addParticipant, canDepart, dateRange, isValidState, myGear, normalizeParticipantName } from '../src/model.js';
 import { syncMealIngredients } from '../src/ingredients.js';
-import { LEDGER_LIMITS, LEDGER_SCHEMA, LedgerError, buildLedger, ledgerView, readLedgerRow, refreshSnapshotNames, requestHash, validateLedgerBody } from './ledger.js';
+import { LEDGER_LIMITS, LedgerError, buildLedger, ledgerView, readLedgerRow, refreshSnapshotNames, requestHash, validateLedgerBody } from './ledger.js';
+import { isLoopbackAddress } from './config.js';
+import { createSetupGuard } from './setup-guard.js';
+import { pingSql } from './db/connect.js';
+import { withWriteTx } from './db/tx.js';
+import * as q from './db/queries.js';
 
 const scrypt = promisify(scryptCb);
 const DAY = 86400000;
@@ -28,9 +32,10 @@ const MAX_CLIENT_EVENTS = 10;
 const LIMITS = {
   loginUser: { max: 5, window: 15 * 60000 },
   loginClient: { max: 30, window: 15 * 60000 },
-  register: { max: 20, window: 60 * 60000 }
+  register: { max: 20, window: 60 * 60000 },
+  // 首次管理員設定：與登入相同的每用戶端上限，通過與未通過的請求都計入（Req 9.8）
+  setupClient: { max: 30, window: 15 * 60000 }
 };
-const PUBLIC_DIRS = new Set(['dist', 'public']);
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -51,21 +56,12 @@ function json(status, data, extraHeaders) {
 }
 const errorResponse = (status, message, extra) => json(status, { error: message }, extra);
 
-function assertPrivateDbPath(dbPath) {
-  if (typeof dbPath !== 'string' || !dbPath) throw new Error('dbPath is required');
-  if (dbPath === ':memory:') return dbPath;
-  const full = resolve(dbPath);
-  if (full.split(/[\\/]+/).some(part => PUBLIC_DIRS.has(part.toLowerCase()))) throw new Error('dbPath must not be inside a public or build directory');
-  mkdirSync(dirname(full), { recursive: true, mode: 0o700 });
-  return full;
-}
-
-async function hashPassword(password) {
+export async function hashPassword(password) {
   const salt = randomBytes(16);
   const hash = await scrypt(password, salt, SCRYPT.keylen, { N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p });
   return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString('base64')}$${hash.toString('base64')}`;
 }
-async function verifyPassword(password, stored) {
+export async function verifyPassword(password, stored) {
   const parts = String(stored).split('$');
   if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
   const [N, r, p] = parts.slice(1, 4).map(Number);
@@ -205,114 +201,55 @@ class RateLimiter {
 }
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
-const isLoopbackIp = ip => /^(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}|::1|::ffff:127\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.test(ip);
+// 127.0.0.0/8、::1、::ffff:127.0.0.0/104（Req 9.1 (a)）
+const isLoopbackIp = ip => isLoopbackAddress(ip);
+// 經 Trusted_Proxies 轉送的請求永遠不視為 loopback 用戶端（Req 9.12）；loopback 判定以 TCP 來源 IP 為準。
 function isLoopback(url, info) {
+  if (info?.viaProxy) return false;
   if (!LOOPBACK_HOSTS.has(url.hostname)) return false;
-  if (info?.ip !== undefined) return typeof info.ip === 'string' && isLoopbackIp(info.ip);
+  const ip = info?.tcpIp !== undefined ? info.tcpIp : info?.ip;
+  if (ip !== undefined) return typeof ip === 'string' && isLoopbackIp(ip);
   return true;
 }
+
+/** 組裝 ggc_session Set-Cookie 值（Req 10.3–10.5）；`url` 應為重建後的有效請求網址。 */
+export const cookieHeader = (url, token, maxAge) => `${COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${url.protocol === 'https:' ? '; Secure' : ''}`;
 const clientKey = info => (typeof info?.ip === 'string' && info.ip ? info.ip.slice(0, 64) : 'local');
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS users (
-  id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('admin','member')), password_hash TEXT NOT NULL,
-  created_at INTEGER NOT NULL, deleted_at INTEGER
-);
-CREATE TABLE IF NOT EXISTS sessions (
-  token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
-  created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
-CREATE TABLE IF NOT EXISTS trips (
-  id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id),
-  title TEXT NOT NULL, destination TEXT NOT NULL, start_date TEXT NOT NULL, end_date TEXT NOT NULL,
-  description TEXT NOT NULL, note TEXT NOT NULL,
-  cover_kind TEXT NOT NULL CHECK (cover_kind IN ('camp','mountain','lake','night')),
-  status TEXT NOT NULL CHECK (status IN ('planning','completed')),
-  revision INTEGER NOT NULL, people_count INTEGER NOT NULL, state_json TEXT NOT NULL,
-  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS trip_members (
-  trip_id TEXT NOT NULL REFERENCES trips(id), user_id TEXT NOT NULL REFERENCES users(id),
-  person_id TEXT NOT NULL, joined_at INTEGER NOT NULL,
-  PRIMARY KEY (trip_id, user_id), UNIQUE (trip_id, person_id)
-);
-CREATE INDEX IF NOT EXISTS trip_members_user ON trip_members(user_id);
-CREATE TABLE IF NOT EXISTS invites (
-  token_hash TEXT PRIMARY KEY, trip_id TEXT NOT NULL REFERENCES trips(id), created_by TEXT NOT NULL REFERENCES users(id),
-  created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER
-);
-CREATE INDEX IF NOT EXISTS invites_trip ON invites(trip_id);
-CREATE TABLE IF NOT EXISTS trip_deletions (
-  trip_id TEXT PRIMARY KEY REFERENCES trips(id), deleted_by TEXT NOT NULL REFERENCES users(id), deleted_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS audit (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL
-);`;
-
-export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
+/**
+ * 建立帳號服務。
+ *
+ * @param {object} options
+ * @param {{sql: import('bun').SQL, ping?: (ms?: number) => Promise<boolean>, close?: () => Promise<void>}} options.db
+ *   server/db/connect.js `createDatabase` 的回傳值（或形狀相同的物件）。Schema 必須已由 Migration_Runner 建立。
+ *   **連線池由呼叫端擁有**：`service.close()` 只停止服務（之後的請求回應 503），不關閉 `db`；
+ *   呼叫端在 `service.close()` 之後自行 `await db.close()`。
+ * @param {() => number|Date} [options.now] 測試用時鐘
+ * @param {object} [options.receiptAi]
+ * @param {object} [options.setup] server/setup-guard.js 的 guard；未提供時視為 loopback 綁定
+ * @returns {Promise<{handle: Function, ping: () => Promise<boolean>, close: () => void}>}
+ */
+export async function createAccountService({ db, now, receiptAi = null, setup = null } = {}) {
+  const sql = db?.sql;
+  if (typeof sql !== 'function' || typeof sql.begin !== 'function') throw new TypeError('createAccountService 需要 db.sql（Bun.SQL 連線池）');
+  // 及早確認 Schema 已由 Migration_Runner 建立；只回報結構性問題，不含連線設定。
+  try { await sql`SELECT 1 FROM users LIMIT 0`; } catch (error) {
+    throw new Error(`Database 無法使用或尚未套用遷移（${error?.code || error?.name || 'ERROR'}）`);
+  }
+  // 未提供 setup guard 時視為 loopback 綁定：Setup_Token 停用，只有 loopback 用戶端能完成首次設定。
+  const setupGuard = setup || createSetupGuard({ bindAddress: '127.0.0.1' });
   const clock = () => { const value = now ? now() : Date.now(); return value instanceof Date ? value.getTime() : Number(value); };
   const iso = () => new Date(clock()).toISOString();
-  const db = new Database(assertPrivateDbPath(dbPath), { create: true });
-  db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
-  if (dbPath !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
-  db.exec(SCHEMA + LEDGER_SCHEMA);
   const limiter = new RateLimiter(clock);
   const aiActive = new Map();
   let closed = false, dummyHash;
-  const TRIP_SELECT = 'SELECT t.*, u.username AS owner_username, u.display_name AS owner_name FROM trips t JOIN users u ON u.id = t.owner_id';
-  const LIVE = 'NOT EXISTS (SELECT 1 FROM trip_deletions d WHERE d.trip_id = t.id)';
-
-  const q = {
-    userCount: db.query('SELECT COUNT(*) AS n FROM users'),
-    userById: db.query('SELECT * FROM users WHERE id = ?'),
-    userByName: db.query('SELECT * FROM users WHERE username = ?'),
-    insertUser: db.query('INSERT INTO users (id, username, display_name, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)'),
-    activeAdmins: db.query("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND deleted_at IS NULL"),
-    listUsers: db.query('SELECT u.*, (SELECT COUNT(*) FROM trip_members m WHERE m.user_id = u.id AND NOT EXISTS (SELECT 1 FROM trip_deletions d WHERE d.trip_id = m.trip_id)) AS trip_count FROM users u ORDER BY u.created_at, u.username'),
-    updateUser: db.query('UPDATE users SET display_name = ?, role = ? WHERE id = ? AND deleted_at IS NULL'),
-    softDelete: db.query('UPDATE users SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL'),
-    sessionUser: db.query('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ? AND u.deleted_at IS NULL'),
-    insertSession: db.query('INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)'),
-    deleteSession: db.query('DELETE FROM sessions WHERE token_hash = ?'),
-    deleteExpiredSessions: db.query('DELETE FROM sessions WHERE expires_at <= ?'),
-    trimSessions: db.query('DELETE FROM sessions WHERE user_id = ? AND token_hash NOT IN (SELECT token_hash FROM sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT ?)'),
-    deleteUserSessions: db.query('DELETE FROM sessions WHERE user_id = ?'),
-    tripById: db.query(`${TRIP_SELECT} WHERE t.id = ? AND ${LIVE}`),
-    anyTripById: db.query(`${TRIP_SELECT} WHERE t.id = ?`),
-    tripDeletion: db.query('SELECT 1 AS deleted FROM trip_deletions WHERE trip_id = ?'),
-    insertTripDeletion: db.query('INSERT INTO trip_deletions (trip_id, deleted_by, deleted_at) VALUES (?, ?, ?)'),
-    allTrips: db.query(`${TRIP_SELECT} WHERE ${LIVE} ORDER BY t.start_date DESC, t.created_at DESC`),
-    myTrips: db.query(`${TRIP_SELECT} WHERE (t.owner_id = ? OR EXISTS (SELECT 1 FROM trip_members m WHERE m.trip_id = t.id AND m.user_id = ?)) AND ${LIVE} ORDER BY t.start_date DESC, t.created_at DESC`),
-    ownedTrips: db.query('SELECT id FROM trips WHERE owner_id = ?'),
-    insertTrip: db.query('INSERT INTO trips (id, owner_id, title, destination, start_date, end_date, description, note, cover_kind, status, revision, people_count, state_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
-    updateTrip: db.query('UPDATE trips SET owner_id = ?, title = ?, destination = ?, start_date = ?, end_date = ?, description = ?, note = ?, cover_kind = ?, status = ?, revision = ?, people_count = ?, state_json = ?, updated_at = ? WHERE id = ? AND revision = ?'),
-    membership: db.query('SELECT person_id FROM trip_members WHERE trip_id = ? AND user_id = ?'),
-    membersOf: db.query('SELECT user_id, person_id FROM trip_members WHERE trip_id = ?'),
-    tripsOfMember: db.query('SELECT trip_id, person_id FROM trip_members WHERE user_id = ?'),
-    insertMember: db.query('INSERT INTO trip_members (trip_id, user_id, person_id, joined_at) VALUES (?, ?, ?, ?)'),
-    deleteMember: db.query('DELETE FROM trip_members WHERE trip_id = ? AND user_id = ?'),
-    activeInvites: db.query('SELECT COUNT(*) AS n FROM invites WHERE trip_id = ? AND revoked_at IS NULL AND expires_at > ?'),
-    insertInvite: db.query('INSERT INTO invites (token_hash, trip_id, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?)'),
-    inviteByHash: db.query('SELECT i.* FROM invites i JOIN users u ON u.id = i.created_by WHERE i.token_hash = ? AND i.revoked_at IS NULL AND i.expires_at > ? AND u.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM trip_deletions d WHERE d.trip_id = i.trip_id)'),
-    revokeTripInvites: db.query('UPDATE invites SET revoked_at = ? WHERE trip_id = ? AND revoked_at IS NULL'),
-    revokeInvitesBy: db.query('UPDATE invites SET revoked_at = ? WHERE created_by = ? AND revoked_at IS NULL'),
-    insertAudit: db.query('INSERT INTO audit (at, actor, action, target) VALUES (?, ?, ?, ?)'),
-    trimAudit: db.query('DELETE FROM audit WHERE id <= (SELECT id FROM audit ORDER BY id DESC LIMIT 1 OFFSET ?)'),
-    listAudit: db.query('SELECT at, actor, action, target FROM audit ORDER BY id DESC LIMIT 200'),
-    ledgerByTrip: db.query('SELECT * FROM trip_ledgers WHERE trip_id = ?'),
-    insertLedger: db.query('INSERT INTO trip_ledgers (trip_id, revision, ledger_json, requests_json, updated_by, updated_at) VALUES (?, 1, ?, ?, ?, ?)'),
-    updateLedger: db.query('UPDATE trip_ledgers SET revision = revision + 1, ledger_json = ?, requests_json = ?, updated_by = ?, updated_at = ? WHERE trip_id = ? AND revision = ?'),
-    updateLedgerPeople: db.query('UPDATE trip_ledgers SET ledger_json = ? WHERE trip_id = ? AND revision = ?')
-  };
+  // 每個寫入交易：BEGIN → 全域 advisory lock（等同 SQLite BEGIN IMMEDIATE）→ fn(t) → COMMIT；例外即 ROLLBACK（Req 11.3）。
+  const tx = fn => withWriteTx(sql, fn);
 
   const publicUser = u => ({ id: u.id, username: u.username, displayName: u.display_name, role: u.role });
-  const audit = (actor, action, target) => { q.insertAudit.run(clock(), actor, action, target); q.trimAudit.run(MAX_AUDIT); };
-  const needsSetup = () => q.userCount.get().n === 0;
-  const tx = fn => db.transaction(fn).immediate();
+  const audit = async (e, actor, action, target) => { await q.insertAudit(e, clock(), actor, action, target); await q.trimAudit(e, MAX_AUDIT); };
+  const needsSetup = async (e = sql) => (await q.userCount(e)) === 0;
 
-  const cookieHeader = (url, token, maxAge) => `${COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${url.protocol === 'https:' ? '; Secure' : ''}`;
   function sessionToken(request) {
     for (const part of (request.headers.get('cookie') || '').split(';')) {
       const index = part.indexOf('=');
@@ -323,25 +260,25 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
     }
     return null;
   }
-  function currentUser(request) {
+  async function currentUser(request, e = sql) {
     const token = sessionToken(request);
-    return token ? q.sessionUser.get(sha256(token), clock()) || null : null;
+    return token ? (await q.sessionUser(e, sha256(token), clock())) || null : null;
   }
-  const requireUser = request => currentUser(request) || fail(401, '請先登入。');
-  const requireAdmin = request => { const user = requireUser(request); if (user.role !== 'admin') fail(403, '需要管理員權限。'); return user; };
-  const requireExpectedUser = (request, expectedUserId) => {
-    const user = requireUser(request);
+  const requireUser = async (request, e = sql) => (await currentUser(request, e)) || fail(401, '請先登入。');
+  const requireAdmin = async (request, e = sql) => { const user = await requireUser(request, e); if (user.role !== 'admin') fail(403, '需要管理員權限。'); return user; };
+  const requireExpectedUser = async (request, expectedUserId, e = sql) => {
+    const user = await requireUser(request, e);
     if (expectedUserId !== undefined && (typeof expectedUserId !== 'string' || expectedUserId !== user.id)) fail(409, '登入帳號已在其他分頁變更，這份資料未儲存。');
     return user;
   };
 
-  function startSession(request, url, user) {
+  async function startSession(request, url, user) {
     const previous = sessionToken(request);
-    if (previous) q.deleteSession.run(sha256(previous));
-    const token = newToken(), at = clock();
-    q.deleteExpiredSessions.run(at);
-    q.insertSession.run(sha256(token), user.id, at, at + SESSION_TTL);
-    q.trimSessions.run(user.id, user.id, MAX_SESSIONS_PER_USER);
+    if (previous) await q.deleteSession(sql, sha256(previous));
+    const token = newToken(), at = clock(), tokenHash = sha256(token);
+    await q.deleteExpiredSessions(sql, at);
+    await q.insertSession(sql, tokenHash, user.id, at, at + SESSION_TTL);
+    await q.trimSessions(sql, user.id, tokenHash, MAX_SESSIONS_PER_USER);
     return json(200, { user: publicUser(user), needsSetup: false }, [['Set-Cookie', cookieHeader(url, token, SESSION_TTL / 1000)]]);
   }
 
@@ -372,10 +309,10 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
     const manage = row.owner_id === user.id || user.role === 'admin';
     return { canEdit: manage || isMember, canDelete: manage, canInvite: manage, canManage: manage };
   };
-  function tripAccess(user, tripId) {
-    const row = ID.test(tripId) ? q.tripById.get(tripId) : null;
+  async function tripAccess(e, user, tripId) {
+    const row = ID.test(tripId) ? await q.tripById(e, tripId) : null;
     if (!row) fail(404, '找不到這趟旅行。');
-    const personId = q.membership.get(tripId, user.id)?.person_id ?? null;
+    const personId = (await q.membership(e, tripId, user.id))?.person_id ?? null;
     const caps = capabilities(row, user, !!personId);
     if (!caps.canEdit) fail(404, '找不到這趟旅行。');
     return { row, personId, ...caps };
@@ -385,10 +322,10 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
     if (!Number.isSafeInteger(revision)) fail(400, '缺少版本號 revision。');
     if (revision !== access.row.revision) fail(409, '旅行已被其他人更新，請重新載入後再修改。');
   }
-  const ownerPersonId = row => q.membership.get(row.id, row.owner_id)?.person_id ?? null;
+  const ownerPersonId = async (e, row) => (await q.membership(e, row.id, row.owner_id))?.person_id ?? null;
 
-  const summary = (row, user) => {
-    const isMember = row.owner_id === user.id || !!q.membership.get(row.id, user.id);
+  const summary = async (e, row, user) => {
+    const isMember = row.owner_id === user.id || !!(await q.membership(e, row.id, user.id));
     const caps = capabilities(row, user, isMember);
     return {
       id: row.id, ownerId: row.owner_id, ownerName: row.owner_name, ownerUsername: row.owner_username,
@@ -398,16 +335,16 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
       memberCount: row.people_count, isMember
     };
   };
-  function envelope(user, tripId) {
-    const access = tripAccess(user, tripId);
+  async function envelope(e, user, tripId) {
+    const access = await tripAccess(e, user, tripId);
     const state = JSON.parse(access.row.state_json);
     const has = id => !!id && state.people.some(p => p.id === id);
-    const viewer = has(access.personId) ? access.personId : ownerPersonId(access.row);
+    const viewer = has(access.personId) ? access.personId : await ownerPersonId(e, access.row);
     state.currentUser = has(viewer) ? viewer : state.people[0].id;
     state.revision = access.row.revision;
     state.joined = true;
     const { canEdit, canDelete, canInvite, canManage, personId } = access;
-    return { trip: summary(access.row, user), state, permissions: { canEdit, canDelete, canInvite, canManage, personId } };
+    return { trip: await summary(e, access.row, user), state, permissions: { canEdit, canDelete, canInvite, canManage, personId } };
   }
 
   function actorName(user, state, personId) {
@@ -418,34 +355,37 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
     state.events = [{ id: randomUUID(), text: String(text).slice(0, 200), actor, at: iso() }, ...state.events].slice(0, 50);
   }
 
-  function persist(row, state, meta = {}) {
+  async function persist(t, row, state, meta = {}) {
     const ownerId = meta.ownerId ?? row.owner_id;
     const revision = row.revision + 1;
-    const anchor = q.membership.get(row.id, ownerId)?.person_id;
+    const anchor = (await q.membership(t, row.id, ownerId))?.person_id;
     state.revision = revision;
     state.joined = true;
     state.currentUser = state.people.some(p => p.id === anchor) ? anchor : state.people[0]?.id;
     if (!isValidState(state)) fail(400, '旅行資料格式不正確，未儲存。');
-    const t = state.trip;
-    const result = q.updateTrip.run(ownerId, t.title, t.destination, t.startDate, t.endDate, t.description, t.note,
-      meta.coverKind ?? row.cover_kind, meta.status ?? row.status, revision, state.people.length, JSON.stringify(state), clock(), row.id, row.revision);
-    if (result.changes !== 1) fail(409, '旅行已被其他人更新，請重新載入後再修改。');
-    snapshotRemovedPeople(row, state);
+    const s = state.trip;
+    const changed = await q.updateTrip(t, {
+      id: row.id, expectedRevision: row.revision, ownerId, title: s.title, destination: s.destination, startDate: s.startDate, endDate: s.endDate,
+      description: s.description, note: s.note, coverKind: meta.coverKind ?? row.cover_kind, status: meta.status ?? row.status,
+      revision, peopleCount: state.people.length, stateJson: JSON.stringify(state), updatedAt: clock()
+    });
+    if (changed !== 1) fail(409, '旅行已被其他人更新，請重新載入後再修改。');
+    await snapshotRemovedPeople(t, row, state);
   }
   // A person leaving the trip keeps the name they had while they still owe or are owed money; the debt itself is never moved.
-  function snapshotRemovedPeople(row, state) {
+  async function snapshotRemovedPeople(t, row, state) {
     const before = JSON.parse(row.state_json).people;
     const kept = new Set(state.people.map(p => p.id));
     const removed = new Set(before.filter(p => !kept.has(p.id)).map(p => p.id));
-    const ledgerRow = removed.size ? q.ledgerByTrip.get(row.id) : null;
+    const ledgerRow = removed.size ? await q.ledgerByTrip(t, row.id) : null;
     if (!ledgerRow) return;
     let stored;
     try { stored = readLedgerRow(ledgerRow).ledger; } catch { return; }
     const next = refreshSnapshotNames(stored, before, removed);
-    q.updateLedgerPeople.run(JSON.stringify(next), row.id, ledgerRow.revision);
+    await q.updateLedgerPeople(t, JSON.stringify(next), row.id, ledgerRow.revision);
   }
-  function ledgerAccess(user, tripId) {
-    const access = tripAccess(user, tripId);
+  async function ledgerAccess(e, user, tripId) {
+    const access = await tripAccess(e, user, tripId);
     const state = JSON.parse(access.row.state_json);
     if (!access.personId || !state.people.some(p => p.id === access.personId)) fail(404, '找不到這趟旅行。');
     return { ...access, state };
@@ -461,7 +401,7 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
   // A row someone bought stays a manual row once a member unticks it, so a later recipe edit cannot prune it.
   const retainPurchased = (old, item) => { if (old?.done && !item.done && item.source === 'meal') item.source = 'manual'; };
   // Invited members may add and edit, but never remove items, rewrite other accounts' identities or pack for others.
-  function guardCollaborator(tripId, stored, next, me) {
+  async function guardCollaborator(t, tripId, stored, next, me) {
     const oldShopping = new Map(stored.shopping.map(x => [x.id, x]));
     for (const item of next.shopping) {
       const old = oldShopping.get(item.id);
@@ -472,7 +412,7 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
       const kept = new Set(next[key].map(item => item.id));
       if (stored[key].some(item => !kept.has(item.id))) fail(403, DENY_REMOVAL);
     }
-    const bound = new Set(q.membersOf.all(tripId).map(b => b.person_id));
+    const bound = new Set((await q.membersOf(t, tripId)).map(b => b.person_id));
     for (const person of next.people) {
       const old = stored.people.find(p => p.id === person.id);
       if (old && bound.has(person.id) && person.id !== me && ['name', 'role', 'color'].some(k => old[k] !== person[k])) fail(403, '只能修改自己的旅伴資料。');
@@ -501,57 +441,78 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
       if (!autoPruned) fail(403, DENY_REMOVAL);
     }
   }
-  function inviteTrip(token) {
-    const invite = TOKEN.test(token) ? q.inviteByHash.get(sha256(token), clock()) : null;
-    const row = invite ? q.tripById.get(invite.trip_id) : null;
+  async function inviteTrip(e, token) {
+    const invite = TOKEN.test(token) ? await q.inviteByHash(e, sha256(token), clock()) : null;
+    const row = invite ? await q.tripById(e, invite.trip_id) : null;
     if (!row) fail(404, '邀請連結無效或已過期。');
     return row;
   }
 
   async function softDeleteTrip(request, tripId, adminOnly) {
-    if (adminOnly) requireAdmin(request); else requireUser(request);
+    if (adminOnly) await requireAdmin(request); else await requireUser(request);
     const body = await readJson(request);
     if (typeof body.expectedUserId !== 'string') fail(400, '缺少目前登入帳號 expectedUserId。');
-    tx(() => {
-      const user = requireExpectedUser(request, body.expectedUserId);
+    await tx(async t => {
+      const user = await requireExpectedUser(request, body.expectedUserId, t);
       if (adminOnly && user.role !== 'admin') fail(403, '需要管理員權限。');
-      const row = ID.test(tripId) ? q.anyTripById.get(tripId) : null;
+      const row = ID.test(tripId) ? await q.anyTripById(t, tripId) : null;
       if (!row) fail(404, '找不到這趟旅行。');
-      const deleted = !!q.tripDeletion.get(tripId);
+      const deleted = !!(await q.tripDeletion(t, tripId));
       if (!capabilities(row, user, false).canDelete) {
-        if (!deleted && q.membership.get(tripId, user.id)) fail(403, '受邀旅伴可以編輯旅行，但只有主辦人或管理員可以刪除。');
+        if (!deleted && await q.membership(t, tripId, user.id)) fail(403, '受邀旅伴可以編輯旅行，但只有主辦人或管理員可以刪除。');
         fail(404, '找不到這趟旅行。');
       }
       if (deleted) fail(409, '這趟旅行已刪除。');
       if (typeof body.confirmTitle !== 'string' || body.confirmTitle !== row.title) fail(400, '請輸入要刪除的旅行名稱以確認。');
       requireRevision({ row }, body.revision);
       const at = clock();
-      q.insertTripDeletion.run(tripId, user.id, at);
-      q.revokeTripInvites.run(at, tripId);
-      audit(user.username, 'trip.delete', `trip:${tripId}`);
+      await q.insertTripDeletion(t, tripId, user.id, at);
+      await q.revokeTripInvites(t, at, tripId);
+      await audit(t, user.username, 'trip.delete', `trip:${tripId}`);
     });
     return json(200, { ok: true });
   }
 
   const routes = {
-    getSession(request) {
-      const user = currentUser(request);
-      return json(200, { user: user ? publicUser(user) : null, needsSetup: needsSetup() });
+    async getSession(request) {
+      const user = await currentUser(request);
+      const setupPending = await needsSetup();
+      return json(200, { user: user ? publicUser(user) : null, needsSetup: setupPending, setupTokenRequired: setupPending && setupGuard.required });
     },
 
     async setup(request, url, info) {
-      if (!isLoopback(url, info)) fail(403, '首次管理員設定只能在本機進行。');
-      if (!needsSetup()) fail(409, '管理員已設定完成。');
-      const body = await readJson(request);
+      // 1. 限速：先判斷再計數，通過與未通過的請求都計入；達上限時不驗證 token（Req 9.8、9.9）
+      const client = clientKey(info);
+      const limitKey = `setup:client:${client}`;
+      if (limiter.blocked(limitKey, LIMITS.setupClient)) fail(429, '設定嘗試太多次，請 15 分鐘後再試。');
+      limiter.hit(limitKey, LIMITS.setupClient);
+      // 2. 已有使用者 → 409，不論來源或 token（Req 9.6）
+      if (!(await needsSetup())) fail(409, '管理員已設定完成。');
+      // 讀取 body 以取得 setupToken；格式錯誤延後到授權通過後才回報，未授權者一律 403
+      let body = {}, bodyError = null;
+      try { body = await readJson(request); } catch (error) { if (!(error instanceof HttpError)) throw error; bodyError = error; }
+      // 3. 授權（Req 9.1、9.12）：本機 Host + loopback TCP IP 且非經代理，或 Setup_Token 相符
+      const candidate = typeof body.setupToken === 'string' ? body.setupToken : '';
+      if (!isLoopback(url, info) && !setupGuard.verify(candidate)) {
+        const reason = !setupGuard.required ? 'non_loopback' : candidate ? 'token_mismatch' : 'missing_token';
+        // 稽核只記原因類別與來源 IP，絕不記錄提交的 token（Req 9.4）
+        await audit(sql, 'anonymous', 'setup.denied', `reason:${reason} ip:${client}`);
+        fail(403, setupGuard.required ? '首次管理員設定需要有效的設定碼。' : '首次管理員設定只能在本機進行。');
+      }
+      // 4. 輸入驗證失敗 → 400，Setup_Token 不被消耗（Req 9.10）
+      if (bodyError) throw bodyError;
       const username = validateUsername(body.username), displayName = validateDisplayName(body.displayName);
       const hash = await hashPassword(validatePassword(body.password));
-      const user = tx(() => {
-        if (q.userCount.get().n !== 0) fail(409, '管理員已設定完成。');
+      // 5. 交易內再次檢查使用者數，並行請求只會建立一個管理員（Req 9.11）
+      const user = await tx(async t => {
+        if ((await q.userCount(t)) !== 0) fail(409, '管理員已設定完成。');
         const id = randomUUID();
-        q.insertUser.run(id, username, displayName, 'admin', hash, clock());
-        audit(username, 'setup', `user:${username}`);
-        return q.userById.get(id);
+        await q.insertUser(t, id, username, displayName, 'admin', hash, clock());
+        await audit(t, username, 'setup', `user:${username}`);
+        return q.userById(t, id);
       });
+      // 6. Setup_Token 失效（Req 9.5）
+      setupGuard.consume();
       return startSession(request, url, user);
     },
 
@@ -559,18 +520,18 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
       const key = `register:${clientKey(info)}`;
       if (limiter.blocked(key, LIMITS.register)) fail(429, '註冊嘗試太多次，請稍後再試。');
       limiter.hit(key, LIMITS.register);
-      if (needsSetup()) fail(409, '請先完成管理員設定。');
+      if (await needsSetup()) fail(409, '請先完成管理員設定。');
       const body = await readJson(request);
       const username = validateUsername(body.username), displayName = validateDisplayName(body.displayName);
       validatePassword(body.password);
-      if (q.userByName.get(username)) fail(409, '這個帳號名稱已被使用。');
+      if (await q.userByName(sql, username)) fail(409, '這個帳號名稱已被使用。');
       const hash = await hashPassword(body.password);
-      const user = tx(() => {
-        if (q.userByName.get(username)) fail(409, '這個帳號名稱已被使用。');
+      const user = await tx(async t => {
+        if (await q.userByName(t, username)) fail(409, '這個帳號名稱已被使用。');
         const id = randomUUID();
-        q.insertUser.run(id, username, displayName, 'member', hash, clock());
-        audit(username, 'register', `user:${username}`);
-        return q.userById.get(id);
+        await q.insertUser(t, id, username, displayName, 'member', hash, clock());
+        await audit(t, username, 'register', `user:${username}`);
+        return q.userById(t, id);
       });
       return startSession(request, url, user);
     },
@@ -581,7 +542,7 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
       const username = body.username.trim().toLowerCase().slice(0, 64);
       const userKey = `login:user:${username}`, clientLimitKey = `login:client:${clientKey(info)}`;
       if (limiter.blocked(userKey, LIMITS.loginUser) || limiter.blocked(clientLimitKey, LIMITS.loginClient)) fail(429, '登入失敗次數太多，請 15 分鐘後再試。');
-      const user = q.userByName.get(username);
+      const user = await q.userByName(sql, username);
       const password = body.password.length <= 1024 ? body.password : '';
       dummyHash ||= await hashPassword(newToken());
       const ok = await verifyPassword(password, user?.password_hash || dummyHash);
@@ -591,24 +552,26 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
         fail(401, '帳號或密碼不正確。');
       }
       limiter.clear(userKey);
-      audit(user.username, 'login', `user:${user.username}`);
+      await audit(sql, user.username, 'login', `user:${user.username}`);
       return startSession(request, url, user);
     },
 
-    logout(request, url) {
+    async logout(request, url) {
       const token = sessionToken(request);
-      if (token) q.deleteSession.run(sha256(token));
+      if (token) await q.deleteSession(sql, sha256(token));
       return json(200, { ok: true }, [['Set-Cookie', cookieHeader(url, '', 0)]]);
     },
 
-    listTrips(request) {
-      const user = requireUser(request);
-      const rows = user.role === 'admin' ? q.allTrips.all() : q.myTrips.all(user.id, user.id);
-      return json(200, { trips: rows.map(row => summary(row, user)) });
+    async listTrips(request) {
+      const user = await requireUser(request);
+      const rows = user.role === 'admin' ? await q.allTrips(sql) : await q.myTrips(sql, user.id);
+      const trips = [];
+      for (const row of rows) trips.push(await summary(sql, row, user));
+      return json(200, { trips });
     },
 
     async createTrip(request) {
-      const user = requireUser(request);
+      const user = await requireUser(request);
       const body = await readJson(request);
       const legacy = body.legacyState !== undefined;
       let state = legacy ? cleanState(body.legacyState) : null;
@@ -625,25 +588,29 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
       pushEvent(state, legacy ? '匯入了旅行手冊' : '建立了這本旅行手冊', added.person.name);
       if (!isValidState(state)) fail(400, '旅行資料格式不正確。');
       const id = randomUUID(), at = clock();
-      tx(() => {
-        if (requireExpectedUser(request, body.expectedUserId).id !== user.id) fail(401, '請先登入。');
-        q.insertTrip.run(id, user.id, card.title, card.destination, card.startDate, card.endDate, card.description, card.note, card.coverKind, card.status, 1, state.people.length, JSON.stringify(state), at, at);
-        q.insertMember.run(id, user.id, added.person.id, at);
-        audit(user.username, 'trip.create', `trip:${id}`);
+      await tx(async t => {
+        if ((await requireExpectedUser(request, body.expectedUserId, t)).id !== user.id) fail(401, '請先登入。');
+        await q.insertTrip(t, {
+          id, ownerId: user.id, title: card.title, destination: card.destination, startDate: card.startDate, endDate: card.endDate,
+          description: card.description, note: card.note, coverKind: card.coverKind, status: card.status,
+          revision: 1, peopleCount: state.people.length, stateJson: JSON.stringify(state), createdAt: at, updatedAt: at
+        });
+        await q.insertMember(t, id, user.id, added.person.id, at);
+        await audit(t, user.username, 'trip.create', `trip:${id}`);
       });
-      return json(201, { trip: summary(q.tripById.get(id), user) });
+      return json(201, { trip: await summary(sql, await q.tripById(sql, id), user) });
     },
 
-    getTrip(request, url, info, [tripId]) {
-      return json(200, envelope(requireUser(request), tripId));
+    async getTrip(request, url, info, [tripId]) {
+      return json(200, await envelope(sql, await requireUser(request), tripId));
     },
 
     async putTrip(request, url, info, [tripId]) {
-      let user = requireUser(request);
+      let user = await requireUser(request);
       const body = await readJson(request);
-      tx(() => {
-        user = requireExpectedUser(request, body.expectedUserId);
-        const access = tripAccess(user, tripId);
+      await tx(async t => {
+        user = await requireExpectedUser(request, body.expectedUserId, t);
+        const access = await tripAccess(t, user, tripId);
         requireRevision(access, body.revision);
         const stored = JSON.parse(access.row.state_json);
         const next = cleanState(body.state);
@@ -652,7 +619,7 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
         next.joined = true;
         next.currentUser = next.people[0]?.id;
         if (!isValidState(next)) fail(400, '旅行資料格式不正確。');
-        for (const binding of q.membersOf.all(tripId)) {
+        for (const binding of await q.membersOf(t, tripId)) {
           const person = next.people.find(p => p.id === binding.person_id);
           if (!person) fail(409, '已綁定帳號的旅伴不能在手冊中移除或更換，請由管理員處理帳號。');
           const checked = validateName(person.name, person.role);
@@ -661,7 +628,7 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
           if (next.people.some(p => p.id !== person.id && participantKey(p.name) === participantKey(person.name))) fail(409, '這個名字已在小隊中，請使用不同暱稱。');
         }
         validateTripText(next.trip);
-        if (!access.canDelete) guardCollaborator(tripId, stored, next, access.personId);
+        if (!access.canDelete) await guardCollaborator(t, tripId, stored, next, access.personId);
         const actor = actorName(user, next, access.personId);
         const known = new Set(stored.events.map(ev => ev.id));
         const fresh = next.events.filter(ev => !known.has(ev.id)).slice(0, MAX_CLIENT_EVENTS)
@@ -670,36 +637,36 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
         if (!fresh.length) pushEvent(next, '更新了旅行手冊', actor);
         runSync(next);
         if (!access.canDelete) guardShoppingRemoval(stored, next);
-        persist(access.row, next);
-        audit(user.username, 'trip.update', `trip:${tripId}`);
+        await persist(t, access.row, next);
+        await audit(t, user.username, 'trip.update', `trip:${tripId}`);
       });
-      return json(200, envelope(user, tripId));
+      return json(200, await envelope(sql, user, tripId));
     },
 
     async patchTrip(request, url, info, [tripId]) {
-      let user = requireUser(request);
+      let user = await requireUser(request);
       const body = await readJson(request);
-      tx(() => {
-        user = requireExpectedUser(request, body.expectedUserId);
-        const access = tripAccess(user, tripId);
+      await tx(async t => {
+        user = await requireExpectedUser(request, body.expectedUserId, t);
+        const access = await tripAccess(t, user, tripId);
         requireRevision(access, body.revision);
         const state = JSON.parse(access.row.state_json);
         const card = mergeCard(body, { ...state.trip, coverKind: access.row.cover_kind, status: access.row.status }, []);
         applyCardToState(state, card);
         pushEvent(state, '更新了旅行設定', actorName(user, state, access.personId));
-        persist(access.row, state, { coverKind: card.coverKind, status: card.status });
-        audit(user.username, 'trip.meta', `trip:${tripId}`);
+        await persist(t, access.row, state, { coverKind: card.coverKind, status: card.status });
+        await audit(t, user.username, 'trip.meta', `trip:${tripId}`);
       });
-      return json(200, envelope(user, tripId));
+      return json(200, await envelope(sql, user, tripId));
     },
 
     async checkTrip(request, url, info, [tripId]) {
-      let user = requireUser(request);
+      let user = await requireUser(request);
       const body = await readJson(request);
       if (!['shopping', 'gear', 'depart'].includes(body.kind) || typeof body.checked !== 'boolean') fail(400, '勾選資料不正確。');
-      tx(() => {
-        user = requireExpectedUser(request, body.expectedUserId);
-        const access = tripAccess(user, tripId);
+      await tx(async t => {
+        user = await requireExpectedUser(request, body.expectedUserId, t);
+        const access = await tripAccess(t, user, tripId);
         requireRevision(access, body.revision);
         const state = JSON.parse(access.row.state_json);
         const me = access.personId && state.people.some(p => p.id === access.personId) ? access.personId : null;
@@ -729,65 +696,65 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
             pushEvent(state, body.checked ? '準備出發了' : '取消出發', actor);
           }
         }
-        persist(access.row, state);
-        audit(user.username, `trip.check.${body.kind}`, `trip:${tripId}`);
+        await persist(t, access.row, state);
+        await audit(t, user.username, `trip.check.${body.kind}`, `trip:${tripId}`);
       });
-      return json(200, envelope(user, tripId));
+      return json(200, await envelope(sql, user, tripId));
     },
 
     async createInvite(request, url, info, [tripId]) {
-      let user = requireUser(request);
+      let user = await requireUser(request);
       const body = await readJson(request);
       const token = newToken(), at = clock(), expiresAt = at + INVITE_TTL;
-      tx(() => {
-        user = requireExpectedUser(request, body.expectedUserId);
-        requireManager(tripAccess(user, tripId));
-        if (q.activeInvites.get(tripId, at).n >= MAX_ACTIVE_INVITES) fail(409, `每趟旅行最多 ${MAX_ACTIVE_INVITES} 個有效邀請連結。`);
-        q.insertInvite.run(sha256(token), tripId, user.id, at, expiresAt);
-        audit(user.username, 'invite.create', `trip:${tripId}`);
+      await tx(async t => {
+        user = await requireExpectedUser(request, body.expectedUserId, t);
+        requireManager(await tripAccess(t, user, tripId));
+        if ((await q.activeInvites(t, tripId, at)) >= MAX_ACTIVE_INVITES) fail(409, `每趟旅行最多 ${MAX_ACTIVE_INVITES} 個有效邀請連結。`);
+        await q.insertInvite(t, sha256(token), tripId, user.id, at, expiresAt);
+        await audit(t, user.username, 'invite.create', `trip:${tripId}`);
       });
       return json(201, { token, urlPath: `/invite/${token}`, expiresAt: new Date(expiresAt).toISOString() });
     },
 
-    getInvite(request, url, info, [token]) {
-      const user = requireUser(request);
-      const row = inviteTrip(token);
-      const alreadyMember = row.owner_id === user.id || !!q.membership.get(row.id, user.id);
+    async getInvite(request, url, info, [token]) {
+      const user = await requireUser(request);
+      const row = await inviteTrip(sql, token);
+      const alreadyMember = row.owner_id === user.id || !!(await q.membership(sql, row.id, user.id));
       return json(200, { title: row.title, destination: row.destination, startDate: row.start_date, endDate: row.end_date, alreadyMember });
     },
 
     async joinInvite(request, url, info, [token]) {
-      let user = requireUser(request);
+      let user = await requireUser(request);
       const body = await readJson(request);
       if (typeof body.name !== 'string' || (body.role !== undefined && typeof body.role !== 'string')) fail(400, '請填寫名字或暱稱。');
-      const tripId = tx(() => {
-        user = requireUser(request);
-        const row = inviteTrip(token);
-        if (q.membership.get(row.id, user.id)) return row.id;
+      const tripId = await tx(async t => {
+        user = await requireUser(request, t);
+        const row = await inviteTrip(t, token);
+        if (await q.membership(t, row.id, user.id)) return row.id;
         let added;
         try { added = addParticipant(JSON.parse(row.state_json), body.name, body.role ?? ''); } catch (error) {
           fail(/已在小隊|額滿/.test(error.message) ? 409 : 400, error.message);
         }
-        q.insertMember.run(row.id, user.id, added.person.id, clock());
+        await q.insertMember(t, row.id, user.id, added.person.id, clock());
         pushEvent(added.state, `${added.person.name} 加入了小隊`, added.person.name);
-        persist(row, added.state);
-        audit(user.username, 'invite.join', `trip:${row.id}`);
+        await persist(t, row, added.state);
+        await audit(t, user.username, 'invite.join', `trip:${row.id}`);
         return row.id;
       });
       return json(200, { tripId });
     },
 
-    adminUsers(request) {
-      requireAdmin(request);
-      return json(200, { users: q.listUsers.all().map(u => ({ ...publicUser(u), deleted: u.deleted_at !== null, tripCount: u.trip_count })) });
+    async adminUsers(request) {
+      await requireAdmin(request);
+      return json(200, { users: (await q.listUsers(sql)).map(u => ({ ...publicUser(u), deleted: u.deleted_at !== null, tripCount: u.trip_count })) });
     },
 
     async adminPatchUser(request, url, info, [userId]) {
-      requireAdmin(request);
+      await requireAdmin(request);
       const body = await readJson(request);
-      const user = tx(() => {
-        const admin = requireAdmin(request);
-        const target = ID.test(userId) ? q.userById.get(userId) : null;
+      const user = await tx(async t => {
+        const admin = await requireAdmin(request, t);
+        const target = ID.test(userId) ? await q.userById(t, userId) : null;
         if (!target) fail(404, '找不到這個帳號。');
         if (target.deleted_at !== null) fail(409, '這個帳號已刪除。');
         const displayName = body.displayName === undefined ? target.display_name : validateDisplayName(body.displayName);
@@ -795,72 +762,72 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
         if (!ROLES.includes(role)) fail(400, '角色必須是 admin 或 member。');
         if (target.role === 'admin' && role !== 'admin') {
           if (target.id === admin.id) fail(403, '不能移除自己的管理員權限。');
-          if (q.activeAdmins.get().n <= 1) fail(409, '至少需要保留一位管理員。');
+          if ((await q.activeAdmins(t)) <= 1) fail(409, '至少需要保留一位管理員。');
         }
-        q.updateUser.run(displayName, role, target.id);
-        audit(admin.username, 'user.update', `user:${target.username}`);
-        return q.userById.get(target.id);
+        await q.updateUser(t, displayName, role, target.id);
+        await audit(t, admin.username, 'user.update', `user:${target.username}`);
+        return q.userById(t, target.id);
       });
       return json(200, { user: { ...publicUser(user), deleted: false } });
     },
 
     async adminDeleteUser(request, url, info, [userId]) {
-      requireAdmin(request);
+      await requireAdmin(request);
       const body = await readJson(request);
-      tx(() => {
-        const admin = requireAdmin(request);
-        const target = ID.test(userId) ? q.userById.get(userId) : null;
+      await tx(async t => {
+        const admin = await requireAdmin(request, t);
+        const target = ID.test(userId) ? await q.userById(t, userId) : null;
         if (!target) fail(404, '找不到這個帳號。');
         if (target.deleted_at !== null) fail(409, '這個帳號已刪除。');
         if (body.confirmUsername !== target.username) fail(400, '請輸入要刪除的帳號名稱以確認。');
         if (target.id === admin.id) fail(403, '不能刪除自己的帳號。');
-        if (target.role === 'admin' && q.activeAdmins.get().n <= 1) fail(409, '至少需要保留一位管理員。');
+        if (target.role === 'admin' && (await q.activeAdmins(t)) <= 1) fail(409, '至少需要保留一位管理員。');
         const at = clock();
-        q.softDelete.run(at, target.id);
-        q.deleteUserSessions.run(target.id);
-        q.revokeInvitesBy.run(at, target.id);
+        await q.softDelete(t, at, target.id);
+        await q.deleteUserSessions(t, target.id);
+        await q.revokeInvitesBy(t, at, target.id);
         const touched = new Map();
-        const load = tripId => {
-          if (!touched.has(tripId)) { const row = q.anyTripById.get(tripId); touched.set(tripId, { row, state: JSON.parse(row.state_json), ownerId: row.owner_id }); }
+        const load = async tripId => {
+          if (!touched.has(tripId)) { const row = await q.anyTripById(t, tripId); touched.set(tripId, { row, state: JSON.parse(row.state_json), ownerId: row.owner_id }); }
           return touched.get(tripId);
         };
-        for (const { trip_id, person_id } of q.tripsOfMember.all(target.id)) {
-          detachPerson(load(trip_id).state, person_id);
-          q.deleteMember.run(trip_id, target.id);
+        for (const { trip_id, person_id } of await q.tripsOfMember(t, target.id)) {
+          detachPerson((await load(trip_id)).state, person_id);
+          await q.deleteMember(t, trip_id, target.id);
         }
-        for (const { id } of q.ownedTrips.all(target.id)) {
-          const entry = load(id);
-          if (!q.membership.get(id, admin.id)) {
+        for (const { id } of await q.ownedTrips(t, target.id)) {
+          const entry = await load(id);
+          if (!(await q.membership(t, id, admin.id))) {
             const added = addUniqueParticipant(entry.state, admin.display_name, '接手的主辦人');
             entry.state = added.state;
-            q.insertMember.run(id, admin.id, added.person.id, at);
+            await q.insertMember(t, id, admin.id, added.person.id, at);
           }
           entry.ownerId = admin.id;
         }
         for (const [tripId, entry] of touched) {
           pushEvent(entry.state, '有旅伴帳號已移除，相關分工已解除綁定', `${admin.display_name}（管理員）`);
-          persist(entry.row, entry.state, { ownerId: entry.ownerId });
-          audit(admin.username, 'trip.reassign', `trip:${tripId}`);
+          await persist(t, entry.row, entry.state, { ownerId: entry.ownerId });
+          await audit(t, admin.username, 'trip.reassign', `trip:${tripId}`);
         }
-        audit(admin.username, 'user.delete', `user:${target.username}`);
+        await audit(t, admin.username, 'user.delete', `user:${target.username}`);
       });
       return json(200, { ok: true });
     },
 
-    getReceiptAi(request, url, info, [tripId]) {
-      const access = ledgerAccess(requireUser(request), tripId);
+    async getReceiptAi(request, url, info, [tripId]) {
+      const access = await ledgerAccess(sql, await requireUser(request), tripId);
       if (!access.canEdit) fail(403, '需要旅行編輯權限才能辨識收據。');
       return json(200, receiptAi?.status || { enabled: false, provider: 'Amazon Bedrock', region: '', modelId: '', maxImageBytes: AI_IMAGE_LIMIT });
     },
     async recognizeReceiptAi(request, url, info, [tripId]) {
       const expected = request.headers.get('x-camping-user-id');
-      if (!expected) { requireUser(request); fail(400, '缺少預期登入帳號。'); }
-      const authorize = () => {
-        const user = requireExpectedUser(request, expected), access = ledgerAccess(user, tripId);
+      if (!expected) { await requireUser(request); fail(400, '缺少預期登入帳號。'); }
+      const authorize = async () => {
+        const user = await requireExpectedUser(request, expected), access = await ledgerAccess(sql, user, tripId);
         if (!access.canEdit) fail(403, '需要旅行編輯權限才能辨識收據。');
         return user;
       };
-      const user = authorize();
+      const user = await authorize();
       if (request.headers.get('x-receipt-consent') !== 'bedrock-v1') fail(400, '請先同意將這張收據照片送到 Amazon Bedrock。');
       if (!receiptAi?.status?.enabled) fail(503, 'AI 辨識尚未設定，請改用本機 OCR 或聯絡管理員。');
       const type = (request.headers.get('content-type') || '').split(';')[0].toLowerCase();
@@ -874,31 +841,31 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
       try {
         const bytes = await readLimitedBytes(request, AI_IMAGE_LIMIT, signal);
         validateAiImage(bytes, type);
-        authorize();
+        await authorize();
         if (signal.aborted) fail(408, '已取消這次辨識。');
         if (limiter.blocked(`ai:${user.id}`, perUser) || limiter.blocked('ai:global', daily)) fail(429, 'AI 辨識次數已達上限，請稍後再試。');
         limiter.hit(`ai:${user.id}`, perUser); limiter.hit('ai:global', daily);
         const result = await receiptAi.recognize(bytes, type, { signal });
         if (closed || signal.aborted) fail(408, '已取消這次辨識。');
-        authorize();
+        await authorize();
         return json(200, result);
       } finally { aiActive.delete(user.id); }
     },
 
-    getLedger(request, url, info, [tripId]) {
-      const access = ledgerAccess(requireUser(request), tripId);
-      return json(200, ledgerEnvelope(access, readLedgerRow(q.ledgerByTrip.get(tripId))));
+    async getLedger(request, url, info, [tripId]) {
+      const access = await ledgerAccess(sql, await requireUser(request), tripId);
+      return json(200, ledgerEnvelope(access, readLedgerRow(await q.ledgerByTrip(sql, tripId))));
     },
 
     async putLedger(request, url, info, [tripId]) {
-      requireUser(request);
+      await requireUser(request);
       const body = await readJson(request);
       validateLedgerBody(body);
       const hash = requestHash(body);
-      const result = tx(() => {
-        const user = requireExpectedUser(request, body.expectedUserId);
-        const access = ledgerAccess(user, tripId);
-        const row = q.ledgerByTrip.get(tripId);
+      const result = await tx(async t => {
+        const user = await requireExpectedUser(request, body.expectedUserId, t);
+        const access = await ledgerAccess(t, user, tripId);
+        const row = await q.ledgerByTrip(t, tripId);
         const current = readLedgerRow(row);
         const seenRequest = current.requests.find(r => r.id === body.requestId);
         if (seenRequest) {
@@ -909,10 +876,10 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
         const ledger = buildLedger(body, { stored: current.ledger, state: access.state, canDelete: access.canDelete });
         const requests = [{ id: body.requestId, userId: user.id, hash }, ...current.requests].slice(0, LEDGER_LIMITS.requests);
         const at = clock();
-        if (!row) q.insertLedger.run(tripId, JSON.stringify(ledger), JSON.stringify(requests), user.id, at);
-        else if (q.updateLedger.run(JSON.stringify(ledger), JSON.stringify(requests), user.id, at, tripId, current.revision).changes !== 1) fail(409, '帳本已被其他人更新，你的草稿仍保留；請重新載入後再儲存。');
-        audit(user.username, 'trip.ledger', `trip:${tripId}`);
-        return ledgerEnvelope(access, readLedgerRow(q.ledgerByTrip.get(tripId)));
+        if (!row) await q.insertLedger(t, tripId, JSON.stringify(ledger), JSON.stringify(requests), user.id, at);
+        else if ((await q.updateLedger(t, JSON.stringify(ledger), JSON.stringify(requests), user.id, at, tripId, current.revision)) !== 1) fail(409, '帳本已被其他人更新，你的草稿仍保留；請重新載入後再儲存。');
+        await audit(t, user.username, 'trip.ledger', `trip:${tripId}`);
+        return ledgerEnvelope(access, readLedgerRow(await q.ledgerByTrip(t, tripId)));
       });
       return json(200, result);
     },
@@ -920,9 +887,9 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
     deleteTrip(request, url, info, [tripId]) { return softDeleteTrip(request, tripId, false); },
     adminDeleteTrip(request, url, info, [tripId]) { return softDeleteTrip(request, tripId, true); },
 
-    adminAudit(request) {
-      requireAdmin(request);
-      return json(200, { events: q.listAudit.all().map(e => ({ at: new Date(e.at).toISOString(), actor: e.actor, action: e.action, target: e.target })) });
+    async adminAudit(request) {
+      await requireAdmin(request);
+      return json(200, { events: (await q.listAudit(sql)).map(e => ({ at: new Date(e.at).toISOString(), actor: e.actor, action: e.action, target: e.target })) });
     }
   };
 
@@ -951,6 +918,9 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
   async function handle(request, info = {}) {
     let url;
     try { url = new URL(request.url); } catch { return null; }
+    // HTTP 處理器以 resolveClient 重建的有效網址（協定可能來自 Trusted_Proxies 的 X-Forwarded-Proto），
+    // 用於 Origin 比對與 Cookie Secure 判斷（Req 9.12、10.1、10.5）。路徑一律取自原始請求。
+    if (info?.url instanceof URL && info.url.pathname === url.pathname) url = new URL(info.url.href);
     if (url.pathname !== '/api' && !url.pathname.startsWith('/api/')) return null;
     try {
       if (closed) fail(503, '服務已關閉。');
@@ -974,6 +944,12 @@ export function createAccountService({ dbPath, now, receiptAi = null } = {}) {
 
   return {
     handle,
-    close() { if (!closed) { closed = true; for (const controller of aiActive.values()) controller.abort(); aiActive.clear(); for (const statement of Object.values(q)) statement.finalize(); db.close(); } }
+    // 資料庫存活檢查（/healthz 使用）；已關閉或查詢失敗時回傳 false，絕不拋出。
+    async ping(ms = 2000) {
+      if (closed) return false;
+      try { return typeof db.ping === 'function' ? (await db.ping(ms)) === true : await pingSql(sql, ms); } catch { return false; }
+    },
+    // 只停止服務並中止進行中的 AI 辨識；連線池由呼叫端關閉（見上方 JSDoc）。可重複呼叫。
+    close() { if (!closed) { closed = true; for (const controller of aiActive.values()) controller.abort(); aiActive.clear(); } }
   };
 }

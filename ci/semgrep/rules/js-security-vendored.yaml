@@ -1,0 +1,194 @@
+# Vendored JavaScript 安全規則集（Requirement 6.3；Design §10 SAST 列：「JavaScript 安全規則 + 自訂」）。
+#
+# 來源與授權：本檔所有規則皆為本 repository 自行撰寫，未複製任何第三方規則集
+# （例如 semgrep/semgrep-rules 採 Semgrep Rules License v1.0，限制再散布，因此不 vendoring）。
+# 規則主題參考 OWASP 與 CWE 公開分類，模式內容針對本專案程式碼調整，以便離線、固定版本執行，
+# 不依賴 Semgrep 雲端 registry。
+#
+# 嚴重度與 ci/policy/normalize.mjs 一致：ERROR→high（使建置失敗）、WARNING→medium、INFO→low
+# （medium／low 只記錄於報告，不使建置失敗；Req 6.5）。
+#
+# 規則一覽：
+#   lm-js-tls-verify-disabled     ERROR    關閉 TLS 憑證驗證
+#   lm-js-string-timer            WARNING  setTimeout/setInterval 傳入字串（隱性 eval）
+#   lm-js-insecure-random-secret  WARNING  以 Math.random 產生 token／secret 類值
+#   lm-js-timing-unsafe-compare   WARNING  以 ===/!== 比較 token／secret 類值（伺服器端）
+#   lm-js-hardcoded-secret        WARNING  原始碼內寫死的密碼／secret／API key 字串
+#   lm-js-weak-hash               WARNING  MD5／SHA-1
+#   lm-js-document-write          WARNING  document.write／writeln
+#   lm-js-dom-html-sink           INFO     innerHTML／outerHTML／insertAdjacentHTML 寫入非常值
+#
+# 範例檔：同目錄 js-security-vendored.js（semgrep --test）。
+rules:
+  - id: lm-js-tls-verify-disabled
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      不得關閉 TLS 憑證驗證（rejectUnauthorized: false／NODE_TLS_REJECT_UNAUTHORIZED）。
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      requirements: ["6.3"]
+      source: little-moments（自行撰寫）
+    # 已審查的例外：server/db/connect.js 的 TLS_BY_SSLMODE.require 依 libpq `sslmode=require` 語意
+    # 「加密但不驗證憑證」，僅在維運者明確設定 CAMPING_DATABASE_SSLMODE=require 時使用；
+    # 需要驗證時應設定 verify-full。
+    paths:
+      exclude:
+        - server/db/connect.js
+    pattern-either:
+      - pattern: '{..., rejectUnauthorized: false, ...}'
+      - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = $X
+      - pattern: process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = $X
+
+  - id: lm-js-string-timer
+    languages: [javascript]
+    severity: WARNING
+    message: >-
+      $TIMER 傳入字串會被當成程式碼執行（等同 eval）。請改傳函式。
+    metadata:
+      category: security
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+      requirements: ["6.3"]
+      source: little-moments（自行撰寫）
+    patterns:
+      - pattern-either:
+          - pattern: $TIMER($CODE, ...)
+          - pattern: $OBJ.$TIMER($CODE, ...)
+      - metavariable-regex:
+          metavariable: $TIMER
+          regex: ^(setTimeout|setInterval)$
+      - metavariable-regex:
+          metavariable: $CODE
+          regex: ^["'`]
+
+  - id: lm-js-insecure-random-secret
+    languages: [javascript]
+    severity: WARNING
+    message: >-
+      Math.random 不是密碼學安全的亂數，不得用於 $V。請改用 crypto.randomBytes／crypto.getRandomValues／randomUUID。
+    metadata:
+      category: security
+      cwe: "CWE-338: Use of Cryptographically Weak Pseudo-Random Number Generator (PRNG)"
+      requirements: ["6.3"]
+      source: little-moments（自行撰寫）
+    patterns:
+      - pattern: $V = <... Math.random() ...>
+      - metavariable-regex:
+          metavariable: $V
+          regex: (?i)^.*(token|secret|passw|salt|nonce|session|csrf|api_?key|otp)
+
+  - id: lm-js-timing-unsafe-compare
+    languages: [javascript]
+    severity: WARNING
+    message: >-
+      以 === / !== 比較秘密值（$SECRET）的耗時與內容相關。請先 SHA-256 再以 crypto.timingSafeEqual 比較
+      （參考 server/setup-guard.js 的 verify）。
+    metadata:
+      category: security
+      cwe: "CWE-208: Observable Timing Discrepancy"
+      requirements: ["6.3"]
+      source: little-moments（自行撰寫）
+    # src/ 為瀏覽器端程式碼，其中的 token 比較是請求序號或「確認密碼」欄位比對，不涉及伺服器秘密，
+    # 回報只會產生雜訊，因此排除。
+    paths:
+      exclude:
+        - src/
+    patterns:
+      - pattern-either:
+          - pattern: $SECRET === $OTHER
+          - pattern: $SECRET !== $OTHER
+          - pattern: $SECRET == $OTHER
+          - pattern: $SECRET != $OTHER
+          - pattern: $OTHER === $SECRET
+          - pattern: $OTHER !== $SECRET
+          - pattern: $OTHER == $SECRET
+          - pattern: $OTHER != $SECRET
+      # 最後一段名稱含秘密字樣的識別字或成員存取（`token.length`、`typeof token` 不符合）。
+      - metavariable-regex:
+          metavariable: $SECRET
+          regex: (?i)^([A-Za-z_$][\w$]*\.)*[\w$]*(token|secret|password|passwd|signature|hmac|api_?key)[\w$]*$
+      # 另一側亦須為識別字或成員存取（與字串、數字、null／undefined 常值比較不回報）。
+      - metavariable-regex:
+          metavariable: $OTHER
+          regex: ^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$
+      - metavariable-regex:
+          metavariable: $OTHER
+          regex: ^(?!(null|undefined|true|false)$)
+
+  - id: lm-js-hardcoded-secret
+    languages: [javascript]
+    severity: WARNING
+    message: >-
+      $V 疑似寫死的秘密值。秘密只能由 Credential_Store／環境變數提供（Requirement 15），不得寫入原始碼。
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      requirements: ["6.3"]
+      source: little-moments（自行撰寫）
+      note: 秘密偵測的主要防線為 Gitleaks（Req 6.4，不可豁免）；本規則作為 SAST 的補充。
+    patterns:
+      - pattern: $V = $VALUE
+      # 名稱以秘密字樣結尾（setupTokenMode 這類狀態變數不符合）。
+      - metavariable-regex:
+          metavariable: $V
+          regex: (?i)^([A-Za-z_$][\w$]*\.)*[\w$]*(password|passwd|secret|api_?key|token)$
+      # 值為 12 字元以上、不含空白的單引號或雙引號字串常值。
+      - metavariable-regex:
+          metavariable: $VALUE
+          regex: ^(["'])[^\s"']{12,}\1$
+
+  - id: lm-js-weak-hash
+    languages: [javascript]
+    severity: WARNING
+    message: >-
+      MD5／SHA-1 不具抗碰撞性，不得用於完整性或安全用途。請改用 SHA-256 以上；密碼請使用 scrypt。
+    metadata:
+      category: security
+      cwe: "CWE-328: Use of Weak Hash"
+      requirements: ["6.3"]
+      source: little-moments（自行撰寫）
+    patterns:
+      - pattern-either:
+          - pattern: createHash($ALG, ...)
+          - pattern: $CRYPTO.createHash($ALG, ...)
+      - metavariable-regex:
+          metavariable: $ALG
+          regex: (?i)^["'`](md5|sha1|sha-1|md4)["'`]$
+
+  - id: lm-js-document-write
+    languages: [javascript]
+    severity: WARNING
+    message: >-
+      document.write 會直接解析 HTML 並阻塞頁面；請改用 DOM API 或經 e() 跳脫後的範本。
+    metadata:
+      category: security
+      cwe: "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+      requirements: ["6.3"]
+      source: little-moments（自行撰寫）
+    pattern-either:
+      - pattern: document.write(...)
+      - pattern: document.writeln(...)
+
+  - id: lm-js-dom-html-sink
+    languages: [javascript]
+    severity: INFO
+    message: >-
+      寫入 HTML sink 的內容不是字串常值。請確認所有使用者資料皆經 e() 跳脫（src/ 的既有慣例）；
+      此規則僅供審查追蹤，嚴重度為 Low、不使建置失敗。
+    metadata:
+      category: security
+      cwe: "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+      requirements: ["6.3"]
+      source: little-moments（自行撰寫）
+      note: >-
+        src/ 以 innerHTML + 範本字串繪製畫面，使用者資料統一以 e() 跳脫；SAST 無法證明每個插值都已跳脫，
+        因此以 INFO 記錄，XSS 的阻擋性驗證由安全測試套件（tests/security，Req 7.6）負責。
+    patterns:
+      - pattern-either:
+          - pattern: $EL.innerHTML = $HTML
+          - pattern: $EL.outerHTML = $HTML
+          - pattern: $EL.insertAdjacentHTML($POS, $HTML)
+      - pattern-not: $EL.innerHTML = "..."
+      - pattern-not: $EL.outerHTML = "..."
+      - pattern-not: $EL.insertAdjacentHTML($POS, "...")

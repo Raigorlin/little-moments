@@ -1,0 +1,182 @@
+# Deploy_Host Compose 專案（Requirement 11.4、11.10、15.6、18.6、20.2、20.3；design.md Components §12）。
+#
+# 每個環境一份獨立專案：以 `--env-file /srv/lm/<env>/<env>.env` 啟動，`name: lm-<env>` 使
+# 網路、卷與容器名稱皆以 lm-staging_／lm-prod_ 為前綴，兩環境不共用 Database、資料卷或網路。
+#
+#   docker compose -f compose.yaml --env-file prod.env --profile green up -d app-green
+#
+# 檔案配置（由 deploy/host/install.sh 安裝，lm-deploy 操作）：
+#   /srv/lm/<env>/compose.yaml   本檔
+#   /srv/lm/<env>/<env>.env      Compose 變數（非秘密；範本見 staging.env.example／prod.env.example）
+#   /srv/lm/<env>/app.env        0600 root；App 的 DB 憑證與 Setup_Token（範本見 app.env.example）
+#   /srv/lm/<env>/db.env         0600 root；PostgreSQL 初始化憑證（範本見 db.env.example）
+#   /srv/lm/<env>/caddy/         deploy/caddy/ 的內容 + lm-deploy 產生的 upstream.caddy
+#
+# 映像一律以 `repo@sha256:<digest>` 引用（Req 17.7、20.1）。APP_IMAGE_* 由 lm-deploy 在每次呼叫時
+# 提供並驗證格式；第三方映像的 digest 為 PLACEHOLDER，見下方註解。
+#
+# 網路：
+#   edge  一般 bridge，只有 proxy；唯一發布連接埠的服務，綁定 ${LAN_IP}。LAN 網段限制由
+#         deploy/host 的 DOCKER-USER 規則在 Docker 轉送層生效（Req 8.6）。
+#   app   internal、固定子網；proxy ↔ app-blue／app-green。proxy 使用固定 IP，App 只採信該 /32
+#         的 X-Forwarded-*（Req 9.12；design Open Risks 6：不得設為整個 LAN 網段）。
+#   data  internal；app-blue／app-green／migrate ↔ db。proxy 不在此網路，無法直接連線 Database。
+# db 不宣告 ports，不發布到 Deploy_Host 任何介面（Req 11.10）。
+
+name: lm-${LM_ENV:?LM_ENV 必須為 staging 或 prod}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging: *logging
+
+x-app: &app
+  <<: *hardening
+  # App_Image 已在映像內設定 USER 10001:10001；此處再次明確指定，避免被覆寫為 root。
+  user: "10001:10001"
+  env_file: [app.env]
+  environment:
+    NODE_ENV: production
+    CAMPING_BIND_ADDRESS: 0.0.0.0
+    PORT: "5173"
+    CAMPING_ALLOWED_HOSTS: ${ALLOWED_HOSTS:?ALLOWED_HOSTS 未設定}
+    CAMPING_TRUSTED_PROXIES: ${PROXY_IP:?PROXY_IP 未設定}/32
+    CAMPING_DATABASE_HOST: db
+    CAMPING_DATABASE_PORT: "5432"
+    # 同一 Compose internal 網路，不經過主機網路介面（design Components §1 預設 disable）。
+    CAMPING_DATABASE_SSLMODE: disable
+    CAMPING_DIST: /app/dist
+    CAMPING_MIGRATIONS_DIR: /app/migrations
+    # 雲端 AI 收據辨識預設停用（Req 15.6）：未設定時為空字串。只有 Release_Approver 針對特定環境
+    # 明確啟用時，lm-deploy 才會由 Credential_Store 提供的值設定這三個變數（Req 15.7）。
+    CAMPING_BEDROCK_REGION: ${CAMPING_BEDROCK_REGION:-}
+    CAMPING_BEDROCK_MODEL_ID: ${CAMPING_BEDROCK_MODEL_ID:-}
+    CAMPING_BEDROCK_API_KEY: ${CAMPING_BEDROCK_API_KEY:-}
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=16m
+  networks: [app, data]
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: unless-stopped
+  # 收到 SIGTERM 後 serve.mjs 停止接受新連線並在 5 秒內關閉連線池；略長於 Caddy grace_period 30s。
+  stop_grace_period: 35s
+  # distroless 映像沒有 shell 或 wget，不在容器內設 healthcheck。健康檢查由 lm-deploy 經 proxy 容器
+  # 呼叫 http://app-<color>:5173/healthz（5 秒逾時，design Components §12）。
+  deploy:
+    resources:
+      limits:
+        cpus: "${APP_CPUS:-1.0}"
+        memory: ${APP_MEMORY:-512M}
+        pids: 256
+
+services:
+  proxy:
+    <<: *hardening
+    # PLACEHOLDER：digest 須由維運者以 `docker buildx imagetools inspect caddy:2.10.2-alpine` 填入。
+    # 未填入時映像解析失敗，部署不會進行（fail closed）。
+    image: caddy:2.10.2-alpine@sha256:<digest>
+    # 官方 Caddy 映像的 /usr/bin/caddy 帶有 cap_net_bind_service 檔案能力；bounding set 不含該能力時
+    # execve 會以 EPERM 失敗，因此只加回這一項。容器內監聽 8080／8443，不需要其他能力。
+    cap_add: [NET_BIND_SERVICE]
+    ports:
+      - "${LAN_IP:?LAN_IP 未設定}:${LM_PUBLIC_PORT:?LM_PUBLIC_PORT 未設定}:${LM_LISTEN_PORT:-8080}"
+    environment:
+      LM_SITE_ADDRESS: ${LM_SITE_ADDRESS:-http://:8080}
+      LM_TLS_MODE: ${LM_TLS_MODE:-off}
+      LM_HEALTH_HOST: ${LM_HEALTH_HOST:?LM_HEALTH_HOST 未設定}
+    volumes:
+      # 掛載整個目錄（唯讀）：lm-deploy switch 在主機端以 rename 原子更新 upstream.caddy，
+      # 目錄 bind mount 才能看見新的 inode（單檔 bind mount 會停留在舊檔）。
+      - ${LM_CADDY_DIR:-./caddy}:/etc/caddy:ro
+      # tls internal 模式的 CA 與憑證存放處；http 模式下為空。
+      - caddy_data:/data
+    tmpfs:
+      - /config:rw,noexec,nosuid,nodev,size=1m
+      - /tmp:rw,noexec,nosuid,nodev,size=8m
+    networks:
+      edge: {}
+      app:
+        ipv4_address: ${PROXY_IP}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+          pids: 128
+
+  app-blue:
+    <<: *app
+    image: ${APP_IMAGE_BLUE:?APP_IMAGE_BLUE 未設定（repo@sha256:...）}
+    profiles: [blue]
+
+  app-green:
+    <<: *app
+    image: ${APP_IMAGE_GREEN:?APP_IMAGE_GREEN 未設定（repo@sha256:...）}
+    profiles: [green]
+
+  # Migration_Runner：以新版 App_Image 執行一次後結束（Req 18.2）；回滾時不執行（Req 20.9）。
+  migrate:
+    <<: *app
+    image: ${APP_IMAGE_NEW:?APP_IMAGE_NEW 未設定（repo@sha256:...）}
+    entrypoint: ["bun", "/app/server/migrate.js"]
+    networks: [data]
+    restart: "no"
+    profiles: [ops]
+
+  db:
+    <<: *hardening
+    # PLACEHOLDER：digest 須由維運者以 `docker buildx imagetools inspect postgres:17.6-bookworm` 填入；
+    # 主要版本須與 lm-deploy 使用的 pg_dump／pg_restore 一致（17）。
+    image: postgres:17.6-bookworm@sha256:<digest>
+    # 以映像內 postgres 帳號（999:999）直接執行：entrypoint 不需 chown／gosu，因此可 cap_drop ALL。
+    # 新建立的具名卷會複製映像中 /var/lib/postgresql/data 的擁有者（postgres），首次 initdb 可寫入。
+    user: "999:999"
+    env_file: [db.env]
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      # 容器外具名卷 lm-<env>_pgdata：`docker compose down`（不加 -v）或替換映像後資料仍在（Req 11.4）。
+      - pgdata:/var/lib/postgresql/data
+    tmpfs:
+      - /var/run/postgresql:rw,noexec,nosuid,nodev,mode=1777,size=1m
+      - /tmp:rw,noexec,nosuid,nodev,mode=1777,size=64m
+    shm_size: 128m
+    # 不宣告 ports（Req 11.10）。
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "${DB_CPUS:-1.0}"
+          memory: ${DB_MEMORY:-1G}
+          pids: 256
+
+networks:
+  edge: {}
+  app:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${APP_SUBNET:?APP_SUBNET 未設定}
+  data:
+    internal: true
+
+volumes:
+  pgdata: {}
+  caddy_data: {}

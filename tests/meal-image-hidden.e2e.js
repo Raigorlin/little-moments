@@ -1,5 +1,6 @@
 import {test,expect} from '@playwright/test';
 import {seed,STORAGE_KEY} from '../src/model.js';
+import {poolMember} from './support/e2e-pool.js';
 
 const base=process.env.CAMPING_BASE_URL;
 const nav=page=>page.locator('.section-tabs [data-tab="meals"]').click();
@@ -10,8 +11,8 @@ async function api(page,path,method='GET',body){
  expect(response.ok(),await response.text()).toBe(true);return response.json();
 }
 async function accountTrip(page){
- const username=`image-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
- await api(page,'/api/register','POST',{username,displayName:'配圖測試',password:'Isolated-Meal-Image-2026'});
+ // 全新 member 帳號取自 harness 帳號池（註冊 API 依用戶端 IP 限速，見 tests/support/e2e-pool.js）。
+ const {username}=await poolMember(page,base);
  const initial=seed();initial.meals[0].imageKind='salad';
  const {trip}=await api(page,'/api/trips','POST',{legacyState:initial});
  await page.goto(`/${username}/trips/${trip.id}`);await nav(page);

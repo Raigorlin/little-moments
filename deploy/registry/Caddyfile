@@ -1,0 +1,68 @@
+# LAN Registry 前置 Caddy：TLS（內部 CA）+ 每帳號 basic auth + HTTP 方法限制
+#
+# 帳號（定義於 ./secrets/htpasswd，格式見 htpasswd.example）：
+#   lm-push          唯一可寫入的帳號（GET/HEAD/POST/PUT/PATCH），只存放於 Jenkins
+#                    `release/` 資料夾範圍的 Credential_Store（Req 15.1、17.5）。
+#   其他所有帳號     僅允許 GET/HEAD（例如 lm-pull-staging、lm-pull-prod、lm-pull-ci）；
+#                    寫入一律 403（Req 15.9）。判斷採「不是 lm-push 就是唯讀」，
+#                    新增的帳號預設唯讀（fail closed）。
+#   所有帳號         DELETE 一律 405；Registry 本身亦關閉刪除（config.yml）。
+#
+# 標籤不可覆寫：Distribution 沒有原生的標籤不可變設定，Caddy 也無法區分
+# 「建立」與「覆寫」標籤的 PUT。覆寫保護由 Pipeline 端 `ci/resolve-digest.mjs`
+# 的 versionTagDecision（crane digest 先查再 crane tag）負責（Req 16.10），
+# 並以「只有 release/ 持有 lm-push」縮小可寫入者。見 design.md Open Risks 第 5 點。
+#
+# 參考文件：
+#   https://caddyserver.com/docs/caddyfile/options   （admin、auto_https、persist_config）
+#   https://caddyserver.com/docs/caddyfile/matchers  （vars {http.auth.user.id}、method、not）
+#   https://caddyserver.com/docs/caddyfile/directives/basic_auth
+{
+	# 不開放管理 API；設定變更以重新啟動容器套用。
+	admin off
+	persist_config off
+	# 憑證由內部 CA 簽發並以檔案提供，不使用 ACME，也不監聽 :80 轉址。
+	auto_https off
+	grace_period 30s
+}
+
+https://{$LM_REGISTRY_HOST}:8443 {
+	# 內部 CA 簽發的伺服器憑證；檔案不存在時 Caddy 拒絕啟動（fail closed）。
+	tls /etc/caddy/tls/registry.crt /etc/caddy/tls/registry.key {
+		protocols tls1.2 tls1.3
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	# Caddy 的存取日誌預設不記錄 Authorization 標頭值。
+	log {
+		output stdout
+		format json
+	}
+
+	# route 內的處理器依書寫順序執行，matcher 在執行到該處理器時才評估，
+	# 所以 basic_auth 之後的 vars matcher 能讀到 {http.auth.user.id}。
+	route {
+		@delete method DELETE
+		respond @delete "deletion is disabled" 405
+
+		@notRegistryApi not path /v2/*
+		respond @notRegistryApi 404
+
+		basic_auth bcrypt "little-moments registry" {
+			import /etc/caddy/htpasswd
+		}
+
+		@readOnlyAccountWrite {
+			not vars {http.auth.user.id} lm-push
+			not method GET HEAD
+		}
+		respond @readOnlyAccountWrite "pull-only account" 403
+
+		reverse_proxy registry:5000
+	}
+}

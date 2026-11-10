@@ -1,0 +1,31 @@
+# 自訂 Semgrep 規則：禁止 `sql.unsafe`（Requirement 11.2；Design §4「轉換規則」、§10 SAST 列）。
+#
+# 所有包含使用者輸入的查詢必須使用 Bun.SQL tagged template（自動參數化）。`.unsafe()` 以原始字串
+# 執行 SQL，一旦混入外部輸入即成為 SQL injection，因此預設一律為 ERROR（normalize.mjs 對應 High，
+# 未列入 Approved_Exception 時使建置失敗）。
+#
+# 已審查的例外（以 paths.exclude 排除，僅限下列檔案；新增例外需經 code review 並更新此清單）：
+#   - server/db/migrations.js：Migration_Runner 執行 repository `migrations/*.sql` 原文與固定的
+#     schema_migrations DDL，內容受版本控制、不含使用者輸入（見該檔檔頭「唯一例外」說明）。
+#   - tests/support/pg.js：測試輔助模組以 `CREATE/DROP SCHEMA <ident>` 建立隔離 schema，identifier
+#     先通過 TEST_SCHEMA_PATTERN 嚴格檢查。tests/ 不在 Req 6.3 的掃描範圍內，排除項目僅為範圍擴大時保持一致。
+#
+# 範例檔：同目錄 lm-sql-unsafe.js（semgrep --test）。
+rules:
+  - id: lm-sql-unsafe
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      禁止呼叫 `.unsafe()` 執行原始 SQL 字串。請改用 tagged template（例如 sql`SELECT ... WHERE id = ${id}`）
+      讓參數自動綁定（Requirement 11.2）。唯一例外為 server/db/migrations.js。
+    metadata:
+      category: security
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+      requirements: ["6.3", "11.2"]
+      source: little-moments（自行撰寫）
+    paths:
+      exclude:
+        - server/db/migrations.js
+        - tests/support/pg.js
+    # 比對屬性存取本身（含呼叫與 `const run = sql.unsafe` 這類別名取用），避免以變數繞過。
+    pattern: $DB.unsafe

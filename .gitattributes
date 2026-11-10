@@ -1,0 +1,7 @@
+# Shell 腳本必須以 LF 檢出，否則在 Deploy_Host／Build_Agent 上執行會因 CR 失敗。
+*.sh text eol=lf
+*.bats text eol=lf
+deploy/bin/* text eol=lf
+deploy/tests/** text eol=lf
+# 主機設定（sudoers、iptables 規則、systemd unit、authorized_keys 樣板）含 CR 會被拒絕或誤判。
+deploy/host/** text eol=lf

@@ -1,10 +1,10 @@
 import {test,expect} from '@playwright/test';
-const base=process.env.CAMPING_BASE_URL,password='Session-Test-Pass-2026';
-let serial=0;
-const username=()=>`focus-${Date.now().toString(36)}-${++serial}`;
+import {poolMember} from './support/e2e-pool.js';
+const base=process.env.CAMPING_BASE_URL;
 async function request(page,path,method='GET',body){const r=await page.request.fetch(base+path,{method,data:body,headers:body?{'Content-Type':'application/json',Origin:base}:{}});expect(r.status()).toBeLessThan(300);return r.json();}
-async function register(page){const name=username();await request(page,'/api/register','POST',{username:name,displayName:name,password});return name;}
-test('account home removes stale owner data when a second tab logs out',async({browser,baseURL})=>{
+// 以帳號池中的全新 member 帳號登入（註冊 API 依用戶端 IP 限速，見 tests/support/e2e-pool.js）。
+async function register(page){return (await poolMember(page,base)).username;}
+test('[TC-HOME-002] account home removes stale owner data when a second tab logs out',async({browser,baseURL})=>{
  test.skip(new URL(baseURL).port!=='5181');
  const context=await browser.newContext({baseURL});const tab=await context.newPage(), other=await context.newPage();try{const name=await register(tab);await request(tab,'/api/trips','POST',{title:'私人的露營',startDate:'2026-11-18',endDate:'2026-11-19',destination:'秘密山谷',description:'',note:'',status:'planning',coverKind:'camp'});await tab.goto(`/${name}/home`);await expect(tab.getByText('私人的露營',{exact:true})).toBeVisible();await other.goto(`/${name}/home`);await other.getByRole('button',{name:'登出',exact:true}).click();await expect(other).toHaveURL(/\/login/);await tab.evaluate(()=>window.dispatchEvent(new Event('focus')));await expect(tab.getByText('私人的露營',{exact:true})).toHaveCount(0);await expect(tab).toHaveURL(/\/login/);}finally{await context.close();}
 });

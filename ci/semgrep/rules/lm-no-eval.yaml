@@ -1,0 +1,19 @@
+# 自訂 Semgrep 規則：禁止 `eval`（Requirement 6.3；Design §10 SAST 列）。
+#
+# `eval` 會把字串當程式碼執行；本專案沒有任何正當用途，因此不論參數是否為常值一律 ERROR
+# （normalize.mjs 對應 High）。經物件的間接呼叫（`globalThis.eval`、`window.eval`）同樣禁止。
+# 範例檔：同目錄 lm-no-eval.js（semgrep --test）。
+rules:
+  - id: lm-no-eval
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      禁止使用 eval 執行字串程式碼。請改用 JSON.parse、查表或明確的函式呼叫。
+    metadata:
+      category: security
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+      requirements: ["6.3"]
+      source: little-moments（自行撰寫）
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: $OBJ.eval(...)

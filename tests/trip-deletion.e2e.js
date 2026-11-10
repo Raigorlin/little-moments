@@ -1,12 +1,14 @@
 import {test,expect} from '@playwright/test';
 import {STORAGE_KEY,seed} from '../src/model.js';
+import {poolMember} from './support/e2e-pool.js';
 const base=process.env.CAMPING_BASE_URL;
 const password='Local-Only-Test-Pass-2026';
 const card={title:'待刪除的旅行',destination:'森林營地',startDate:'2026-11-20',endDate:'2026-11-22',description:'',note:'',coverKind:'camp',status:'planning'};
 const tile=(page,id)=>page.locator(`.acct-trip-card[data-trip-id="${id}"]`);
 async function api(page,path,method='GET',body){return page.request.fetch(base+path,{method,data:body,headers:body?{Origin:base,'Content-Type':'application/json'}:{}});}
 async function admin(page){const r=await api(page,'/api/login','POST',{username:'qa-admin',password});expect(r.status()).toBe(200);return (await r.json()).user;}
-async function member(page){const username=`del-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;const r=await api(page,'/api/register','POST',{username,displayName:'露營旅伴',password});expect(r.ok()).toBe(true);return (await r.json()).user;}
+// 全新 member 帳號取自 harness 帳號池（註冊 API 依用戶端 IP 限速，見 tests/support/e2e-pool.js）。
+const member=page=>poolMember(page,base);
 async function create(page,title=card.title){const r=await api(page,'/api/trips','POST',{...card,title});expect(r.status()).toBe(201);return (await r.json()).trip;}
 test.beforeEach(async({baseURL})=>{expect(new URL(baseURL).port).toBe('5181');});
 
@@ -27,7 +29,7 @@ test('home omits legacy and local notices without changing saved demo data',asyn
  await expect(page.locator('[data-action=acct-import-file]')).toBeHidden();
 });
 
-test('admin can cancel then confirm own trip deletion from home on phone and desktop',async({page})=>{
+test('[TC-ADMIN-003] admin can cancel then confirm own trip deletion from home on phone and desktop',async({page})=>{
  const user=await admin(page),trip=await create(page,'要確認才刪除的旅行');
  await page.goto(`/${user.username}/home`);await expect(tile(page,trip.id)).toBeVisible();
  for(const width of [320,1440]){
@@ -45,7 +47,7 @@ test('admin can cancel then confirm own trip deletion from home on phone and des
  await page.reload();await expect(page.locator('[data-action=acct-new-trip]')).toBeVisible();await expect(tile(page,trip.id)).toHaveCount(0);
 });
 
-test('admin deletes another owner trip in backend, revokes link and leaves other trips and account intact',async({page,browser})=>{
+test('[TC-ADMIN-002] admin deletes another owner trip in backend, revokes link and leaves other trips and account intact',async({page,browser})=>{
  const owner=await member(page),trip=await create(page,'主揪的待刪卡片'),keep=await create(page,'要保留的另一趟');
  const link=await (await api(page,`/api/trips/${trip.id}/invites`,'POST',{})).json();
  await page.goto(`/${owner.username}/home`);await expect(tile(page,trip.id)).toBeVisible();await expect(tile(page,trip.id).locator('[data-action=acct-delete-trip]')).toBeVisible();
@@ -59,6 +61,20 @@ test('admin deletes another owner trip in backend, revokes link and leaves other
   expect((await (await api(page,'/api/session')).json()).user.id).toBe(owner.id);
   await page.reload();await expect(tile(page,keep.id)).toBeVisible();await expect(tile(page,trip.id)).toHaveCount(0);
  }finally{await ctx.close();}
+});
+
+// 越權操作（Req 5.2）：非擁有者的 member 呼叫刪除 API 被拒絕，行程與邀請連結都未被變更。
+test('[TC-UNAUTH-004] member cannot delete another owner trip through admin or owner APIs, and the trip and invite remain',async({page,browser})=>{
+ await admin(page);const trip=await create(page,'不能被別人刪的旅行');
+ const link=await (await api(page,`/api/trips/${trip.id}/invites`,'POST',{})).json();
+ const ctx=await browser.newContext({baseURL:base});try{
+  const p=await ctx.newPage();const attacker=await member(p);
+  const body={expectedUserId:attacker.id,revision:trip.revision,confirmTitle:trip.title};
+  for(const path of [`/api/admin/trips/${trip.id}/delete`,`/api/trips/${trip.id}/delete`])expect([403,404]).toContain((await api(p,path,'POST',body)).status());
+ }finally{await ctx.close();}
+ const after=await api(page,`/api/trips/${trip.id}`);expect(after.status()).toBe(200);
+ const d=await after.json();expect(d.trip.title).toBe(trip.title);expect(d.trip.revision).toBe(trip.revision);
+ expect((await api(page,`/api/invites/${link.token}`)).status()).toBe(200);
 });
 
 test('stale revision and failed deletion keep card and show error instead of success',async({page})=>{

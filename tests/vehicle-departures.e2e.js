@@ -1,5 +1,6 @@
 import {test,expect} from '@playwright/test';
 import {seed,STORAGE_KEY} from '../src/model.js';
+import {poolMember} from './support/e2e-pool.js';
 const base=process.env.CAMPING_BASE_URL;
 const nav=(p,t)=>p.locator(`.section-tabs [data-tab="${t}"]`).click();
 const saved=p=>expect(p.locator('.sync-status')).toContainText('已儲存至本機伺服器');
@@ -59,10 +60,10 @@ test('unsaved vehicle drafts and stale saves never overwrite the newer server pl
  await p.locator('#edit-form button[type=submit]').click();await expect(p.locator('.save-warning')).toContainText('其他人已更新');await expect(car(p,'v1')).toContainText('要保留的草稿');expect((await detail()).state.vehicles[0].meeting).toBe('06:20 · 別人已更新的出發地點');
 });
 
-test('collaborators can edit departures but cannot delete cars; strangers cannot read the trip',async({page:p,browser})=>{
+test('[TC-VEH-001] collaborators can edit departures but cannot delete cars; strangers cannot read the trip',async({page:p,browser})=>{
  const {trip,detail}=await fixture(p);const invite=await api(p,`/api/trips/${trip.id}/invites`,'POST',{});const context=await browser.newContext({baseURL:base});try{
-  const guest=await context.newPage();const username=`cars-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
-  await api(guest,'/api/register','POST',{username,displayName:'同行測試者',password:'Cars-Test-Only-Pass-2026'});
+  // 全新 member 帳號取自 harness 帳號池（註冊 API 依用戶端 IP 限速，見 tests/support/e2e-pool.js）。
+  const guest=await context.newPage();const {username}=await poolMember(guest,base);
   const denied=await guest.request.get(base+`/api/trips/${trip.id}`);expect(denied.status()).toBe(404);
   await guest.goto(invite.urlPath);await guest.locator('[name=join-name]').fill('分車旅伴');await guest.locator('form button[type=submit]').click();await expect(guest).toHaveURL(new RegExp(`/${username}/trips/`));
   await car(guest,'v2').getByRole('button').click();await expect(guest.getByRole('button',{name:'移除項目',exact:true})).toHaveCount(0);await guest.getByLabel('出發地點',{exact:true}).fill('嘉義高鐵站');await submit(guest);expect((await detail()).state.vehicles.find(v=>v.id==='v2').meeting).toBe('08:30 · 嘉義高鐵站');

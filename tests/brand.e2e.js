@@ -11,14 +11,18 @@ async function brand(page,href){
  const link=page.getByRole('link',{name:'日子拾光首頁',exact:true});
  await expect(link).toBeVisible();await expect(link).toHaveAttribute('href',href);
  await expect(link).toContainText('日子拾光');await expect(link.locator('small')).toHaveText('LITTLE MOMENTS');
- await expect(page.locator('footer')).toContainText('日子拾光');
+ // 帳號頁（登入、首頁、管理後台、邀請）的頁尾已改為 acct-footer 標語與畫面偏好，不再重複品牌名稱
+ // （TC-AUTH-001 驗證其標語）；規劃與示範頁的頁尾仍顯示品牌。
+ const footer=page.locator('footer');await expect(footer).toHaveCount(1);
+ if(await footer.evaluate(el=>el.classList.contains('acct-footer')))await expect(footer.locator('.acct-footer-note')).toContainText('把日常摺進行囊');
+ else await expect(footer).toContainText('日子拾光');
  await expect(page.getByRole('banner')).not.toContainText('好好露營');
  await expect(page.locator('footer')).not.toContainText('好好露營');
  await expect(page).toHaveTitle(/日子拾光$/);
 }
 test.beforeEach(async({baseURL})=>expect(new URL(baseURL).port).toBe('5181'));
 
-test('public login and registration use the new brand',async({page})=>{
+test('[TC-BRAND-001] public login and registration use the new brand',async({page})=>{
  for(const [path,title] of [['/login','登入 · 日子拾光'],['/register','註冊旅伴帳號 · 日子拾光']]){
   await page.goto(path);await brand(page,'/login');await expect(page).toHaveTitle(title);
  }

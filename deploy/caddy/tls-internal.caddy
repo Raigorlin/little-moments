@@ -1,0 +1,6 @@
+# LM_TLS_MODE=internal：由 Caddy 內部 CA 簽發憑證（LM_SITE_ADDRESS 必須以 https:// 開頭並包含 LAN 主機名稱）。
+# CA 根憑證存放於 caddy_data 卷（/data/caddy/pki/authorities/local/root.crt），需由維運者散布到 LAN 裝置信任。
+tls internal
+
+# 只在 HTTPS 模式送 HSTS；LAN 主機名稱不加 includeSubDomains／preload。
+header Strict-Transport-Security "max-age=31536000"

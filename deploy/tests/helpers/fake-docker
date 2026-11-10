@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# 測試用的假 docker（deploy/tests/lm-deploy.bats）。不連線任何 daemon。
+#
+# 每次呼叫在 $FAKE_DOCKER_LOG 追加一行：參數以空白連接；compose 呼叫另附 [new=<APP_IMAGE_NEW>]。
+# 以環境變數控制行為（未設定 = 成功）：
+#   FAKE_PG_DUMP_FAIL=1          exec -T db pg_dump 以結束碼 1 失敗（不輸出內容）
+#   FAKE_PG_DUMP_EMPTY=1         pg_dump 成功但不輸出任何位元組
+#   FAKE_PG_RESTORE_LIST_FAIL=1  exec -T db pg_restore --list 以結束碼 1 失敗
+#   FAKE_MIGRATE_FAIL=1          --profile ops run ... migrate 失敗
+#   FAKE_UP_FAIL=1               pull／up 失敗
+#   FAKE_HEALTH_FAIL=all|blue|green  exec -T proxy wget .../healthz 失敗
+#   FAKE_CADDY_RELOAD_FAIL=1     exec -T proxy caddy reload 失敗
+#   FAKE_IMAGE_LIST=<file>       image ls 的輸出（每行一個 digest）
+set -u
+
+log=${FAKE_DOCKER_LOG:?FAKE_DOCKER_LOG 未設定}
+args=" $* "
+
+if [[ ${1:-} == compose ]]; then
+  printf '%s [new=%s]\n' "$*" "${APP_IMAGE_NEW:-}" >>"$log"
+else
+  printf '%s\n' "$*" >>"$log"
+fi
+
+case $args in
+  *" exec -T db pg_dump "*)
+    [[ ${FAKE_PG_DUMP_FAIL:-} == 1 ]] && { echo "fake pg_dump: failure" >&2; exit 1; }
+    [[ ${FAKE_PG_DUMP_EMPTY:-} == 1 ]] && exit 0
+    printf 'PGDMP-fake-%s-%s-%s\n' "$$" "$RANDOM" "$RANDOM"
+    exit 0
+    ;;
+  *" exec -T db pg_restore --list "*)
+    cat >/dev/null
+    [[ ${FAKE_PG_RESTORE_LIST_FAIL:-} == 1 ]] && { echo "fake pg_restore: failure" >&2; exit 1; }
+    printf '%s\n' ';' '; Archive created by fake' \
+      '215; 1259 16385 TABLE public trips postgres' \
+      '3401; 0 16385 TABLE DATA public trips postgres'
+    exit 0
+    ;;
+  *" run --rm --no-deps -T migrate "*)
+    [[ ${FAKE_MIGRATE_FAIL:-} == 1 ]] && exit 1
+    exit 0
+    ;;
+  *" pull app-"* | *" up -d --no-deps app-"*)
+    [[ ${FAKE_UP_FAIL:-} == 1 ]] && exit 1
+    exit 0
+    ;;
+  *" exec -T proxy wget "*)
+    case ${FAKE_HEALTH_FAIL:-} in
+      all) exit 1 ;;
+      blue | green) [[ $args == *"http://app-${FAKE_HEALTH_FAIL}:5173/healthz"* ]] && exit 1 ;;
+    esac
+    printf 'ok\n'
+    exit 0
+    ;;
+  *" exec -T proxy caddy reload "*)
+    [[ ${FAKE_CADDY_RELOAD_FAIL:-} == 1 ]] && exit 1
+    exit 0
+    ;;
+  " image ls "*)
+    [[ -n ${FAKE_IMAGE_LIST:-} && -f ${FAKE_IMAGE_LIST} ]] && cat -- "$FAKE_IMAGE_LIST"
+    exit 0
+    ;;
+esac
+exit 0

@@ -1,0 +1,93 @@
+# OWASP ZAP Automation Framework 計畫範本（Req 7.2、7.3、7.4）。
+#
+# 目標以 ${VAR} 注入，Pipeline 不直接把這個檔交給 ZAP，而是先執行：
+#
+#   bun ci/dast/targets.mjs --plan ci/dast/zap-automation.yaml \
+#     --allowlist "$DAST_TARGET_ORIGIN" --render reports/dast/zap-plan.yaml
+#
+# targets.mjs 會在「解析後的物件」上代入環境變數、驗證所有目標都在 Target_Allowlist 內、
+# 驗證本檔的速率與時間上限，通過後才輸出 ZAP 實際執行的計畫（失敗則以非零結束碼結束，
+# 不產生計畫檔，ZAP 不會發出任何請求）。這樣 ZAP 執行的內容就是被驗證過的內容。
+#
+# 注入變數：
+#   DAST_TARGET_ORIGIN  Test_Environment 的 origin，不含結尾斜線，例如 http://lm-dast-app-<tag>:5173
+#   DAST_REPORT_DIR     報告輸出目錄（ZAP 容器內路徑）
+#
+# 速率與並行限制（Req 7.4：每秒最多 20 個請求、最多 5 個並行連線）：
+#   1. 硬性速率上限由 ZAP Network add-on 的 Rate Limit 規則提供。Automation Framework 的 YAML
+#      沒有設定 Rate Limit 的欄位，因此由 Pipeline 以 ZAP 命令列 -config 帶入：
+#        -config network.ratelimit.rules.rule(0).description=lm-dast
+#        -config network.ratelimit.rules.rule(0).enabled=true
+#        -config 'network.ratelimit.rules.rule(0).matchStr=.*'
+#        -config network.ratelimit.rules.rule(0).regex=true
+#        -config network.ratelimit.rules.rule(0).reqsPerSec=20
+#        -config network.ratelimit.rules.rule(0).groupBy=RULE
+#      設定鍵名取自 zap-extensions 原始碼 RateLimitOptions.java（network.ratelimit.rules.rule、
+#      description/enabled/matchStr/regex/reqsPerSec/groupBy）。這些鍵在 ZAP 啟動時經 -config
+#      覆寫是否生效，尚未在固定版本的 ZAP 映像上實測，須在 DAST 階段整合測試中確認
+#      （以 ZAP 的 Rate Limit 統計或 Test_Environment 存取日誌計算實際速率）。
+#   2. 本檔另以有文件記載的掃描器參數獨立限制，即使第 1 項未生效仍不超過上限：
+#      spider threadCount=5；activeScan threadPerHost=5 且 delayInMs=250
+#      （每個執行緒每秒最多 4 個請求，5 個執行緒合計最多 20 rps）。
+#      ZAP 本身的連線池大小不由本檔控制；並行連線上限以執行緒數量為準。
+#
+# 時間上限（Req 7.4：60 分鐘）：spider 10 + passiveScan-wait 5 + activeScan 40 = 55 分鐘。
+# 硬性上限是 Jenkinsfile DAST 階段的 timeout(time: 60, unit: 'MINUTES')。
+#
+# 範圍：context 的 urls 與 includePaths 只含 Test_Environment origin，includePaths 以 ^\Q<origin>\E/
+# 錨定。真正的網路邊界是 docker network create --internal 與 ci/dast/isolation-probe.sh（Req 7.7、7.9）。
+
+env:
+  contexts:
+    - name: lm-test-environment
+      urls:
+        - '${DAST_TARGET_ORIGIN}/'
+      includePaths:
+        - '^\Q${DAST_TARGET_ORIGIN}\E/.*'
+      excludePaths:
+        # 登出會使掃描使用的 Session 失效；Session 處理改由 tests/security 驗證（Req 7.6）
+        - '^\Q${DAST_TARGET_ORIGIN}\E/api/logout.*'
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+
+jobs:
+  - type: passiveScan-config
+    parameters:
+      maxAlertsPerRule: 10
+      scanOnlyInScope: true
+
+  - type: spider
+    parameters:
+      context: lm-test-environment
+      url: '${DAST_TARGET_ORIGIN}/'
+      maxDuration: 10
+      maxDepth: 5
+      threadCount: 5
+      parseRobotsTxt: false
+      parseSitemapXml: false
+      parseGit: false
+      parseSVNEntries: false
+      parseDsStore: false
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+
+  - type: activeScan
+    parameters:
+      context: lm-test-environment
+      maxScanDurationInMins: 40
+      maxRuleDurationInMins: 5
+      threadPerHost: 5
+      delayInMs: 250
+      handleAntiCSRFTokens: true
+
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: '${DAST_REPORT_DIR}'
+      reportFile: zap-report.json
+    risks: [high, medium, low, info]
+    confidences: [high, medium, low, falsepositive]
