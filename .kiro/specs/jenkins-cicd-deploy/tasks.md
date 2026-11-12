@@ -661,6 +661,13 @@
   - [x] 19.6 Checkpoint - 部署設定同步後確認所有測試通過
     - 執行 `bun run build`、`bun test tests/*.test.js`（需要 PostgreSQL 的測試使用臨時 Ephemeral_Database，用完即刪）、`bats deploy/tests` 與 `semgrep --test ci/semgrep`，確認全部通過，且 repository 中沒有任何秘密值。Ensure all tests pass, ask the user if questions arise.
 
+- [x] 20. Build_Image 首次建置修正
+  - [x] 20.1 Node.js 改用 `.tar.gz` 發行檔
+    - 第一次 `infra/build-image`（commit 0080a1b）在 `ci/build-image/Dockerfile` 的 Node.js 步驟失敗：`mcr.microsoft.com/playwright:v1.56.1-noble` 沒有 `xz`，`tar -xJf` 回報 `xz: Cannot exec: No such file or directory`（校驗已通過）
+    - 改下載 `node-v${NODE_VERSION}-linux-x64.tar.gz` 並以 `tar -xzf` 解壓；`NODE_SHA256=eeaccb0378b79406f2208e8b37a62479c70595e20be6b659125eb77dd1ab2a29`（nodejs.org/dist/v22.20.0/SHASUMS256.txt 的 linux-x64.tar.gz）；不另外以 apt 安裝套件；更新檔頭說明與 ARG 預設值的說明
+    - 更新斷言 Node.js 下載檔名或格式的測試，執行 `bun test tests/ci-build-image-pipeline.test.js tests/ci-lint.test.js tests/ci-toolchain.test.js`
+    - _Requirements: 3.1, 3.2_
+
 ## Notes
 
 - 標記 `*` 的子任務為選用（property test、整合測試與額外檢查），可為加快 MVP 而略過。
@@ -710,7 +717,8 @@
     { "id": 31, "tasks": ["19.2"] },
     { "id": 32, "tasks": ["19.3"] },
     { "id": 33, "tasks": ["19.5"] },
-    { "id": 34, "tasks": ["19.6"] }
+    { "id": 34, "tasks": ["19.6"] },
+    { "id": 35, "tasks": ["20.1"] }
   ]
 }
 ```

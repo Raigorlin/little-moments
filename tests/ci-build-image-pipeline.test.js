@@ -189,6 +189,17 @@ describe('PLACEHOLDER 與版本檢查（fail closed）', () => {
     expect(dockerfile).toContain('case "${BUN_SHA256}" in "<"*)');
   });
 
+  test('Node.js 使用 .tar.gz 發行檔：基底映像沒有 xz，先校驗再以 gzip 解壓', () => {
+    const dockerfile = readFileSync(resolve(root, 'ci/build-image/Dockerfile'), 'utf8');
+    const code = dockerfile.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+    expect(code).toContain('/node-v${NODE_VERSION}-linux-x64.tar.gz"');
+    expect(code).not.toMatch(/tar\.xz|-xJf/);
+    const check = code.indexOf('echo "${NODE_SHA256}  /tmp/node.tar.gz" | sha256sum -c -');
+    const extract = code.indexOf('tar -xzf /tmp/node.tar.gz');
+    expect(check).toBeGreaterThan(-1);
+    expect(extract).toBeGreaterThan(check);
+  });
+
   test('crane 只以 digest 引用（LAN Registry 的鏡像）；格式不符時 Init 失敗', () => {
     const crane = /LM_CRANE_IMAGE = '([^']+)'/.exec(code)?.[1];
     expect(crane).toMatch(/^registry\.our-littlemoments\.com:8443\/little-moments\/mirror\/crane@sha256:[0-9a-f]{64}$/);

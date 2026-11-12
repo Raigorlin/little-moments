@@ -7,8 +7,9 @@
 #   syntax 前端      docker buildx imagetools inspect docker/dockerfile:1.10
 #   基底映像         docker buildx imagetools inspect mcr.microsoft.com/playwright:v1.56.1-noble
 #   BUN_SHA256       https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/SHASUMS256.txt 的 bun-linux-x64.zip
-#   NODE_SHA256      https://nodejs.org/dist/v22.20.0/SHASUMS256.txt 的 node-v22.20.0-linux-x64.tar.xz
+#   NODE_SHA256      https://nodejs.org/dist/v22.20.0/SHASUMS256.txt 的 node-v22.20.0-linux-x64.tar.gz
 # 下載內容與 SHA-256 不符時，下方的校驗步驟會使建置失敗（fail closed）。
+# Node.js 使用 .tar.gz 發行檔：基底映像沒有 xz，無法解壓 .tar.xz；改用 gzip 即不必另外安裝套件。
 #
 # Playwright 1.56.1 隨附 Chromium 141.0.7390.37（chromium-1194）。
 FROM mcr.microsoft.com/playwright:v1.56.1-noble@sha256:f1e7e01021efd65dd1a2c56064be399f3e4de00fd021ac561325f2bfbb2b837a
@@ -16,16 +17,16 @@ FROM mcr.microsoft.com/playwright:v1.56.1-noble@sha256:f1e7e01021efd65dd1a2c5606
 ARG BUN_VERSION=1.3.14
 ARG BUN_SHA256=951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f
 ARG NODE_VERSION=22.20.0
-ARG NODE_SHA256=00bbd05e306ea68b6e13e17360d0e2f680b493ef95f2fea1c4296ff7437530bc
+ARG NODE_SHA256=eeaccb0378b79406f2208e8b37a62479c70595e20be6b659125eb77dd1ab2a29
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # 精確版本的 Node.js：覆蓋基底映像以套件管理器安裝、版本不固定的 Node。
 RUN case "${NODE_SHA256}" in "<"*) echo "NODE_SHA256 尚未設定" >&2; exit 1;; esac \
- && curl -fsSLo /tmp/node.tar.xz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
- && echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - \
- && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner \
- && rm /tmp/node.tar.xz \
+ && curl -fsSLo /tmp/node.tar.gz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" \
+ && echo "${NODE_SHA256}  /tmp/node.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1 --no-same-owner \
+ && rm /tmp/node.tar.gz \
  && hash -r && [ "$(/usr/local/bin/node --version)" = "v${NODE_VERSION}" ]
 
 # 精確版本的 Bun。

@@ -2618,6 +2618,25 @@
         "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
         "timestamp": 1794458184712
       }
+    ],
+    "20.1 Node.js 改用 `.tar.gz` 發行檔": [
+      {
+        "executionId": "0f4d95ae-63bc-4ce6-bb5f-30c41c14d0b7",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794459277911
+      },
+      {
+        "executionId": "0f4d95ae-63bc-4ce6-bb5f-30c41c14d0b7",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794459422755
+      }
+    ],
+    "20. Build_Image 首次建置修正": [
+      {
+        "executionId": "0f4d95ae-63bc-4ce6-bb5f-30c41c14d0b7",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794459422939
+      }
     ]
   }
 }
