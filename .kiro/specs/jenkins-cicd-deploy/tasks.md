@@ -786,6 +786,24 @@
     - 執行 `bun run build`、`bun test tests/*.test.js`（需要 PostgreSQL 的測試使用臨時 Ephemeral_Database，用完即刪）、WSL 下的 `bats deploy/tests`、`semgrep --test ci/semgrep` 與秘密掃描（`bun scripts/scan-secrets.mjs`）；若變更觸及 UI 或 `qa/inventory.json`，另以 `scripts/check-accounts.mjs`（設定 `CAMPING_BUN` 與 `CHROME_PATH`）執行 E2E 並以 `scripts/qa-inventory.mjs` validate／compare。確認全部通過且 repository 中沒有任何秘密值。Ensure all tests pass, ask the user if questions arise.
     - _Requirements: 27.1, 27.2, 27.3, 27.4, 27.5, 27.6, 27.7, 27.8, 27.9, 27.10, 27.11, 27.12, 27.13, 27.14, 27.15, 27.16, 27.17, 27.18, 27.19, 27.20, 27.21, 27.22, 27.23, 27.24, 27.25, 27.26, 27.27_
 
+- [x] 24. Jenkinsfile 方法大小
+  - [x] 24.1 將 `Jenkinsfile` 各階段內容移至頂層函式
+    - 背景與設計見 design.md Components 第 22 節：192.168.1.121 上第一次真實建置（commit `3c66555`）的 `release/little-moments » main` 在任何階段前以 `MethodTooLargeException`（`WorkflowScript.___cps___436`）失敗；`pipeline {}` 區塊自第 23 行起共 1677 行。不改用 controller 的 `SCRIPT_SPLITTING_TRANSFORMATION`
+    - 開始前重新讀取 `Jenkinsfile` 全檔，以及 `tests/ci-jenkinsfile.test.js` 的 `stageBlock`、`functionBody`、`inOrder` 與所有呼叫處；以 grep 找出其他讀取根目錄 `Jenkinsfile` 的測試（例如 `tests/ci-lint.test.js`、`tests/ci-jenkins-config.test.js`、`tests/ci-build-image-pipeline.test.js`）
+    - `Jenkinsfile`：每個 stage 的 `steps` 改為 `script { run<階段名稱>Stage() }`，原 `script {}` 內容逐行移入該函式，`enterStage('<階段名稱>')` 仍為第一個敘述；長的 `sh` 腳本可移到回傳 `String` 的頂層函式，內容不變。超過一個敘述的 post 條件區塊改為呼叫 `<階段>Post<條件>()`；管線層級 post 改為 `pipelinePostAlways()`／`pipelinePostCleanup()`；`when` 逐字不變（超過一行時才改為呼叫頂層 `boolean` 函式）
+    - 階段函式依 stage 順序放在 `pipeline {}` 之後、`// ---- 輔助函式` 分隔線之前，post 函式緊接在該階段函式之後；stage 上方的多行說明移到函式文件註解，stage 上方保留一行摘要；`environment` 的說明註解可移到 `pipeline {` 之前，鍵、值與順序不變；註解只搬移、不刪除
+    - 不變：`agent`、`options`、`environment`、stage 名稱與順序、`when` 條件、`lock`／`timeout`／`withCredentials`／`catchError` 的範圍、`error()` 訊息、`sh` 的 `label` 與腳本內容、所有可觀察行為；`withCredentials` 隨原本包住的指令移入同一個階段函式（Req 15.2），`credentialsId:` 與 `withCredentials([` 的數量不變；`lmNotifier` 等 binding 變數不加 `def` 或型別；不新增 step、`parallel` 或 `@NonCPS`
+    - 每個頂層函式不超過 250 行；需要拆分時，原本提早結束階段的 `return`（Migration Compatibility 等）仍須結束整個階段函式
+    - 新增 `tests/ci-jenkinsfile-size.test.js`（design.md 第 22.3 節）：保留換行的掃描器（略過註解與四種字串、處理 `\` 跳脫）找出深度 0 的 `pipeline {` 與頂層函式；結束 `}` 不在第 0 欄、字串或括號未結束時失敗；對 `Jenkinsfile` 與 `ci/jenkins/pipelines/*.Jenkinsfile` 斷言區塊 ≤ 400 行、函式 ≤ 250 行，失敗訊息列出檔名、名稱、起訖行與行數；以固定的小型 Groovy 文字測試掃描器（字串與 heredoc 內的括號、第 0 欄的 heredoc 行、註解內的括號、超過門檻的範例）；只對根目錄 `Jenkinsfile` 斷言 `steps` 只呼叫一個 `run…Stage()`、post 條件區塊只有一個呼叫、`when` 只有一行
+    - 更新以 stage 區塊定位內容的既有斷言，改為讀取對應的階段或 post 函式（design.md 第 22.4 節列出的位置），斷言意圖與強度不變：不刪除斷言、不放寬比對；有調整的斷言逐項記錄於任務回報
+    - 執行 `bun test tests/ci-jenkinsfile-size.test.js tests/ci-jenkinsfile.test.js tests/ci-lint.test.js tests/ci-jenkins-config.test.js tests/ci-build-image-pipeline.test.js tests/ci-rollback-pipeline.test.js tests/ci-restore-drill.test.js tests/ci-digest-lookup.test.js`，再以明列檔名的方式執行全部 `tests/ci-*.test.js`（Windows 上不依賴 glob 展開）；在任務回報記錄重構前後 `pipeline {}` 區塊的行數與最大頂層函式的名稱與行數
+    - 本機沒有 Groovy／Jenkins，無法執行 CPS 編譯；在任務回報寫明維運者檢查：合併後對 `release/little-moments » main` 按 Build Now，確認進入 Init 階段且沒有 `MethodTooLargeException`（可先以 Jenkins Declarative linter 檢查語法，但它不保證能發現方法大小問題）
+    - _Requirements: 1.1, 1.7, 15.2, 23.1_
+
+  - [x] 24.2 Checkpoint - Jenkinsfile 重構後確認所有測試通過
+    - 執行受影響的 `bun test` 測試檔（含 24.1 列出的檔案與全部 `tests/ci-*.test.js`，Windows 上明列檔名）與秘密掃描（`bun scripts/scan-secrets.mjs`），確認全部通過且沒有任何秘密值。Ensure all tests pass, ask the user if questions arise.
+    - _Requirements: 1.1_
+
 ## Notes
 
 - 標記 `*` 的子任務為選用（property test、整合測試與額外檢查），可為加快 MVP 而略過。
@@ -797,6 +815,7 @@
 - 任務 21 依同主機配置（Deploy_Host = Jenkins = Registry = `192.168.1.121`）讓 Production 經 Nginx Proxy Manager 與 Cloudflare 公開；Edge_Proxy 與 Cloudflare 的設定是維運操作，repository 只提供設定檔、驗證與 runbook。Requirement 8.8–8.10 與 25 沒有新的 Correctness Property（行為由 Caddy 與主機上的 bash 腳本實作），以設定檢查、bats 與 Caddy 實測驗證。任務 21.3 依 Requirement 26 讓 Deploy_Host 的公開註冊預設關閉並可由管理員在 `/admin` 切換，新增 Property 48。
 - 任務 22 來自 192.168.1.121 上 `install.sh` 的 sudoers 步驟失敗（sudo-rs 0.2.13 不支援 `requiretty`）；Requirement 15.9 的行為不變，沒有新的 Correctness Property，以靜態檢查、bats 固定樣本與 `visudo -cf` 驗證。
 - 任務 23 來自準備 192.168.1.121 第一次部署時發現的缺口：Smoke_Test 需要的 `smoke-bot` 與 `smoke-fixture` 沒有任何建立方式，且 `lm-deploy deploy` 不會啟動 `db`／`proxy`。依 Requirement 27，由 Host_Operator 以 `lm-deploy <env> smoke-account` 建立；部署憑證權限不變（Requirement 15.9）。因為 `needsSetup` 只看使用者數量，順序固定為先 `create-admin`、後 Smoke_Account。沒有新的 Correctness Property：決策表只有 16 種組合，以窮舉範例測試涵蓋。
+- 任務 24 來自 192.168.1.121 上第一次真實建置（commit `3c66555`）：`release/little-moments » main` 在任何階段執行前以 `MethodTooLargeException` 失敗，因為 Declarative Pipeline 把 `pipeline {}` 區塊（1677 行）編譯成單一 JVM 方法，超過 64 KB 限制（JENKINS-37984）。依 design.md Components 第 22 節把各階段內容移到頂層函式，行為不變，並以 `tests/ci-jenkinsfile-size.test.js` 限制區塊與函式行數；不採用 controller 的 `SCRIPT_SPLITTING_TRANSFORMATION`。沒有新的需求或 Correctness Property；真正的編譯檢查是維運者下一次的 Build Now。
 - 任務 18 合併 security-harden：兩分支沒有共同歷史，以 main 的 `cd06606` 作為合成共同基底進行三方合併；應用程式功能採用 security-harden，部署、設定模型、Setup_Token 與 PostgreSQL 資料層採用 main；收據 AI 改為 OpenAI（`CAMPING_OPENAI_*`）。
 
 ## Task Dependency Graph
@@ -850,7 +869,9 @@
     { "id": 43, "tasks": ["22.2"] },
     { "id": 44, "tasks": ["23.1", "23.2"] },
     { "id": 45, "tasks": ["23.3"] },
-    { "id": 46, "tasks": ["23.4"] }
+    { "id": 46, "tasks": ["23.4"] },
+    { "id": 47, "tasks": ["24.1"] },
+    { "id": 48, "tasks": ["24.2"] }
   ]
 }
 ```

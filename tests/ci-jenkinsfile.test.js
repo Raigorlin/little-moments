@@ -84,7 +84,7 @@ describe('Jenkinsfile 結構', () => {
     expect(functionBody('boolean destructiveAllowed(String who, String migration)'))
       .toContain('bun ci/approval.mjs destructive --approver "$LM_APR_WHO" --migration "$LM_APR_MIGRATION"');
     // 核准迴圈只由 Release_Tag 的 Approval 階段呼叫，且整體 24 小時逾時（Req 19.4）。
-    const approval = stageBlock(STAGE.APPROVAL);
+    const approval = stageCode(STAGE.APPROVAL);
     expect(approval).toContain("env.LM_TRIGGER_KIND == 'release_tag'");
     expect(approval).toContain('waitForApproval()');
     const wait = functionBody('void waitForApproval()');
@@ -168,6 +168,20 @@ function functionBody(signature) {
   throw new Error(`找不到 ${signature} 的結尾`);
 }
 
+/**
+ * stage 的完整內容：stage 宣告（stageBlock：when、steps、post）加上它呼叫的階段函式與 post 函式本體。
+ * Components 第 22 節起，各 stage 的 steps 與多於一個敘述的 post 內容位於 pipeline {} 之後的頂層函式
+ * （run<階段名稱>Stage()、<階段>Post<條件>()）；順序為 stage 宣告 → run…Stage() → post 函式。
+ */
+function stageCode(name) {
+  const block = stageBlock(name);
+  const fns = [...block.matchAll(/script \{ (run\w+Stage|[a-z]\w*Post(?:Always|Unsuccessful|Cleanup))\(\) \}/g)]
+    .map((m) => m[1])
+    .filter((f) => !f.startsWith('pipelinePost'));
+  expect(fns[0]).toMatch(/^run\w+Stage$/);
+  return [block, ...fns.map((f) => functionBody(`void ${f}()`))].join('\n');
+}
+
 /** 所有 ''' 多行 sh 腳本（含以位置參數傳給 runScan 的腳本）。 */
 const tripleScripts = [...source.matchAll(/(?:script: |, )'''([\s\S]*?)'''/g)].map((m) => m[1]);
 
@@ -177,8 +191,8 @@ function dockerRunsIn(text) {
 }
 
 describe('Unit Tests 與 Browser Tests 階段（Req 4、5、23.1、23.5）', () => {
-  const unit = stageBlock('Unit Tests');
-  const browser = stageBlock('Browser Tests');
+  const unit = stageCode('Unit Tests');
+  const browser = stageCode('Browser Tests');
   const startDb = functionBody('void startEphemeralDb(String purpose)');
   const destroyDb = functionBody('void destroyEphemeralDb()');
   const recordQa = functionBody('int recordQa(Map args)');
@@ -313,9 +327,12 @@ describe('Unit Tests 與 Browser Tests 階段（Req 4、5、23.1、23.5）', () 
   });
 
   test('post：always 於 120 秒內銷毀資料庫；失敗時遮罩並封存截圖、trace 與伺服器日誌（Req 4.2、5.6）', () => {
-    for (const block of [unit, browser]) {
+    // always 只呼叫該階段的 post 函式（Components 第 22.1 節），函式的第一個敘述是 destroyEphemeralDb()。
+    for (const [name, fn] of [['Unit Tests', 'unitTestsPostAlways'], ['Browser Tests', 'browserTestsPostAlways']]) {
+      const block = stageBlock(name);
       const post = block.slice(at(block, 'post {'));
-      expect(post).toMatch(/always\s*\{\s*script\s*\{\s*destroyEphemeralDb\(\)/);
+      expect(post).toMatch(new RegExp(`always\\s*\\{\\s*script\\s*\\{\\s*${fn}\\(\\)`));
+      expect(functionBody(`void ${fn}()`)).toMatch(new RegExp(`^void ${fn}\\(\\) \\{\\s*destroyEphemeralDb\\(\\)`));
       expect(post).toMatch(/cleanup\s*\{\s*script\s*\{\s*removeEphemeralDbSecrets\(\)/);
     }
     expect(destroyDb).toContain("timeout(time: 120, unit: 'SECONDS')");
@@ -336,7 +353,7 @@ describe('Unit Tests 與 Browser Tests 階段（Req 4、5、23.1、23.5）', () 
 });
 
 describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
-  const sec = stageBlock('Security Scan');
+  const sec = stageCode('Security Scan');
   const prepare = functionBody('void prepareScanSources()');
   const runScan = functionBody('void runScan(String what, String report, String script)');
   const recordGate = functionBody('int recordSecurityGate(String stageError)');
@@ -490,8 +507,8 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
 });
 
 describe('Trusted_Ref 專用階段：Migration Compatibility 與 DAST（Req 7、10.10、10.11、12.5、12.8、12.9）', () => {
-  const compat = stageBlock('Migration Compatibility');
-  const dast = stageBlock('DAST');
+  const compat = stageCode('Migration Compatibility');
+  const dast = stageCode('DAST');
   const runDast = functionBody('void runDast()');
   const at = (text, s) => { const i = text.indexOf(s); expect(i).toBeGreaterThan(-1); return i; };
   const inOrder = (text, list) => { const idx = list.map((s) => at(text, s)); expect(idx).toEqual([...idx].sort((a, b) => a - b)); };
@@ -551,8 +568,11 @@ describe('Trusted_Ref 專用階段：Migration Compatibility 與 DAST（Req 7、
       expect(cmd).toContain('--read-only');
     }
     // post：銷毀資料庫（含依 label 移除 App 容器）、失敗時記錄失敗原因，最後刪除秘密檔。
-    const post = compat.slice(at(compat, 'post {'));
-    inOrder(post, ['saveContainerLog(env.LM_COMPAT_APP', 'destroyEphemeralDb()', "recordMigrationCompat('fail', compatStageError())", 'removeEphemeralDbSecrets()']);
+    // always 只呼叫 migrationCompatibilityPostAlways()（Components 第 22.1 節），cleanup 在其後。
+    const block = stageBlock('Migration Compatibility');
+    const post = block.slice(at(block, 'post {'));
+    inOrder(post, ['always {', 'migrationCompatibilityPostAlways()', 'cleanup {', 'removeEphemeralDbSecrets()']);
+    inOrder(functionBody('void migrationCompatibilityPostAlways()'), ['saveContainerLog(env.LM_COMPAT_APP', 'destroyEphemeralDb()', "recordMigrationCompat('fail', compatStageError())"]);
   });
 
   test('Release_Tag 格式與 ci/policy/tag.mjs 一致；舊映像以版本標籤拉取後立即解析為 digest', async () => {
@@ -598,8 +618,11 @@ describe('Trusted_Ref 專用階段：Migration Compatibility 與 DAST（Req 7、
     expect(dast).toMatch(/catch \(org\.jenkinsci\.plugins\.workflow\.steps\.FlowInterruptedException e\)\s*\{[\s\S]*?error\([\s\S]*?throw e/);
     expect(dast).toMatch(/recordDastSecurityGate\(''\) != 0\)\s*\{\s*error\(/);
     // post：先停止 ZAP（60 秒內）→ 保存日誌 → 銷毀 Test_Environment 與資料庫 → 未記錄時評估並記錄關卡 → 刪除秘密檔。
-    const post = dast.slice(at(dast, 'post {'));
-    inOrder(post, ['stopDastScanner()', 'saveContainerLog(env.LM_DAST_APP', 'destroyEphemeralDb()', 'evaluateDastReports()', 'recordDastSecurityGate(dastStageError())', 'removeEphemeralDbSecrets()']);
+    // always 只呼叫 dastPostAlways()（Components 第 22.1 節），cleanup 在其後。
+    const block = stageBlock('DAST');
+    const post = block.slice(at(block, 'post {'));
+    inOrder(post, ['always {', 'dastPostAlways()', 'cleanup {', 'removeEphemeralDbSecrets()']);
+    inOrder(functionBody('void dastPostAlways()'), ['stopDastScanner()', 'saveContainerLog(env.LM_DAST_APP', 'destroyEphemeralDb()', 'evaluateDastReports()', 'recordDastSecurityGate(dastStageError())']);
     const stop = functionBody('void stopDastScanner()');
     expect(stop).toContain("timeout(time: 60, unit: 'SECONDS')");
     expect(stop).toContain('label=lm.ci.dast=$LM_EDB_RUN');
@@ -693,7 +716,7 @@ describe('Trusted_Ref 專用階段：Migration Compatibility 與 DAST（Req 7、
     expect(ev).toContain('bun ci/policy/normalize.mjs --tool zap --in reports/dast/zap-report.json --out reports/security/zap.json');
     expect(ev).toContain('bun ci/policy/normalize.mjs --tool security-suite --in reports/security-junit.xml --out reports/security/security-suite.json');
     const evalReports = /--reports ([^\\\n]+)/.exec(ev)?.[1].trim().split(/\s+/) ?? [];
-    const staticReports = /--reports ([^\\\n]+)/.exec(stageBlock('Security Scan'))?.[1].trim().split(/\s+/) ?? [];
+    const staticReports = /--reports ([^\\\n]+)/.exec(stageCode('Security Scan'))?.[1].trim().split(/\s+/) ?? [];
     expect(evalReports).toEqual([...staticReports, 'reports/security/zap.json', 'reports/security/security-suite.json']);
     expect(ev).toContain('--out reports/security/evaluation-dast.json');
     expect(ev).toMatch(/rc != 0 && rc != 1\)\s*\{\s*lmDastErrors << /);
@@ -720,7 +743,7 @@ describe('Trusted_Ref 專用階段：Migration Compatibility 與 DAST（Req 7、
 
 describe('main 專用的映像階段：Image Build → Image Scan → SBOM → Image Push → Image Sign（Req 15.1–15.3、16、17.1–17.6、21.2）', () => {
   const IMAGE_STAGES = [STAGE.IMAGE_BUILD, STAGE.IMAGE_SCAN, STAGE.SBOM, STAGE.IMAGE_PUSH, STAGE.IMAGE_SIGN];
-  const blocks = Object.fromEntries(IMAGE_STAGES.map((n) => [n, stageBlock(n)]));
+  const blocks = Object.fromEntries(IMAGE_STAGES.map((n) => [n, stageCode(n)]));
   const build = blocks[STAGE.IMAGE_BUILD];
   const scan = blocks[STAGE.IMAGE_SCAN];
   const sbom = blocks[STAGE.SBOM];
@@ -892,15 +915,18 @@ describe('main 專用的映像階段：Image Build → Image Scan → SBOM → I
     // 13.7 起 Release_Tag 的 pushVersionTag()（crane tag 寫入版本標籤，不需私鑰）是第四個、也是唯一另外的使用處。
     const attest = functionBody('int attestStaging()');
     const versionTag = functionBody('int pushVersionTag()');
+    // Components 第 22 節起 withCredentials 隨指令位於 Image Push／Image Sign 的階段函式內（Req 15.2）。
+    const pushFn = functionBody('void runImagePushStage()');
+    const signFn = functionBody('void runImageSignStage()');
     for (const i of uses(/credentialsId: env\.LM_REGISTRY_PUSH_CREDENTIALS/g)) {
-      expect(inside(i, push) || inside(i, sign) || inside(i, attest) || inside(i, versionTag)).toBe(true);
+      expect(inside(i, pushFn) || inside(i, signFn) || inside(i, attest) || inside(i, versionTag)).toBe(true);
     }
     expect(uses(/credentialsId: env\.LM_REGISTRY_PUSH_CREDENTIALS/g).length).toBe(4);
     expect(versionTag).not.toMatch(/LM_COSIGN_/);
     for (const re of [/credentialsId: env\.LM_COSIGN_KEY_CREDENTIALS/g, /credentialsId: env\.LM_COSIGN_PASSPHRASE_CREDENTIALS/g]) {
       const found = uses(re);
       expect(found.length).toBe(2);
-      expect(inside(found[0], sign)).toBe(true);
+      expect(inside(found[0], signFn)).toBe(true);
       expect(inside(found[1], attest)).toBe(true);
     }
     const secretScripts = tripleScripts.filter((s) => /LM_PUSH_PASSWORD|COSIGN_PASSWORD|LM_COSIGN_KEY_FILE/.test(s));
@@ -953,7 +979,7 @@ describe('main 專用的映像階段：Image Build → Image Scan → SBOM → I
 });
 
 describe('main 專用的 Staging Deploy 階段（Req 14.1–14.3、14.8、15.9、17.7、17.8、18.1–18.5、18.7–18.9、23.2）', () => {
-  const stg = stageBlock(STAGE.STAGING);
+  const stg = stageCode(STAGE.STAGING);
   const deploy = functionBody('void deployStaging()');
   const restore = functionBody('void restoreStaging()');
   const deployCmd = functionBody('int stagingDeployCommand()');
@@ -1200,7 +1226,7 @@ describe('verify-toolchain --record-patch（Req 3.3）', () => {
 
 describe('Release_Tag 專用階段：Resolve Digest → Version Tag → Approval → Production Deploy（Req 1.4、1.10、12.6、14.1–14.3、19、20、22.5、23）', () => {
   const RELEASE_STAGES = [STAGE.RESOLVE_DIGEST, STAGE.VERSION_TAG, STAGE.APPROVAL, STAGE.PRODUCTION];
-  const blocks = Object.fromEntries(RELEASE_STAGES.map((n) => [n, stageBlock(n)]));
+  const blocks = Object.fromEntries(RELEASE_STAGES.map((n) => [n, stageCode(n)]));
   const resolveFn = functionBody('void resolveReleaseImage()');
   const registryFn = functionBody('int releaseRegistry(String action)');
   const versionFn = functionBody('void applyVersionTag()');
@@ -1419,12 +1445,13 @@ describe('Release_Tag 專用階段：Resolve Digest → Version Tag → Approval
 });
 
 describe('收尾 post { always } 與 post { cleanup }（13.8；Req 2.6、15.4、21.2、21.6、21.9、21.11、22.2–22.4、22.7、22.8、23.1）', () => {
-  // 管線層級的 post（兩個空白縮排）位於 stages 之後、輔助函式之前。
+  // 管線層級的 post（兩個空白縮排）位於 stages 之後、輔助函式之前；Components 第 22.1 節起 always／cleanup
+  // 只呼叫 pipelinePostAlways()／pipelinePostCleanup()，收尾步驟在這兩個頂層函式內。
   const postStart = code.indexOf('\n  post {\n    always {');
   const helpers = code.indexOf('\nvoid enterStage(String name)');
-  const post = code.slice(postStart, helpers);
-  const always = post.slice(post.indexOf('always {'), post.indexOf('cleanup {'));
-  const cleanup = post.slice(post.indexOf('cleanup {'));
+  const post = code.slice(postStart, code.indexOf('\n}\n', postStart) + 3);
+  const always = functionBody('void pipelinePostAlways()');
+  const cleanup = functionBody('void pipelinePostCleanup()');
   const at = (text, s) => { const i = text.indexOf(s); expect(i).toBeGreaterThan(-1); return i; };
   const inOrder = (text, list) => { let prev = -1; for (const s of list) { const i = text.indexOf(s, prev + 1); expect(i).toBeGreaterThan(prev); prev = i; } };
   const archive = functionBody('void archiveScrubbedReports(Map outcome)');
@@ -1439,6 +1466,8 @@ describe('收尾 post { always } 與 post { cleanup }（13.8；Req 2.6、15.4、
   test('管線層級 post 位於 stages 之後；always 依序 finalize → 遮罩封存 → keepLog → 清除資源 → 通知；cleanup 最後 cleanWs()', () => {
     expect(postStart).toBeGreaterThan(code.indexOf("stage('Production Deploy')"));
     expect(helpers).toBeGreaterThan(postStart);
+    expect(post).toMatch(/^\n  post \{\n    always \{\n      script \{ pipelinePostAlways\(\) \}\n    \}\n    cleanup \{\n      script \{ pipelinePostCleanup\(\) \}\n    \}\n  \}\n\}\n$/);
+    expect(code.indexOf('\nvoid pipelinePostAlways()')).toBeLessThan(helpers);
     inOrder(always, [
       "postStep('Post Finalize') { finalizeBuildRecord(outcome) }",
       "postStep('Post Archive') { archiveScrubbedReports(outcome) }",

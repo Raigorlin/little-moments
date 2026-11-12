@@ -13,6 +13,7 @@
 5. **同主機 Edge_Proxy（Requirement 8.8–8.10、25）**：Deploy_Host、Jenkins 與 Registry 為同一台主機 `192.168.1.121`（LAN `192.168.1.0/24`）。主機上不由本 repository 管理的 Nginx Proxy Manager（Edge_Proxy）占用 80／443，路由器把網際網路 80／443 轉給它，Cloudflare 以 Proxied 記錄在前。Production_Environment 經 `https://www.our-littlemoments.com` 公開；LM_Proxy 只採信 Edge_Trusted_Proxies 的轉送標頭，DOCKER-USER 只對宣告的 Public_Port 接受任何來源。細節見 Components 第 18 節。
 6. **公開註冊政策（Requirement 26）**：Registration_Policy 改為每個請求從 Settings_Store 讀取（管理員儲存值優先，其次 `CAMPING_REGISTRATION`，最後 `open`），管理員在 `/admin` 切換後下一個請求即生效；Deploy_Host 的 `compose.yaml` 未設定時傳入 `closed`。細節見 Components 第 19 節。
 7. **Smoke_Account 佈建（Requirement 27）**：新增維運工具 `scripts/create-smoke-account.mjs`（映像內 `/app/tools/create-smoke-account.js`）與只限 Host_Operator 的 `lm-deploy <env> smoke-account <digest>`。子命令會啟動未執行的 `db`／`proxy`，接著備份、遷移，最後經 stdin 傳入密碼並建立 `smoke-bot` 與 `smoke-fixture`。第一次部署的順序為先建立管理員、再建立 Smoke_Account。部署憑證權限不變（Req 15.9）。細節見 Components 第 21 節。
+8. **Jenkinsfile 方法大小**：根目錄 `Jenkinsfile` 的 `pipeline {}` 區塊超過 JVM 單一方法 64 KB 的限制，建置在任何階段前失敗。各階段內容移到區塊之後的頂層函式，行為不變，並以靜態測試限制區塊與函式的行數。細節見 Components 第 22 節。
 
 ### 現況盤點（已讀取的程式碼）
 
@@ -1047,6 +1048,94 @@ sudo cat <controller-dir>/secrets/little-moments/release/lm-<env>-smoke \
 - `README.md`「帳號維運指令：create-admin 與 reset-password」章節（標題與錨點不變，其他章節的連結仍有效）新增 `create-smoke-account` 說明（Req 27.26）：用途、選項與預設值、三種密碼來源、冪等行為、拒絕條件、結束碼，Deploy_Host 上只經 `lm-deploy <env> smoke-account`，並連結 `deploy/README.md` 的新章節；開頭一句改為「三個指令」。「LAN 部署」的首次管理員設定段落改為以 `create-admin` 為主、`/setup` 為後備，並連結新章節。`scripts/smoke.mjs` 檔頭「由維運者以 Credential_Store 中的 smoke 憑證建立一次」改為指向此指令。
 - `ci/jenkins/README.md` 憑證表中 `lm-staging-smoke`、`lm-prod-smoke` 的「使用者」欄補上「帳號由 `lm-deploy <env> smoke-account` 建立，見 `deploy/README.md`」。
 
+### 22. Jenkinsfile 方法大小限制（新增；Req 1.1、1.7、15.2、23.1）
+
+現況（192.168.1.121 上第一次真實建置，commit `3c66555`）：`release/little-moments » main` 在任何階段執行前失敗：
+
+```
+org.codehaus.groovy.control.MultipleCompilationErrorsException: startup failed:
+General error during class generation: Method too large: WorkflowScript.___cps___436 ()Lcom/cloudbees/groovy/cps/impl/CpsFunction;
+groovyjarjarasm.asm.MethodTooLargeException ...
+```
+
+原因：Declarative Pipeline 把 `pipeline { … }` 內的全部程式碼編譯成同一個 JVM 方法，JVM 限制單一方法的 bytecode 不超過 64 KB（[JENKINS-37984](https://issues.jenkins.io/browse/JENKINS-37984)；[CloudBees KB：Method Code Too Large Error](https://docs.cloudbees.com/docs/cloudbees-ci-kb/latest/troubleshooting-guides/method-code-too-large-error)）。根目錄 `Jenkinsfile` 共 5462 行，`pipeline {}` 區塊自第 23 行起共 1677 行，因為各階段內有很長的內嵌 `sh` 腳本、`script {}` 邏輯與 `post` 區塊。區塊之後的頂層函式各自編譯成獨立的方法，不受這個限制影響；目前最大的是 `runDast`（178 行）。其他 Pipeline 的區塊都較小：`build-image.Jenkinsfile` 377 行（在 controller 上可執行），`rollback` 176 行，`restore-drill` 106 行，`digest-lookup` 118 行。
+
+| 做法 | 結論 | 理由 |
+|---|---|---|
+| 把各階段內容移到 `pipeline {}` 之後的頂層函式 | 採用 | 只改程式碼位置，Jenkins 設定不變；CloudBees KB 列出的做法之一；現有的後半段階段（Staging Deploy 起）已是此形式 |
+| controller JVM 參數 `org.jenkinsci.plugins.pipeline.modeldefinition.parser.RuntimeASTTransformer.SCRIPT_SPLITTING_TRANSFORMATION=true`（[JENKINS-56500](https://issues.jenkins.io/browse/JENKINS-56500)） | 不採用 | 預設關閉；會改變 controller 上每一條 Pipeline 的編譯與執行方式，並對 `pipeline {}` 內的區域變數有限制；問題只在本 repository 的一個檔案 |
+| Shared Library 或把 `sh` 內容移到外部腳本檔 | 不採用 | Shared Library 需要新的 Jenkins 全域設定與另一個受信任來源；外部腳本檔會讓現有斷言 `sh` 內容的測試全部改寫，且不是解決大小問題所必需 |
+
+#### 22.1 結構規則
+
+```groovy
+pipeline {
+  // ... agent、options、environment 不變
+  stages {
+    // Unit Tests：Ephemeral_Database → Migration_Runner → bun test → JUnit（說明見 runUnitTestsStage）
+    stage('Unit Tests') {
+      steps {
+        script { runUnitTestsStage() }
+      }
+      post {
+        always {
+          script { unitTestsPostAlways() }
+        }
+        cleanup {
+          script { removeEphemeralDbSecrets() }
+        }
+      }
+    }
+    // ...
+  }
+  post {
+    always {
+      script { pipelinePostAlways() }
+    }
+    cleanup {
+      script { pipelinePostCleanup() }
+    }
+  }
+}
+
+/** 原 stage('Unit Tests') 上方的完整註解移到這裡。 */
+void runUnitTestsStage() {
+  enterStage('Unit Tests')
+  // 原 script {} 內容，逐行搬移
+}
+```
+
+- **steps**：每個 stage 的 `steps` 只有一個 `script { run<階段名稱>Stage() }`（例如 `runInitStage`、`runTagVerifyStage`、`runMigrationCompatibilityStage`、`runProductionDeployStage`）。原 `script {}` 的內容逐行移入該函式，`enterStage('<階段名稱>')` 仍是第一個敘述。長的 `sh` 腳本文字留在函式內，或移到回傳 `String` 的頂層函式（例如 `String installScript()`）；腳本內容不變。
+- **post**：本體只有一個呼叫的條件區塊維持原樣（例如現有的 `script { stagingStageFailed() }`）。超過一個敘述的條件區塊改為 `script { <階段>Post<條件>() }`（例如 `unitTestsPostAlways`、`dastPostAlways`），函式內呼叫的順序與 `catchError`／`postStep` 包裝不變。管線層級的 `post { always }`、`post { cleanup }` 改為 `pipelinePostAlways()`、`pipelinePostCleanup()`。
+- **when**：維持 `expression { … }` 且內容逐字不變。條件超過一行時改為呼叫頂層的 `boolean` 函式（目前的條件都只有一行，預期不需要）。
+- **函式位置**：階段函式依 stage 順序放在 `pipeline {}` 區塊之後、`// ---- 輔助函式` 分隔線之前，每個階段的 post 函式緊接在該階段函式之後。這樣原本依字串位置判斷先後的測試（例如 `notifyAll('pending'` 在 `bun install --frozen-lockfile` 之前、`enterStage` 名稱與 stage 名稱同序）仍然成立。
+- **註解**：stage 上方的多行說明移到對應函式的文件註解，stage 上方只留一行摘要。`environment` 內解釋憑證 ID 的註解行可以移到 `pipeline {` 之前的註解區塊；鍵、值與順序不變。註解只搬移，內容不刪除。
+- **函式大小**：任何頂層函式不超過 250 行。超過時拆成數個依序呼叫的子函式；原本在 `script {}` 中提早結束階段的 `return`（例如 Migration Compatibility 在沒有 Release_Tag 或沒有遷移變更時）必須仍讓整個階段函式結束，例如子函式回傳 `boolean` 由呼叫端 `return`。
+
+#### 22.2 不變的部分
+
+- `agent`、`options`、`environment` 的鍵與值、stage 名稱與順序、每個 `when` 條件，以及 `lock`、`timeout`、`withCredentials`、`catchError` 的巢狀範圍、`error()` 訊息、`sh` 的 `label` 與腳本內容、Build_Record 與通知的寫入順序。目前沒有 `parallel`、`matrix` 或 `failFast`，不新增。
+- 憑證範圍（Req 15.2）：`withCredentials` 隨原本包住的指令一起移入同一個階段函式，不移到更外層、不跨階段共用。`credentialsId:` 與 `withCredentials([` 的數量不變。
+- Script binding 變數（`lmNotifier`、`lmScanErrors`、`lmDastErrors`、`lmImageErrors`、`lmApprovalAttempts`、`lmDestructiveApprovals`、`lmDestructivePending`）維持不加 `def` 或型別的指定。加上 `def` 會讓它們變成函式區域變數，後續階段與 post 讀不到。原 `script {}` 內以 `String`／`int`／`Map` 宣告的區域變數成為階段函式的區域變數；跨階段的值仍經 `env` 或上述 binding 變數傳遞，與現在相同。
+- Jenkins sandbox：Script 內定義的方法可直接呼叫，不需要 script approval；搬移不改變任何 step 或 Groovy／Java 方法呼叫，因此不會出現新的待核准簽章。現有的 `@NonCPS` 函式不變，不新增 `@NonCPS`（含 step 呼叫的函式不能標 `@NonCPS`）。
+- 其他 Pipeline（`ci/jenkins/pipelines/*.Jenkinsfile`）不修改，只納入 22.3 的尺寸檢查。
+
+#### 22.3 尺寸檢查（`tests/ci-jenkinsfile-size.test.js`，新增）
+
+- 對根目錄 `Jenkinsfile` 與 `ci/jenkins/pipelines/*.Jenkinsfile` 每個檔案執行。以一個保留換行的 Groovy 掃描器（略過 `//`、`/* */` 註解，以及 `'…'`、`"…"`、`'''…'''`、`"""…"""` 字串的內容，處理 `\` 跳脫）計算註解與字串以外的 `{`／`}` 深度，找出深度 0 的區塊：`pipeline {` 與頂層函式宣告。不能只看第 0 欄的 `}`：目前 `Jenkinsfile` 第 2971–2978 行的 `sh` heredoc 有從第 0 欄開始的行。
+- 掃描器找到的結束 `}` 必須單獨位於一行的第 0 欄，否則測試失敗並指出行號；字串或括號未結束也是失敗。掃描錯誤因此只會讓測試失敗，不會少算行數。
+- 斷言：`pipeline {}` 區塊（含首尾兩行）≤ 400 行；每個頂層函式（含文件註解以外的宣告行到結束行）≤ 250 行。失敗訊息列出檔名、區塊名稱、起訖行號與行數。
+- 只對根目錄 `Jenkinsfile` 另外斷言 22.1 的形式：每個 stage 的 `steps` 只含一個 `script { run…Stage() }`，被呼叫的函式存在；每個 post 條件區塊只有一個 `script { <一個呼叫> }`；每個 `when` 的 `expression { … }` 只有一行。
+- 門檻的依據：bytecode 大小無法在本機量測，行數是代理指標。`build-image.Jenkinsfile` 的 377 行區塊在 controller 上可以編譯，400 行與它相近；250 行約為目前最大頂層函式的 1.4 倍，且頂層函式不會累加到 `pipeline {}` 的方法中。重構後的實際行數寫在任務回報。
+
+#### 22.4 測試更新與驗證
+
+- 既有測試改為到新函式中找原本在 stage 內的內容，斷言的意圖與強度不變：
+  - `tests/ci-jenkinsfile.test.js`：以 `stageBlock(…)` 讀取 stage 內容的斷言（例如 Approval 的 `waitForApproval()`、Unit／Browser Tests 的 post、Security Scan 的 `--reports` 清單、Migration Compatibility 與 DAST 的 post `inOrder`、Image 與 Release 階段、Staging Deploy 的 `lock`）改為讀取 `stageBlock(…)` 加上對應的 `functionBody('void run…Stage()')` 或 post 函式；`when` 的斷言仍對 `stageBlock`。管線層級 post 的測試改為讀取 `pipelinePostAlways()`／`pipelinePostCleanup()`，並另外斷言 `post` 依序呼叫這兩個函式。`enterStage` 與 stage 名稱同序的斷言保留。
+  - 其他讀取根目錄 `Jenkinsfile` 的測試（`tests/ci-lint.test.js`、`tests/ci-jenkins-config.test.js`、`tests/ci-build-image-pipeline.test.js` 中的共用映像斷言等）以 grep 找出，確認仍通過；只有在定位方式依賴 stage 區塊時才調整。
+  - 不刪除任何斷言、不放寬比對（例如不把 `toEqual` 改成 `toContain`）；如需調整，任務回報逐項列出。
+- 本機沒有 Groovy 或 Jenkins，無法執行真正的 CPS 編譯。repository 內的檢查是 22.3 的尺寸測試、既有的括號配對與結構測試，以及 `bun test tests/ci-*.test.js`（Windows 上明列檔名）。維運者的檢查：合併後對 `release/little-moments » main` 執行下一次 Build Now，確認建置進入 Init 階段且沒有 `MethodTooLargeException`。也可以先用 Jenkins 的 Declarative linter（`POST <jenkins>/pipeline-model-converter/validate`，`jenkinsfile=@Jenkinsfile`，需要登入與 CSRF crumb）檢查語法；它只驗證 Declarative 語法，不保證能發現方法大小問題。
+
 ## Data Models
 
 ### PostgreSQL Schema（`migrations/0001_initial.sql`）
@@ -1602,6 +1691,7 @@ Requirement 27 不新增屬性，原因如下。`provisionSmokeAccount` 的決�
 | Prod 鎖已被占用 | 立即失敗「已有部署進行中」 | 20.12 |
 | 憑證不存在 | `withCredentials` 失敗，訊息只含憑證 ID | 15.3 |
 | 通知失敗 | 重試 3 次，摘要記錄管道名稱，不改結果 | 22.7 |
+| `Jenkinsfile` 編譯失敗（例如 `MethodTooLargeException`） | 建置在 Init 之前失敗，沒有 Build_Record、沒有 pending 通知，也不執行任何部署；合併前由 `tests/ci-jenkinsfile-size.test.js` 限制區塊與函式行數（Components 第 22 節） | 1.1、1.7 |
 
 ### Deploy_Host 與 Edge_Proxy
 
@@ -1721,6 +1811,14 @@ test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ 
   - 失敗（Req 27.23、27.24）：db 未健康（`FAKE_UP_FAIL`）、備份失敗、migrate 失敗時不呼叫 Smoke_Provisioner；工具以 1 結束並輸出 `{"ok":false,"reason":"no_admin"}` 時 lm-deploy 結束碼 1、`reason` 為 `smoke_account_failed` 且附上工具 JSON；工具輸出含空白或反斜線時 `tool` 為 `null`；成功時最後一行為 `command":"smoke-account"` 且含工具 JSON。
 - **文件**（`tests/readme.test.js`）：`deploy/README.md` 有「首次部署與 smoke-bot」一節且 Staging 步驟依序出現 `backup_create_failed`、`reports/image-digest.txt`、`smoke-account`、`no_admin`、`create-admin`、`smoke-account`、新的 `main` 建置、staging-verified，並含不可對同一個 commit 按 Build Now 的警告（`Jenkinsfile` 含「拒絕覆寫」），Production 步驟出現在 Release_Tag 之前；README 帳號維運章節提到 `create-smoke-account` 與 `lm-deploy <env> smoke-account` 並連結該節；兩份文件不含秘密樣式的字串（沿用既有掃描）。
 
+### Jenkinsfile 方法大小（Components 第 22 節）
+
+不適用 PBT：這是 Groovy 原始碼的配置，沒有可產生輸入的函式。測試如下：
+
+- **尺寸與形式**（新增 `tests/ci-jenkinsfile-size.test.js`）：對 `Jenkinsfile` 與 `ci/jenkins/pipelines/*.Jenkinsfile` 斷言 `pipeline {}` 區塊 ≤ 400 行、每個頂層函式 ≤ 250 行；掃描器遇到未結束的字串、括號，或結束 `}` 不在第 0 欄時失敗。另以固定的小型 Groovy 文字測試掃描器本身：字串內的 `{`／`}`、`'''` heredoc 中第 0 欄的行、`//` 與 `/* */` 註解中的括號都不影響結果，超過門檻的範例會失敗。只對根目錄 `Jenkinsfile` 斷言 `steps` 只呼叫一個 `run…Stage()`、post 條件區塊只有一個呼叫、`when` 只有一行。
+- **既有結構測試**：`tests/ci-jenkinsfile.test.js` 等改為到階段函式與 post 函式中斷言原本的內容（第 22.4 節），意圖與強度不變。
+- **維運者檢查**：下一次在 `release/little-moments » main` 按 Build Now，確認進入 Init 階段且沒有 `MethodTooLargeException`。
+
 ## Open Risks
 
 1. **資料層重寫工作量**：`server/accounts.js` 約 50 個同步 prepared statement、所有路由與 `tx` 呼叫點都要改為 async，測試檔也要全面改寫。這是本功能最大的工作項目，也最容易引入行為差異。緩解：先建立 `queries.js` 一對一轉換、以既有測試作回歸基準、用全域 advisory lock 保留單一寫入者語意；Bun.SQL 若在 BIGINT 型別、錯誤型別或重連上有問題，切換到 `postgres@3.4.7`。
@@ -1738,3 +1836,4 @@ test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ 
 13. **同主機的 Docker bridge 網段放行**：為了讓 Edge_Proxy 與 Trusted Agent 的建置容器經發布連接埠連到 LM_Proxy 與 Registry，`--lan-cidr` 須包含它們的 Docker 網段（Components 第 18.5 節）。這些網段上的任何容器都能連到 8081／8082／8443；DAST 的 Test_Environment 使用 `--internal` 網路、Untrusted Agent 使用 rootless daemon，不在這些網段內。
 14. **Smoke_Account 是 Production 的真實帳號**：Production 對網際網路公開，任何人都能嘗試以 `smoke-bot` 登入（仍受每帳號 15 分鐘 5 次的限速）。密碼只存在 `lm-prod-smoke`，長度至少 12 字元；建議以至少 32 字元的隨機值建立。Smoke_Account 為 member，只能看到自己的行程。管理員的行程清單會列出 `smoke-fixture`，管理員刪除該行程或帳號後，下一次 Production 觀察期的 Smoke_Test 會失敗並觸發回滾。`deploy/README.md` 須寫明這一點，並說明以 `smoke-account` 重新建立的方式。已刪除的 Smoke_Account 會被拒絕（Req 27.10），此時須以 `--username` 另取帳號名稱，並同步更新 Jenkinsfile 兩處固定的 `CAMPING_SMOKE_USERNAME=smoke-bot`。
 15. **第一次部署需要人工步驟**：`lm-deploy deploy` 不會啟動 `db`／`proxy`（第 21 節現況），全新主機的第一次 `main` 建置一定在 Staging 失敗，須依 `deploy/README.md` 的順序由 Host_Operator 寫入 `app.env`（不存在時）並完成 `smoke-account` → `create-admin` → `smoke-account`，再以新的 commit 觸發新的 `main` 建置（同一個 commit 按 Build Now 會在 Image Push 拒絕覆寫標籤而失敗）。若之後要讓第一次建置直接通過，可另立需求讓 `deploy` 在服務未執行時啟動它們。
+16. **行數只是 bytecode 大小的代理指標**：本機無法執行 Jenkins 的 CPS 編譯，400／250 行的門檻是依 `build-image.Jenkinsfile` 的 377 行區塊可以編譯而訂。`environment` 項目或 `when` 條件增加時，區塊可能在行數內仍超過 64 KB。發生時建置會在 Init 之前失敗，不會部署任何東西；處理方式是降低門檻並再搬移程式碼。重構後真正的確認是維運者下一次的 Build Now。
