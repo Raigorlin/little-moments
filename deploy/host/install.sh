@@ -32,7 +32,9 @@
 #   /etc/lm/docker-user.rules             root 0644；以 iptables-restore --test 驗證後安裝（檔頭註解列出
 #                                         LAN 網段與 Public_Port）
 #   /etc/systemd/system/lm-docker-user.service   enable 並套用（開機時於 docker.service 之前套用）
-#   /etc/sudoers.d/lm-deploy              root 0440；以 visudo -cf 驗證後安裝，安裝後再驗證整體設定
+#   /etc/sudoers.d/lm-deploy              root 0440；以 visudo -cf 驗證後安裝，安裝後再以 visudo -c 驗證整體設定。
+#                                         傳統 sudo 與 sudo-rs（例如 0.2.13）皆可：只用兩者都支援的 visudo 選項；
+#                                         /etc/sudoers 與（存在時）/etc/sudoers-rs 都必須載入 /etc/sudoers.d
 #   ~lm-deploy-<env>/.ssh/authorized_keys root 0644（forced command、from=、no-pty）
 #
 # 不會建立或覆寫秘密：db.env／app.env（0600 root）須由維運者依 deploy/compose/*.env.example 建立；
@@ -519,9 +521,17 @@ install_firewall() {
 
 install_sudoers() {
   local tmp prev=""
+  local main found_main=0
   [[ -d /etc/sudoers.d && ! -L /etc/sudoers.d ]] || die "/etc/sudoers.d 不存在"
-  grep -Eq '^[@#]includedir[[:space:]]+/etc/sudoers\.d[[:space:]]*$' /etc/sudoers ||
-    die "/etc/sudoers 未載入 /etc/sudoers.d（缺少 @includedir /etc/sudoers.d）"
+  # 傳統 sudo 讀 /etc/sudoers；sudo-rs 在 /etc/sudoers-rs 存在時改讀它（sudo-rs v0.2.13 src/sudo/mod.rs
+  # candidate_sudoers_file）。存在的主檔都必須載入 /etc/sudoers.d，否則 lm-deploy 的規則不會生效。
+  for main in /etc/sudoers /etc/sudoers-rs; do
+    [[ -e $main ]] || continue
+    found_main=1
+    grep -Eq '^[@#]includedir[[:space:]]+/etc/sudoers\.d[[:space:]]*$' "$main" ||
+      die "$main 未載入 /etc/sudoers.d（缺少 @includedir /etc/sudoers.d）"
+  done
+  ((found_main == 1)) || die "找不到 /etc/sudoers 或 /etc/sudoers-rs"
   # 暫存檔名含「.」，sudo 不會在驗證前讀取它。
   tmp=$(mktemp /etc/sudoers.d/.lm-deploy.XXXXXX)
   TMP_FILES+=("$tmp")

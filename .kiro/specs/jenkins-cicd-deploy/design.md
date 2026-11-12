@@ -118,7 +118,7 @@ flowchart LR
 | GitHub → Jenkins | GitHub plugin 的 webhook shared secret（HMAC-SHA256，`X-Hub-Signature-256`，常數時間比較）；Jenkins 前置 Caddy 寫入拒絕日誌（時間、來源 IP、原因），不記錄 body。 |
 | PR 程式碼 → 憑證 | `ci/` 資料夾無任何部署相關憑證；GitHub Branch Source 的 PR 信任策略設為「From users with Admin or Write permission」，fork／無寫入權限者使用 `main` 的 `Jenkinsfile`（Req 2.7）；非管理員移除 Replay 權限。 |
 | Untrusted Agent → LAN | Agent 位於獨立 VLAN；防火牆拒絕連線至 Deploy_Host、Staging/Prod 連接埠與 DB；建置結束 `cleanWs()` 並 `docker rm -f` 該建置標籤的容器、網路與卷（Req 2.6）。 |
-| Trusted Agent → Deploy_Host | 每環境一把 SSH 金鑰，`authorized_keys` 設定 `command="sudo /opt/lm/bin/lm-deploy staging",no-pty,no-port-forwarding,from="<agent IP>"`；部署帳號不在 `docker` 群組，sudoers 僅允許執行對應環境的固定腳本（Req 15.9）。 |
+| Trusted Agent → Deploy_Host | 每環境一把 SSH 金鑰，`authorized_keys` 設定 `command="sudo /opt/lm/bin/lm-deploy staging",no-pty,no-port-forwarding,from="<agent IP>"`；部署帳號不在 `docker` 群組，sudoers 僅允許執行對應環境的固定腳本（Req 15.9；傳統 sudo 與 sudo-rs 相容性見 Components 第 20 節）。 |
 | DAST 環境 | `docker network create --internal`，只含 Test_Environment、Ephemeral_Database 與 ZAP；啟動前執行隔離探測（Req 7.7、7.9）。 |
 | LAN → App | `DOCKER-USER` 規則僅允許 `LAN_CIDR` 至代理連接埠；DB 不發布連接埠（Req 8.6、11.10）。 |
 | 網際網路 → Edge_Proxy | Cloudflare（Proxied、Full strict）→ 路由器 80／443 → Edge_Proxy；DOCKER-USER 只對宣告的 Public_Port（80、443）接受任何來源，LM_Proxy 的 8081／8082、Registry 8443 仍只限 LAN CIDR（Req 8.6、8.8）。 |
@@ -866,6 +866,46 @@ async function registrationPolicy(e = sql) {
 - 啟動摘要範例改為 `registration=… (<來源>) receiptAiPolicy=… (<來源>)`。
 - 恢復以 `CAMPING_REGISTRATION` 控制：以編號步驟說明移除儲存值，例如 `docker compose -f compose.yaml --env-file <env>.env exec db psql -U <database-user> -d <database-name> -c "DELETE FROM settings WHERE key = 'registrationPolicy';"`（佔位符，不含實際值），移除後下一個請求即改用 `CAMPING_REGISTRATION`。
 
+### 20. sudo-rs 相容性（新增；Req 15.9）
+
+背景：192.168.1.121 的 `/usr/bin/sudo` 與 `visudo` 為 `sudo-rs 0.2.13-0ubuntu1.2`（Ubuntu 自 25.10 起預設使用 sudo-rs）。`deploy/host/install.sh` 在 sudoers 步驟以 `visudo -cf` 驗證暫存檔時失敗：`syntax error: unknown setting: 'requiretty'`。該步驟之前的帳號、`/opt/lm/bin/lm-deploy`、`/srv/lm/<env>`、備份目錄與 DOCKER-USER 規則已安裝；sudoers 與 `authorized_keys` 尚未安裝。`install.sh` 為冪等，修正後重新執行即可。
+
+原則：Deploy_Host 可能使用傳統 sudo 或 sudo-rs，`deploy/host/sudoers.d/lm-deploy` 只能使用兩者都接受的語法與 Defaults。Req 15.9 的語意不變：每個部署帳號只能以 root、免密碼執行 `/opt/lm/bin/lm-deploy <自己的環境>` 這一個固定指令列，且只額外保留 `SSH_ORIGINAL_COMMAND`。
+
+#### 20.1 sudoers 結構對照（依 sudo-rs v0.2.13）
+
+以 [sudo-rs v0.2.13](https://github.com/trifectatechfoundation/sudo-rs/tree/v0.2.13) 的 `docs/man/sudoers.5.md`、`src/defaults/mod.rs`、`src/sudoers/`（parser 與 `entry.rs`）、`src/sudo/cli/`、`src/visudo/` 為準。下表「初步判讀」是撰寫設計時閱讀上述檔案的結果，任務 22.1 須逐項以原始碼確認並記錄於任務回報；與實測不符時以實測為準。
+
+| 現有寫法 | 初步判讀（sudo-rs 0.2.13） | 處理 |
+|---|---|---|
+| `Defaults:<users> !requiretty` | `src/defaults/mod.rs` 的設定清單沒有 `requiretty`，`visudo` 回報 unknown setting。傳統 sudo 預設不啟用，Ubuntu 的 `/etc/sudoers` 也不設定 | 移除 |
+| `Defaults:<users> !lecture` | `lecture` 列在設定清單中且標為 `#ignored`，可解析、可否定，在 sudo-rs 中沒有效果；傳統 sudo 中為抑制首次使用提示 | 保留（兩者皆接受）；確認不成立時移除，對授權沒有影響 |
+| `Defaults!/opt/lm/bin/lm-deploy env_keep += "SSH_ORIGINAL_COMMAND"` | man page 的 `Default_Type` 含 `'Defaults' '!' Cmnd_List`（per-command entry 在第二輪處理），`env_keep` 為支援的 list 設定 | 保留；任務 22.1 須確認 sudo-rs 在執行時實際套用（不只是能解析）。不支援時改為 `Defaults:LM_DEPLOY_STAGING_USERS,LM_DEPLOY_PROD_USERS env_keep += "SSH_ORIGINAL_COMMAND"`：這兩個帳號本來就只能執行 lm-deploy，保留範圍相同 |
+| `Cmnd_Alias … = /opt/lm/bin/lm-deploy staging`（完整比對參數） | 文法支援 `Cmnd_Alias`；`entry.rs` 的 `Args::Exact` 表示完整比對，`Args::Prefix` 只在結尾為 `*` 時使用 | 保留 |
+| `User_Alias`、`(root) NOPASSWD:` | 文法支援 | 保留 |
+| `authorized_keys` 的 `/usr/bin/sudo -n …`、verify-host 的 `sudo -n -l -U <user>` | 須在 `src/sudo/cli/` 確認 `-n`、`-l`、`-U` 及其組合 | 保留；不支援時改用兩者都接受的等效選項 |
+| `visudo -c`、`visudo -cf <file>` | 須在 `src/visudo/cli.rs` 確認 `-c` 與 `-f` 可合併 | 保留 |
+| `install.sh` 檢查 `/etc/sudoers` 含 `@includedir /etc/sudoers.d` | sudoers(5) 的 FILES 列出 `/etc/sudoers-rs`（與傳統 sudo 共存用）：存在時 sudo-rs 讀取它而非 `/etc/sudoers` | 任務 22.1 確認讀取順序；若成立，`install.sh` 與 `verify-host.sh` 在 `/etc/sudoers-rs` 存在時也要求它載入 `/etc/sudoers.d`，否則失敗並指出檔案 |
+
+檔頭註解改為說明：此檔須同時通過傳統 sudo 與 sudo-rs 0.2.13 的 `visudo -cf`、不使用 `requiretty` 的原因、以及 `env_keep` 的範圍。
+
+移除 `!requiretty` 的影響：只有在主機使用傳統 sudo、且全域 sudoers 另外設定 `Defaults requiretty` 時，`no-pty` 的 forced command 才會以 `sorry, you must have a tty to run sudo` 失敗。Ubuntu 與 Debian 不設定此項；遇到時由維運者移除該全域設定，repository 不再為此提供覆寫。
+
+#### 20.2 verify-host 的 `sudo -l -U` 解析
+
+`verify-host.sh` 不依 sudo 實作分支，以同一個解析器處理兩種輸出，並以 `LC_ALL=C` 執行 `sudo -n -l -U <user>`（sudo-rs 0.2.13 的訊息經 `xlat_println!` 翻譯，傳統 sudo 也會依語系翻譯）：
+
+| | 傳統 sudo | sudo-rs 0.2.13（`src/sudo/pipeline/list.rs`、`src/sudoers/entry.rs`） |
+|---|---|---|
+| Defaults 區塊 | 先輸出 `Matching Defaults entries for <user> on <host>:` 與縮排的 Defaults 行，接著空行 | 不輸出 |
+| 指令標題 | `User <user> may run the following commands on <host>:` | 相同 |
+| 指令項目 | 每個 user spec 一行，4 個空白縮排，例如 `    (root) NOPASSWD: /opt/lm/bin/lm-deploy staging` | 每個 entry 一行，`"    ("` + runas + `") "` + 標籤（`NOPASSWD: `）+ 指令；`Cmnd_Alias` 展開為實際指令，同一 entry 的多個指令以 `, ` 分隔 |
+| 沒有權限 | `User <user> is not allowed to run sudo on <host>.` | 相同 |
+
+判定規則不變：只取指令標題之後的縮排行，必須恰好一行且等於 `(root) NOPASSWD: /opt/lm/bin/lm-deploy <env>`；Defaults 區塊不計入；多一行、同一行含 `, ` 的其他指令、標題缺少或為「not allowed」時 FAIL。`visudo -c` 檢查保留。實際的 sudo-rs 輸出格式由任務 22.1 依原始碼確認，與上表不同時以原始碼為準並更新 bats 固定樣本。
+
+為了能以固定樣本測試，解析邏輯抽成函式；只有在現有的 `--check-rules` 模式無法擴充以餵入固定輸出時，才新增等效的唯讀解析模式（不檢查 root、不呼叫 `sudo`、不讀主機檔案）。
+
 ## Data Models
 
 ### PostgreSQL Schema（`migrations/0001_initial.sql`）
@@ -1406,6 +1446,10 @@ Requirement 26 只新增 Property 48：第 1 條（決定順序）與第 2 條�
 | Caddy 無法解析 Edge_Trusted_Proxies | proxy 容器啟動失敗；`caddy reload` 失敗時 Caddy 保留舊設定，`lm-deploy switch` 回報失敗 | 25.9 |
 | 受信任來源送來非 `http`／`https` 的 `X-Forwarded-Proto` | Caddyfile 移除該標頭，轉送值改為連線協定；App 端另有相同檢查 | 25.5 |
 | 受信任來源的 `X-Forwarded-For` 缺少、無法解析或全部受信任 | `{client_ip}` 為 TCP 來源（Edge_Proxy 位址），App 照常處理 | 25.3 |
+| `visudo -cf` 拒絕 `sudoers.d/lm-deploy`（例如 sudo-rs 不支援的設定） | `install.sh` 不安裝 sudoers 與 `authorized_keys`，結束碼 1；修正檔案後重新執行（冪等） | 15.9 |
+| sudo-rs 讀取 `/etc/sudoers-rs` 但該檔未載入 `/etc/sudoers.d`（任務 22.1 確認讀取順序後適用） | `install.sh` 結束碼 1 並指出檔案；`verify-host.sh` FAIL | 15.9 |
+| 傳統 sudo 的全域 sudoers 設定 `Defaults requiretty` | 部署 SSH 以 `sorry, you must have a tty to run sudo` 失敗；由維運者移除該全域設定（Components 第 20.1 節） | 15.9 |
+| `sudo -l -U` 輸出不是預期格式、多於一個指令或為 not allowed | `verify-host.sh` 的 `account` 群組 FAIL 並列出解析到的項目 | 15.9 |
 
 所有 `post { always }` 區塊執行：封存並 scrub 報告、寫入 Build_Record 的 `result` 與 `firstFailedStage`、清除該建置的容器／網路／卷、`cleanWs()`、通知。
 
@@ -1449,6 +1493,7 @@ test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ 
 
 - Jenkins：webhook 簽章錯誤請求被拒（Req 2.1、2.2）、fork PR 使用 `main` 的 Jenkinsfile（Req 2.7）、`ci/` 資料夾請求部署憑證失敗（Req 2.5）、Untrusted Agent 無法連線 Deploy_Host（Req 2.6）。
 - Deploy_Host：LAN 外來源無法連線（Req 8.6）、備份目錄權限（Req 14.4）、部署帳號無法操作另一環境（Req 15.9）。
+- sudo 相容性（Req 15.9，Components 第 20 節）：`tests/deploy-host-config.test.js` 靜態斷言 sudoers 檔不含 `requiretty`、仍為完整比對參數的 `Cmnd_Alias` 與只保留 `SSH_ORIGINAL_COMMAND`；bats 以傳統 sudo 與 sudo-rs 0.2.13 的固定 `sudo -l -U` 樣本測試 verify-host 的解析（兩種格式的正確單一項目 PASS，傳統 sudo 樣本含 Defaults 區塊；多一個指令、同行多指令、其他 runas 或缺少 NOPASSWD、not allowed、缺少標題 FAIL）。可取得時在 WSL 或測試容器以傳統 `visudo -cf` 與 sudo-rs（apt 套件 `sudo-rs`）的 `visudo -cf` 驗證檔案；取不到時列為維運者手動檢查：`sudo visudo -cf deploy/host/sudoers.d/lm-deploy`、重新執行 `install.sh`、`sudo -l -U lm-deploy-staging`。
 
 ### 同主機 Edge_Proxy（Req 8.8–8.10、25）
 

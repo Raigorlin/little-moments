@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# deploy/host/install.sh --render-rules 與 verify-host.sh --check-rules 的行為測試（tasks.md 21.2；
-# Requirements 8.6、8.8–8.10、25.8；design.md Components §12、§18.4、§18.5）。
+# deploy/host/install.sh --render-rules 與 verify-host.sh --check-rules（含 --sudo-list）的行為測試
+# （tasks.md 21.2、22.1；Requirements 8.6、8.8–8.10、15.9、25.8；design.md Components §12、§18.4、§18.5、§20）。
 #
 # 兩個模式都是唯讀、不需要 root：install.sh 只把渲染後的 DOCKER-USER 規則輸出到 stdout，verify-host.sh 只檢查
 # 指定的規則檔與 <env>.env。每個測試以 BATS_TEST_TMPDIR 下的 LM_SRV_ROOT 取代 /srv/lm。
@@ -265,4 +265,125 @@ rule_lines() { grep '^-A ' <<<"$output" || true; }
       return 1
     fi
   done
+}
+
+# ---------------------------------------------------------------------------------------------
+# verify-host.sh account：`sudo -n -l -U` 的解析（Req 15.9；design.md Components §20.2）
+# ---------------------------------------------------------------------------------------------
+# 固定樣本取自實際輸出（LC_ALL=C）：傳統 sudo 1.9.9 在標題前輸出 Defaults 區塊；sudo-rs 0.2.13 只輸出標題與項目
+# （src/sudo/pipeline/list.rs、src/sudoers/entry.rs）。--sudo-list 以檔案代替 sudo 的輸出，不呼叫 sudo。
+
+WANT_STAGING='(root) NOPASSWD: /opt/lm/bin/lm-deploy staging'
+WANT_PROD='(root) NOPASSWD: /opt/lm/bin/lm-deploy prod'
+
+# list_classic <user> <entry>...：傳統 sudo 格式（含 Defaults 區塊）寫入 $SUDO_LIST。
+list_classic() {
+  local user=$1
+  shift
+  {
+    printf 'Matching Defaults entries for %s on lm-host:\n' "$user"
+    printf '    env_reset, mail_badpass, secure_path=/usr/local/sbin\\:/usr/local/bin\\:/usr/sbin\\:/usr/bin\\:/sbin\\:/bin, use_pty, !lecture\n\n'
+    printf 'Runas and Command-specific defaults for %s:\n' "$user"
+    printf '    Defaults!/opt/lm/bin/lm-deploy env_keep+=SSH_ORIGINAL_COMMAND\n\n'
+    printf 'User %s may run the following commands on lm-host:\n' "$user"
+    printf '    %s\n' "$@"
+  } >"$SUDO_LIST"
+}
+
+# list_rs <user> <entry>...：sudo-rs 0.2.13 格式寫入 $SUDO_LIST。
+list_rs() {
+  local user=$1
+  shift
+  { printf 'User %s may run the following commands on lm-host:\n' "$user"; printf '    %s\n' "$@"; } >"$SUDO_LIST"
+}
+
+sudo_setup() {
+  SUDO_LIST="$BATS_TEST_TMPDIR/sudo-list"
+  write_host_envs
+  render
+  printf '%s\n' "$output" >"$RULES_FILE"
+}
+
+# verify_sudo <env>：只檢查一個環境的 sudo 權限解析。
+verify_sudo() { verify --envs "$1" --sudo-list "$SUDO_LIST"; }
+
+@test "sudo-list: the single expected entry passes in both the classic sudo and sudo-rs 0.2.13 formats" {
+  sudo_setup
+  list_classic lm-deploy-staging "$WANT_STAGING"
+  verify_sudo staging
+  assert_status 0
+  assert_contains "$output" "PASS account  [staging] sudo 只允許「$WANT_STAGING」"
+  # Defaults 區塊不計入。
+  [[ $output != *env_reset* && $output != *env_keep* ]]
+
+  list_rs lm-deploy-staging "$WANT_STAGING"
+  verify_sudo staging
+  assert_status 0
+  assert_contains "$output" "PASS account  [staging] sudo 只允許「$WANT_STAGING」"
+
+  list_rs lm-deploy-prod "$WANT_PROD"
+  verify_sudo prod
+  assert_status 0
+  assert_contains "$output" "PASS account  [prod] sudo 只允許「$WANT_PROD」"
+}
+
+@test "sudo-list: an extra entry, an extra command on the same line, another runas or a missing NOPASSWD fails" {
+  sudo_setup
+  local fmt entries
+  for fmt in list_classic list_rs; do
+    for entries in "$WANT_STAGING|(ALL : ALL) ALL" \
+      "(root) NOPASSWD: /opt/lm/bin/lm-deploy staging, /opt/lm/bin/lm-deploy prod" \
+      '(ALL) NOPASSWD: /opt/lm/bin/lm-deploy staging' \
+      '(root) /opt/lm/bin/lm-deploy staging' \
+      '(root) NOPASSWD: /opt/lm/bin/lm-deploy staging *' \
+      "$WANT_PROD"; do
+      local -a arr=()
+      IFS='|' read -r -a arr <<<"$entries"
+      "$fmt" lm-deploy-staging "${arr[@]}"
+      verify_sudo staging
+      if [[ $status -ne 1 || $output != *"FAIL account  [staging] sudo 權限與預期不同"* ]]; then
+        printf 'format %s, entries <%s>: status %s\n%s\n' "$fmt" "$entries" "$status" "$output"
+        return 1
+      fi
+    done
+  done
+}
+
+@test "sudo-list: not allowed, a missing header or another user's header fails" {
+  sudo_setup
+  printf 'User lm-deploy-staging is not allowed to run sudo on lm-host.\n' >"$SUDO_LIST"
+  verify_sudo staging
+  assert_status 1
+  assert_contains "$output" 'FAIL account  [staging] sudo -l -U lm-deploy-staging 沒有列出任何指令'
+  assert_contains "$output" 'is not allowed to run sudo'
+
+  # 只有縮排的項目、沒有標題。
+  printf '    %s\n' "$WANT_STAGING" >"$SUDO_LIST"
+  verify_sudo staging
+  assert_status 1
+  assert_contains "$output" 'FAIL account  [staging] sudo -l -U lm-deploy-staging 沒有列出任何指令'
+
+  # 標題屬於另一個帳號。
+  list_rs lm-deploy-prod "$WANT_STAGING"
+  verify_sudo staging
+  assert_status 1
+  assert_contains "$output" 'FAIL account  [staging]'
+
+  : >"$SUDO_LIST"
+  verify_sudo staging
+  assert_status 1
+  assert_contains "$output" '沒有列出任何指令（預期只有「(root) NOPASSWD: /opt/lm/bin/lm-deploy staging」）：<empty>'
+}
+
+@test "sudo-list: requires --check-rules and exactly one env" {
+  sudo_setup
+  list_rs lm-deploy-staging "$WANT_STAGING"
+  run --separate-stderr bash "$VERIFY" --sudo-list "$SUDO_LIST" --envs staging
+  assert_status 2
+  assert_contains "$stderr" '--sudo-list 只能與 --check-rules 併用'
+  verify --sudo-list "$SUDO_LIST"
+  assert_status 2
+  assert_contains "$stderr" '--sudo-list 需要 --envs 只指定一個環境'
+  verify --envs staging --sudo-list "$BATS_TEST_TMPDIR/missing"
+  assert_status 2
 }

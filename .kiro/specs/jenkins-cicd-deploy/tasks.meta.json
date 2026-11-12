@@ -2725,6 +2725,37 @@
         "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
         "timestamp": 1794471865993
       }
+    ],
+    "22.1 sudoers 與 verify-host 支援 sudo-rs": [
+      {
+        "executionId": "be4e44a7-8c73-4343-bd5f-aa7ec8d094ea",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794473272242
+      },
+      {
+        "executionId": "be4e44a7-8c73-4343-bd5f-aa7ec8d094ea",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794474266858
+      }
+    ],
+    "22.2 Checkpoint - sudo-rs 相容變更後確認所有測試通過": [
+      {
+        "executionId": "be4e44a7-8c73-4343-bd5f-aa7ec8d094ea",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794474267693
+      },
+      {
+        "executionId": "be4e44a7-8c73-4343-bd5f-aa7ec8d094ea",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794474971576
+      }
+    ],
+    "22. Deploy_Host 相容 sudo-rs": [
+      {
+        "executionId": "be4e44a7-8c73-4343-bd5f-aa7ec8d094ea",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794474971695
+      }
     ]
   }
 }

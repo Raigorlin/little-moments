@@ -85,12 +85,37 @@ LAN=192.168.1.0/24,172.17.0.0/16,172.20.0.0/16,172.21.0.0/16,172.22.0.0/16
 
 2. 安裝：
 
+   先確認主機的 sudo 接受 sudoers 檔。主機可能使用傳統 sudo 或 sudo-rs（Ubuntu 25.10 起預設，例如 `sudo-rs 0.2.13-0ubuntu1.2`），此檔只使用兩者都支援的寫法（design.md Components §20）：
+
+   ```sh
+   sudo --version | head -n1
+   sudo visudo -cf deploy/host/sudoers.d/lm-deploy
+   ```
+
+   預期第二個指令輸出 `deploy/host/sudoers.d/lm-deploy: parsed OK`、結束碼 0。`install.sh` 的 sudoers 步驟執行相同的檢查；失敗時不安裝 sudoers 與 `authorized_keys`、以結束碼 1 結束，修正後以相同參數重新執行即可（冪等）。若 `/etc/sudoers-rs` 存在，sudo-rs 讀取它而非 `/etc/sudoers`，`install.sh` 要求它也含 `@includedir /etc/sudoers.d`。
+
    ```sh
    sudo deploy/host/install.sh --lan-cidr "$LAN" --public-port 80,443 \
      --agent-from 172.22.0.0/16 --staging-key <staging 公鑰檔> --prod-key <prod 公鑰檔>
    ```
 
    只更新規則時可省略 `--agent-from`、`--staging-key`、`--prod-key`（未提供公鑰時不變更既有 authorized_keys）。
+
+   安裝後確認部署帳號的 sudo 權限：
+
+   ```sh
+   LC_ALL=C sudo -l -U lm-deploy-staging
+   LC_ALL=C sudo -l -U lm-deploy-prod
+   ```
+
+   sudo-rs 只輸出標題與一個項目（`<hostname>` 為主機名稱）：
+
+   ```text
+   User lm-deploy-staging may run the following commands on <hostname>:
+       (root) NOPASSWD: /opt/lm/bin/lm-deploy staging
+   ```
+
+   傳統 sudo 在標題之前另外列出 `Matching Defaults entries for …`（含 `!lecture`）與 `Runas and Command-specific defaults for …`（`Defaults!/opt/lm/bin/lm-deploy env_keep+=SSH_ORIGINAL_COMMAND`）兩個區塊。兩種實作在標題之後都必須只有這一行；prod 帳號為 `(root) NOPASSWD: /opt/lm/bin/lm-deploy prod`。多出其他項目或顯示 `is not allowed to run sudo` 時不要繼續，先回報。
 
 3. 確認套用後的規則與渲染結果逐行相同（`iptables -S` 的正規化形式）：
 
@@ -106,7 +131,7 @@ LAN=192.168.1.0/24,172.17.0.0/16,172.20.0.0/16,172.21.0.0/16,172.22.0.0/16
    sudo deploy/host/verify-host.sh --lan-cidr "$LAN" --public-port 80,443
    ```
 
-   預期沒有 FAIL。設定第 8 節之前，`proxy` 群組會對 prod 的 `LM_EDGE_TRUSTED_PROXIES` 為空提出 WARN，這是預期的。
+   預期沒有 FAIL，其中包含 `PASS account  [staging] sudo 只允許「(root) NOPASSWD: /opt/lm/bin/lm-deploy staging」`、prod 的對應行，以及 `PASS files    /etc/sudoers 載入 /etc/sudoers.d`。設定第 8 節之前，`proxy` 群組會對 prod 的 `LM_EDGE_TRUSTED_PROXIES` 為空提出 WARN，這是預期的。
 
 5. 確認既有連線仍正常：Jenkins「Nodes」頁中 `lm-trusted-1` 與 `lm-untrusted-1` 仍上線；LAN 內 `curl -sk https://registry.our-littlemoments.com:8443/v2/` 有回應（401 即正常）。
 

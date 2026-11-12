@@ -41,6 +41,31 @@ describe('deploy/host', () => {
     }
   });
 
+  test('sudoers：只用傳統 sudo 與 sudo-rs 0.2.13 都接受的設定（design.md Components §20）', () => {
+    const text = read('sudoers.d/lm-deploy');
+    // sudo-rs 沒有 requiretty（visudo：unknown setting: 'requiretty'）；只有檔頭註解說明不使用的原因。
+    expect(body(text).some(l => /requiretty/.test(l))).toBe(false);
+    const defaults = body(text).filter(l => l.startsWith('Defaults'));
+    expect(defaults).toEqual([
+      'Defaults!/opt/lm/bin/lm-deploy env_keep += "SSH_ORIGINAL_COMMAND"',
+      'Defaults:LM_DEPLOY_STAGING_USERS,LM_DEPLOY_PROD_USERS !lecture',
+    ]);
+    // Cmnd_Alias 帶完整參數（完整比對），不得以結尾 * 或 "" 改變比對方式。
+    const cmnds = body(text).filter(l => l.startsWith('Cmnd_Alias'));
+    for (const l of cmnds) expect(l).toMatch(/^Cmnd_Alias LM_DEPLOY_[A-Z]+_CMD = \/opt\/lm\/bin\/lm-deploy (staging|prod)$/);
+    expect(cmnds).toHaveLength(2);
+  });
+
+  test('install.sh／verify-host.sh：/etc/sudoers-rs 存在時也必須載入 /etc/sudoers.d；sudo -l 以 LC_ALL=C 解析', () => {
+    const install = read('install.sh');
+    expect(install).toContain('for main in /etc/sudoers /etc/sudoers-rs; do');
+    expect(install).toContain('die "$main 未載入 /etc/sudoers.d（缺少 @includedir /etc/sudoers.d）"');
+    const verify = read('verify-host.sh');
+    expect(verify).toContain('readonly SUDOERS_MAIN_FILES="/etc/sudoers /etc/sudoers-rs"');
+    expect(verify).toContain('check_sudo_listing "$env" "$(LC_ALL=C sudo -n -l -U "$user" 2>&1 || true)"');
+    for (const fn of ['sudo_list_entries', 'check_sudo_listing']) expect(verify).toContain(`${fn}() {`);
+  });
+
   test('authorized_keys 樣板：forced command、from=、no-pty 與 restrict', () => {
     const [line, ...rest] = body(read('authorized_keys.tmpl'));
     expect(rest).toEqual([]);

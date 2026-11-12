@@ -734,6 +734,22 @@
     - 執行 `bun run build`、`bun test tests/*.test.js`（需要 PostgreSQL 的測試使用臨時 Ephemeral_Database，用完即刪）、`bats deploy/tests`（WSL）、`semgrep --test ci/semgrep` 與秘密掃描（`bun scripts/scan-secrets.mjs`），確認全部通過，且 repository 中沒有任何秘密值或主機上才有的實際 Edge 設定（Cloudflare 範圍、Edge_Proxy 來源位址）。Ensure all tests pass, ask the user if questions arise.
     - _Requirements: 8.6, 8.8, 8.9, 8.10, 25.1, 25.2, 25.3, 25.4, 25.5, 25.6, 25.7, 25.8, 25.9, 25.10, 25.11, 25.12, 25.13, 26.1, 26.2, 26.3, 26.4, 26.5, 26.6, 26.7, 26.8, 26.9, 26.10, 26.11, 26.12, 26.13, 26.14, 26.15, 26.16, 26.17, 26.18, 26.19, 26.20_
 
+- [x] 22. Deploy_Host 相容 sudo-rs
+  - [x] 22.1 sudoers 與 verify-host 支援 sudo-rs
+    - 背景與設計見 design.md Components 第 20 節：192.168.1.121 使用 `sudo-rs 0.2.13-0ubuntu1.2`，`install.sh` 在 `visudo -cf` 回報 `unknown setting: 'requiretty'` 後停止；帳號、`/opt/lm/bin/lm-deploy`、`/srv/lm/<env>`、備份目錄與 DOCKER-USER 規則已安裝，sudoers 與 `authorized_keys` 未安裝
+    - 開始前以 sudo-rs v0.2.13（github.com/trifectatechfoundation/sudo-rs，tag `v0.2.13`：`docs/man/sudoers.5.md`、`docs/man/sudo.8.md`、`docs/man/visudo.8.md`、`src/defaults/mod.rs`、`src/sudoers/` parser、`src/sudo/cli/`、`src/visudo/`）逐項確認第 20.1 節表格中的設定與寫法是否支援：`!lecture`、`Defaults!<cmd>` 的 per-command `env_keep`（含執行時是否實際套用）、完整比對參數的 `Cmnd_Alias`、`User_Alias`、`(root) NOPASSWD:`、`sudo -n`、`sudo -l -U`、`visudo -c`／`-cf`，以及 `/etc/sudoers-rs` 與 `/etc/sudoers` 的讀取順序；把結果（含檔案與行號）記錄在任務回報
+    - `deploy/host/sudoers.d/lm-deploy`：移除 `!requiretty`；其他寫法依確認結果保留或改為等效的支援寫法（例如 per-command Defaults 不支援時改為 `Defaults:LM_DEPLOY_STAGING_USERS,LM_DEPLOY_PROD_USERS env_keep += "SSH_ORIGINAL_COMMAND"`），使檔案在傳統 sudo 與 sudo-rs 0.2.13 上都通過 `visudo -cf` 且語意相同（每個部署帳號只能以 root、免密碼執行 `lm-deploy <自己的環境>`，只額外保留 `SSH_ORIGINAL_COMMAND`）；更新檔頭註解
+    - `deploy/host/verify-host.sh`：以 `LC_ALL=C` 執行 `sudo -n -l -U`，同一個解析器接受傳統 sudo 與 sudo-rs 0.2.13 的輸出格式（sudo-rs 格式依原始碼推導，例如 `src/sudo/pipeline/list.rs` 與 `src/sudoers/entry.rs` 的列印邏輯），仍要求恰好一個以 root、NOPASSWD 執行 `/opt/lm/bin/lm-deploy <env>` 的指令且沒有其他項目；保留 `visudo -c`；若確認 sudo-rs 在 `/etc/sudoers-rs` 存在時改讀該檔，檢查它也載入 `/etc/sudoers.d`；更新檔頭說明
+    - `deploy/host/install.sh`：預期不需改變行為；若用到 sudo-rs 不支援的 sudo／visudo 選項則調整；若確認 `/etc/sudoers-rs` 優先，`@includedir /etc/sudoers.d` 檢查改為針對實際生效的檔案
+    - 測試：以 grep 找出 `tests/` 與 `deploy/tests/` 中斷言 sudoers 內容的測試（例如 `tests/deploy-host-config.test.js`）並更新；新增靜態斷言 sudoers 檔不含 `requiretty`；新增 bats 案例，以傳統 sudo 與 sudo-rs 兩種格式的固定 `sudo -l -U` 樣本測試 verify-host 的解析（PASS 與 FAIL 案例見 design.md Testing Strategy「冒煙與設定檢查」）；verify-host 若已有可測試的模式（例如 `--check-rules`）則擴充，只有必要時才新增等效的唯讀解析掛勾
+    - 若 WSL 有傳統 `visudo`，對檔案執行 `visudo -cf`；若能在 WSL 或測試容器取得 sudo-rs（例如 apt 套件 `sudo-rs`），也以它的 `visudo -cf` 驗證；都無法取得時在任務回報與 runbook 寫明維運者手動檢查：`sudo visudo -cf deploy/host/sudoers.d/lm-deploy`，接著重新執行 `install.sh`，再執行 `sudo -l -U lm-deploy-staging`
+    - 執行 `bun test tests/deploy-host-config.test.js` 與 WSL 下的 `bats deploy/tests`
+    - _Requirements: 15.9_
+
+  - [x] 22.2 Checkpoint - sudo-rs 相容變更後確認所有測試通過
+    - 執行受影響的 `bun test` 測試檔、WSL 下的 `bats deploy/tests` 與秘密掃描（`bun scripts/scan-secrets.mjs`），確認全部通過且沒有任何秘密值。Ensure all tests pass, ask the user if questions arise.
+    - _Requirements: 15.9_
+
 ## Notes
 
 - 標記 `*` 的子任務為選用（property test、整合測試與額外檢查），可為加快 MVP 而略過。
@@ -743,6 +759,7 @@
 - Jenkins、Deploy_Host 與 Registry 任務只產出設定檔、腳本與驗證腳本，實際套用到主機由維運者執行。
 - 任務 19 的值來自 192.168.1.121 上已驗證的部署（Jenkins controller、lm-trusted-1、lm-untrusted-1 與 LAN Registry）；design.md 中 Untrusted Agent 的「隔離 VLAN」在此部署以 rootless Docker 加主機 owner 防火牆實作。
 - 任務 21 依同主機配置（Deploy_Host = Jenkins = Registry = `192.168.1.121`）讓 Production 經 Nginx Proxy Manager 與 Cloudflare 公開；Edge_Proxy 與 Cloudflare 的設定是維運操作，repository 只提供設定檔、驗證與 runbook。Requirement 8.8–8.10 與 25 沒有新的 Correctness Property（行為由 Caddy 與主機上的 bash 腳本實作），以設定檢查、bats 與 Caddy 實測驗證。任務 21.3 依 Requirement 26 讓 Deploy_Host 的公開註冊預設關閉並可由管理員在 `/admin` 切換，新增 Property 48。
+- 任務 22 來自 192.168.1.121 上 `install.sh` 的 sudoers 步驟失敗（sudo-rs 0.2.13 不支援 `requiretty`）；Requirement 15.9 的行為不變，沒有新的 Correctness Property，以靜態檢查、bats 固定樣本與 `visudo -cf` 驗證。
 - 任務 18 合併 security-harden：兩分支沒有共同歷史，以 main 的 `cd06606` 作為合成共同基底進行三方合併；應用程式功能採用 security-harden，部署、設定模型、Setup_Token 與 PostgreSQL 資料層採用 main；收據 AI 改為 OpenAI（`CAMPING_OPENAI_*`）。
 
 ## Task Dependency Graph
@@ -791,7 +808,9 @@
     { "id": 38, "tasks": ["21.2"] },
     { "id": 39, "tasks": ["21.3"] },
     { "id": 40, "tasks": ["21.4"] },
-    { "id": 41, "tasks": ["21.5"] }
+    { "id": 41, "tasks": ["21.5"] },
+    { "id": 42, "tasks": ["22.1"] },
+    { "id": 43, "tasks": ["22.2"] }
   ]
 }
 ```

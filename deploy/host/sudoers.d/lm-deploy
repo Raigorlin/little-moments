@@ -1,9 +1,16 @@
-# Little Moments — 部署帳號的 sudo 權限（Requirement 15.9；design.md Security Boundaries）。
+# Little Moments — 部署帳號的 sudo 權限（Requirement 15.9；design.md Security Boundaries、Components §20）。
 #
 # 由 deploy/host/install.sh 以 `visudo -cf` 驗證後安裝為 /etc/sudoers.d/lm-deploy（0440 root:root）。
 # 檔名不含「.」也不以「~」結尾，sudo 才會讀取。
 #
-# 每個環境一個部署帳號，各自只能以 root 執行「lm-deploy <自己的環境>」這一個固定指令列：
+# 相容性：Deploy_Host 可能使用傳統 sudo 或 sudo-rs（Ubuntu 25.10 起的預設），此檔只使用兩者都接受、
+# 語意相同的寫法，必須同時通過兩者的 `visudo -cf`（已以 sudo 1.9.9 與 sudo-rs 0.2.13 確認）。
+#   - 不設定 requiretty：sudo-rs 沒有此設定（`visudo` 回報 unknown setting: 'requiretty'），傳統 sudo
+#     預設也不啟用。若主機的全域 sudoers 自行設定了 `Defaults requiretty`，no-pty 的 forced command 會以
+#     「sorry, you must have a tty to run sudo」失敗，請移除該全域設定。
+#   - !lecture：傳統 sudo 不顯示首次使用提示；sudo-rs 可解析但不使用此設定（沒有提示）。
+#
+# 每個環境一個部署帳號，各自只能以 root、免密碼執行「lm-deploy <自己的環境>」這一個固定指令列：
 #   - sudoers 的指令參數為完整比對：多帶任何參數（例如另一個環境、子命令）都不符合，sudo 會拒絕。
 #   - 子命令由 SSH forced command 經 $SSH_ORIGINAL_COMMAND 傳入；lm-deploy 逐 token 驗證字元集，
 #     並拒絕任何指向另一個環境的 token。
@@ -19,10 +26,11 @@ User_Alias LM_DEPLOY_PROD_USERS = lm-deploy-prod
 Cmnd_Alias LM_DEPLOY_STAGING_CMD = /opt/lm/bin/lm-deploy staging
 Cmnd_Alias LM_DEPLOY_PROD_CMD = /opt/lm/bin/lm-deploy prod
 
-# 只對 lm-deploy 保留 SSH_ORIGINAL_COMMAND（env_reset 仍清除其他變數）；lm-deploy 以 root 經 sudo
-# 執行時忽略所有 LM_* 覆寫並重設 PATH。
+# env_keep 的範圍：只在執行 /opt/lm/bin/lm-deploy 時額外保留 SSH_ORIGINAL_COMMAND，env_reset 仍清除其他變數
+# （傳統 sudo 與 sudo-rs 都在比對到該指令時套用 per-command Defaults）。lm-deploy 以 root 經 sudo 執行時
+# 忽略所有 LM_* 覆寫並重設 PATH。
 Defaults!/opt/lm/bin/lm-deploy env_keep += "SSH_ORIGINAL_COMMAND"
-Defaults:LM_DEPLOY_STAGING_USERS,LM_DEPLOY_PROD_USERS !lecture,!requiretty
+Defaults:LM_DEPLOY_STAGING_USERS,LM_DEPLOY_PROD_USERS !lecture
 
 LM_DEPLOY_STAGING_USERS ALL = (root) NOPASSWD: LM_DEPLOY_STAGING_CMD
 LM_DEPLOY_PROD_USERS ALL = (root) NOPASSWD: LM_DEPLOY_PROD_CMD

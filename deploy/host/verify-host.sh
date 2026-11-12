@@ -5,6 +5,7 @@
 # 用法：
 #   sudo deploy/host/verify-host.sh [--envs staging,prod] [--lan-cidr <CIDR>[,...]] [--public-port <port>[,...]|none]
 #   deploy/host/verify-host.sh --check-rules <規則檔> [--envs ...] [--lan-cidr ...] [--public-port ...]
+#        [--sudo-list <sudo -l 輸出檔>]
 #
 #   --envs         要檢查的環境（預設 staging,prod）
 #   --lan-cidr     預期的 LAN 網段；指定時另外比對 /etc/lm/docker-user.rules 的網段是否完全相同
@@ -13,6 +14,8 @@
 #   --check-rules  唯讀、不需 root：只對指定的規則檔執行 firewall 的靜態檢查與 proxy 檢查，不查詢 iptables、
 #                  systemd、Docker 與帳號（測試用）。只有此模式接受環境變數 LM_SRV_ROOT（預設 /srv/lm）
 #                  覆寫 <env>.env 的讀取位置。
+#   --sudo-list    只能與 --check-rules 併用，且 --envs 必須只有一個環境：以檔案內容代替
+#                  `sudo -n -l -U lm-deploy-<env>` 的輸出，執行 account 群組的 sudo 權限解析（不呼叫 sudo，測試用）。
 #
 # 檢查項目（每項輸出一行 PASS／FAIL／WARN）：
 #   firewall  lm-docker-user.service 已 enable 且 active；/etc/lm/docker-user.rules 依序為「已建立連線 RETURN →
@@ -28,10 +31,13 @@
 #   backup    /var/backups/little-moments 與 <env>/ 為 lm-ops 擁有、0700、不是符號連結；其下所有檔案
 #             皆為 lm-ops 擁有且群組／其他人無任何權限；不在 Docker 資料目錄內、不在 git 工作目錄內。
 #   account   lm-deploy-<env> 存在、未設定密碼、不在 docker（或 docker.sock 所屬群組）及其他特權群組；
-#             `sudo -l -U` 只列出「(root) NOPASSWD: /opt/lm/bin/lm-deploy <env>」一項；authorized_keys
+#             `LC_ALL=C sudo -n -l -U` 只列出「(root) NOPASSWD: /opt/lm/bin/lm-deploy <env>」一項；authorized_keys
 #             為 root 擁有，每把金鑰都有 forced command、from= 與 no-pty（或 restrict）；兩環境金鑰不同。
+#             `sudo -l -U` 的輸出以同一個解析器處理傳統 sudo 與 sudo-rs 0.2.13 兩種格式（見 sudo_list_entries）。
 #   files     /opt/lm/bin/lm-deploy 與上層目錄、/srv/lm/<env> 為 root 擁有且群組／其他人不可寫；
-#             /etc/sudoers.d/lm-deploy 為 root 0440 且 visudo -c 通過；app.env／db.env 為 0600 root。
+#             /etc/sudoers.d/lm-deploy 為 root 0440 且 visudo -c 通過；/etc/sudoers 與（存在時）/etc/sudoers-rs
+#             載入 /etc/sudoers.d（sudo-rs 在 /etc/sudoers-rs 存在時讀取它而非 /etc/sudoers）；
+#             app.env／db.env 為 0600 root。
 #
 # 結束碼：0 沒有 FAIL；1 至少一項 FAIL；2 參數錯誤或未以 root 執行。
 
@@ -46,12 +52,16 @@ readonly LM_BIN=/opt/lm/bin/lm-deploy
 readonly BACKUP_ROOT=/var/backups/little-moments
 readonly UNIT_NAME=lm-docker-user.service
 readonly SUDOERS_FILE=/etc/sudoers.d/lm-deploy
+# 主 sudoers 檔：傳統 sudo 讀 /etc/sudoers；sudo-rs 在 /etc/sudoers-rs 存在時改讀它（sudo-rs v0.2.13
+# src/sudo/mod.rs candidate_sudoers_file）。
+readonly SUDOERS_MAIN_FILES="/etc/sudoers /etc/sudoers-rs"
+readonly SUDOERS_INCLUDEDIR_RE='^[@#]includedir[[:space:]]+/etc/sudoers\.d[[:space:]]*$'
 readonly PRIV_GROUPS="docker sudo admin wheel adm lxd libvirt disk"
 readonly ZERO_DIGEST="sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 usage_die() {
   printf 'verify-host: %s\n' "$*" >&2
-  printf '%s\n' '用法：verify-host.sh [--check-rules FILE] [--envs staging,prod] [--lan-cidr <CIDR>[,...]] [--public-port <port>[,...]|none]' >&2
+  printf '%s\n' '用法：verify-host.sh [--check-rules FILE [--sudo-list FILE]] [--envs staging,prod] [--lan-cidr <CIDR>[,...]] [--public-port <port>[,...]|none]' >&2
   exit 2
 }
 
@@ -59,15 +69,17 @@ ENVS="staging,prod"
 EXPECT_CIDRS=""
 EXPECT_PORTS=""
 CHECK_RULES=""
+SUDO_LIST_FILE=""
 while (($# > 0)); do
   case $1 in
-    --envs | --lan-cidr | --public-port | --check-rules)
+    --envs | --lan-cidr | --public-port | --check-rules | --sudo-list)
       (($# >= 2)) || usage_die "$1 需要一個值"
       case $1 in
         --envs) ENVS=$2 ;;
         --lan-cidr) EXPECT_CIDRS=$2 ;;
         --public-port) EXPECT_PORTS=$2 ;;
         --check-rules) CHECK_RULES=$2 ;;
+        --sudo-list) SUDO_LIST_FILE=$2 ;;
       esac
       shift 2
       ;;
@@ -94,7 +106,12 @@ if [[ -n $CHECK_RULES ]]; then
   [[ $LM_ROOT == /* ]] || usage_die "LM_SRV_ROOT 必須為絕對路徑：$LM_ROOT"
   RULES=$CHECK_RULES
   [[ -f $RULES && -r $RULES ]] || usage_die "--check-rules 檔案無法讀取：$RULES"
+  if [[ -n $SUDO_LIST_FILE ]]; then
+    ((${#ENV_LIST[@]} == 1)) || usage_die "--sudo-list 需要 --envs 只指定一個環境"
+    [[ -f $SUDO_LIST_FILE && -r $SUDO_LIST_FILE ]] || usage_die "--sudo-list 檔案無法讀取：$SUDO_LIST_FILE"
+  fi
 else
+  [[ -z $SUDO_LIST_FILE ]] || usage_die "--sudo-list 只能與 --check-rules 併用"
   [[ ${EUID} -eq 0 ]] || usage_die "必須以 root 執行（需要讀取 iptables、sudoers、shadow 與 Docker）"
 fi
 readonly LM_ROOT RULES
@@ -632,6 +649,47 @@ check_backup() {
 
 declare -A KEY_BLOBS=()
 
+# sudo_list_entries <user> <listing>：解析 `LC_ALL=C sudo -n -l -U <user>` 的輸出，把指令標題
+# 「User <user> may run the following commands on <host>:」之後的縮排項目（去除開頭空白）放在 SUDO_ENTRIES。
+# 傳統 sudo 與 sudo-rs 0.2.13 的標題與項目格式相同：每個項目一行、4 個空白縮排，例如
+# 「    (root) NOPASSWD: /opt/lm/bin/lm-deploy staging」（sudo-rs：src/sudo/pipeline/list.rs run_list、
+# src/sudoers/entry.rs 的 Display；Cmnd_Alias 展開為實際指令，同一項目的多個指令以「, 」分隔）。
+# 傳統 sudo 在標題之前另有「Matching Defaults entries for …」與「Runas and Command-specific defaults for …」
+# 區塊（縮排的 Defaults 行），sudo-rs 不輸出；標題之前的內容一律不計入。標題之後遇到非縮排的非空行即結束。
+# 沒有標題（例如「User <user> is not allowed to run sudo on <host>.」或錯誤訊息）時 SUDO_ENTRIES 為空。
+sudo_list_entries() {
+  local user=$1 line in_cmds=0
+  SUDO_ENTRIES=()
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=${line%$'\r'}
+    if [[ $line == "User $user may run the following commands on "*: ]]; then
+      in_cmds=1
+      continue
+    fi
+    ((in_cmds == 1)) || continue
+    if [[ $line =~ ^[[:space:]]+([^[:space:]].*)$ ]]; then
+      SUDO_ENTRIES+=("${BASH_REMATCH[1]}")
+    elif [[ -n $line ]]; then
+      in_cmds=0
+    fi
+  done <<<"$2"
+}
+
+# check_sudo_listing <env> <listing>：恰好一個項目，且等於「(root) NOPASSWD: /opt/lm/bin/lm-deploy <env>」。
+# 多一個項目、同一行另有指令（「, 」）、其他 runas、缺少 NOPASSWD、沒有標題或 not allowed 皆為 FAIL。
+check_sudo_listing() {
+  local env=$1 user="lm-deploy-$1" want="(root) NOPASSWD: $LM_BIN $1" first=""
+  sudo_list_entries "$user" "$2"
+  if ((${#SUDO_ENTRIES[@]} == 1)) && [[ ${SUDO_ENTRIES[0]} == "$want" ]]; then
+    pass account "[$env] sudo 只允許「$want」"
+  elif ((${#SUDO_ENTRIES[@]} == 0)); then
+    first=$(grep -m1 -v '^[[:space:]]*$' <<<"$2" || true)
+    fail account "[$env] sudo -l -U $user 沒有列出任何指令（預期只有「$want」）：${first:-<empty>}"
+  else
+    fail account "[$env] sudo 權限與預期不同（預期只有「$want」）：$(printf '%s; ' "${SUDO_ENTRIES[@]}")"
+  fi
+}
+
 check_account() {
   local env=$1 user="lm-deploy-$1" groups g sock_group="" pw home ak line found=0 bad=0
   if ! id -u "$user" >/dev/null 2>&1; then
@@ -657,22 +715,8 @@ check_account() {
     pass account "[$env] $user 未設定密碼"
   fi
 
-  # sudo 權限：只能執行 lm-deploy <env> 這一個固定指令列。
-  local listing in_cmds=0
-  local -a cmds=()
-  listing=$(sudo -n -l -U "$user" 2>&1 || true)
-  while IFS= read -r line; do
-    if [[ $line == *"may run the following commands"* ]]; then in_cmds=1; continue; fi
-    ((in_cmds == 1)) || continue
-    [[ $line =~ ^[[:space:]]+([^[:space:]].*)$ ]] || { [[ -z $line ]] && continue; in_cmds=0; continue; }
-    cmds+=("${BASH_REMATCH[1]}")
-  done <<<"$listing"
-  local want="(root) NOPASSWD: $LM_BIN $env"
-  if ((${#cmds[@]} == 1)) && [[ ${cmds[0]} == "$want" ]]; then
-    pass account "[$env] sudo 只允許「$want」"
-  else
-    fail account "[$env] sudo 權限與預期不同（預期只有「$want」）：$(printf '%s; ' "${cmds[@]:-<none>}")"
-  fi
+  # sudo 權限：只能執行 lm-deploy <env> 這一個固定指令列。LC_ALL=C：兩種實作的訊息都會依語系翻譯。
+  check_sudo_listing "$env" "$(LC_ALL=C sudo -n -l -U "$user" 2>&1 || true)"
 
   home=$(getent passwd "$user" | cut -d: -f6)
   ak="$home/.ssh/authorized_keys"
@@ -735,6 +779,17 @@ check_files() {
     fail files "找不到 $SUDOERS_FILE"
   fi
   if visudo -c >/dev/null 2>&1; then pass files "visudo -c 通過"; else fail files "visudo -c 失敗"; fi
+  local main found_main=0
+  for main in $SUDOERS_MAIN_FILES; do
+    [[ -e $main ]] || continue
+    found_main=1
+    if grep -Eq -- "$SUDOERS_INCLUDEDIR_RE" "$main"; then
+      pass files "$main 載入 /etc/sudoers.d"
+    else
+      fail files "$main 未載入 /etc/sudoers.d（缺少 @includedir /etc/sudoers.d），$SUDOERS_FILE 不會生效"
+    fi
+  done
+  ((found_main == 1)) || fail files "找不到 /etc/sudoers 或 /etc/sudoers-rs"
 
   for env in "${ENV_LIST[@]}"; do
     d="$LM_ROOT/$env"
@@ -753,6 +808,7 @@ check_files() {
 if [[ -n $CHECK_RULES ]]; then
   check_rules_static || true
   check_proxy
+  [[ -z $SUDO_LIST_FILE ]] || check_sudo_listing "${ENV_LIST[0]}" "$(<"$SUDO_LIST_FILE")"
   printf '\nverify-host（--check-rules）：%d PASS，%d FAIL，%d WARN\n' "$N_PASS" "$N_FAIL" "$N_WARN"
   ((N_FAIL == 0)) || exit 1
   exit 0
