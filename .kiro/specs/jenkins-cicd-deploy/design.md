@@ -1136,6 +1136,140 @@ void runUnitTestsStage() {
   - 不刪除任何斷言、不放寬比對（例如不把 `toEqual` 改成 `toContain`）；如需調整，任務回報逐項列出。
 - 本機沒有 Groovy 或 Jenkins，無法執行真正的 CPS 編譯。repository 內的檢查是 22.3 的尺寸測試、既有的括號配對與結構測試，以及 `bun test tests/ci-*.test.js`（Windows 上明列檔名）。維運者的檢查：合併後對 `release/little-moments » main` 執行下一次 Build Now，確認建置進入 Init 階段且沒有 `MethodTooLargeException`。也可以先用 Jenkins 的 Declarative linter（`POST <jenkins>/pipeline-model-converter/validate`，`jenkinsfile=@Jenkinsfile`，需要登入與 CSRF crumb）檢查語法；它只驗證 Declarative 語法，不保證能發現方法大小問題。
 
+### 23. CPS 序列化與 JSON 解析（新增；Req 1.1、1.7、15.4）
+
+現況（192.168.1.121，`release/little-moments » main` 建置 #7，commit `8df0101`）：第 22 節的重構後 `Jenkinsfile` 可以編譯並進入 Init，但 Init 以 `ERROR: 觸發被拒絕：階段規劃輸出無效` 失敗。封存的 `reports/plan.json` 是有效的規劃（`kind: main_push`、`trusted: true`、`manual: false`、`gates: ["QA","安全","映像","Staging"]`、`reject: null`）。In-process Script Approval 沒有待核准的簽章，`new groovy.json.JsonSlurperClassic` 與 `method groovy.json.JsonSlurperClassic parseText java.lang.String` 都已核准。
+
+推定原因：`readPlan` 寫成 `new JsonSlurperClassic().parseText(readFile(path))`。Groovy 先求值接收者、再求值引數，所以 `readFile` step 執行時，JsonSlurperClassic 實例已經在 CPS 的 continuation 中，等待之後的 `parseText` 呼叫。step 執行期間 Jenkins 會把程式狀態序列化存檔，而 JsonSlurperClassic 沒有實作 `Serializable`，存檔時丟出 `java.io.NotSerializableException`。`catch (Exception ignored)` 把它轉成固定訊息，日誌中沒有任何線索。CPS 要求跨 step 的物件可序列化，`@NonCPS` 方法內則可以使用不可序列化的物件（[What is the effect of @NonCPS](https://stackoverflow.com/questions/42295921/what-is-the-effect-of-noncps-in-a-jenkins-pipeline-script)；相同例外的案例：[NotSerializableException: groovy.json.JsonSlurperClassic](https://stackoverflow.com/questions/75761181/jenkins-error-java-io-notserializableexception-groovy-json-jsonslurperclassic)）。本機無法重現這個推定；23.3 加入的例外類別輸出會在下一次建置確認或推翻它。
+
+JSON 解析位置盤點：
+
+| 檔案 | 函式 | 現況 | 處理 |
+|---|---|---|---|
+| `Jenkinsfile` | `readPlan` | `new JsonSlurperClassic().parseText(readFile(path))`，step 執行期間 continuation 持有 JsonSlurperClassic | 先 `readFile` 存入 `String`，再呼叫 `parseJsonText`；catch 依 23.3 處理 |
+| `Jenkinsfile` | `securityGate`、`smokeFailures`、`dastTargetProblems`、`isolationReachable`、`gatePassed`、`signatureCovers`、`recordImageFacts`、`parseJsonObject`（皆為 `@NonCPS`） | 在 `@NonCPS` 內建立 JsonSlurperClassic，沒有序列化問題 | `new JsonSlurperClassic().parseText(x)` 改為 `parseJsonText(x)`，其餘不變 |
+| `Jenkinsfile` | `readJsonFile` | `parseJsonObject(readFile(path))`：step 執行時 continuation 只持有 script 本身，目前沒有問題 | 拆成兩個敘述（先存入 `String`），符合 23.1 的統一寫法 |
+| `ci/jenkins/pipelines/build-image.Jenkinsfile` | `readJsonFile` | 與 `readPlan` 完全相同的寫法 | 同 `readPlan`。這個 Job 目前能通過不代表寫法安全：CPS 是否在該 step 期間存檔與時序、step 的執行位置有關，原因未確認 |
+| `ci/jenkins/pipelines/rollback.Jenkinsfile`、`restore-drill.Jenkinsfile` | `readJsonFile` | 先 `readFile`，再在 CPS 中建立 JsonSlurperClassic 並立即解析，中間沒有 step，目前沒有問題 | 改用 `parseJsonText`；「取最後一個非空行」移到 `@NonCPS String lastNonEmptyLine(String text)`（同一個 `tokenize('\n').findAll { it.trim() }` 運算式，結果不變） |
+| `ci/jenkins/pipelines/digest-lookup.Jenkinsfile`、`ci/notify.groovy` | — | 不解析 JSON | 不加 `parseJsonText`；`ci/notify.groovy` 的 catch 區塊依 23.3 處理 |
+
+#### 23.1 解析輔助函式與 step 順序
+
+```groovy
+/** 唯一建立 JsonSlurperClassic 的地方（Components 第 23 節）。回傳 Map／List／String／Number／Boolean／null（皆可序列化）；
+ *  null、空字串或無效 JSON 時丟出例外，由呼叫端處理。 */
+@NonCPS
+Object parseJsonText(String text) {
+  return new JsonSlurperClassic().parseText(text)
+}
+```
+
+- 每個解析 JSON 的檔案各有一份內容相同的 `parseJsonText`。每個 Jenkinsfile 是獨立的 script，沒有 Shared Library（第 22 節不採用 Shared Library）。`import groovy.json.JsonSlurperClassic` 只留在有 `parseJsonText` 的檔案。
+- 結果不變：JsonSlurperClassic 對 null 與空字串丟出 `IllegalArgumentException`，對無效 JSON 丟出 `groovy.json.JsonException`，與現在直接呼叫 `parseText` 相同，所以各呼叫端原本的 fallback 結果不變。
+- Step 先執行：CPS 函式（沒有 `@NonCPS` 的函式）中，`readFile`、`sh(returnStdout: true)` 等 step 的結果先指定給 `String` 區域變數，下一個敘述才呼叫 `parseJsonText` 或其他 `@NonCPS` 函式。不寫 `parseJsonText(readFile(…))`，即使引數位置的 step 目前沒有問題也一樣，讓 23.5 的靜態檢查可以用單純的規則判斷。
+- `@NonCPS` 函式的參數與回傳值只用可序列化的型別（String、Map、List、數字、Boolean），內部可以使用不可序列化的物件。`@NonCPS` 函式不呼叫任何 step（[JENKINS-31314](https://issues.jenkins.io/browse/JENKINS-31314)）；這些檔案目前的 15 個 `@NonCPS` 函式都沒有 step 呼叫。
+
+#### 23.2 CPS 區域變數規則
+
+- CPS 函式的區域變數與運算式在 step 執行期間不得持有不可序列化的物件，例如 JsonSlurperClassic、JsonSlurper 與它回傳的 LazyMap、`=~` 產生的 `java.util.regex.Matcher`、`.iterator()` 取得的 Iterator、Reader 與 Scanner。需要這些物件時放進 `@NonCPS` 函式，只回傳 String、List 或 Map。
+- 目前根目錄 `Jenkinsfile`、`ci/jenkins/pipelines/` 的四個 Jenkinsfile 與 `ci/notify.groovy` 只使用 `==~`（回傳 boolean），沒有 `=~`、`.matcher(` 或 `.iterator(`。所以 23.5 直接禁止這三種寫法出現在 CPS 函式中，不需要分析變數是否跨 step。
+- 例外物件：`deployStaging`、`deployProduction` 的 `interrupted = err` 與 `waitForApproval` 的 `rethrow` 會把 Jenkins 的例外（例如 `FlowInterruptedException`）保留到之後重新拋出，寫法不變。
+
+#### 23.3 catch 區塊輸出例外類別
+
+`catch (Exception …)`、`catch (Throwable …)` 與不指定型別的 `catch (err)` 分為四類（只指定特定型別的 catch，例如 `FlowInterruptedException`、`MissingPropertyException`，不在範圍內）：
+
+| 類別 | 判斷 | 處理 |
+|---|---|---|
+| 重新拋出 | catch 本體有 `throw <例外變數>`（`runStagingDeployStage`、`runProductionDeployStage`、`runScan`、`releaseApprovalLoop`、`destructiveApprovalLoop`、`postStep`、`rollback.Jenkinsfile` 的逾時／中止） | 不變；Jenkins 會印出例外類別與堆疊 |
+| 延後重新拋出 | 把例外存入變數或 Map，之後由同一函式拋出（`deployStaging`、`deployProduction`、`waitForApproval`） | 不變；23.5 以明列的函式清單允許 |
+| 吸收並改為固定結果 | 其他所有 catch（下表） | 記錄例外類別名稱 |
+| `@NonCPS` 函式內 | 盤點表中的 8 個 `@NonCPS` 函式 | 不能呼叫 `echo`，不輸出。這些例外在 `@NonCPS` 內產生，不會是 CPS 序列化錯誤，且固定訊息已指出哪個輸入無法解析 |
+
+吸收例外的 catch（固定結果不變）：
+
+| 檔案 | 函式 | 固定結果 |
+|---|---|---|
+| `Jenkinsfile` | `readPlan` | `[reject: '階段規劃輸出無效']` |
+| `Jenkinsfile` | `restoreStaging`、`restoreProduction` | 原本的 echo 訊息，之後寫入 `restore_unconfirmed` |
+| `Jenkinsfile` | `runStagingSmoke`、`runProductionSmoke` | 原本的 echo 訊息與 `rc = 124` |
+| `Jenkinsfile` | `stageScrubSecrets` | 把憑證 ID 加入 `missing` |
+| `Jenkinsfile` | `keepProductionBuildLog` | `rc = 2` |
+| `Jenkinsfile` | `notifyFinal`（兩處） | `gate = ''`；`echo '最終狀態通知失敗（不改變建置結果）'` |
+| `build-image.Jenkinsfile`、`rollback.Jenkinsfile`、`restore-drill.Jenkinsfile` | `readJsonFile` | `[:]` |
+| `rollback.Jenkinsfile`、`restore-drill.Jenkinsfile` | `writeRollbackRecord`、`writeDrillRecord` | `echo 'Build_Record 寫入失敗'` 與 `currentBuild.result = 'FAILURE'` |
+| `ci/notify.groovy` | `notifyChannels`（三處） | `ok = false`；`echo "通知失敗：${name}"`；不還原結果 |
+
+寫法（以 `readPlan` 為例）：
+
+```groovy
+/** 讀取 ci/stages.mjs 的規劃 JSON；讀取或解析失敗視為觸發被拒絕。失敗時只輸出例外類別（Components 第 23.3 節）。 */
+Map readPlan(String path) {
+  String failure = null
+  Object parsed = null
+  try {
+    String text = readFile(path)
+    parsed = parseJsonText(text)
+  } catch (Exception e) {
+    failure = e.getClass().getName()
+  }
+  if (failure != null) {
+    echo "readPlan: ${failure}"
+    return [reject: '階段規劃輸出無效']
+  }
+  if (!(parsed instanceof Map)) {
+    echo "readPlan: 不是 JSON 物件（${parsed == null ? 'null' : parsed.getClass().getName()}）"
+    return [reject: '階段規劃輸出無效']
+  }
+  return (Map) parsed
+}
+```
+
+- catch 本體只做指定：記下 `<例外變數>.getClass().getName()` 與原本的固定結果（例如 `rc = 124`、`missing << …`、`currentBuild.result = 'FAILURE'`），不呼叫任何 step。`echo` 與原本寫在 catch 中的其他 step（包括原本的固定 echo 訊息）移到 try/catch 之後，以 `if (failure != null)` 判斷，原本的訊息文字與順序不變。原因：catch 本體執行時例外物件仍在 CPS 的 continuation 中，如果例外引用了不可序列化的物件（例如 Groovy 的 `MissingMethodException` 保存呼叫引數），在 catch 內呼叫 step 會讓存檔再次失敗。
+- `try … finally` 中的 `finally` 區塊照舊執行 step（例如 `keepProductionBuildLog` 刪除 API token），因為那時例外變數已離開作用域。
+- echo 格式為 `"<函式名稱>: <完整類別名稱>"`。同一函式有多個 catch 時加上固定標籤，例如 `notifyFinal/gate`、`notifyChannels/description`。可以附上已經會出現在日誌中的識別名稱（管道名稱、憑證 ID），不附其他值。`readPlan` 與 `readJsonFile` 在解析成功但不是 JSON 物件時，另外輸出結果的類別名稱。
+- 不輸出 `e.message`、`e.getMessage()`、`e.toString()`、`"${e}"`、`e.cause`、堆疊或 `printStackTrace()`：例外訊息可能含權杖、回應內容或指令輸出（Req 15.4、22.8）。類別名稱是程式碼中固定的字串，不含執行期資料。
+- 原有的固定訊息、`error()` 文字、回傳值、通知內容與建置結果都不變，只多一行 echo。`readPlan` 失敗時建置仍以 `觸發被拒絕：階段規劃輸出無效` 結束；`notifyChannels` 仍不改變建置結果（Req 22.7）。
+
+例外類別的判讀（維運者參考，寫入 `ci/jenkins/README.md` 的 Script Security 一節）：
+
+| echo 的類別 | 可能原因 | 處理 |
+|---|---|---|
+| `java.io.NotSerializableException` | step 執行期間 CPS 函式持有不可序列化的物件 | 依 23.1、23.2 修正該函式 |
+| `org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException` | sandbox 拒絕某個簽章（它是 `SecurityException`，會被 `catch (Exception …)` 吸收） | script-security 拒絕時仍會登記待核准簽章，到 In-process Script Approval 比對後核准 |
+| `groovy.json.JsonException`、`java.lang.IllegalArgumentException` | 檔案內容不是 JSON 或為空 | 檢查封存的報告檔 |
+| `org.jenkinsci.plugins.workflow.steps.FlowInterruptedException` | 逾時或使用者中止 | 依該階段的時間上限判斷 |
+| 其他 `java.io.IOException` 的子類別 | `readFile` 讀不到檔案或 Agent 連線中斷 | 檢查產生該檔案的前一個步驟 |
+
+#### 23.4 Sandbox 與 Script Approval
+
+- `@NonCPS` 函式仍在 Groovy sandbox 中執行。把解析移到 `parseJsonText` 不改變呼叫的簽章，已核准的 `new groovy.json.JsonSlurperClassic` 與 `method groovy.json.JsonSlurperClassic parseText java.lang.String` 仍然適用。
+- `e.getClass().getName()` 用到 `method java.lang.Object getClass` 與 `method java.lang.Class getName`。兩者都列在 script-security 的 [generic-whitelist](https://github.com/jenkinsci/script-security-plugin/blob/master/src/main/resources/org/jenkinsci/plugins/scriptsecurity/sandbox/whitelists/generic-whitelist)，不在 [blacklist](https://github.com/jenkinsci/script-security-plugin/blob/master/src/main/resources/org/jenkinsci/plugins/scriptsecurity/sandbox/whitelists/blacklist) 中。blacklist 對 `java.lang.Class` 只禁止反射用的方法（例如 `getMethods`、`getDeclaredField`、`getConstructor`、`newInstance`）。所以不需要核准。
+- 決定：直接使用 `getClass().getName()`，不另寫 `instanceof` 對照表。對照表只能涵蓋預先列出的類別，而這次要找的正是未預期的類別。不採用 `e.toString()`，因為它含例外訊息。
+- 若 192.168.1.121 上的 script-security 版本較舊、出現這兩個簽章的待核准項目：兩者都不在 blacklist，比對簽章後核准即可，不改用 `toString()`。
+- 這次確認的其他簽章：`JsonOutput.toJson` 的 `java.lang.Object` 版本在 blacklist（SECURITY-538），但 `staticMethod groovy.json.JsonOutput toJson java.util.Map` 在 generic-whitelist。`Jenkinsfile` 的 12 處 `JsonOutput.toJson(…)` 都傳入 Map，在 23.5 加入斷言：`JsonOutput.toJson(` 的引數是 Map 字面值，或是在同一函式中宣告為 `Map` 的變數。
+
+#### 23.5 靜態檢查（`tests/ci-jenkinsfile-cps.test.js`，新增）
+
+- 共用掃描器：把 `tests/ci-jenkinsfile-size.test.js` 的 `scanGroovy` 移到 `tests/support/groovy-scan.js`，兩個測試都從這裡匯入；尺寸測試的斷言與固定樣本不變。
+- 檢查的檔案：`Jenkinsfile`、`ci/jenkins/pipelines/*.Jenkinsfile` 與 `ci/notify.groovy`。如果掃描器無法處理 `ci/notify.groovy` 的頂層 `@Field` 宣告與 `return this`，擴充掃描器並加上固定樣本，不放寬對 Jenkinsfile 的檢查。
+- 以 masked 文字（註解與字串內容換成空白）判斷程式結構，以原文判斷 echo 字串與 GString：
+  1. `new JsonSlurperClassic` 只出現在名為 `parseJsonText`、前一行為 `@NonCPS` 的函式中，每個檔案最多一個；`parseText(` 只出現在 `parseJsonText` 中；沒有 `JsonSlurper`（非 Classic）。檔案有 `import groovy.json.JsonSlurperClassic` 若且唯若它有 `parseJsonText`。
+  2. 呼叫任何 `@NonCPS` 函式時，引數不直接以 step 開頭：`<@NonCPS 函式名稱>(` 之後不得緊接 `readFile(` 或 `sh(`。這涵蓋 `parseText(readFile(`、`parseJsonText(sh(` 與 `parseJsonObject(readFile(`。
+  3. CPS 函式中沒有 `=~`（不含 `==~`）、`.matcher(`、`.iterator(`。
+  4. `@NonCPS` 函式中沒有 step 呼叫。step 名稱清單：`echo`、`sh`、`readFile`、`writeFile`、`fileExists`、`error`、`input`、`sleep`、`load`、`dir`、`withEnv`、`withCredentials`、`timeout`、`catchError`、`retry`、`archiveArtifacts`、`githubNotify`。
+  5. CPS 函式中每個 `catch (Exception x)`、`catch (Throwable x)`、`catch (x)`：本體有 `throw x`；或函式在延後重新拋出的清單中（`Jenkinsfile` 的 `deployStaging`、`deployProduction`、`waitForApproval`），且函式本體有 `throw`；否則本體必須包含 `x.getClass().getName()`、不含第 4 點的 step 呼叫，且同一函式在該 catch 之後有以 `"<函式名稱>` 開頭的 echo 字串。
+  6. 任何 catch 變數 `x` 都不以 `x.message`、`x.getMessage(`、`x.toString(`、`${x}`、`x.cause`、`x.getCause(` 的形式使用，檔案中沒有 `printStackTrace`。把例外傳給既有的輔助函式（例如 `inputRejecter(err)`）不受限制。
+  7. `JsonOutput.toJson(` 的引數是 Map 字面值（`[` 開頭且含 `:`），或是同一函式中以 `Map` 宣告的變數（23.4）。
+- 每條規則都有通過與失敗的固定 Groovy 樣本，至少包括：CPS 函式中的 `parseText(readFile(…))`、指定給區域變數的 `=~`、沒有輸出類別的吸收型 catch、在 catch 本體內呼叫 echo、echo 輸出 `e.message`、`@NonCPS` 函式呼叫 `echo`。
+- 已知限制：檢查只認得上面列出的寫法。其他不可序列化的型別（例如 plugin API 回傳的物件）無法以文字判斷，列為程式碼審查項目；真正的確認是維運者下一次的 Build Now。
+
+#### 23.6 測試更新與驗證
+
+- 既有斷言中依賴 catch 寫法的部分改為新寫法，意圖與強度不變，例如 `tests/ci-jenkinsfile.test.js` 的 `stageScrubSecrets`（`catch (Exception ignored) { … missing << (s.id`）與 `notifyFinal`（`catch (Exception ignored) { echo '最終狀態通知失敗`）。以 grep 找出其他斷言 `readJsonFile`、`readPlan`、`JsonSlurperClassic` 或 catch 本體的測試（包括 `tests/ci-build-image-pipeline.test.js`、`tests/ci-rollback-pipeline.test.js`、`tests/ci-restore-drill.test.js`、`tests/ci-notify.test.js`、`tests/ci-lint.test.js`）。不刪除斷言、不放寬比對；有調整的斷言逐項記錄於任務回報。
+- `tests/ci-jenkinsfile-size.test.js` 必須仍然通過（`pipeline {}` ≤ 400 行、每個頂層函式 ≤ 250 行）；新增的輔助函式放在 `// ---- 輔助函式` 分隔線之後。
+- 本機沒有 Groovy 或 Jenkins。repository 內的檢查是 23.5 的靜態測試、既有的結構測試與 `bun test tests/ci-*.test.js`（Windows 上明列檔名）。維運者的檢查：合併後對 `release/little-moments » main` 按 Build Now，確認建置通過 Init。如果仍然失敗，主控台在 `ERROR` 之前會有 `readPlan: <類別>`，依 23.3 的判讀表處理。
+
 ## Data Models
 
 ### PostgreSQL Schema（`migrations/0001_initial.sql`）
@@ -1692,6 +1826,7 @@ Requirement 27 不新增屬性，原因如下。`provisionSmokeAccount` 的決�
 | 憑證不存在 | `withCredentials` 失敗，訊息只含憑證 ID | 15.3 |
 | 通知失敗 | 重試 3 次，摘要記錄管道名稱，不改結果 | 22.7 |
 | `Jenkinsfile` 編譯失敗（例如 `MethodTooLargeException`） | 建置在 Init 之前失敗，沒有 Build_Record、沒有 pending 通知，也不執行任何部署；合併前由 `tests/ci-jenkinsfile-size.test.js` 限制區塊與函式行數（Components 第 22 節） | 1.1、1.7 |
+| JSON 讀取或解析失敗，或其他例外被 catch 吸收並改為固定結果（例如 `readPlan` 的 `觸發被拒絕：階段規劃輸出無效`） | 固定訊息、回傳值與建置結果不變；另以 echo 輸出 `<函式名稱>: <例外類別>`，不含例外訊息或任何值（Components 第 23 節） | 1.7、15.4 |
 
 ### Deploy_Host 與 Edge_Proxy
 
@@ -1819,6 +1954,14 @@ test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ 
 - **既有結構測試**：`tests/ci-jenkinsfile.test.js` 等改為到階段函式與 post 函式中斷言原本的內容（第 22.4 節），意圖與強度不變。
 - **維運者檢查**：下一次在 `release/little-moments » main` 按 Build Now，確認進入 Init 階段且沒有 `MethodTooLargeException`。
 
+### CPS 序列化與 JSON 解析（Components 第 23 節）
+
+不適用 PBT：要驗證的是 Groovy 原始碼的寫法與 Jenkins CPS 的執行期行為，本機沒有可產生輸入的函式，也無法執行 CPS。測試如下：
+
+- **靜態檢查**（新增 `tests/ci-jenkinsfile-cps.test.js`，第 23.5 節）：JSON 只經 `@NonCPS parseJsonText` 解析、`@NonCPS` 函式的引數不直接是 step、CPS 函式中沒有 `=~`／`.matcher(`／`.iterator(`、`@NonCPS` 函式中沒有 step、吸收型 catch 輸出例外類別且 catch 本體不呼叫 step、不使用例外訊息、`JsonOutput.toJson` 只傳入 Map。每條規則以固定的小型 Groovy 樣本測試通過與失敗兩種情況。掃描器與 `tests/ci-jenkinsfile-size.test.js` 共用（`tests/support/groovy-scan.js`）。
+- **既有結構測試**：斷言 catch 本體的測試改為新寫法，意圖與強度不變（第 23.6 節）；尺寸測試仍須通過。
+- **維運者檢查**：下一次在 `release/little-moments » main` 按 Build Now，確認建置通過 Init；仍失敗時，依主控台中 `readPlan: <類別>` 與第 23.3 節的判讀表處理。
+
 ## Open Risks
 
 1. **資料層重寫工作量**：`server/accounts.js` 約 50 個同步 prepared statement、所有路由與 `tx` 呼叫點都要改為 async，測試檔也要全面改寫。這是本功能最大的工作項目，也最容易引入行為差異。緩解：先建立 `queries.js` 一對一轉換、以既有測試作回歸基準、用全域 advisory lock 保留單一寫入者語意；Bun.SQL 若在 BIGINT 型別、錯誤型別或重連上有問題，切換到 `postgres@3.4.7`。
@@ -1837,3 +1980,4 @@ test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ 
 14. **Smoke_Account 是 Production 的真實帳號**：Production 對網際網路公開，任何人都能嘗試以 `smoke-bot` 登入（仍受每帳號 15 分鐘 5 次的限速）。密碼只存在 `lm-prod-smoke`，長度至少 12 字元；建議以至少 32 字元的隨機值建立。Smoke_Account 為 member，只能看到自己的行程。管理員的行程清單會列出 `smoke-fixture`，管理員刪除該行程或帳號後，下一次 Production 觀察期的 Smoke_Test 會失敗並觸發回滾。`deploy/README.md` 須寫明這一點，並說明以 `smoke-account` 重新建立的方式。已刪除的 Smoke_Account 會被拒絕（Req 27.10），此時須以 `--username` 另取帳號名稱，並同步更新 Jenkinsfile 兩處固定的 `CAMPING_SMOKE_USERNAME=smoke-bot`。
 15. **第一次部署需要人工步驟**：`lm-deploy deploy` 不會啟動 `db`／`proxy`（第 21 節現況），全新主機的第一次 `main` 建置一定在 Staging 失敗，須依 `deploy/README.md` 的順序由 Host_Operator 寫入 `app.env`（不存在時）並完成 `smoke-account` → `create-admin` → `smoke-account`，再以新的 commit 觸發新的 `main` 建置（同一個 commit 按 Build Now 會在 Image Push 拒絕覆寫標籤而失敗）。若之後要讓第一次建置直接通過，可另立需求讓 `deploy` 在服務未執行時啟動它們。
 16. **行數只是 bytecode 大小的代理指標**：本機無法執行 Jenkins 的 CPS 編譯，400／250 行的門檻是依 `build-image.Jenkinsfile` 的 377 行區塊可以編譯而訂。`environment` 項目或 `when` 條件增加時，區塊可能在行數內仍超過 64 KB。發生時建置會在 Init 之前失敗，不會部署任何東西；處理方式是降低門檻並再搬移程式碼。重構後真正的確認是維運者下一次的 Build Now。
+17. **CPS 序列化只能在 Jenkins 上確認**：第 23 節的原因是推定的，本機無法重現；靜態檢查只認得 JsonSlurperClassic、`=~`、`.matcher(`、`.iterator(` 等已知寫法，plugin API 回傳的其他不可序列化物件無法以文字判斷。緩解：吸收型 catch 一律輸出例外類別，下一次失敗時可以從主控台判斷原因，不必再猜。`build-image.Jenkinsfile` 的 `readJsonFile` 與 `readPlan` 寫法相同卻能通過，原因未確認，因此不能把「某個 Job 能通過」當作寫法安全的證據。

@@ -2842,6 +2842,37 @@
         "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
         "timestamp": 1794490253584
       }
+    ],
+    "25.1 以 `@NonCPS` 解析 JSON，並記錄例外類別": [
+      {
+        "executionId": "7ac423cb-266c-45b8-b45b-39e65af2c178",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794491625655
+      },
+      {
+        "executionId": "7ac423cb-266c-45b8-b45b-39e65af2c178",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794492443720
+      }
+    ],
+    "25.2 Checkpoint - CPS 修正後確認所有測試通過": [
+      {
+        "executionId": "7ac423cb-266c-45b8-b45b-39e65af2c178",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794492444040
+      },
+      {
+        "executionId": "7ac423cb-266c-45b8-b45b-39e65af2c178",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794493119069
+      }
+    ],
+    "25. CPS 序列化與 JSON 解析": [
+      {
+        "executionId": "7ac423cb-266c-45b8-b45b-39e65af2c178",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794493119190
+      }
     ]
   }
 }

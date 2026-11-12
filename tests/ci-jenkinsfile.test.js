@@ -894,7 +894,7 @@ describe('main 專用的映像階段：Image Build → Image Scan → SBOM → I
       'ref="$LM_IMAGE_REPO@$LM_IMAGE_DIGEST"', 'cosign sign --yes --key /keys/cosign.key --tlog-upload=false "$ref"',
       'cosign public-key --key /keys/cosign.key --outfile /out/cosign.pub', 'unset COSIGN_PASSWORD',
       'cosign verify --key /out/cosign.pub --insecure-ignore-tlog=true --output json "$ref"',
-      "signatureCovers(readFile('reports/image-signature.json'), digest)", "image: [signature: 'verified']",
+      "String signatureText = readFile('reports/image-signature.json')", 'signatureCovers(signatureText, digest)', "image: [signature: 'verified']",
       "recordImageGate('final', '', true) != 0",
     ]);
     const [cosign] = dockerRunsIn(sign);
@@ -1574,7 +1574,7 @@ describe('收尾 post { always } 與 post { cleanup }（13.8；Req 2.6、15.4、
     expect(code).not.toMatch(/\$\{env\.LM_SCRUB_VALUE/);
     expect(code).not.toMatch(/--[a-z-]+ "?\$\{?LM_SCRUB_VALUE/);
     // 收尾無法取得秘密時只記錄憑證 ID。
-    expect(functionBody('List stageScrubSecrets()')).toMatch(/catch \(Exception ignored\) \{[\s\S]*missing << \(s\.id/);
+    expect(functionBody('List stageScrubSecrets()')).toMatch(/catch \(Exception e\) \{[\s\S]*missing << \(s\.id/);
   });
 
   test('各階段 Ephemeral_Database 的秘密在刪除前以 0600 保存到建置層級目錄；保存失敗時收尾不封存（fail closed）', () => {
@@ -1635,7 +1635,7 @@ describe('收尾 post { always } 與 post { cleanup }（13.8；Req 2.6、15.4、
     // 關卡說明只讀取遮罩後的封存副本，並跳脫 HTML。
     expect(notify).toContain('dir("${env.WORKSPACE_TMP}/lm-post/archive")');
     expect(functionBody('String gateSummaryText(Map record, String buildUrl)')).toContain('return htmlText(s)');
-    expect(notify).toMatch(/catch \(Exception ignored\) \{\s*echo '最終狀態通知失敗/);
+    expect(notify).toMatch(/catch \(Exception e\) \{\s*failure = e\.getClass\(\)\.getName\(\)\s*\}\s*if \(failure != null\) \{\s*echo "notifyFinal\/notify: \$\{failure\}"\s*echo '最終狀態通知失敗/);
     // Init 尚未載入 notify.groovy 時於收尾載入。
     expect(functionBody('def postNotifier()')).toContain("load('ci/notify.groovy')");
     expect([...code.matchAll(/\.notifyAll\(/g)].length).toBe(2);

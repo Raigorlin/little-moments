@@ -304,6 +304,20 @@ Pipeline 在 Groovy sandbox 中執行。首次執行時以下呼叫可能出現�
 - `staticMethod java.lang.System currentTimeMillis`（逾時與觀察期計時）
 - `@NonCPS` 輔助函式內的集合與字串操作（依實際提示核准）
 
+### 例外類別的判讀
+
+吸收例外並改為固定結果的 `catch` 會在主控台輸出一行 `<函式名稱>[/<標籤>]: <例外類別>`，例如 `readPlan: java.io.NotSerializableException`、`notifyChannels/send: …（githubStatus）`。只輸出完整類別名稱，不輸出例外訊息、cause 或堆疊（訊息可能含權杖、回應內容或指令輸出，Req 15.4、22.8）。這行出現在原本的固定訊息（例如 `觸發被拒絕：階段規劃輸出無效`）之前，判讀如下：
+
+| echo 的類別 | 可能原因 | 處理 |
+|---|---|---|
+| `java.io.NotSerializableException` | step 執行期間 CPS 函式持有不可序列化的物件 | 依 design.md Components 第 23.1、23.2 節修正該函式：不可序列化的物件只在 `@NonCPS` 函式內使用，step 的結果先存入 `String` 變數 |
+| `org.jenkinsci.plugins.scriptsecurity.sandbox.RejectedAccessException` | sandbox 拒絕某個簽章（它是 `SecurityException`，會被 `catch (Exception …)` 吸收） | 到「Manage Jenkins → In-process Script Approval」查看待核准的簽章，比對後核准 |
+| `groovy.json.JsonException`、`java.lang.IllegalArgumentException` | 檔案內容不是 JSON 或為空 | 檢查封存的報告檔 |
+| `org.jenkinsci.plugins.workflow.steps.FlowInterruptedException` | 逾時或使用者中止 | 依該階段的時間上限判斷 |
+| 其他 `java.io.IOException` 的子類別 | `readFile` 讀不到檔案或 Agent 連線中斷 | 檢查產生該檔案的前一個步驟 |
+
+輸出類別名稱用到的 `method java.lang.Object getClass` 與 `method java.lang.Class getName` 都在 script-security 的 generic-whitelist，不需要核准。若較舊的 script-security 版本仍把它們列為待核准項目，兩者都不在 blacklist，比對簽章後核准即可。
+
 `jobs.groovy` 由 Configuration as Code 以系統身分執行。若啟用「Enable script security for Job DSL scripts」，請確認 CasC 載入的 Job DSL 不需要額外核准（`SecretBytes.fromBytes`、`hudson.util.Secret.fromString`、`java.io.File` 讀取）。
 
 ## GitHub 端設定

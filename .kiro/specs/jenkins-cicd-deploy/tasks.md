@@ -804,6 +804,26 @@
     - 執行受影響的 `bun test` 測試檔（含 24.1 列出的檔案與全部 `tests/ci-*.test.js`，Windows 上明列檔名）與秘密掃描（`bun scripts/scan-secrets.mjs`），確認全部通過且沒有任何秘密值。Ensure all tests pass, ask the user if questions arise.
     - _Requirements: 1.1_
 
+- [x] 25. CPS 序列化與 JSON 解析
+  - [x] 25.1 以 `@NonCPS` 解析 JSON，並記錄例外類別
+    - 背景與設計見 design.md Components 第 23 節：192.168.1.121 上 `release/little-moments » main` 建置 #7（commit `8df0101`）在 Init 以 `觸發被拒絕：階段規劃輸出無效` 失敗，但封存的 `reports/plan.json` 有效、Script Approval 沒有待核准簽章。推定原因是 `readPlan` 的 `new JsonSlurperClassic().parseText(readFile(path))` 在 `readFile` step 執行期間持有不可序列化的 JsonSlurperClassic，`NotSerializableException` 被 `catch (Exception ignored)` 轉成固定訊息
+    - 開始前重新讀取 `Jenkinsfile`、`ci/jenkins/pipelines/*.Jenkinsfile`、`ci/notify.groovy` 與 `tests/ci-jenkinsfile-size.test.js`；以 grep 找出所有 `JsonSlurperClassic`、`parseText(`、`catch (`、`=~`，與第 23 節的盤點表比對，有差異時在任務回報說明
+    - 每個解析 JSON 的檔案（`Jenkinsfile`、`build-image.Jenkinsfile`、`rollback.Jenkinsfile`、`restore-drill.Jenkinsfile`）加入一份 `@NonCPS Object parseJsonText(String text)`（第 23.1 節），放在 `// ---- 輔助函式` 分隔線之後或檔案的輔助函式區；所有 `new JsonSlurperClassic().parseText(…)` 改為呼叫它。`digest-lookup.Jenkinsfile` 與 `ci/notify.groovy` 不解析 JSON，不加入
+    - CPS 函式中先把 `readFile`／`sh(returnStdout: true)` 的結果存入 `String` 變數，再呼叫 `parseJsonText` 或其他 `@NonCPS` 函式：`readPlan`、`build-image.Jenkinsfile` 的 `readJsonFile`、根目錄的 `readJsonFile`（`parseJsonObject(readFile(path))` 拆成兩個敘述）；`rollback`／`restore-drill` 的 `readJsonFile` 把取最後一個非空行的運算式原樣移到 `@NonCPS String lastNonEmptyLine(String text)`
+    - 依第 23.3 節處理所有吸收例外的 catch（`readPlan`、`restoreStaging`、`runStagingSmoke`、`runProductionSmoke`、`restoreProduction`、`stageScrubSecrets`、`keepProductionBuildLog`、`notifyFinal` 兩處、三個 `readJsonFile`、`writeRollbackRecord`、`writeDrillRecord`、`ci/notify.groovy` 的 `notifyChannels` 三處）：catch 本體只記下 `<例外變數>.getClass().getName()` 與原本的固定結果，不呼叫 step；`echo "<函式名稱>[/<固定標籤>]: <類別>"` 與原本在 catch 中的 echo 移到 try/catch 之後；`readPlan`／`readJsonFile` 解析成功但不是 JSON 物件時另外輸出結果的類別名稱。不輸出 `e.message`、`e.toString()`、`"${e}"`、`e.cause` 或堆疊
+    - 重新拋出與延後重新拋出的 catch（`runStagingDeployStage`、`runProductionDeployStage`、`runScan`、核准迴圈、`postStep`、`deployStaging`、`deployProduction`、`waitForApproval`、`rollback.Jenkinsfile` 的逾時／中止）與 `@NonCPS` 函式內的 catch 不變；逐一確認延後重新拋出的例外在函式中確實被拋出
+    - 不變：所有 `error()` 文字、原有 echo 訊息與順序、回傳值、`reject` 文字、通知內容、建置結果、`when` 條件、stage 名稱與順序、`withCredentials` 範圍；除了輸出例外類別的 `echo` 之外不新增 step。`getClass().getName()` 的兩個簽章都在 generic-whitelist（第 23.4 節），不需要核准
+    - `ci/jenkins/README.md` 的 Script Security 一節加入第 23.3 節的例外類別判讀表，並說明 `getClass`／`getName` 不需核准、`RejectedAccessException` 出現時到 In-process Script Approval 查看
+    - 把 `tests/ci-jenkinsfile-size.test.js` 的 `scanGroovy` 移到 `tests/support/groovy-scan.js` 並由尺寸測試匯入，尺寸測試的斷言與固定樣本不變；新增 `tests/ci-jenkinsfile-cps.test.js`（第 23.5 節的七條規則，含每條規則通過與失敗的固定 Groovy 樣本），檢查 `Jenkinsfile`、`ci/jenkins/pipelines/*.Jenkinsfile` 與 `ci/notify.groovy`；掃描器無法處理 `ci/notify.groovy` 時擴充掃描器並加固定樣本，不放寬 Jenkinsfile 的檢查
+    - 更新斷言舊 catch 寫法的既有測試（至少 `tests/ci-jenkinsfile.test.js` 的 `stageScrubSecrets` 與 `notifyFinal`；以 grep 找出 `tests/ci-build-image-pipeline.test.js`、`tests/ci-rollback-pipeline.test.js`、`tests/ci-restore-drill.test.js`、`tests/ci-notify.test.js`、`tests/ci-lint.test.js` 中受影響的斷言），意圖與強度不變：不刪除斷言、不放寬比對；有調整的斷言逐項記錄於任務回報
+    - 執行 `bun test tests/ci-jenkinsfile-cps.test.js tests/ci-jenkinsfile-size.test.js tests/ci-jenkinsfile.test.js tests/ci-lint.test.js tests/ci-jenkins-config.test.js tests/ci-build-image-pipeline.test.js tests/ci-rollback-pipeline.test.js tests/ci-restore-drill.test.js tests/ci-digest-lookup.test.js tests/ci-notify.test.js`，再以明列檔名的方式執行全部 `tests/ci-*.test.js`（Windows 上不依賴 glob 展開）；`pipeline {}` 區塊仍 ≤ 400 行、每個頂層函式仍 ≤ 250 行
+    - 本機沒有 Groovy／Jenkins，無法執行 CPS；在任務回報寫明維運者檢查：合併後對 `release/little-moments » main` 按 Build Now，確認建置通過 Init；仍失敗時主控台在 `ERROR` 前會有 `readPlan: <類別>`，依第 23.3 節的判讀表處理
+    - _Requirements: 1.1, 1.7, 15.4_
+
+  - [x] 25.2 Checkpoint - CPS 修正後確認所有測試通過
+    - 執行受影響的 `bun test` 測試檔（含 25.1 列出的檔案與全部 `tests/ci-*.test.js`，Windows 上明列檔名）與秘密掃描（`bun scripts/scan-secrets.mjs`），確認全部通過且沒有任何秘密值。Ensure all tests pass, ask the user if questions arise.
+    - _Requirements: 1.1_
+
 ## Notes
 
 - 標記 `*` 的子任務為選用（property test、整合測試與額外檢查），可為加快 MVP 而略過。
@@ -816,6 +836,7 @@
 - 任務 22 來自 192.168.1.121 上 `install.sh` 的 sudoers 步驟失敗（sudo-rs 0.2.13 不支援 `requiretty`）；Requirement 15.9 的行為不變，沒有新的 Correctness Property，以靜態檢查、bats 固定樣本與 `visudo -cf` 驗證。
 - 任務 23 來自準備 192.168.1.121 第一次部署時發現的缺口：Smoke_Test 需要的 `smoke-bot` 與 `smoke-fixture` 沒有任何建立方式，且 `lm-deploy deploy` 不會啟動 `db`／`proxy`。依 Requirement 27，由 Host_Operator 以 `lm-deploy <env> smoke-account` 建立；部署憑證權限不變（Requirement 15.9）。因為 `needsSetup` 只看使用者數量，順序固定為先 `create-admin`、後 Smoke_Account。沒有新的 Correctness Property：決策表只有 16 種組合，以窮舉範例測試涵蓋。
 - 任務 24 來自 192.168.1.121 上第一次真實建置（commit `3c66555`）：`release/little-moments » main` 在任何階段執行前以 `MethodTooLargeException` 失敗，因為 Declarative Pipeline 把 `pipeline {}` 區塊（1677 行）編譯成單一 JVM 方法，超過 64 KB 限制（JENKINS-37984）。依 design.md Components 第 22 節把各階段內容移到頂層函式，行為不變，並以 `tests/ci-jenkinsfile-size.test.js` 限制區塊與函式行數；不採用 controller 的 `SCRIPT_SPLITTING_TRANSFORMATION`。沒有新的需求或 Correctness Property；真正的編譯檢查是維運者下一次的 Build Now。
+- 任務 25 來自 192.168.1.121 上任務 24 之後的建置 #7（commit `8df0101`）：`Jenkinsfile` 已能編譯，但 Init 以 `觸發被拒絕：階段規劃輸出無效` 失敗，而封存的 `reports/plan.json` 有效、Script Approval 沒有待核准簽章。推定原因是 `readPlan` 在 `readFile` step 執行期間持有不可序列化的 JsonSlurperClassic，例外被 `catch (Exception ignored)` 轉成固定訊息。依 design.md Components 第 23 節，JSON 一律經 `@NonCPS parseJsonText` 解析、step 先存入 `String`，吸收例外的 catch 另外 echo 例外類別（不含訊息或值），並以 `tests/ci-jenkinsfile-cps.test.js` 靜態檢查。行為不變，只讓失敗可以診斷；沒有新的需求或 Correctness Property，真正的確認是維運者下一次的 Build Now。
 - 任務 18 合併 security-harden：兩分支沒有共同歷史，以 main 的 `cd06606` 作為合成共同基底進行三方合併；應用程式功能採用 security-harden，部署、設定模型、Setup_Token 與 PostgreSQL 資料層採用 main；收據 AI 改為 OpenAI（`CAMPING_OPENAI_*`）。
 
 ## Task Dependency Graph
@@ -871,7 +892,9 @@
     { "id": 45, "tasks": ["23.3"] },
     { "id": 46, "tasks": ["23.4"] },
     { "id": 47, "tasks": ["24.1"] },
-    { "id": 48, "tasks": ["24.2"] }
+    { "id": 48, "tasks": ["24.2"] },
+    { "id": 49, "tasks": ["25.1"] },
+    { "id": 50, "tasks": ["25.2"] }
   ]
 }
 ```

@@ -111,33 +111,49 @@ def notifyChannels(String status, Map context = [:]) {
   List failed = []
   for (def ch in channels()) {
     boolean ok = false
+    String sendFailure = null
     try {
       retry(MAX_ATTEMPTS) {
         ch.send.call(status, context ?: [:])
       }
       ok = true
-    } catch (Throwable ignored) {
-      // 不輸出例外訊息：訊息可能含權杖或回應內容（Req 22.8）。
+    } catch (Throwable e) {
+      // 不輸出例外訊息：訊息可能含權杖或回應內容（Req 22.8）；只記錄例外類別（Components 第 23.3 節）。
       // 注意：使用者中止（FlowInterruptedException）也會在此被吸收，以免通知階段改變建置結果。
+      sendFailure = e.getClass().getName()
       ok = false
+    }
+    if (sendFailure != null) {
+      echo "notifyChannels/send: ${sendFailure}（${ch.name}）"
     }
     deliveries << [channel: ch.name, ok: ok]
     if (!ok) { failed << ch.name }
   }
   for (String name in failed) {
+    String descriptionFailure = null
     try {
       appendDescription("通知失敗：${name}".toString())
-    } catch (Throwable ignored) {
+    } catch (Throwable e) {
+      descriptionFailure = e.getClass().getName()
+    }
+    if (descriptionFailure != null) {
+      echo "notifyChannels/description: ${descriptionFailure}"
       echo "通知失敗：${name}"
     }
   }
   // 防禦：任何管道若意外改動結果，嘗試還原為通知前的值
   // （Jenkins 只允許結果變差，因此這僅在結果被意外調整時才有作用）。
+  String resultFailure = null
   try {
     if (resultBefore != null && currentBuild.result != resultBefore) {
       currentBuild.result = resultBefore
     }
-  } catch (Throwable ignored) { }
+  } catch (Throwable e) {
+    resultFailure = e.getClass().getName()
+  }
+  if (resultFailure != null) {
+    echo "notifyChannels/result: ${resultFailure}"
+  }
   return deliveries
 }
 

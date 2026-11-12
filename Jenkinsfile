@@ -1575,7 +1575,8 @@ void runImageSignStage() {
   } else if (signRc != 0) {
     error("App_Image 簽章無法完成（結束碼 ${signRc}）")
   }
-  if (!signatureCovers(readFile('reports/image-signature.json'), digest)) {
+  String signatureText = readFile('reports/image-signature.json')
+  if (!signatureCovers(signatureText, digest)) {
     error('cosign verify 的結果不含此 Image_Digest 的簽章（Req 17.6）')
   }
   mergeRecordPatch('reports/image-sign-record-patch.json', [
@@ -1794,6 +1795,13 @@ void pipelinePostCleanup() {
 }
 
 // ------------------------------------------------------------------ 輔助函式
+
+/** 唯一建立 JsonSlurperClassic 的地方（Components 第 23 節）。回傳 Map／List／String／Number／Boolean／null（皆可序列化）；
+ *  null、空字串或無效 JSON 時丟出例外，由呼叫端處理。 */
+@NonCPS
+Object parseJsonText(String text) {
+  return new JsonSlurperClassic().parseText(text)
+}
 
 /**
  * 記錄目前執行中的階段名稱（與 ci/stages.mjs 的 STAGE 一致），供收尾計算第一個失敗階段；
@@ -2388,7 +2396,7 @@ Map securityGate(String evaluationText, List scanErrors, String stageError, Stri
   }
   Map ev = null
   try {
-    Object parsed = evaluationText ? new JsonSlurperClassic().parseText(evaluationText) : null
+    Object parsed = evaluationText ? parseJsonText(evaluationText) : null
     if (parsed instanceof Map && String.valueOf(parsed.commit) == commit && parsed.pass instanceof Boolean) {
       ev = (Map) parsed
     }
@@ -2644,13 +2652,14 @@ void saveContainerLog(String name, String file) {
  * 最近 Release_Tag、其 App_Image digest、相關遷移檔、失敗或略過原因與失敗的 Smoke_Test 項目；另記錄各日誌路徑。
  */
 void recordMigrationCompat(String status, String reason) {
+  String smokeText = fileExists('reports/migration-compat-smoke.json') ? readFile('reports/migration-compat-smoke.json') : null
   Map compat = [
     status: status,
     releaseTag: env.LM_COMPAT_TAG ?: '',
     image: env.LM_COMPAT_IMAGE ?: '',
     migrations: (env.LM_COMPAT_MIGRATIONS ?: '').tokenize(' '),
     reason: gateText(reason ?: ''),
-    failedSmokeSteps: fileExists('reports/migration-compat-smoke.json') ? smokeFailures(readFile('reports/migration-compat-smoke.json')) : [],
+    failedSmokeSteps: smokeText != null ? smokeFailures(smokeText) : [],
   ]
   writeFile(file: 'reports/migration-compat.json', text: JsonOutput.toJson(compat))
   Map reports = existingReports([
@@ -2673,7 +2682,7 @@ void recordMigrationCompat(String status, String reason) {
 List smokeFailures(String text) {
   List out = []
   try {
-    Object doc = new JsonSlurperClassic().parseText(text ?: '')
+    Object doc = parseJsonText(text ?: '')
     List steps = doc instanceof Map && doc.steps instanceof List ? (List) doc.steps : []
     for (Object s : steps) {
       Map m = s instanceof Map ? (Map) s : [:]
@@ -2944,7 +2953,7 @@ void stopDastScanner() {
 List dastTargetProblems(String text) {
   List out = []
   try {
-    Object doc = new JsonSlurperClassic().parseText(text ?: '')
+    Object doc = parseJsonText(text ?: '')
     Map t = doc instanceof Map && doc.targets instanceof Map ? (Map) doc.targets : [:]
     Map l = doc instanceof Map && doc.limits instanceof Map ? (Map) doc.limits : [:]
     for (Object e : (t.errors instanceof List ? (List) t.errors : [])) {
@@ -2972,7 +2981,7 @@ List dastTargetProblems(String text) {
 List isolationReachable(String text) {
   List out = []
   try {
-    Object doc = new JsonSlurperClassic().parseText(text ?: '')
+    Object doc = parseJsonText(text ?: '')
     for (Object r : (doc instanceof Map && doc.reachable instanceof List ? (List) doc.reachable : [])) {
       out << gateText("Test_Environment 可連線至 Ephemeral_Database 以外的位址：${r}")
     }
@@ -3018,7 +3027,7 @@ void requireQaAndSecurityPassed() {
 @NonCPS
 boolean gatePassed(String text, String commit) {
   try {
-    Object g = text ? new JsonSlurperClassic().parseText(text) : null
+    Object g = text ? parseJsonText(text) : null
     return g instanceof Map && g.pass == true && String.valueOf(g.commit) == commit && commit ==~ /^[0-9a-f]{40}$/
   } catch (Exception ignored) {
     return false
@@ -3221,7 +3230,7 @@ Map imageGate(String phase, String evaluationText, List errors, String stageErro
 boolean signatureCovers(String text, String digest) {
   if (!(digest ==~ /^sha256:[0-9a-f]{64}$/)) { return false }
   try {
-    Object doc = new JsonSlurperClassic().parseText((text ?: '').trim())
+    Object doc = parseJsonText((text ?: '').trim())
     if (!(doc instanceof List) || ((List) doc).isEmpty()) { return false }
     for (Object e : (List) doc) {
       if (e instanceof Map && e.critical instanceof Map && e.critical.image instanceof Map &&
@@ -3240,7 +3249,7 @@ boolean signatureCovers(String text, String digest) {
 Map recordImageFacts(String text) {
   Map out = [digest: '', commit: '', sbom: '']
   try {
-    Object r = text ? new JsonSlurperClassic().parseText(text) : null
+    Object r = text ? parseJsonText(text) : null
     if (r instanceof Map) {
       if (r.image instanceof Map && r.image.digest instanceof String) { out.digest = r.image.digest }
       if (r.source instanceof Map && r.source.commit instanceof String) { out.commit = r.source.commit }
@@ -3465,6 +3474,7 @@ void deployStaging() {
 void restoreStaging() {
   if (env.LM_STG_RESTORE_DONE == 'true') { return }
   env.LM_STG_RESTORE_DONE = 'true'
+  String failure = null
   try {
     timeout(time: 5, unit: 'MINUTES') {
       stagingHost('status', 'status-before-restore.json')
@@ -3497,6 +3507,10 @@ void restoreStaging() {
       ''')
     }
   } catch (err) {
+    failure = err.getClass().getName()
+  }
+  if (failure != null) {
+    echo "restoreStaging: ${failure}"
     echo 'Staging 還原未於 5 分鐘內完成或被中止，需人工確認 Staging 狀態'
   }
   if (!fileExists('reports/staging/restore.json')) {
@@ -3675,6 +3689,7 @@ int attestStaging() {
  */
 int runStagingSmoke() {
   int rc = 124
+  String failure = null
   try {
     timeout(time: 10, unit: 'MINUTES') {
       withCredentials([file(credentialsId: env.LM_STAGING_SMOKE_CREDENTIALS, variable: 'CAMPING_SMOKE_PASSWORD_FILE')]) {
@@ -3696,8 +3711,12 @@ int runStagingSmoke() {
       }
     }
   } catch (err) {
-    echo 'Staging 的 Smoke_Test 未於 10 分鐘內完成或被中止'
+    failure = err.getClass().getName()
     rc = 124
+  }
+  if (failure != null) {
+    echo "runStagingSmoke: ${failure}"
+    echo 'Staging 的 Smoke_Test 未於 10 分鐘內完成或被中止'
   }
   return rc
 }
@@ -3752,7 +3771,8 @@ int recordStagingGate(String stageError) {
 /** 讀取 ci/staging.mjs 輸出的 JSON 檔；不存在、讀取或解析失敗回傳空 Map（呼叫端視為未通過）。 */
 Map readJsonFile(String path) {
   if (!fileExists(path)) { return [:] }
-  return parseJsonObject(readFile(path))
+  String text = readFile(path)
+  return parseJsonObject(text)
 }
 
 /** 整份文字為一個 JSON 物件，否則取最後一個非空行；皆失敗回傳空 Map。 */
@@ -3763,7 +3783,7 @@ Map parseJsonObject(String text) {
   if (!lines.isEmpty()) { candidates << lines[-1].trim() }
   for (Object c : candidates) {
     try {
-      Object parsed = new JsonSlurperClassic().parseText(c.toString())
+      Object parsed = parseJsonText(c.toString())
       if (parsed instanceof Map) { return (Map) parsed }
     } catch (Exception ignored) {
       // 嘗試下一個候選
@@ -4826,6 +4846,7 @@ int observeStep(String type, int exitCode, String result, long ms, String phase)
 int runProductionSmoke(String outName) {
   if (!(outName ==~ /^smoke-[a-z-]+\.json$/)) { error('內部錯誤：Smoke_Test 輸出檔名無效') }
   int rc = 124
+  String failure = null
   try {
     timeout(time: 90, unit: 'SECONDS') {
       withCredentials([file(credentialsId: env.LM_PROD_SMOKE_CREDENTIALS, variable: 'CAMPING_SMOKE_PASSWORD_FILE')]) {
@@ -4847,8 +4868,12 @@ int runProductionSmoke(String outName) {
       }
     }
   } catch (err) {
-    echo 'Production 的 Smoke_Test 未於 90 秒內完成或被中止'
+    failure = err.getClass().getName()
     rc = 124
+  }
+  if (failure != null) {
+    echo "runProductionSmoke: ${failure}"
+    echo 'Production 的 Smoke_Test 未於 90 秒內完成或被中止'
   }
   return rc
 }
@@ -4861,6 +4886,7 @@ int runProductionSmoke(String outName) {
 void restoreProduction() {
   if (env.LM_PRD_RESTORE_DONE == 'true') { return }
   env.LM_PRD_RESTORE_DONE = 'true'
+  String failure = null
   try {
     timeout(time: 5, unit: 'MINUTES') {
       prodHost('status', 'status-before-restore.json')
@@ -4893,6 +4919,10 @@ void restoreProduction() {
       ''')
     }
   } catch (err) {
+    failure = err.getClass().getName()
+  }
+  if (failure != null) {
+    echo "restoreProduction: ${failure}"
     echo 'Production 回滾未於 5 分鐘內完成或被中止，需人工確認 Production 狀態'
   }
   if (!fileExists('reports/production/restore.json')) {
@@ -4997,7 +5027,8 @@ int recordProductionGate(String stageError) {
   }
   env.LM_PRD_GATE_DONE = 'true'
   if (fileExists('reports/production/rollback-summary.txt')) {
-    appendSummary(gateText(readFile('reports/production/rollback-summary.txt').trim()))
+    String rollbackSummary = readFile('reports/production/rollback-summary.txt').trim()
+    appendSummary(gateText(rollbackSummary))
   }
   return rc
 }
@@ -5078,14 +5109,25 @@ boolean isManualBuild() {
     !currentBuild.getBuildCauses('org.jenkinsci.plugins.workflow.cps.replay.ReplayCause').isEmpty()
 }
 
-/** 讀取 ci/stages.mjs 的規劃 JSON；讀取或解析失敗視為觸發被拒絕。 */
+/** 讀取 ci/stages.mjs 的規劃 JSON；讀取或解析失敗視為觸發被拒絕。失敗時只輸出例外類別（Components 第 23.3 節）。 */
 Map readPlan(String path) {
+  String failure = null
+  Object parsed = null
   try {
-    def parsed = new JsonSlurperClassic().parseText(readFile(path))
-    return parsed instanceof Map ? (Map) parsed : [reject: '階段規劃輸出無效']
-  } catch (Exception ignored) {
+    String text = readFile(path)
+    parsed = parseJsonText(text)
+  } catch (Exception e) {
+    failure = e.getClass().getName()
+  }
+  if (failure != null) {
+    echo "readPlan: ${failure}"
     return [reject: '階段規劃輸出無效']
   }
+  if (!(parsed instanceof Map)) {
+    echo "readPlan: 不是 JSON 物件（${parsed == null ? 'null' : parsed.getClass().getName()}）"
+    return [reject: '階段規劃輸出無效']
+  }
+  return (Map) parsed
 }
 
 /** 觸發被拒絕時（例如 Tag 格式不符）仍需建立 Build_Record，觸發類型依 Multibranch 環境變數推定。 */
@@ -5267,11 +5309,16 @@ void writeScrubFile() {
 List stageScrubSecrets() {
   List missing = []
   for (Map s : scrubCredentialSpecs()) {
+    String failure = null
     try {
       stageScrubSecret(s)
-    } catch (Exception ignored) {
-      // 例外訊息可能含憑證內容以外的細節，只記錄憑證 ID（Req 15.3）。
+    } catch (Exception e) {
+      // 例外訊息可能含憑證內容以外的細節，只記錄憑證 ID 與例外類別（Req 15.3；Components 第 23.3 節）。
+      failure = e.getClass().getName()
       missing << (s.id ? s.id.toString() : '?')
+    }
+    if (failure != null) {
+      echo "stageScrubSecrets: ${failure}（${s.id ? s.id.toString() : '?'}）"
     }
   }
   return missing
@@ -5384,6 +5431,7 @@ void keepProductionBuildLog() {
   if (env.LM_TRUSTED != 'true' || env.LM_TRIGGER_KIND != 'release_tag' || env.LM_PRD_OBSERVED != 'true') { return }
   if (!(env.JOB_NAME ?: '').startsWith('release/') || !env.BUILD_IMAGE_DIGEST) { return }
   int rc = 2
+  String failure = null
   withEnv(["LM_KEEP_DIR=${env.WORKSPACE_TMP}/lm-keep-log"]) {
     try {
       withCredentials([usernamePassword(credentialsId: env.LM_JENKINS_RETENTION_CREDENTIALS, usernameVariable: 'LM_KEEP_USER_SRC', passwordVariable: 'LM_KEEP_TOKEN_SRC')]) {
@@ -5413,7 +5461,8 @@ void keepProductionBuildLog() {
           ''')
         }
       }
-    } catch (Exception ignored) {
+    } catch (Exception e) {
+      failure = e.getClass().getName()
       rc = 2
     } finally {
       sh(label: 'remove Jenkins API token（keepLog）', script: '''
@@ -5423,6 +5472,9 @@ void keepProductionBuildLog() {
         esac
       ''')
     }
+  }
+  if (failure != null) {
+    echo "keepProductionBuildLog: ${failure}"
   }
   if (rc == 0) {
     appendSummary('已保留（keepLog）本建置與產生該 Image_Digest 的 main 建置（Req 21.6）')
@@ -5529,17 +5581,23 @@ def postNotifier() {
  * try/catch 保護，載入失敗也不影響其他收尾。
  */
 void notifyFinal() {
+  String failure = null
   try {
     String postFailure = env.LM_POST_RESULT_BEFORE == 'SUCCESS' ? (env.LM_POST_FAILED_STEP ?: '') : ''
     Map o = finalOutcome(currentBuild.currentResult, env.LM_CURRENT_STAGE ?: '', postFailure)
     String gate = ''
     if (o.record != 'SUCCESS' && env.LM_POST_ARCHIVED == 'true') {
+      String gateFailure = null
       try {
         dir("${env.WORKSPACE_TMP}/lm-post/archive") {
           gate = gateSummaryText(readJsonFile('reports/build-record.json'), env.BUILD_URL ?: '')
         }
-      } catch (Exception ignored) {
+      } catch (Exception e) {
+        gateFailure = e.getClass().getName()
         gate = ''
+      }
+      if (gateFailure != null) {
+        echo "notifyFinal/gate: ${gateFailure}"
       }
     }
     def notifier = postNotifier()
@@ -5548,7 +5606,11 @@ void notifyFinal() {
       return
     }
     notifier.notifyAll(o.notify, [commit: env.GIT_COMMIT_FULL ?: '', failedStage: o.failedStage, gateSummary: gate])
-  } catch (Exception ignored) {
+  } catch (Exception e) {
+    failure = e.getClass().getName()
+  }
+  if (failure != null) {
+    echo "notifyFinal/notify: ${failure}"
     echo '最終狀態通知失敗（不改變建置結果）'
   }
 }

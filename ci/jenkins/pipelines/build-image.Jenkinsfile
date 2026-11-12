@@ -427,12 +427,30 @@ void assertDigestRef(String name, String value) {
   }
 }
 
-/** 讀取 JSON 檔；讀取或解析失敗回傳空 Map。 */
+/** 讀取 JSON 檔；讀取或解析失敗回傳空 Map。失敗時只輸出例外類別（Components 第 23.3 節）。 */
 Map readJsonFile(String path) {
+  String failure = null
+  Object parsed = null
   try {
-    def parsed = new JsonSlurperClassic().parseText(readFile(path))
-    return parsed instanceof Map ? (Map) parsed : [:]
-  } catch (Exception ignored) {
+    String text = readFile(path)
+    parsed = parseJsonText(text)
+  } catch (Exception e) {
+    failure = e.getClass().getName()
+  }
+  if (failure != null) {
+    echo('readJsonFile: ' + failure)
     return [:]
   }
+  if (!(parsed instanceof Map)) {
+    echo('readJsonFile: 不是 JSON 物件（' + (parsed == null ? 'null' : parsed.getClass().getName()) + '）')
+    return [:]
+  }
+  return (Map) parsed
+}
+
+/** 唯一建立 JsonSlurperClassic 的地方（Components 第 23 節）。回傳 Map／List／String／Number／Boolean／null（皆可序列化）；
+ *  null、空字串或無效 JSON 時丟出例外，由呼叫端處理。 */
+@NonCPS
+Object parseJsonText(String text) {
+  return new JsonSlurperClassic().parseText(text)
 }

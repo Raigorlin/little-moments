@@ -158,6 +158,7 @@ void writeDrillRecord() {
   }
   env.LM_DRILL_RESULT_STATUS = status
   env.LM_DRILL_FAILED_STAGE = status == 'SUCCESS' ? '' : (env.LM_CURRENT_STAGE ?: '')
+  String failure = null
   try {
     inBuildImage {
       sh(label: 'Build_Record', script: '''
@@ -169,8 +170,12 @@ void writeDrillRecord() {
       ''')
     }
   } catch (err) {
-    echo 'Build_Record 寫入失敗'
+    failure = err.getClass().getName()
     currentBuild.result = 'FAILURE'
+  }
+  if (failure != null) {
+    echo('writeDrillRecord: ' + failure)
+    echo 'Build_Record 寫入失敗'
   }
   if (status != 'SUCCESS' && current == 'SUCCESS') {
     currentBuild.result = 'FAILURE'
@@ -234,18 +239,43 @@ void assertDeployTarget() {
   }
 }
 
-/** 讀取 JSON 檔（最後一行）；讀取或解析失敗回傳空 Map。 */
+/** 讀取 JSON 檔（最後一行）；讀取或解析失敗回傳空 Map。失敗時只輸出例外類別（Components 第 23.3 節）。 */
 Map readJsonFile(String path) {
+  String failure = null
+  Object parsed = null
   try {
-    List lines = readFile(path).tokenize('\n').findAll { it.trim() }
-    if (lines.isEmpty()) {
+    String text = readFile(path)
+    String line = lastNonEmptyLine(text)
+    if (line == null) {
       return [:]
     }
-    def parsed = new JsonSlurperClassic().parseText(lines[-1])
-    return parsed instanceof Map ? (Map) parsed : [:]
-  } catch (Exception ignored) {
+    parsed = parseJsonText(line)
+  } catch (Exception e) {
+    failure = e.getClass().getName()
+  }
+  if (failure != null) {
+    echo('readJsonFile: ' + failure)
     return [:]
   }
+  if (!(parsed instanceof Map)) {
+    echo('readJsonFile: 不是 JSON 物件（' + (parsed == null ? 'null' : parsed.getClass().getName()) + '）')
+    return [:]
+  }
+  return (Map) parsed
+}
+
+/** 最後一個非空行；沒有時回傳 null。 */
+@NonCPS
+String lastNonEmptyLine(String text) {
+  List lines = text.tokenize('\n').findAll { it.trim() }
+  return lines.isEmpty() ? null : lines[-1]
+}
+
+/** 唯一建立 JsonSlurperClassic 的地方（Components 第 23 節）。回傳 Map／List／String／Number／Boolean／null（皆可序列化）；
+ *  null、空字串或無效 JSON 時丟出例外，由呼叫端處理。 */
+@NonCPS
+Object parseJsonText(String text) {
+  return new JsonSlurperClassic().parseText(text)
 }
 
 /** SSH 用戶端函式：只使用 Credential_Store 的金鑰與 known_hosts，不讀取任何 ssh_config 或 agent。 */
