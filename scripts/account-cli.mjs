@@ -1,6 +1,7 @@
 // Shared input, password, and database helpers for the account CLIs (scripts/create-admin.mjs,
-// scripts/reset-password.mjs). In the App_Image they are bundled into /app/tools/create-admin.js and
-// /app/tools/reset-password.js by scripts/build-server.mjs.
+// scripts/reset-password.mjs, scripts/create-smoke-account.mjs). In the App_Image they are bundled into
+// /app/tools/create-admin.js, /app/tools/reset-password.js and /app/tools/create-smoke-account.js by
+// scripts/build-server.mjs.
 //
 // Passwords come only from a hidden terminal prompt, from piped stdin, or from a file named with
 // --password-file. They are never read from arguments or environment variables and never printed.
@@ -90,6 +91,7 @@ export async function openAccountService(database, poolOptions = {}) {
     needsSetup: () => service.needsSetup(),
     createFirstAdmin: (input, options) => service.createFirstAdmin(input, options),
     resetPassword: (username, password) => service.resetPassword(username, password),
+    provisionSmokeAccount: input => service.provisionSmokeAccount(input),
     close: async () => { service.close(); await db.close(); }
   };
 }

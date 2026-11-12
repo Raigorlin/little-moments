@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { NOT_APPLICABLE, NOT_RUN, auditSummary, validateRecord } from '../ci/record.mjs';
 import { DRILL_STEPS, buildDrillRecord, main, parseDrillResult } from '../ci/restore-drill.mjs';
+import { imageContentCheck } from '../ci/image-content-check.mjs';
 
 const root = resolve(import.meta.dir, '..');
 const read = (p) => readFileSync(resolve(root, p), 'utf8');
@@ -325,5 +326,19 @@ describe('安裝與打包', () => {
     expect(install).toContain('SRC_DRILL="$DEPLOY_DIR/compose/drill.yaml"');
     expect(install).toContain('install_atomic "$SRC_DRILL" "$d/drill.yaml" 0644');
     expect(read('scripts/build-server.mjs')).toContain("{ entry: 'scripts/drill.mjs', dir: 'tools', name: 'drill.js' }");
+  });
+
+  test('build-server 打包 /app/tools/create-smoke-account.js，映像內容檢查規則仍通過（Req 27.1、15.5、16.9）', () => {
+    expect(read('scripts/build-server.mjs')).toContain("{ entry: 'scripts/create-smoke-account.mjs', dir: 'tools', name: 'create-smoke-account.js' }");
+    const pkg = JSON.parse(read('package.json'));
+    expect(pkg.scripts['create-smoke-account']).toBe('bun scripts/create-smoke-account.mjs');
+    // Dockerfile 複製整個 /out/（含 tools/），不需要為新工具新增指令。
+    expect(read('Dockerfile')).toMatch(/COPY --from=build[^\n]* \/out\/ \/app\//);
+    const files = [
+      './', 'app/', 'app/server/serve.js', 'app/server/migrate.js', 'app/migrations/0001_initial.sql',
+      'app/tools/', 'app/tools/import-sqlite.js', 'app/tools/drill.js', 'app/tools/create-admin.js',
+      'app/tools/reset-password.js', 'app/tools/create-smoke-account.js', 'app/dist/index.html',
+    ];
+    expect(imageContentCheck(files, '10001:10001', Object.keys(pkg.devDependencies ?? {}))).toEqual({ ok: true, violations: [] });
   });
 });

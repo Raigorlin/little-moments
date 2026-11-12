@@ -11,6 +11,16 @@
 #   FAKE_HEALTH_FAIL=all|blue|green  exec -T proxy wget .../healthz 失敗
 #   FAKE_CADDY_RELOAD_FAIL=1     exec -T proxy caddy reload 失敗
 #   FAKE_IMAGE_LIST=<file>       image ls 的輸出（每行一個 digest）
+# smoke-account（Req 27）：
+#   FAKE_DB_RUNNING=0|1          compose ps --status running -q db 是否輸出容器 id（未設定 = 1）
+#   FAKE_PROXY_RUNNING=0|1       同上，proxy
+#   FAKE_PS_FAIL=1               compose ps 失敗
+#   FAKE_PROXY_UP_FAIL=1         up -d --no-deps proxy 失敗（FAKE_UP_FAIL=1 時 db 與 proxy 的 up 也失敗）
+#   FAKE_SMOKE_TOOL_OUT=<text>   run ... /app/tools/create-smoke-account.js 的 stdout（未設定 = 成功的 JSON）
+#   FAKE_SMOKE_TOOL_RC=<n>       同上的結束碼（未設定 = 0）
+#   FAKE_STDIN_DIR=<dir>         設定時，把 pg_dump、migrate 與 create-smoke-account.js 收到的 stdin 追加寫入
+#                                <dir>/{pg_dump,migrate,tool}.stdin（未設定時不讀取 stdin，tool 的 stdin 一律讀完）
+#   FAKE_ENV_LOG=<file>          設定時，每次呼叫把自己的環境（env 輸出）追加寫入此檔，供測試檢查秘密未經環境傳遞
 set -u
 
 log=${FAKE_DOCKER_LOG:?FAKE_DOCKER_LOG 未設定}
@@ -21,9 +31,46 @@ if [[ ${1:-} == compose ]]; then
 else
   printf '%s\n' "$*" >>"$log"
 fi
+if [[ -n ${FAKE_ENV_LOG:-} ]]; then
+  { printf -- '--- %s\n' "$*"; env; } >>"$FAKE_ENV_LOG"
+fi
+
+# capture_stdin <name>：FAKE_STDIN_DIR 設定時把 stdin 追加到 <dir>/<name>.stdin。
+capture_stdin() {
+  if [[ -n ${FAKE_STDIN_DIR:-} ]]; then
+    cat >>"$FAKE_STDIN_DIR/$1.stdin"
+  elif [[ ${2:-} == always ]]; then
+    cat >/dev/null
+  fi
+}
 
 case $args in
+  *" ps --status running -q db "*)
+    [[ ${FAKE_PS_FAIL:-} == 1 ]] && exit 1
+    [[ ${FAKE_DB_RUNNING:-1} == 1 ]] && printf '0123456789ab\n'
+    exit 0
+    ;;
+  *" ps --status running -q proxy "*)
+    [[ ${FAKE_PS_FAIL:-} == 1 ]] && exit 1
+    [[ ${FAKE_PROXY_RUNNING:-1} == 1 ]] && printf 'ba9876543210\n'
+    exit 0
+    ;;
+  *" up -d --wait --no-deps db "*)
+    [[ ${FAKE_UP_FAIL:-} == 1 ]] && exit 1
+    exit 0
+    ;;
+  *" up -d --no-deps proxy "*)
+    [[ ${FAKE_UP_FAIL:-} == 1 || ${FAKE_PROXY_UP_FAIL:-} == 1 ]] && exit 1
+    exit 0
+    ;;
+  *" --entrypoint bun migrate /app/tools/create-smoke-account.js"*)
+    capture_stdin tool always
+    default_out='{"ok":true,"username":"smoke-bot","account":"created","fixture":"smoke-fixture","fixtureStatus":"created"}'
+    printf '%s\n' "${FAKE_SMOKE_TOOL_OUT-$default_out}"
+    exit "${FAKE_SMOKE_TOOL_RC:-0}"
+    ;;
   *" exec -T db pg_dump "*)
+    capture_stdin pg_dump
     [[ ${FAKE_PG_DUMP_FAIL:-} == 1 ]] && { echo "fake pg_dump: failure" >&2; exit 1; }
     [[ ${FAKE_PG_DUMP_EMPTY:-} == 1 ]] && exit 0
     printf 'PGDMP-fake-%s-%s-%s\n' "$$" "$RANDOM" "$RANDOM"
@@ -38,6 +85,7 @@ case $args in
     exit 0
     ;;
   *" run --rm --no-deps -T migrate "*)
+    capture_stdin migrate
     [[ ${FAKE_MIGRATE_FAIL:-} == 1 ]] && exit 1
     exit 0
     ;;

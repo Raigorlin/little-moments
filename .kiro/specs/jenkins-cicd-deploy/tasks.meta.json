@@ -2756,6 +2756,61 @@
         "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
         "timestamp": 1794474971695
       }
+    ],
+    "23.1 create-smoke-account 工具與映像打包": [
+      {
+        "executionId": "de08dfe6-f06c-4f1d-b0ef-8e056eddfe25",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794477617005
+      },
+      {
+        "executionId": "de08dfe6-f06c-4f1d-b0ef-8e056eddfe25",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794478820123
+      }
+    ],
+    "23.2 lm-deploy smoke-account 子命令（Host_Operator 限定）與 bats": [
+      {
+        "executionId": "de08dfe6-f06c-4f1d-b0ef-8e056eddfe25",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794477617712
+      },
+      {
+        "executionId": "de08dfe6-f06c-4f1d-b0ef-8e056eddfe25",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794478820742
+      }
+    ],
+    "23.3 文件：首次部署與 smoke-bot": [
+      {
+        "executionId": "de08dfe6-f06c-4f1d-b0ef-8e056eddfe25",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794478821141
+      },
+      {
+        "executionId": "de08dfe6-f06c-4f1d-b0ef-8e056eddfe25",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794479641938
+      }
+    ],
+    "23.4 Checkpoint - smoke-bot 佈建後確認所有測試通過": [
+      {
+        "executionId": "de08dfe6-f06c-4f1d-b0ef-8e056eddfe25",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794479642443
+      },
+      {
+        "executionId": "de08dfe6-f06c-4f1d-b0ef-8e056eddfe25",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794482007089
+      }
+    ],
+    "23. smoke-bot 與 smoke-fixture 佈建": [
+      {
+        "executionId": "de08dfe6-f06c-4f1d-b0ef-8e056eddfe25",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794482007204
+      }
     ]
   }
 }

@@ -13,7 +13,8 @@
     "test:security:local": "bun scripts/security-suite.mjs",
     "start": "bun scripts/serve.mjs",
     "create-admin": "bun scripts/create-admin.mjs",
-    "reset-password": "bun scripts/reset-password.mjs"
+    "reset-password": "bun scripts/reset-password.mjs",
+    "create-smoke-account": "bun scripts/create-smoke-account.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.56.1",

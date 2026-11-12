@@ -136,11 +136,11 @@ secrets/
 | `release/` | `lm-ssh-staging` | SSH Username with private key | `.username`（`lm-deploy-staging`）、`.key` | Staging forced command `lm-deploy staging` |
 | `release/` | `lm-staging-db` | Username with password | `.username`、`.password` | Staging Database |
 | `release/` | `lm-staging-setup-token` | Secret text | `lm-staging-setup-token` | Staging Setup_Token |
-| `release/` | `lm-staging-smoke` | Secret file | `lm-staging-smoke` | Staging smoke-bot 密碼 |
+| `release/` | `lm-staging-smoke` | Secret file | `lm-staging-smoke` | Staging smoke-bot 密碼；帳號由 `lm-deploy staging smoke-account` 建立，見 [`deploy/README.md`](../../deploy/README.md#首次部署與-smoke-bot) |
 | `release/` | `lm-ssh-prod` | SSH Username with private key | `.username`（`lm-deploy-prod`）、`.key` | Production 部署、回滾、還原演練 |
 | `release/` | `lm-prod-db` | Username with password | `.username`、`.password` | Production Database |
 | `release/` | `lm-prod-setup-token` | Secret text | `lm-prod-setup-token` | Production Setup_Token |
-| `release/` | `lm-prod-smoke` | Secret file | `lm-prod-smoke` | Production smoke-bot 密碼 |
+| `release/` | `lm-prod-smoke` | Secret file | `lm-prod-smoke` | Production smoke-bot 密碼；帳號由 `lm-deploy prod smoke-account` 建立，見 [`deploy/README.md`](../../deploy/README.md#首次部署與-smoke-bot) |
 | `release/` | `lm-jenkins-api-readonly` | Username with password | `.username`（`lm-api-readonly`）、`.password`（API token） | fingerprint 查詢 main 的 Build_Record、`release/digest-lookup` |
 | `release/` | `lm-jenkins-api-retention` | Username with password | `.username`（`lm-retention-bot`）、`.password`（API token） | `ci/keep-log.mjs` 設定 keepLog（Req 21.6） |
 | `infra/` | `lm-github-app` | GitHub App | 同上 | checkout |

@@ -29,7 +29,7 @@ import { parseConfig } from '../server/config.js';
 import { hashPassword } from '../server/accounts.js';
 import { createDatabase } from '../server/db/connect.js';
 import { insertUser, userByName } from '../server/db/queries.js';
-import { effectiveOrigin, readSmokeConfig, runSmoke } from './smoke.mjs';
+import { SMOKE_FIXTURE_DATES, effectiveOrigin, readSmokeConfig, runSmoke } from './smoke.mjs';
 
 export const DRILL_DATABASE_NAME = 'lm_drill';
 export const DRILL_PROJECT_RE = /^lm-drill-(staging|prod)-[0-9a-f]{8}$/;
@@ -42,8 +42,8 @@ export const HEALTH_CONSECUTIVE = 3;
 export const HEALTH_INTERVAL_MS = 2000;
 export const HEALTH_TIMEOUT_MS = 5000;
 export const STEP_TIMEOUT_MS = 10000;
-// 固定日期，使合成行程可重現；只需是有效且不超過 31 天的範圍。
-export const FIXTURE_DATES = Object.freeze({ startDate: '2030-01-01', endDate: '2030-01-02' });
+// 固定日期，使合成行程可重現；與 create-smoke-account 共用 scripts/smoke.mjs 的 SMOKE_FIXTURE_DATES。
+export const FIXTURE_DATES = SMOKE_FIXTURE_DATES;
 
 const sleepMs = ms => new Promise(resolve => setTimeout(resolve, ms));
 const hostHeaders = host => (host ? { Host: host } : {});

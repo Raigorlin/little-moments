@@ -508,3 +508,380 @@ PY
     assert_no_docker_calls
   done
 }
+
+# ---------------------------------------------------------------------------------------------
+# Req 27.17–27.24：smoke-account（Host_Operator 限定；design.md Components §21.4）
+# 測試密碼是固定的非秘密字串，含空白、引號、$、反斜線與 shell 特殊字元。
+# ---------------------------------------------------------------------------------------------
+
+SMOKE_PW='not-a-secret Sm0ke "pw" $HOME \ ;|&*'
+
+smoke_setup() {
+  idle_green
+  export LM_TEST_OPERATOR=1
+  printf 'CAMPING_DATABASE_NAME=little_moments\nCAMPING_DATABASE_USER=lm_app\nCAMPING_DATABASE_PASSWORD=placeholder\n' >"$ENV_DIR/app.env"
+  PWFILE="$BATS_TEST_TMPDIR/smoke-pw"
+  printf '%s\n' "$SMOKE_PW" >"$PWFILE"
+  export FAKE_STDIN_DIR="$BATS_TEST_TMPDIR/stdin" FAKE_ENV_LOG="$BATS_TEST_TMPDIR/env.log"
+  mkdir -p "$FAKE_STDIN_DIR"
+}
+
+# smoke [args...]：以 $PWFILE 為 stdin 執行 lm-deploy staging smoke-account。
+smoke() { lm staging smoke-account "$@" <"$PWFILE"; }
+
+assert_no_lock_taken() {
+  if [[ -e $LM_LOCK_DIR/lm-staging.lock ]]; then printf 'lock file was created\n'; return 1; fi
+}
+
+assert_no_pw_files() {
+  local f
+  for f in "$ENV_DIR"/state/.smoke-pw.* "$ENV_DIR"/state/.smoke-out.*; do
+    if [[ -e $f ]]; then printf 'leftover temp file: %s\n' "$f"; return 1; fi
+  done
+}
+
+# 密碼不得出現在 lm-deploy 的 stdout／stderr、fake docker 的參數與環境紀錄，或 state/ 下的任何檔案。
+assert_pw_not_leaked() {
+  if [[ $output == *"$SMOKE_PW"* || $stderr == *"$SMOKE_PW"* ]]; then printf 'password in lm-deploy output\n'; return 1; fi
+  if grep -qF -- "$SMOKE_PW" "$FAKE_DOCKER_LOG"; then printf 'password in docker args\n'; return 1; fi
+  if [[ -f ${FAKE_ENV_LOG:-/nonexistent} ]] && grep -qF -- "$SMOKE_PW" "$FAKE_ENV_LOG"; then printf 'password in docker env\n'; return 1; fi
+  if grep -rqF -- "$SMOKE_PW" "$ENV_DIR/state"; then printf 'password in state/\n'; return 1; fi
+}
+
+@test "smoke-account: SSH forced command cannot reach smoke-account (usage, no lock, no docker)" {
+  smoke_setup
+  local cmd
+  for cmd in "smoke-account $D2" "staging smoke-account $D2" "smoke-account staging $D2" \
+    "lm-deploy staging smoke-account $REPO@$D2" "/opt/lm/bin/lm-deploy smoke-account $D2 --username smoke-bot" \
+    "frobnicate" "--wait"; do
+    export SSH_ORIGINAL_COMMAND=$cmd
+    lm staging <"$PWFILE"
+    assert_status 2
+    assert_contains "$(last_line)" '"reason":"usage"'
+    assert_contains "$stderr" 'SSH forced command 不允許此子命令'
+  done
+  unset SSH_ORIGINAL_COMMAND
+  assert_no_docker_calls
+  assert_no_lock_taken
+  assert_no_pw_files
+}
+
+@test "SSH forced command: every allowlisted subcommand still passes the allowlist" {
+  idle_green
+  local cmd
+  export SSH_ORIGINAL_COMMAND=status
+  lm staging </dev/null
+  assert_status 0
+  assert_contains "$(last_line)" '"command":"status"'
+  export SSH_ORIGINAL_COMMAND='lm-deploy staging health green'
+  lm staging </dev/null
+  assert_status 0
+  assert_contains "$(last_line)" '"healthy":true'
+  export SSH_ORIGINAL_COMMAND='health green --wait'
+  lm staging </dev/null
+  assert_status 0
+  for cmd in rollback finalize switch backup prune app-env drill "migrate $D2" start deploy; do
+    export SSH_ORIGINAL_COMMAND=$cmd
+    lm staging </dev/null
+    [[ $stderr != *'不允許此子命令'* ]] || { printf 'allowlisted %s was rejected\n%s\n' "$cmd" "$stderr"; return 1; }
+  done
+  unset SSH_ORIGINAL_COMMAND
+}
+
+@test "smoke-account: SSH_ORIGINAL_COMMAND set (any value) -> operator_only before lock or docker" {
+  smoke_setup
+  local v
+  for v in '' status "smoke-account $D2"; do
+    export SSH_ORIGINAL_COMMAND=$v
+    smoke "$D2"
+    assert_status 2
+    assert_contains "$(last_line)" '"reason":"operator_only"'
+    run --separate-stderr bash "$LM_DEPLOY" smoke-account staging "$D2" <"$PWFILE"
+    assert_status 2
+    assert_contains "$(last_line)" '"reason":"operator_only"'
+  done
+  unset SSH_ORIGINAL_COMMAND
+  assert_no_docker_calls
+  assert_no_lock_taken
+  assert_no_pw_files
+}
+
+@test "smoke-account: non-root without LM_TEST_OPERATOR, or SUDO_USER is a deploy account -> operator_only" {
+  if [[ $EUID -eq 0 ]]; then skip "must run as non-root"; fi
+  smoke_setup
+  unset LM_TEST_OPERATOR
+  smoke "$D2"
+  assert_status 2
+  assert_contains "$(last_line)" '"reason":"operator_only"'
+  export LM_TEST_OPERATOR=0
+  smoke "$D2"
+  assert_status 2
+  assert_contains "$(last_line)" '"reason":"operator_only"'
+  export LM_TEST_OPERATOR=1
+  local u
+  for u in lm-deploy-staging lm-deploy-prod; do
+    export SUDO_USER=$u
+    smoke "$D2"
+    assert_status 2
+    assert_contains "$(last_line)" '"reason":"operator_only"'
+  done
+  unset SUDO_USER
+  assert_no_docker_calls
+  assert_no_lock_taken
+}
+
+@test "smoke-account: invalid digest and arguments exit 2 before any docker call" {
+  smoke_setup
+  local bad
+  for bad in "sha256:abc" "latest" "$REPO:latest" "other.lan:5000/little-moments@$D2" "${D2^^}" "$REPO@sha256:xyz"; do
+    smoke "$bad"
+    assert_status 2
+    assert_contains "$(last_line)" '"reason":"invalid_digest"'
+  done
+  local long33 long101
+  long33=$(printf 'a%.0s' {1..33})
+  long101=$(printf 'f%.0s' {1..101})
+  local -a cases=(
+    ""
+    "$D2 $D3"
+    "$D2 --password x"
+    "$D2 --username=smoke-bot"
+    "$D2 --verbose"
+    "$D2 --username"
+    "$D2 --fixture"
+    "$D2 --username Smoke"
+    "$D2 --username ab"
+    "$D2 --username a_b"
+    "$D2 --username 1abc"
+    "$D2 --username $long33"
+    "$D2 --username smoke-bot --username smoke-two"
+    "$D2 --fixture .hidden"
+    "$D2 --fixture -x"
+    "$D2 --fixture $long101"
+    "$D2 --fixture a --fixture b"
+  )
+  local c
+  for c in "${cases[@]}"; do
+    # shellcheck disable=SC2086
+    smoke $c
+    assert_status 2
+    assert_contains "$(last_line)" '"reason":"usage"'
+  done
+  # 含空白、前後空白或空字串的 fixture（單一參數）。
+  for bad in "smoke fixture" " smoke-fixture" "smoke-fixture " ""; do
+    smoke "$D2" --fixture "$bad"
+    assert_status 2
+    assert_contains "$(last_line)" '"reason":"usage"'
+  done
+  smoke "$D2" --username ""
+  assert_status 2
+  assert_no_docker_calls
+  assert_no_pw_files
+}
+
+@test "smoke-account: empty, oversized or NUL-containing stdin exits 2 (password_invalid) without docker" {
+  smoke_setup
+  lm staging smoke-account "$D2" </dev/null
+  assert_status 2
+  assert_contains "$(last_line)" '"reason":"password_invalid"'
+  head -c 4097 /dev/zero | tr '\0' a >"$PWFILE"
+  smoke "$D2"
+  assert_status 2
+  assert_contains "$(last_line)" '"reason":"password_invalid"'
+  printf 'abcdefgh\0ijklmnop\n' >"$PWFILE"
+  smoke "$D2"
+  assert_status 2
+  assert_contains "$(last_line)" '"reason":"password_invalid"'
+  assert_no_docker_calls
+  assert_no_pw_files
+  [ "$(count_files '*.dump')" -eq 0 ]
+}
+
+@test "smoke-account: stdin of exactly 4096 bytes is accepted and passed through unchanged" {
+  smoke_setup
+  head -c 4096 /dev/zero | tr '\0' b >"$PWFILE"
+  smoke "$D2"
+  assert_status 0
+  cmp "$PWFILE" "$FAKE_STDIN_DIR/tool.stdin"
+  assert_no_pw_files
+}
+
+@test "smoke-account: stdin that is a terminal exits 2 (password_stdin_required)" {
+  if ! command -v script >/dev/null; then skip "script(1) not available"; fi
+  smoke_setup
+  run script -qec "bash '$LM_DEPLOY' staging smoke-account $D2" /dev/null </dev/null
+  assert_status 2
+  assert_contains "$output" '"reason":"password_stdin_required"'
+  assert_no_docker_calls
+  assert_no_lock_taken
+}
+
+@test "smoke-account: missing app.env or db.env exits 2 (config_missing) without docker" {
+  smoke_setup
+  local f
+  for f in app.env db.env; do
+    mv "$ENV_DIR/$f" "$ENV_DIR/$f.bak"
+    smoke "$D2"
+    assert_status 2
+    assert_contains "$(last_line)" '"reason":"config_missing"'
+    assert_contains "$(last_line)" "$f"
+    mv "$ENV_DIR/$f.bak" "$ENV_DIR/$f"
+  done
+  assert_no_docker_calls
+  assert_no_pw_files
+}
+
+@test "smoke-account: held lock exits 4, unfinished deploy exits 3, both without docker" {
+  smoke_setup
+  local fd
+  exec {fd}>>"$LM_LOCK_DIR/lm-staging.lock"
+  flock -n "$fd"
+  smoke "$D2"
+  assert_status 4
+  assert_contains "$(last_line)" '"reason":"deploy_in_progress"'
+  exec {fd}>&-
+  write_state PHASE=started ACTIVE_COLOR=green "ACTIVE_DIGEST=$D1" CANDIDATE_COLOR=blue "CANDIDATE_DIGEST=$D2" "HISTORY=$D1"
+  smoke "$D3"
+  assert_status 3
+  assert_contains "$(last_line)" '"reason":"invalid_phase"'
+  assert_no_docker_calls
+  assert_no_pw_files
+  [ "$(state_get PHASE)" = started ]
+}
+
+@test "smoke-account: db/proxy stopped -> up db (wait), up proxy, backup, migrate, tool in order" {
+  smoke_setup
+  export FAKE_DB_RUNNING=0 FAKE_PROXY_RUNNING=0
+  local before
+  before=$(sha256sum <"$UPSTREAM")
+  smoke "$REPO@$D2"
+  assert_status 0
+  local pd ud pp up b m t
+  pd=$(call_line 'ps --status running -q db')
+  ud=$(call_line 'up -d --wait --no-deps db')
+  pp=$(call_line 'ps --status running -q proxy')
+  up=$(call_line 'up -d --no-deps proxy')
+  b=$(call_line 'exec -T db pg_dump')
+  m=$(call_line 'run --rm --no-deps -T migrate ')
+  t=$(call_line 'run --rm --no-deps -T --entrypoint bun migrate /app/tools/create-smoke-account.js')
+  [ "$pd" -gt 0 ]
+  [ "$ud" -gt "$pd" ]
+  [ "$pp" -gt "$ud" ]
+  [ "$up" -gt "$pp" ]
+  [ "$b" -gt "$up" ]
+  [ "$m" -gt "$b" ]
+  [ "$t" -gt "$m" ]
+  assert_call "--profile ops run --rm --no-deps -T migrate \\[new=$REPO@$D2\\]"
+  assert_call "--profile ops run --rm --no-deps -T --entrypoint bun migrate /app/tools/create-smoke-account.js \\[new=$REPO@$D2\\]"
+  refute_call 'up -d --no-deps app-|pull app-|caddy reload|rm -s -f app-'
+  [ "$(sha256sum <"$UPSTREAM")" = "$before" ]
+  # 只更新最後備份；槽位欄位不變。
+  [ "$(state_get PHASE)" = idle ]
+  [ "$(state_get ACTIVE_COLOR)" = green ]
+  [ "$(state_get ACTIVE_DIGEST)" = "$D1" ]
+  [ "$(state_get HISTORY)" = "$D1" ]
+  [ -z "$(state_get CANDIDATE_COLOR)" ]
+  [ -n "$(state_get LAST_BACKUP_ID)" ]
+  [ "$(count_files '*.dump.sha256')" -eq 1 ]
+  # 每個步驟一行 JSON。
+  [ "${#lines[@]}" -eq 4 ]
+  assert_contains "${lines[0]}" '{"ok":true,"command":"services","env":"staging","db":"started","proxy":"started"}'
+  assert_contains "${lines[1]}" '"command":"backup"'
+  assert_contains "${lines[1]}" '"sha256":'
+  assert_contains "${lines[2]}" '"command":"migrate"'
+  assert_contains "$(last_line)" "{\"ok\":true,\"command\":\"smoke-account\",\"env\":\"staging\",\"digest\":\"$D2\",\"tool\":{\"ok\":true,\"username\":\"smoke-bot\",\"account\":\"created\""
+  assert_no_pw_files
+}
+
+@test "smoke-account: running db/proxy are not recreated" {
+  smoke_setup
+  export FAKE_DB_RUNNING=1 FAKE_PROXY_RUNNING=1
+  smoke "$D2"
+  assert_status 0
+  refute_call 'up -d'
+  assert_call 'ps --status running -q db'
+  assert_call 'ps --status running -q proxy'
+  assert_contains "${lines[0]}" '"db":"running","proxy":"running"'
+  assert_call 'create-smoke-account.js'
+}
+
+@test "smoke-account: password only reaches the tool's stdin; no leaks, no temp files left" {
+  smoke_setup
+  export FAKE_DB_RUNNING=0 FAKE_PROXY_RUNNING=0
+  smoke "$D2" --username smoke-two --fixture smoke-other
+  assert_status 0
+  assert_call 'create-smoke-account.js --username smoke-two --fixture smoke-other \['
+  cmp "$PWFILE" "$FAKE_STDIN_DIR/tool.stdin"
+  [ -f "$FAKE_STDIN_DIR/pg_dump.stdin" ] && [ ! -s "$FAKE_STDIN_DIR/pg_dump.stdin" ]
+  [ -f "$FAKE_STDIN_DIR/migrate.stdin" ] && [ ! -s "$FAKE_STDIN_DIR/migrate.stdin" ]
+  [ -s "$FAKE_ENV_LOG" ]
+  assert_pw_not_leaked
+  assert_no_pw_files
+
+  # 失敗路徑（工具失敗）也不留下暫存檔、不洩漏密碼。
+  : >"$FAKE_DOCKER_LOG"
+  export FAKE_SMOKE_TOOL_OUT='{"ok":false,"reason":"no_admin"}' FAKE_SMOKE_TOOL_RC=1
+  smoke "$D2"
+  assert_status 1
+  assert_pw_not_leaked
+  assert_no_pw_files
+}
+
+@test "smoke-account: db, proxy, backup and migrate failures stop before the tool" {
+  smoke_setup
+  local -a cases=(
+    "FAKE_DB_RUNNING=0 FAKE_UP_FAIL=1|db_start_failed"
+    "FAKE_PS_FAIL=1|db_start_failed"
+    "FAKE_PROXY_RUNNING=0 FAKE_PROXY_UP_FAIL=1|proxy_start_failed"
+    "FAKE_PG_DUMP_FAIL=1|backup_create_failed"
+    "FAKE_PG_RESTORE_LIST_FAIL=1|backup_verify_failed"
+    "FAKE_MIGRATE_FAIL=1|migrate_failed"
+  )
+  local c vars reason v
+  for c in "${cases[@]}"; do
+    vars=${c%|*}
+    reason=${c#*|}
+    : >"$FAKE_DOCKER_LOG"
+    for v in $vars; do export "$v"; done
+    smoke "$D2"
+    assert_status 1
+    assert_contains "$(last_line)" "\"reason\":\"$reason\""
+    refute_call 'create-smoke-account'
+    assert_pw_not_leaked
+    assert_no_pw_files
+    for v in $vars; do unset "${v%%=*}"; done
+  done
+  # db 啟動失敗時不備份、不遷移；備份失敗時不遷移。
+  export FAKE_DB_RUNNING=0 FAKE_UP_FAIL=1
+  : >"$FAKE_DOCKER_LOG"
+  smoke "$D2"
+  refute_call 'pg_dump|-T migrate |up -d --no-deps proxy'
+  unset FAKE_DB_RUNNING FAKE_UP_FAIL
+  export FAKE_PG_DUMP_FAIL=1
+  : >"$FAKE_DOCKER_LOG"
+  smoke "$D2"
+  refute_call '-T migrate '
+  [ "$(state_get ACTIVE_DIGEST)" = "$D1" ]
+}
+
+@test "smoke-account: tool failure -> exit 1, smoke_account_failed with embedded reason and JSON" {
+  smoke_setup
+  export FAKE_SMOKE_TOOL_OUT='{"ok":false,"reason":"no_admin"}' FAKE_SMOKE_TOOL_RC=1
+  smoke "$D2"
+  assert_status 1
+  assert_contains "$(last_line)" '"command":"smoke-account"'
+  assert_contains "$(last_line)" '"reason":"smoke_account_failed"'
+  assert_contains "$(last_line)" 'Smoke_Provisioner 未完成（no_admin）'
+  assert_contains "$(last_line)" '"tool":{"ok":false,"reason":"no_admin"}'
+
+  # 工具輸出含空白或反斜線 → tool 為 null。
+  local out
+  for out in '{"ok":false, "reason":"no_admin"}' '{"ok":false,"reason":"no\\admin"}' 'not json' ''; do
+    export FAKE_SMOKE_TOOL_OUT=$out
+    smoke "$D2"
+    assert_status 1
+    assert_contains "$(last_line)" '"reason":"smoke_account_failed"'
+    assert_contains "$(last_line)" '"tool":null'
+  done
+  assert_no_pw_files
+}

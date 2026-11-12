@@ -148,6 +148,25 @@ function validateTripText(trip) {
   if (!dateRange(trip.startDate, trip.endDate).length) fail(400, '日期需為有效日期，結束不早於開始，且最長 31 天。');
 }
 
+// The card defaults of a new (non-imported) trip from POST /api/trips; also used for the Smoke_Fixture (Req 27.11).
+const NEW_TRIP_BASE = Object.freeze({ destination: '', description: '', note: '', coverKind: 'camp', status: 'planning' });
+
+/** Display name of the Smoke_Account created by the create-smoke-account tool (Req 27.5). */
+export const SMOKE_DISPLAY_NAME = 'Smoke Bot';
+
+/**
+ * The trip title rule of POST /api/trips (mergeCard / validateTripText: 1–100 characters, no U+0000), and in
+ * addition no leading or trailing whitespace, so the stored title is character-for-character the string that
+ * scripts/smoke.mjs compares (Req 27.5). Throws HttpError 400; returns the title unchanged.
+ */
+export function validateFixtureTitle(value) {
+  if (typeof value !== 'string' || value === '') fail(400, '請填寫 Smoke_Fixture 行程標題。');
+  if (value.trim() !== value) fail(400, 'Smoke_Fixture 行程標題不能有前後空白。');
+  if ([...value].length > CARD_LIMITS.title) fail(400, `Smoke_Fixture 行程標題最多 ${CARD_LIMITS.title} 個字。`);
+  if (value.includes('\u0000')) fail(400, 'Smoke_Fixture 行程標題含有不允許的字元。');
+  return value;
+}
+
 function mergeCard(body, base, required) {
   const card = { ...base };
   for (const key of ['title', 'destination', 'startDate', 'endDate', 'description', 'note', 'coverKind', 'status']) {
@@ -271,7 +290,7 @@ const clientKey = info => (typeof info?.ip === 'string' && info.ip ? info.ip.sli
  * @param {{maxEvents?: number, maxAlerts?: number}} [options.securityEventLimits] 測試用：降低安全事件與警示的保留上限
  * @param {(line: string) => void} [options.alertLog] Security_Alert 的日誌輸出（預設 console.error）
  * @returns {Promise<{handle: Function, ping: Function, needsSetup: Function, createFirstAdmin: Function,
- *   resetPassword: Function, receiptAiPolicy: Function, registrationPolicy: Function, registerAlertNotifier: Function,
+ *   resetPassword: Function, provisionSmokeAccount: Function, receiptAiPolicy: Function, registrationPolicy: Function, registerAlertNotifier: Function,
  *   close: () => void}>}
  */
 export async function createAccountService({
@@ -357,6 +376,49 @@ export async function createAccountService({
       await q.deleteUserSessions(t, user.id);
       await audit(t, 'local-cli', 'password.reset.cli', `user:${validUsername}`);
       return validUsername;
+    });
+  }
+
+  // A refusal of provisionSmokeAccount: HttpError 409 with a machine-readable `reason`; the transaction rolls back.
+  const SMOKE_REFUSALS = {
+    no_admin: '這個 Database 還沒有管理員。請先以 create-admin 建立第一個管理員，再建立 Smoke_Test 合成帳號。',
+    account_is_admin: '這個帳號名稱屬於管理員帳號，不會作為 Smoke_Test 合成帳號，也不會修改。',
+    account_disabled: '這個帳號已停用，不會作為 Smoke_Test 合成帳號，也不會修改。'
+  };
+  const refuse = reason => { const error = new HttpError(409, SMOKE_REFUSALS[reason]); error.reason = reason; throw error; };
+
+  // The create-smoke-account tool (Req 27.7–27.14). Validation and hashing run outside the transaction; every check
+  // and write runs in one write transaction under the advisory lock. An existing member account is kept as is
+  // (role, display name, password hash and sessions); when the account and the fixture both exist nothing is
+  // written, not even an audit event. The password is only hashed and never logged or audited.
+  // `dates` is { startDate, endDate } (scripts/smoke.mjs SMOKE_FIXTURE_DATES).
+  // Returns { username, account: 'created'|'kept', fixture, fixtureStatus: 'created'|'kept' }.
+  async function provisionSmokeAccount({ username, password, fixture, dates } = {}) {
+    const name = validateUsername(username), title = validateFixtureTitle(fixture);
+    const hash = await hashPassword(validatePassword(password)); // unused when the account exists (Req 27.9)
+    const card = mergeCard({ title, startDate: dates?.startDate, endDate: dates?.endDate }, NEW_TRIP_BASE, ['title', 'startDate', 'endDate']);
+    return tx(async t => {
+      if ((await q.activeAdmins(t)) === 0) refuse('no_admin');
+      let user = await q.userByName(t, name), account = 'kept';
+      if (user && user.deleted_at !== null) refuse('account_disabled');
+      if (user?.role === 'admin') refuse('account_is_admin');
+      if (!user) {
+        const id = randomUUID();
+        await q.insertUser(t, id, name, SMOKE_DISPLAY_NAME, 'member', hash, clock());
+        await audit(t, name, 'smoke.account.create', `user:${name}`);
+        user = await q.userById(t, id);
+        account = 'created';
+      }
+      let fixtureStatus = 'kept';
+      // The same set GET /api/trips returns to a member account (Req 27.11, 27.12).
+      if (!(await q.myTrips(t, user.id)).some(row => row.title === title)) {
+        const { state, person } = newTripState(card, user.display_name);
+        const tripId = randomUUID();
+        await insertNewTrip(t, { id: tripId, owner: user, card, state, personId: person.id, at: clock() });
+        await audit(t, name, 'smoke.fixture.create', `trip:${tripId}`);
+        fixtureStatus = 'created';
+      }
+      return { username: name, account, fixture: title, fixtureStatus };
     });
   }
 
@@ -545,6 +607,30 @@ export async function createAccountService({
   }
   function runSync(state) {
     try { syncMealIngredients(state); } catch (error) { fail(400, error.message); }
+  }
+  // The trip state of a new trip, shared by POST /api/trips and provisionSmokeAccount (Req 27.11): an empty state
+  // (or the cleaned legacy `baseState`) → applyCardToState → the creator joins as 這趟的召集人 → revision 1 →
+  // meal ingredient sync → creation event → isValidState. Throws HttpError 400/409. Returns { state, person }.
+  function newTripState(card, displayName, baseState = null) {
+    let state = baseState || { schema: 1, revision: 0, currentUser: '', joined: true, trip: { ...card }, people: [], activities: [], meals: [], shopping: [], gear: [], vehicles: [], events: [], departed: [] };
+    applyCardToState(state, card);
+    const added = addUniqueParticipant(state, displayName, '這趟的召集人');
+    state = added.state;
+    state.currentUser = added.person.id;
+    state.revision = 1;
+    runSync(state);
+    pushEvent(state, baseState ? '匯入了旅行手冊' : '建立了這本旅行手冊', added.person.name);
+    if (!isValidState(state)) fail(400, '旅行資料格式不正確。');
+    return { state, person: added.person };
+  }
+  // Inserts the trip row and the owner's membership inside the caller's write transaction `t`.
+  async function insertNewTrip(t, { id, owner, card, state, personId, at }) {
+    await q.insertTrip(t, {
+      id, ownerId: owner.id, title: card.title, destination: card.destination, startDate: card.startDate, endDate: card.endDate,
+      description: card.description, note: card.note, coverKind: card.coverKind, status: card.status,
+      revision: 1, peopleCount: state.people.length, stateJson: JSON.stringify(state), createdAt: at, updatedAt: at
+    });
+    await q.insertMember(t, id, owner.id, personId, at);
   }
   const DENY_REMOVAL = '受邀旅伴可以編輯，但不能刪除既有項目；請聯絡主辦人或管理員。';
   const DENY_PACKING = '只能變更自己的行前準備。';
@@ -777,26 +863,13 @@ export async function createAccountService({
       const legacy = body.legacyState !== undefined;
       let state = legacy ? cleanState(body.legacyState) : null;
       if (legacy && (!state || !isValidState(state))) fail(400, '匯入的旅行資料格式不正確。');
-      const base = legacy ? { ...state.trip, coverKind: 'camp', status: 'planning' } : { destination: '', description: '', note: '', coverKind: 'camp', status: 'planning' };
+      const base = legacy ? { ...state.trip, coverKind: 'camp', status: 'planning' } : NEW_TRIP_BASE;
       const card = mergeCard(body, base, legacy ? [] : ['title', 'startDate', 'endDate']);
-      state ||= { schema: 1, revision: 0, currentUser: '', joined: true, trip: { ...card }, people: [], activities: [], meals: [], shopping: [], gear: [], vehicles: [], events: [], departed: [] };
-      applyCardToState(state, card);
-      const added = addUniqueParticipant(state, user.display_name, '這趟的召集人');
-      state = added.state;
-      state.currentUser = added.person.id;
-      state.revision = 1;
-      runSync(state);
-      pushEvent(state, legacy ? '匯入了旅行手冊' : '建立了這本旅行手冊', added.person.name);
-      if (!isValidState(state)) fail(400, '旅行資料格式不正確。');
+      const created = newTripState(card, user.display_name, state);
       const id = randomUUID(), at = clock();
       await tx(async t => {
         if ((await requireExpectedUser(request, body.expectedUserId, t)).id !== user.id) fail(401, '請先登入。');
-        await q.insertTrip(t, {
-          id, ownerId: user.id, title: card.title, destination: card.destination, startDate: card.startDate, endDate: card.endDate,
-          description: card.description, note: card.note, coverKind: card.coverKind, status: card.status,
-          revision: 1, peopleCount: state.people.length, stateJson: JSON.stringify(state), createdAt: at, updatedAt: at
-        });
-        await q.insertMember(t, id, user.id, added.person.id, at);
+        await insertNewTrip(t, { id, owner: user, card, state: created.state, personId: created.person.id, at });
         await audit(t, user.username, 'trip.create', `trip:${id}`);
       });
       return json(201, { trip: await summary(sql, await q.tripById(sql, id), user) });
@@ -1340,6 +1413,8 @@ export async function createAccountService({
     needsSetup: () => needsSetup(),
     createFirstAdmin,
     resetPassword,
+    // create-smoke-account（scripts/create-smoke-account.mjs，Req 27）。
+    provisionSmokeAccount,
     // { value, source: 'default'|'seed'|'stored', updatedAt, updatedBy }；serve.mjs 啟動摘要使用。
     receiptAiPolicy: () => receiptAiPolicy(),
     // 同上形狀的實際生效 Registration_Policy；serve.mjs 啟動摘要與測試使用（Req 26.17）。

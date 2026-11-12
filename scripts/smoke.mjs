@@ -13,9 +13,11 @@
 //   CAMPING_SMOKE_FIXTURE         合成行程標題，預設 smoke-fixture
 //   內部 CA 憑證以 NODE_EXTRA_CA_CERTS 提供，不關閉 TLS 驗證。
 //
-// 合成資料：smoke-bot 帳號與其可見的 smoke-fixture 行程須事先存在。Staging／Production 由維運者以 Credential_Store
-// 中的 smoke 憑證建立一次；還原演練（lm-deploy drill）於還原後在 drill DB 內插入臨時合成管理員與行程
-// （design.md §13、§14）。本腳本只讀取，不建立任何資料；行程不存在即失敗。
+// 合成資料：smoke-bot 帳號與其可見的 smoke-fixture 行程須事先存在。Staging／Production 由 Host_Operator 以
+// Credential_Store 中的 smoke 憑證執行 `lm-deploy <env> smoke-account <digest>` 建立一次（映像內的
+// scripts/create-smoke-account.mjs，即 /app/tools/create-smoke-account.js；Requirement 27、design.md §21）；
+// 還原演練（lm-deploy drill）於還原後在 drill DB 內插入臨時合成管理員與行程（design.md §13、§14）。
+// 兩者的行程日期皆為 SMOKE_FIXTURE_DATES。本腳本只讀取，不建立任何資料；行程不存在即失敗。
 //
 // 步驟：GET /login（200 且含 server/http.js 的 SECURITY_HEADERS，HTML 路由的 Cache-Control 須為 no-store）
 // → GET /api/session → POST /api/login → GET /api/trips（確認合成行程存在）→ POST /api/logout。
@@ -31,6 +33,8 @@ import { SECURITY_HEADERS } from '../server/http.js';
 
 export const STEPS = Object.freeze(['login-page', 'session', 'login', 'trips', 'logout']);
 export const STEP_TIMEOUT_MS = 10000;
+// Smoke_Fixture 的固定日期（create-smoke-account 與還原演練共用）；只需是有效且不超過 31 天的範圍。
+export const SMOKE_FIXTURE_DATES = Object.freeze({ startDate: '2030-01-01', endDate: '2030-01-02' });
 const COOKIE = 'ggc_session';
 // host、host:port、[IPv6] 或 [IPv6]:port；不得含協定、路徑或認證資訊。
 const HOST_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*|\[[0-9a-f:.]+\])(?::\d{1,5})?$/i;

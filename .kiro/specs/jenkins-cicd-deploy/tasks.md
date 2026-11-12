@@ -750,6 +750,42 @@
     - 執行受影響的 `bun test` 測試檔、WSL 下的 `bats deploy/tests` 與秘密掃描（`bun scripts/scan-secrets.mjs`），確認全部通過且沒有任何秘密值。Ensure all tests pass, ask the user if questions arise.
     - _Requirements: 15.9_
 
+- [x] 23. smoke-bot 與 smoke-fixture 佈建
+  - [x] 23.1 create-smoke-account 工具與映像打包
+    - 背景與設計見 design.md Components 第 21 節。開始前重新讀取 `server/accounts.js`（`createFirstAdmin`、`resetPassword`、`routes.createTrip`、`mergeCard`、`applyCardToState`、`addUniqueParticipant`、`runSync`、`pushEvent`、`tx`）、`server/db/queries.js`（`activeAdmins`、`userByName`、`insertUser`、`myTrips`、`insertTrip`、`insertMember`、`insertAudit`）、`scripts/account-cli.mjs`、`scripts/create-admin.mjs`、`scripts/smoke.mjs`、`scripts/drill.mjs` 與 `scripts/build-server.mjs`
+    - `server/accounts.js`：把 `routes.createTrip` 的初始 state 建立到 `isValidState` 抽成 `newTripState(card, displayName, baseState = null)`，把 `insertTrip` + `insertMember` 抽成 `insertNewTrip(t, …)`，路由改用兩者（回應、`trip.create` 稽核與 legacy 匯入行為不變）；新增並匯出 `SMOKE_DISPLAY_NAME`、`validateFixtureTitle`；新增服務方法 `provisionSmokeAccount({ username, password, fixture, dates })`：交易外驗證與雜湊，單一 `tx` 內依序檢查 `activeAdmins`（0 → `no_admin`）、既有帳號（已刪除 → `account_disabled`、admin → `account_is_admin`、member → 保留不變）、不存在時建立 member 並寫 `smoke.account.create`，以 `myTrips` 判斷 Smoke_Fixture，不存在時以 `newTripState`／`insertNewTrip` 建立並寫 `smoke.fixture.create`；拒絕以 `HttpError(409)` 附 `reason`；更新 JSDoc 與服務物件
+    - `scripts/account-cli.mjs`：`openAccountService` 轉出 `provisionSmokeAccount`；更新檔頭
+    - `scripts/smoke.mjs`：匯出 `SMOKE_FIXTURE_DATES = { startDate: '2030-01-01', endDate: '2030-01-02' }`，檔頭「合成資料」一段改為指向 `create-smoke-account` 與 `lm-deploy <env> smoke-account`；`scripts/drill.mjs` 的 `FIXTURE_DATES` 改為引用同一個常數（值不變）
+    - 新增 `scripts/create-smoke-account.mjs`：依 design.md 第 21.3 節（`parseArgs` 只接受 `--username`、`--fixture`、`--password-file`、`--help`；預設 `smoke-bot`、`smoke-fixture`；三種密碼來源；結束碼 0／1／2；stdout 恰好一行 JSON，`reason` 只用列出的值；不輸出密碼或雜湊），匯出 `USAGE` 與可注入依賴的 `runCreateSmokeAccount`（比照 `runCreateAdmin`）
+    - `scripts/build-server.mjs` 的 `ENTRIES` 加入 `create-smoke-account.js`（tools），更新其檔頭與 `Dockerfile` build 階段註解的產出清單；`package.json` 新增 `create-smoke-account` 指令；確認 `ci/image-content-check.mjs` 不需修改
+    - 測試：新增 `tests/create-smoke-account.test.js`，依 design.md Testing Strategy「Smoke_Account 佈建（Req 27）」的 CLI 與服務案例（用法與設定錯誤、密碼來源與拒絕 `--password`、16 種初始狀態的決策表與第二次執行無寫入、既有 member 不變、行程狀態與 `POST /api/trips` 相同、交易回復、輸出不含秘密、以 `runSmoke` 往返）；在 `tests/ci-restore-drill.test.js` 的「安裝與打包」區塊（或 `tests/ci-image-content.test.js`）新增打包與映像內容檢查斷言；Requirement 27 沒有新的 Correctness Property，不新增 property test
+    - 執行 `bun test tests/create-smoke-account.test.js tests/create-admin.test.js tests/reset-password.test.js tests/drill-tool.test.js tests/smoke.test.js tests/accounts.test.js tests/ci-restore-drill.test.js tests/ci-image-content.test.js`（需要 PostgreSQL 的測試使用臨時 Ephemeral_Database，用完即刪）與 `bun scripts/build-server.mjs --out <暫存目錄>`，確認 `tools/create-smoke-account.js` 產出
+    - _Requirements: 27.1, 27.2, 27.3, 27.4, 27.5, 27.6, 27.7, 27.8, 27.9, 27.10, 27.11, 27.12, 27.13, 27.14, 27.15, 27.16, 27.27, 9.6, 15.5, 16.2, 16.9, 21.10_
+
+  - [x] 23.2 lm-deploy smoke-account 子命令（Host_Operator 限定）與 bats
+    - 依 design.md Components 第 21.4 節實作；開始前重新讀取 `deploy/bin/lm-deploy` 的 `parse_ssh_command`、`main`、`acquire_lock`、`load_env_config`、`parse_digest`、`build_compose`、`do_backup`、`do_migrate`、`stage_app_env` 與 `cleanup`，以及 `deploy/host/sudoers.d/lm-deploy`
+    - 以 grep 確認 `Jenkinsfile` 與 `ci/jenkins/pipelines/*.Jenkinsfile` 經 SSH 使用的子命令，新增 `SSH_SUBCOMMANDS` 清單（現有子命令，不含 `smoke-account`），`parse_ssh_command` 拒絕清單外的子命令（`usage`，結束碼 2）
+    - 新增 `require_operator`（`SSH_ORIGINAL_COMMAND` 已設定、非 root（`LM_TRUST_ENV=1` 且 `LM_TEST_OPERATOR=1` 除外）、`SUDO_USER` 為 `lm-deploy-staging`／`lm-deploy-prod` → `die 2 operator_only`），在 `smoke-account` 分支取鎖與任何 docker 呼叫前執行
+    - 新增 `smoke-account <digest> [--username <name>] [--fixture <title>]`：參數與 `[[ -t 0 ]]` 檢查 → `acquire_lock` → `load_state` → `require_phase idle` → `load_env_config` → `parse_digest` → `app.env`／`db.env` 存在檢查 → `stage_smoke_password`（`state/.smoke-pw.XXXXXX` 0600、≤ 4096 位元組、非空、無 NUL，加入 `TMP_FILES`，之後 `exec 0</dev/null`）→ `ensure_services`（`db` 未執行時 `up -d --wait --no-deps db`，`LM_DB_UP_TIMEOUT` 預設 5m；`proxy` 未執行時 `up -d --no-deps proxy`；輸出 `services` 行）→ `do_backup` → `do_migrate` → 以 `--profile ops run --rm --no-deps -T --entrypoint bun migrate /app/tools/create-smoke-account.js` 執行工具，密碼只經 `<"$pwfile"` 傳入（`LM_SMOKE_TOOL_TIMEOUT` 預設 5m）→ 只在工具輸出符合安全字元時嵌入，成功輸出 `smoke-account` 行，失敗 `smoke_account_failed`；不改槽位、不改 `upstream.caddy`
+    - 更新 `usage()`、檔頭的子命令說明與測試覆寫清單（`LM_DB_UP_TIMEOUT`、`LM_SMOKE_TOOL_TIMEOUT`、`LM_TEST_OPERATOR`），註明 `smoke-account` 不在 SSH forced command 清單內；`deploy/host/sudoers.d/lm-deploy` 不變
+    - `deploy/tests/helpers/fake-docker`：支援 `ps --status running -q <svc>`（`FAKE_DB_RUNNING`、`FAKE_PROXY_RUNNING`）、`up -d --wait --no-deps db`、`up -d --no-deps proxy`，以及 `create-smoke-account.js` 的 run（stdin 寫入測試目錄、輸出 `FAKE_SMOKE_TOOL_OUT`、以 `FAKE_SMOKE_TOOL_RC` 結束）；並記錄每次呼叫的環境中是否含測試密碼
+    - `deploy/tests/lm-deploy.bats` 新增 design.md Testing Strategy「Smoke_Account 佈建（Req 27）」列出的 bats 案例：forced command 無法執行 `smoke-account` 且既有子命令仍可、`SSH_ORIGINAL_COMMAND` 已設定或非 root 時 `operator_only`、digest 與參數驗證、stdin 為空／過大／含 NUL、缺少 `app.env`／`db.env`、鎖與狀態、呼叫順序（db／proxy 未執行與已執行兩種）、密碼不出現在 fake docker 參數與環境紀錄、輸出與 `state/`，只經工具 stdin 傳遞且無殘留暫存檔、各失敗路徑不呼叫工具、工具失敗時的 reason 與 JSON 嵌入；拒絕時確認 fake docker 未被呼叫
+    - `tests/deploy-host-config.test.js` 新增靜態斷言：`SSH_SUBCOMMANDS` 不含 `smoke-account`、`require_operator` 含兩個部署帳號名稱並檢查 `SSH_ORIGINAL_COMMAND`、sudoers 仍為完整比對參數的 `lm-deploy <env>`
+    - 執行 `bun test tests/deploy-host-config.test.js tests/deploy-bats.test.js` 與 WSL 下的 `bats deploy/tests`
+    - _Requirements: 27.17, 27.18, 27.19, 27.20, 27.21, 27.22, 27.23, 27.24, 27.27, 14.1, 14.2, 14.3, 14.8, 15.9_
+
+  - [x] 23.3 文件：首次部署與 smoke-bot
+    - `deploy/README.md` 新增「首次部署與 smoke-bot」一節（design.md Components 第 21.1、21.5 節）：前置條件；Staging 的編號步驟（第一次 `main` 建置預期失敗（全新主機為 `backup_create_failed`）並自 `reports/image-digest.txt` 或 Console Output「App_Image 已推送：…」取得 Image_Digest → `app.env` 不存在時以 `lm-deploy staging app-env`（stdin）寫入 → `sudo cat <controller-dir>/secrets/little-moments/release/lm-staging-smoke | sudo /opt/lm/bin/lm-deploy staging smoke-account <digest>` 預期 `no_admin` → 以 README 的 compose 指令執行 `create-admin` → 再次 `smoke-account` → 合併新的 PR 至 `main`（可為空 commit）觸發新的 `main` 建置，不對同一個 commit 按 Build Now（Image Push 拒絕覆寫標籤）→ 確認 staging-verified）；Production 在第一個 Release_Tag 前以 `prod`、`lm-prod-smoke` 與新建置的 staging-verified digest 重複相同三步，再推送 Tag 並核准；Setup_Token 只是後備；Smoke_Account 在 Production 是真實 member、密碼只在 Credential_Store、以 `reset-password` 更換並同步更新 `lm-<env>-smoke`；Smoke_Fixture 只有 Smoke_Account 與管理員可見，刪除後下一次 Smoke_Test 會失敗；只用佔位符
+    - `README.md`「帳號維運指令：create-admin 與 reset-password」章節：標題與錨點不變，開頭改為三個指令，新增 `create-smoke-account` 的用法、選項與預設值、密碼來源、冪等行為、拒絕條件、結束碼、Deploy_Host 上只經 `lm-deploy <env> smoke-account`，並連結 `deploy/README.md` 的新章節；「LAN 部署」的首次管理員設定段落改為先 `create-admin`、`/setup` 為後備，並連結新章節
+    - `ci/jenkins/README.md`：憑證表 `lm-staging-smoke`、`lm-prod-smoke` 的使用者欄補上帳號由 `lm-deploy <env> smoke-account` 建立並連結 `deploy/README.md`
+    - `tests/readme.test.js`：新增 design.md Testing Strategy「文件」項目的斷言（章節存在、步驟順序、Production 步驟在 Release_Tag 之前、README 連結與指令名稱、不含秘密樣式字串）；同步更新受影響的既有斷言
+    - 執行 `bun test tests/readme.test.js tests/ci-jenkins-config.test.js`
+    - _Requirements: 27.25, 27.26, 24.9, 24.10_
+
+  - [x] 23.4 Checkpoint - smoke-bot 佈建後確認所有測試通過
+    - 執行 `bun run build`、`bun test tests/*.test.js`（需要 PostgreSQL 的測試使用臨時 Ephemeral_Database，用完即刪）、WSL 下的 `bats deploy/tests`、`semgrep --test ci/semgrep` 與秘密掃描（`bun scripts/scan-secrets.mjs`）；若變更觸及 UI 或 `qa/inventory.json`，另以 `scripts/check-accounts.mjs`（設定 `CAMPING_BUN` 與 `CHROME_PATH`）執行 E2E 並以 `scripts/qa-inventory.mjs` validate／compare。確認全部通過且 repository 中沒有任何秘密值。Ensure all tests pass, ask the user if questions arise.
+    - _Requirements: 27.1, 27.2, 27.3, 27.4, 27.5, 27.6, 27.7, 27.8, 27.9, 27.10, 27.11, 27.12, 27.13, 27.14, 27.15, 27.16, 27.17, 27.18, 27.19, 27.20, 27.21, 27.22, 27.23, 27.24, 27.25, 27.26, 27.27_
+
 ## Notes
 
 - 標記 `*` 的子任務為選用（property test、整合測試與額外檢查），可為加快 MVP 而略過。
@@ -760,6 +796,7 @@
 - 任務 19 的值來自 192.168.1.121 上已驗證的部署（Jenkins controller、lm-trusted-1、lm-untrusted-1 與 LAN Registry）；design.md 中 Untrusted Agent 的「隔離 VLAN」在此部署以 rootless Docker 加主機 owner 防火牆實作。
 - 任務 21 依同主機配置（Deploy_Host = Jenkins = Registry = `192.168.1.121`）讓 Production 經 Nginx Proxy Manager 與 Cloudflare 公開；Edge_Proxy 與 Cloudflare 的設定是維運操作，repository 只提供設定檔、驗證與 runbook。Requirement 8.8–8.10 與 25 沒有新的 Correctness Property（行為由 Caddy 與主機上的 bash 腳本實作），以設定檢查、bats 與 Caddy 實測驗證。任務 21.3 依 Requirement 26 讓 Deploy_Host 的公開註冊預設關閉並可由管理員在 `/admin` 切換，新增 Property 48。
 - 任務 22 來自 192.168.1.121 上 `install.sh` 的 sudoers 步驟失敗（sudo-rs 0.2.13 不支援 `requiretty`）；Requirement 15.9 的行為不變，沒有新的 Correctness Property，以靜態檢查、bats 固定樣本與 `visudo -cf` 驗證。
+- 任務 23 來自準備 192.168.1.121 第一次部署時發現的缺口：Smoke_Test 需要的 `smoke-bot` 與 `smoke-fixture` 沒有任何建立方式，且 `lm-deploy deploy` 不會啟動 `db`／`proxy`。依 Requirement 27，由 Host_Operator 以 `lm-deploy <env> smoke-account` 建立；部署憑證權限不變（Requirement 15.9）。因為 `needsSetup` 只看使用者數量，順序固定為先 `create-admin`、後 Smoke_Account。沒有新的 Correctness Property：決策表只有 16 種組合，以窮舉範例測試涵蓋。
 - 任務 18 合併 security-harden：兩分支沒有共同歷史，以 main 的 `cd06606` 作為合成共同基底進行三方合併；應用程式功能採用 security-harden，部署、設定模型、Setup_Token 與 PostgreSQL 資料層採用 main；收據 AI 改為 OpenAI（`CAMPING_OPENAI_*`）。
 
 ## Task Dependency Graph
@@ -810,7 +847,10 @@
     { "id": 40, "tasks": ["21.4"] },
     { "id": 41, "tasks": ["21.5"] },
     { "id": 42, "tasks": ["22.1"] },
-    { "id": 43, "tasks": ["22.2"] }
+    { "id": 43, "tasks": ["22.2"] },
+    { "id": 44, "tasks": ["23.1", "23.2"] },
+    { "id": 45, "tasks": ["23.3"] },
+    { "id": 46, "tasks": ["23.4"] }
   ]
 }
 ```

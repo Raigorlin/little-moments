@@ -183,15 +183,21 @@ App_Server（`scripts/serve.mjs`，映像中為 `/app/server/serve.js`）啟動�
 
 ## 帳號維運指令：create-admin 與 reset-password
 
-兩個指令都連線 `CAMPING_DATABASE_*` 指定的 PostgreSQL Database（只讀這組變數，驗證規則與 App_Server 相同），需要遷移已套用。錯誤訊息只含變數名稱、主機與連接埠或錯誤代碼，不含密碼或設定值。結束碼：0 成功、1 失敗、2 參數或設定錯誤。
+三個指令都連線 `CAMPING_DATABASE_*` 指定的 PostgreSQL Database（只讀這組變數，驗證規則與 App_Server 相同），需要遷移已套用。錯誤訊息只含變數名稱、主機與連接埠或錯誤代碼，不含密碼或設定值。結束碼：0 成功、1 失敗或拒絕執行、2 參數或設定錯誤（在連線 Database 之前）。
 
 ```sh
 bun run create-admin [--username <name>] [--display-name <name>] [--password-file <path>]
 bun run reset-password <username> [--password-file <path>]
+bun run create-smoke-account [--username <name>] [--fixture <title>] [--password-file <path>]
 ```
 
 - `create-admin` 建立第一個管理員帳號（與 `/setup` 相同，稽核紀錄為 `setup.cli`）；Database 已有任何帳號時拒絕執行。未指定 `--username`、`--display-name` 時在終端機詢問；沒有終端機時兩者都必須指定。
 - `reset-password` 為既有帳號設定新密碼，並登出該帳號的所有 session。App 沒有網頁版的密碼重設功能。
+- `create-smoke-account` 建立 Smoke_Test 使用的合成帳號（Smoke_Account，角色 member）與該帳號擁有的合成行程（Smoke_Fixture）。預設帳號 `smoke-bot`、顯示名稱 `Smoke Bot`、行程標題 `smoke-fixture`（日期 2030-01-01 至 2030-01-02）；`--username` 與 `--fixture` 可覆寫，但 Pipeline 的 Smoke_Test 固定使用預設值。稽核紀錄為 `smoke.account.create` 與 `smoke.fixture.create`。
+  - **冪等**：帳號已存在且是未停用的 member 時保留不變（不改密碼、顯示名稱或 session；換密碼用 `reset-password`）；該帳號看得到的行程中已有同標題者時保留不變。以相同參數再次執行不寫入任何資料。
+  - **拒絕執行**（結束碼 1，不寫入任何資料）：Database 沒有未停用的管理員時（先以 `create-admin` 建立第一個管理員；若先建立 Smoke_Account，Database 已有帳號，`create-admin` 與 `/setup` 都無法再建立管理員），以及該帳號名稱屬於管理員或已停用的帳號時。
+  - **輸出**：stdout 恰好一行 JSON，例如 `{"ok":true,"username":"smoke-bot","account":"created","fixture":"smoke-fixture","fixtureStatus":"created"}`（既有者為 `kept`）。失敗時為 `{"ok":false,"reason":"<reason>"}`：`usage`、`config_invalid` 的結束碼為 2；`password_invalid`、`input_ended`、`database`、`no_admin`、`account_is_admin`、`account_disabled` 的結束碼為 1。
+  - 在 Deploy_Host 上**只**由 Host_Operator 以 `sudo cat <secret-file> | sudo /opt/lm/bin/lm-deploy <env> smoke-account <digest>` 執行：該子命令讀入 stdin 的密碼，必要時啟動 `db` 與 `proxy`，備份並套用遷移後，才在 Compose 專案內執行映像中的 `/app/tools/create-smoke-account.js`。部署帳號的 SSH forced command 無法執行此子命令。不要以下方的 compose 指令直接執行它。第一次部署的完整順序見 [`deploy/README.md` 的「首次部署與 smoke-bot」](deploy/README.md#首次部署與-smoke-bot)。
 - **密碼來源只有三種**，依序為：`--password-file <path>`（檔案內只有一行密碼，最多 4096 bytes）、終端機隱藏輸入（不回顯，輸入兩次確認）、沒有終端機時從 stdin 管線讀取一行。密碼**從不**由指令列參數或環境變數讀取（`--password` 之類的參數會被拒絕），也從不輸出。不要用 `echo` 等方式把密碼寫進指令列，否則會留在 shell 歷史與程序列表中。
 
 在 Deploy_Host 上，Database 只在 Compose 的 internal 網路中，因此改以 App_Image 內的 `/app/tools/create-admin.js`、`/app/tools/reset-password.js` 在同一 Compose 專案內執行。**主機上的指令沿用上方 [SQLite_Importer](#sqlite_importer從舊版-sqlite-匯入) 的 `--profile ops run … migrate` 模式**：`migrate` 服務已帶有 `app.env` 的 Database 憑證與 `CAMPING_DATABASE_HOST=db`，只把 entrypoint 換成 `bun` 與指令檔（`<image>` 為 `<LM_IMAGE_REPO>@sha256:<digest>`，通常是目前作用中的 digest）：
@@ -263,7 +269,7 @@ Build_Image 與本機開發使用相同的工具鏈（Bun 1.3.14，見 `ci/toolc
 - **Jenkins 只公開 `/github-webhook/`**：GitHub 需要從網際網路送出 webhook，所以 Nginx Proxy Manager 只公開這個路徑且只接受 POST，Jenkins 的其他路徑只允許 LAN（見 [`ci/jenkins/README.md`](ci/jenkins/README.md)）。
 - 其他公開網際網路曝露方式**不在支援範圍內**，包含其他路由器連接埠轉發、其他對外公開的反向代理、以及任何通道服務（tunnel）。不要為了對外公開而移除 Allowed_Hosts、Setup_Token 或 LAN 網段限制。
 
-首次管理員設定：Pipeline 由 Credential_Store 提供 `CAMPING_SETUP_TOKEN`（`lm-<env>-setup-token`）。若 `app.env` 未設定，App 每次啟動自動產生設定碼並只寫入容器日誌，只能在 Deploy_Host 本機以 `sudo docker logs lm-<env>-app-<color>-1 2>&1 | grep Setup_Token` 讀取；建立管理員後即失效。也可以在 Deploy_Host 上以 `create-admin` 建立（見[帳號維運指令](#帳號維運指令create-admin-與-reset-password)）。
+首次管理員設定：在 Deploy_Host 上以 `create-admin` 建立每個環境的第一個管理員（見[帳號維運指令](#帳號維運指令create-admin-與-reset-password)），再以 `lm-deploy <env> smoke-account` 建立 Smoke_Test 的 smoke-bot 帳號；Staging 與 Production 的完整順序見 [`deploy/README.md` 的「首次部署與 smoke-bot」](deploy/README.md#首次部署與-smoke-bot)。`/setup` 只是後備，只在 Database 沒有任何帳號時可用，並需要 Setup_Token：Pipeline 由 Credential_Store 提供 `CAMPING_SETUP_TOKEN`（`lm-<env>-setup-token`）；若 `app.env` 未設定，App 每次啟動自動產生設定碼並只寫入容器日誌，只能在 Deploy_Host 本機以 `sudo docker logs lm-<env>-app-<color>-1 2>&1 | grep Setup_Token` 讀取；建立管理員後即失效。
 
 Staging 與 Production 是兩個獨立的 Compose 專案（`lm-staging`、`lm-prod`），不共用 Database、資料卷、網路或部署憑證。
 

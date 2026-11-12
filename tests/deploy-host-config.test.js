@@ -6,6 +6,13 @@ import { join } from 'node:path';
 
 const HOST = join(import.meta.dir, '..', 'deploy', 'host');
 const read = name => readFileSync(join(HOST, name), 'utf8');
+const LM_DEPLOY = join(import.meta.dir, '..', 'deploy', 'bin', 'lm-deploy');
+// fnBody(text, name)：bash 函式 `name() {` 到第一個只有 `}` 的行。
+const fnBody = (text, name) => {
+  const start = text.indexOf(`\n${name}() {\n`);
+  if (start < 0) return '';
+  return text.slice(start, text.indexOf('\n}\n', start) + 3);
+};
 const body = text => text.split('\n').filter(l => l.trim() !== '' && !l.trimStart().startsWith('#'));
 
 const FILES = [
@@ -54,6 +61,46 @@ describe('deploy/host', () => {
     const cmnds = body(text).filter(l => l.startsWith('Cmnd_Alias'));
     for (const l of cmnds) expect(l).toMatch(/^Cmnd_Alias LM_DEPLOY_[A-Z]+_CMD = \/opt\/lm\/bin\/lm-deploy (staging|prod)$/);
     expect(cmnds).toHaveLength(2);
+  });
+
+  test('smoke-account 只限 Host_Operator：SSH 允許清單不含它、require_operator 擋部署帳號（Req 27.17、27.18、15.9）', () => {
+    const sh = readFileSync(LM_DEPLOY, 'utf8');
+    const m = sh.match(/^readonly SSH_SUBCOMMANDS="([^"]*)"$/m);
+    expect(m).not.toBeNull();
+    const list = m[1].split(' ');
+    // 現有 Pipeline 經 SSH 使用的子命令（Jenkinsfile、ci/jenkins/pipelines/*.Jenkinsfile）全部在清單內。
+    for (const c of ['deploy', 'status', 'health', 'rollback', 'finalize', 'drill']) expect(list).toContain(c);
+    expect(list.sort()).toEqual(
+      ['app-env', 'backup', 'deploy', 'drill', 'finalize', 'health', 'migrate', 'prune', 'rollback', 'start', 'status', 'switch'],
+    );
+    expect(list).not.toContain('smoke-account');
+    // parse_ssh_command 以清單拒絕其他子命令。
+    expect(fnBody(sh, 'parse_ssh_command')).toContain('" $SSH_SUBCOMMANDS " != *" ${toks[0]} "*');
+
+    const op = fnBody(sh, 'require_operator');
+    expect(op).toContain('SSH_ORIGINAL_COMMAND');
+    expect(op).toContain('lm-deploy-staging');
+    expect(op).toContain('lm-deploy-prod');
+    expect(op).toContain('SUDO_USER');
+    expect(op).toContain('EUID');
+    expect(op).toContain('operator_only');
+
+    // smoke-account 分支：require_operator 是第一個動作，stdin 為終端機的檢查在取鎖之前。
+    const branch = sh.slice(sh.indexOf('\n    smoke-account)\n'));
+    const first = branch.indexOf('require_operator');
+    expect(first).toBeGreaterThan(0);
+    expect(first).toBeLessThan(branch.indexOf('acquire_lock'));
+    expect(branch.indexOf('-t 0')).toBeLessThan(branch.indexOf('acquire_lock'));
+    // 密碼只經工具的 stdin。
+    expect(sh).toContain('/app/tools/create-smoke-account.js "$@" <"$SMOKE_PW_FILE"');
+
+    // sudoers 不變：完整比對參數的 lm-deploy <env>，無法在 argv 加上 smoke-account。
+    const cmnds = body(read('sudoers.d/lm-deploy')).filter(l => l.startsWith('Cmnd_Alias'));
+    expect(cmnds).toEqual([
+      'Cmnd_Alias LM_DEPLOY_STAGING_CMD = /opt/lm/bin/lm-deploy staging',
+      'Cmnd_Alias LM_DEPLOY_PROD_CMD = /opt/lm/bin/lm-deploy prod',
+    ]);
+    expect(read('sudoers.d/lm-deploy')).not.toContain('smoke-account');
   });
 
   test('install.sh／verify-host.sh：/etc/sudoers-rs 存在時也必須載入 /etc/sudoers.d；sudo -l 以 LC_ALL=C 解析', () => {

@@ -11,6 +11,8 @@
 
 本文件中的 `<...>` 是佔位符。Cloudflare 範圍與 Edge_Proxy 的實際來源位址只寫在主機的 `/srv/lm/prod/prod.env`，不寫入 repository。
 
+Staging 與 Production 第一次部署的順序（建立第一個管理員與 Smoke_Test 的 smoke-bot 帳號）見最後一節[首次部署與 smoke-bot](#首次部署與-smoke-bot)。
+
 ## 主機配置
 
 Deploy_Host、Jenkins controller、兩個 Build_Agent、LAN Registry 與 NPM 都在 `192.168.1.121`（LAN `192.168.1.0/24`）。
@@ -269,3 +271,140 @@ Let's Encrypt 的 HTTP-01 驗證經 Cloudflare 代理時若失敗，改用 NPM �
 3. 經 `https://www.our-littlemoments.com` 登入成功，瀏覽器的 `ggc_session` Cookie 帶有 `Secure`。
 4. LM_Proxy 存取日誌的 `client_ip` 記錄真實用戶端 IP（第 8 節步驟 3）。
 5. Staging 只能從 LAN 以 `http://192.168.1.121:8081` 開啟。
+
+## 首次部署與 smoke-bot
+
+Pipeline 的 Smoke_Test（`scripts/smoke.mjs`）以帳號 `smoke-bot` 與 Credential_Store 中 `lm-<env>-smoke` 的密碼登入，並要求該帳號看得到標題為 `smoke-fixture` 的行程。這兩項資料（Smoke_Account 與 Smoke_Fixture）由 Host_Operator 在 Deploy_Host 上以 `lm-deploy <env> smoke-account` 在每個環境建立一次（Requirement 27；design.md Components §21）。
+
+順序固定為「先管理員、後 smoke-bot」。`create-admin` 與 `/setup` 只在 Database 沒有任何帳號時建立管理員，smoke-bot 若先建立，該環境就無法再建立管理員；所以 `smoke-account` 在沒有管理員時拒絕執行，也不寫入任何資料。
+
+`smoke-account` 只限 Host_Operator 以自己的帳號經 sudo 執行。它不在 SSH forced command 的允許清單內，部署帳號無法執行。密碼只經 stdin 傳入，不出現在指令列、環境變數或輸出中。它依序執行：讀入密碼 → `db` 未執行時啟動並等待健康檢查（5 分鐘內）、`proxy` 未執行時啟動 → 備份並驗證 → 以 `<digest>` 的映像執行 Migration_Runner → 在同一 Compose 專案執行 `/app/tools/create-smoke-account.js`。它不啟動或停止 `app-blue`／`app-green`，也不改 `upstream.caddy`。
+
+以下指令都在 `192.168.1.121` 上以維運者的帳號執行。佔位符：
+
+- `<digest>`：`sha256:<hex>`，`main` 建置的 Image_Digest。`lm-deploy` 也接受 `<image>` 形式。
+- `<image>`：`registry.our-littlemoments.com:8443/little-moments@<digest>`（`Jenkinsfile` 的 `LM_IMAGE_REPO` 加上 digest）。
+- `<admin-name>`、`<display-name>`：第一個管理員的帳號名稱與顯示名稱。
+
+`S` 是 Jenkins 的秘密目錄 `<controller-dir>/secrets/little-moments/release`（本主機的 `<controller-dir>` 為 `~/docker/jenkins`），後續步驟沿用。先執行 `sudo -v` 快取 sudo 認證，避免管線兩端的 sudo 同時詢問密碼：
+
+```sh
+S=~/docker/jenkins/secrets/little-moments/release
+sudo -v
+```
+
+### 前置條件
+
+1. 第 1、2 節的 `install.sh` 已完成，`/srv/lm/<env>/<env>.env` 已填入（Production 見第 3 節）。
+2. `/srv/lm/<env>/db.env`（0600 root）已依 `compose/db.env.example` 建立：`POSTGRES_USER` 與 `POSTGRES_PASSWORD` 與 Credential_Store 的 `lm-<env>-db` 相同，`POSTGRES_DB` 為 `Jenkinsfile` 的 `LM_STAGING_DB_NAME`（`little_moments_staging`）或 `LM_PROD_DB_NAME`（`little_moments`）。`db.env` 只在資料卷第一次初始化時生效。
+3. `lm-<env>-db`、`lm-<env>-setup-token` 與 `lm-<env>-smoke` 的秘密檔已填入實際值，Staging 與 Production 各不相同。smoke 密碼為一行、12–128 個字元。
+4. Deploy_Host 的 Docker 可以從 Registry 拉取 App_Image（`lm-deploy deploy` 與 `smoke-account` 都會拉取）。
+5. 使用的 Image_Digest 由包含 Smoke_Provisioner（`scripts/create-smoke-account.mjs`，映像中的 `/app/tools/create-smoke-account.js`）的 commit 建置。較舊的映像沒有此檔案，`smoke-account` 會在最後一步以 `smoke_account_failed` 結束，`tool` 為 `null`。
+6. `/srv/lm/<env>/app.env` 存在。`smoke-account` 在它不存在時以結束碼 2（`config_missing`）拒絕。Pipeline 的 `lm-deploy <env> deploy <digest> --app-env-stdin` 依序為：驗證 stdin 的 app.env 內容 → 備份 → 寫入 `app.env` → Migration_Runner → 啟動 → 健康檢查 → 切換；備份失敗時不會寫入 `app.env`。全新主機的第一次部署正是在備份失敗（見下方 Staging 步驟 1），所以由維運者以同一組 Credential_Store 值先寫入。`lm-deploy <env> app-env` 驗證鍵名後以 0600 root 原子寫入，不輸出任何值；值只經 root shell 的內建 `printf` 與管線傳遞，不出現在任何程序的指令列。之後每次 Pipeline 部署都以相同來源覆寫此檔：
+
+   ```sh
+   E=staging DB=little_moments_staging        # Production：E=prod DB=little_moments
+   sudo sh -c 'printf "%s=%s\n" \
+       CAMPING_DATABASE_NAME "$3" \
+       CAMPING_DATABASE_USER "$(cat "$1/lm-$2-db.username")" \
+       CAMPING_DATABASE_PASSWORD "$(cat "$1/lm-$2-db.password")" \
+       CAMPING_SETUP_TOKEN "$(cat "$1/lm-$2-setup-token")"' sh "$S" "$E" "$DB" \
+     | sudo /opt/lm/bin/lm-deploy "$E" app-env
+   ```
+
+   預期輸出 `{"ok":true,"command":"app-env","env":"staging","keys":["CAMPING_DATABASE_NAME","CAMPING_DATABASE_USER","CAMPING_DATABASE_PASSWORD","CAMPING_SETUP_TOKEN"]}`。任一秘密檔不存在或為空時，對應的值為空，`app-env` 以結束碼 2（`app_env_invalid`）拒絕且不變更既有檔案。
+
+### Staging
+
+1. 包含 Smoke_Provisioner 的變更合併至 `main` 後，Jenkins `release/little-moments » main` 的第一次建置會推送並簽章 App_Image，然後在「Staging Deploy」失敗。失敗的位置取決於 `db` 是否已在執行：
+   - 全新主機（一般情況）：沒有任何指令事先啟動 `db`，`lm-deploy staging deploy` 的備份（`compose exec -T db pg_dump`）失敗，`reason` 為 `backup_create_failed`（建置訊息「備份建立失敗」）。沒有套用遷移、沒有啟動 App，也沒有寫入 `app.env`。
+   - 維運者事先啟動過 `db` 且 `app.env` 已存在：部署會完成切換，但 Smoke_Test 在登入時失敗（smoke-bot 不存在），Pipeline 停止新版容器（沒有先前已通過 Staging 驗證的版本）。
+
+   兩種情況結束後 `sudo /opt/lm/bin/lm-deploy staging status` 都顯示 `"phase":"idle"`，可以執行 `smoke-account`。自該建置取得 Image_Digest：建置頁 Build Artifacts 中的 `reports/image-digest.txt`（內容為一行 `sha256:<hex>`），或 Console Output 中「App_Image 已推送：」那一行 `@` 之後的部分。以下以 `<digest>` 表示。
+2. 若 `/srv/lm/staging/app.env` 不存在（`sudo test -f /srv/lm/staging/app.env || echo missing` 輸出 `missing`），依前置條件 6 以 `E=staging DB=little_moments_staging` 寫入。
+3. 第一次執行 `smoke-account`：
+
+   ```sh
+   sudo cat "$S/lm-staging-smoke" | sudo /opt/lm/bin/lm-deploy staging smoke-account <digest>
+   ```
+
+   預期 stdout 依序為 `services`（`"db":"started","proxy":"started"`）、`backup`（`"emptyDatabase":true`）、`migrate` 三行成功，最後一行為 `{"ok":false,"command":"smoke-account",…,"reason":"smoke_account_failed","message":"Smoke_Provisioner 未完成（no_admin）",…,"tool":{"ok":false,"reason":"no_admin"}}`，結束碼 1。這是預期結果：Database 與 LM_Proxy 已啟動、schema 已建立，但還沒有管理員，所以沒有建立任何帳號或行程。
+4. 以 README 的 compose 指令執行 `create-admin`，建立 Staging 的第一個管理員（[帳號維運指令](../README.md#帳號維運指令create-admin-與-reset-password)）。加 `-T` 時沒有終端機，`--username` 與 `--display-name` 必須指定，密碼由 stdin 提供。下列寫法以隱藏輸入讀入密碼，密碼只經 shell 內建的 `printf` 與管線傳遞：
+
+   ```sh
+   read -rsp '管理員密碼（12–128 字元）：' P; echo
+   printf '%s\n' "$P" | sudo env LM_ENV=staging APP_IMAGE_BLUE=<image> APP_IMAGE_GREEN=<image> APP_IMAGE_NEW=<image> \
+     docker compose --project-directory /srv/lm/staging -f /srv/lm/staging/compose.yaml --env-file /srv/lm/staging/staging.env \
+     --profile ops run --rm --no-deps -T --entrypoint bun migrate /app/tools/create-admin.js \
+     --username <admin-name> --display-name <display-name>
+   unset P
+   ```
+
+   也可以不加 `-T`、不加管線與兩個選項，改在終端機回答提示（密碼輸入兩次）。管理員密碼由維運者自行保管，不放進 Credential_Store。Database 已有管理員（例如曾經以 `/setup` 建立）時略過此步驟；`create-admin` 在已有任何帳號時拒絕執行。
+5. 再次執行同一個 `smoke-account` 指令：
+
+   ```sh
+   sudo cat "$S/lm-staging-smoke" | sudo /opt/lm/bin/lm-deploy staging smoke-account <digest>
+   ```
+
+   預期 `services` 為 `"db":"running","proxy":"running"`，最後一行為 `{"ok":true,"command":"smoke-account","env":"staging","digest":"<digest>","tool":{"ok":true,"username":"smoke-bot","account":"created","fixture":"smoke-fixture","fixtureStatus":"created"}}`，結束碼 0。之後再執行時兩者皆為 `kept`，不寫入任何資料列。
+6. 觸發一次新的 `main` 建置：合併下一個 PR 至 `main`（`main` 需要 PR 與審查；沒有待合併的變更時，可以用只含一個空 commit 的 PR）。**不要**對同一個 commit 在 `release/little-moments » main` 按 Build Now：該 commit 的 `<LM_IMAGE_REPO>:<完整 SHA>` 標籤已由第一次建置推送，「Image Push」階段會拒絕覆寫而失敗，不會進入 Staging。新建置的 Staging 部署應通過（備份 → `app.env` → Migration_Runner → 切換 → Smoke_Test），並記錄 staging-verified attestation（「Staging」關卡通過）。此建置的 `reports/image-digest.txt` 是 Production 要使用的已通過 Staging 驗證的 Image_Digest，以下以 `<verified-digest>` 表示，`<verified-image>` 為 `registry.our-littlemoments.com:8443/little-moments@<verified-digest>`。
+
+### Production
+
+在推送第一個 Release_Tag **之前**，以 `prod`、`lm-prod-smoke` 與 `<verified-digest>` 依相同順序執行：
+
+1. Production 的第一次部署由 Release_Tag 建置執行，在此之前 `/srv/lm/prod/app.env` 不存在。依前置條件 6 以 `E=prod DB=little_moments` 寫入。
+2. 第一次 `smoke-account`，預期與 Staging 相同以 `no_admin` 結束（結束碼 1）：
+
+   ```sh
+   sudo cat "$S/lm-prod-smoke" | sudo /opt/lm/bin/lm-deploy prod smoke-account <verified-digest>
+   ```
+
+3. 建立 Production 的第一個管理員：
+
+   ```sh
+   read -rsp '管理員密碼（12–128 字元）：' P; echo
+   printf '%s\n' "$P" | sudo env LM_ENV=prod APP_IMAGE_BLUE=<verified-image> APP_IMAGE_GREEN=<verified-image> APP_IMAGE_NEW=<verified-image> \
+     docker compose --project-directory /srv/lm/prod -f /srv/lm/prod/compose.yaml --env-file /srv/lm/prod/prod.env \
+     --profile ops run --rm --no-deps -T --entrypoint bun migrate /app/tools/create-admin.js \
+     --username <admin-name> --display-name <display-name>
+   unset P
+   ```
+
+4. 再次執行 `smoke-account`，預期 `"account":"created","fixtureStatus":"created"`、結束碼 0：
+
+   ```sh
+   sudo cat "$S/lm-prod-smoke" | sudo /opt/lm/bin/lm-deploy prod smoke-account <verified-digest>
+   ```
+
+5. 之後才推送 Release_Tag：Release_Approver 在 `<verified-digest>` 所屬的 commit（Staging 步驟 6 的 commit）建立 annotated tag（`git tag -a vX.Y.Z <commit>`）並推送，Release_Tag 建置通過「映像」與「Staging」關卡後核准。Production 部署依序為備份 → 寫入 `app.env` → Migration_Runner → 啟動 → 切換，觀察期的 Smoke_Test 應通過。完成後依第 8 節設定 `LM_EDGE_TRUSTED_PROXIES`。
+
+### `smoke-account` 的結束碼
+
+| 結束碼 | `reason` | 處理方式 |
+|---|---|---|
+| 0 | — | 完成。最後一行的 `tool` 為 Smoke_Provisioner 輸出的 JSON |
+| 1 | `db_start_failed`、`proxy_start_failed`、`backup_create_failed`、`backup_verify_failed`、`backup_timeout`、`migrate_failed`、`smoke_account_failed` | 該步驟失敗，後續步驟未執行。`smoke_account_failed` 的 `message` 括號內是 Smoke_Provisioner 的 `reason`：`no_admin`（先執行 `create-admin`）、`account_is_admin`、`account_disabled`（該帳號名稱已被管理員或已停用的帳號使用，不會修改）、`password_invalid`（密碼不是一行 12–128 個字元）、`database` |
+| 2 | `usage`、`operator_only`、`password_stdin_required`、`password_invalid`、`config_missing`、`config_invalid` | 參數、stdin（沒有內容、超過 4096 位元組、含 NUL 或是終端機）或設定錯誤；未執行任何 Docker 指令。`operator_only` 表示經 SSH forced command、不是 root，或由部署帳號執行 |
+| 3 | `invalid_phase`、`state_invalid` | 有未完成的部署；等 Pipeline 結束，或以 `finalize`／`rollback` 處理後再執行 |
+| 4 | `deploy_in_progress` | 部署鎖被持有（Pipeline 正在部署這個環境）；稍後再執行 |
+
+`--username <name>` 與 `--fixture <title>` 可以覆寫預設的 `smoke-bot` 與 `smoke-fixture`，但 Pipeline 的 Smoke_Test 固定使用預設值，Staging 與 Production 不要指定。
+
+### Setup_Token、smoke-bot 密碼與 smoke-fixture
+
+- Setup_Token：Pipeline 每次部署仍把 `lm-<env>-setup-token` 寫入 `app.env`，但依本節建立管理員後 `needsSetup` 為 `false`，`/setup` 不再使用。它只在 Database 沒有任何帳號時（本節步驟之前，或還原成空 Database 後）作為 `create-admin` 以外的後備。
+- Production 的 smoke-bot 是真實的 member 帳號，知道密碼的人都能以它登入 `https://www.our-littlemoments.com`。密碼只保存在 Credential_Store 的 `lm-prod-smoke`（Staging 為 `lm-staging-smoke`），不要另外記錄或分享。`smoke-account` 不會變更既有帳號的密碼。要更換時，不要在 Pipeline 部署期間進行，以 `reset-password` 設定新密碼並同步更新秘密檔（`<image>` 用 `sudo /opt/lm/bin/lm-deploy <env> status` 中 `active` 的 digest）：
+
+  ```sh
+  read -rsp '新的 smoke-bot 密碼（12–128 字元）：' P; echo
+  printf '%s\n' "$P" | sudo env LM_ENV=<env> APP_IMAGE_BLUE=<image> APP_IMAGE_GREEN=<image> APP_IMAGE_NEW=<image> \
+    docker compose --project-directory /srv/lm/<env> -f /srv/lm/<env>/compose.yaml --env-file /srv/lm/<env>/<env>.env \
+    --profile ops run --rm --no-deps -T --entrypoint bun migrate /app/tools/reset-password.js smoke-bot
+  printf '%s\n' "$P" | sudo install -o 1000 -g 1000 -m 600 /dev/stdin "$S/lm-<env>-smoke"
+  unset P
+  ```
+
+  之後在 Jenkins 執行「Reload existing configuration」（見 [`../ci/jenkins/README.md`](../ci/jenkins/README.md)）。`reset-password` 會登出 smoke-bot 的所有 session。兩者更新完成之前的 Smoke_Test 會失敗。
+- Smoke_Fixture：`smoke-fixture` 行程由 smoke-bot 擁有，只有 smoke-bot 與管理員看得到（管理員的行程清單列出全部行程，所以 Production 的管理員也會看到它）。不要改名、刪除或邀請其他人加入。刪除或改名後下一次 Smoke_Test 會失敗；以同一個 `smoke-account` 指令重建（既有帳號保留，只建立缺少的行程）。

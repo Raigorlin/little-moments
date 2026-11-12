@@ -2,6 +2,7 @@
 // 1. 環境變數表（<!-- env-table:start --> … <!-- env-table:end -->）列出 parseConfig 讀取的每個變數，
 //    且預設值、必填與未設定時行為與 server/config.js 實作一致。
 // 2. README 不含任何符合秘密模式的字串；範例值只用佔位符。
+// 3. deploy/README.md 的「首次部署與 smoke-bot」與 README 帳號維運章節（Requirement 27.25、27.26）。
 import { describe, test, expect } from 'bun:test';
 import fc from 'fast-check';
 import { readFileSync } from 'node:fs';
@@ -312,5 +313,132 @@ describe('公開範圍與 Edge_Proxy runbook（Req 24.3、25.12、25.13）', () 
     }
     // IPv6 只能是文件保留網段 2001:db8::/32。
     for (const m of runbook.matchAll(/\b[0-9a-f]{1,4}:[0-9a-f:]*::?[0-9a-f:]*\/\d{1,3}/gi)) expect(m[0]).toBe('2001:db8::/32');
+  });
+});
+
+describe('首次部署與 smoke-bot（Req 27.25、27.26、24.9、24.10）', () => {
+  const runbook = read('../deploy/README.md');
+  const jenkinsReadme = read('../ci/jenkins/README.md');
+  /** `## <title>` 到下一個 `## ` 標題（或檔尾）之間的內容。 */
+  const sectionOf = (text, title) => {
+    const start = text.indexOf(`\n## ${title}\n`);
+    if (start < 0) return '';
+    const body = text.slice(start + title.length + 5);
+    const next = body.search(/^## /m);
+    return next < 0 ? body : body.slice(0, next);
+  };
+  /** GitHub 標題錨點：小寫、移除標點（保留字母、數字、空白、`-`、`_`）、空白改為 `-`。 */
+  const slug = title => title.toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, '').replace(/ /g, '-');
+  /** 依序尋找每個片段，回傳各自的位置（找不到為 -1，之後的片段也不再尋找）。 */
+  const positions = (text, parts) => {
+    let from = 0;
+    return parts.map(p => {
+      if (from < 0) return -1;
+      const i = text.indexOf(p, from);
+      from = i < 0 ? -1 : i + p.length;
+      return i;
+    });
+  };
+  const first = sectionOf(runbook, '首次部署與 smoke-bot');
+  const staging = first.slice(first.indexOf('### Staging'), first.indexOf('### Production'));
+  const production = first.slice(first.indexOf('### Production'));
+  const accounts = sectionOf(readme, '帳號維運指令：create-admin 與 reset-password');
+  const lanSection = sectionOf(readme, 'LAN 部署');
+  const LINK = 'deploy/README.md#首次部署與-smoke-bot';
+
+  test('deploy/README.md 有「首次部署與 smoke-bot」一節，錨點與連結一致', () => {
+    expect(first).not.toBe('');
+    expect(slug('首次部署與 smoke-bot')).toBe(LINK.split('#')[1]);
+    // README 既有的帳號維運章節錨點不變（其他章節的連結仍有效）。
+    expect(slug('帳號維運指令：create-admin 與 reset-password')).toBe('帳號維運指令create-admin-與-reset-password');
+    expect(readme).toContain('(#帳號維運指令create-admin-與-reset-password)');
+  });
+
+  test('前置條件：install.sh、db.env／app.env 與 lm-<env>-db 一致、映像包含 Smoke_Provisioner；app.env 經 lm-deploy app-env 寫入', () => {
+    const pre = first.slice(first.indexOf('### 前置條件'), first.indexOf('### Staging'));
+    for (const s of ['`install.sh`', '`db.env`', '`lm-<env>-db`', '`little_moments_staging`', '`little_moments`',
+      '/app/tools/create-smoke-account.js', '`config_missing`', '--app-env-stdin', '| sudo /opt/lm/bin/lm-deploy "$E" app-env']) {
+      expect(pre).toContain(s);
+    }
+    // 備份失敗時不寫入 app.env：文件所述的順序與 lm-deploy 的 do_deploy 相同。
+    const lmDeploy = read('../deploy/bin/lm-deploy');
+    const deployBody = lmDeploy.slice(lmDeploy.indexOf('do_deploy() {'), lmDeploy.indexOf('\n}\n', lmDeploy.indexOf('do_deploy() {')));
+    expect(positions(deployBody, ['stage_app_env', 'do_backup', 'install_app_env', 'do_migrate']).every(i => i >= 0)).toBe(true);
+    expect(positions(pre, ['驗證 stdin 的 app.env 內容', '備份', '寫入 `app.env`', 'Migration_Runner']).every(i => i >= 0)).toBe(true);
+  });
+
+  test('Staging 依序為：第一次建置失敗並取得 digest → smoke-account（no_admin）→ create-admin → smoke-account → 新的 main 建置 → staging-verified', () => {
+    const cmd = 'sudo cat "$S/lm-staging-smoke" | sudo /opt/lm/bin/lm-deploy staging smoke-account <digest>';
+    const order = positions(staging, [
+      '`backup_create_failed`', 'reports/image-digest.txt', cmd, 'Smoke_Provisioner 未完成（no_admin）', '/app/tools/create-admin.js', cmd,
+      '"account":"created"', '新的 `main` 建置', 'staging-verified',
+    ]);
+    expect(order.every(i => i >= 0)).toBe(true);
+    // create-admin 使用 README 的 compose 指令（-T、密碼經 stdin、無終端機時必須指定兩個選項）。
+    expect(staging).toContain('--profile ops run --rm --no-deps -T --entrypoint bun migrate /app/tools/create-admin.js');
+    expect(staging).toContain('--username <admin-name> --display-name <display-name>');
+    expect(readme).toContain('--profile ops run --rm --no-deps --entrypoint bun migrate /app/tools/create-admin.js');
+    // 同一個 commit 重建會在 Image Push 拒絕覆寫標籤，文件不得要求對同一 commit 按 Build Now。
+    expect(read('../Jenkinsfile')).toContain('拒絕覆寫');
+    expect(staging).toContain('**不要**對同一個 commit 在 `release/little-moments » main` 按 Build Now');
+  });
+
+  test('Production 在推送第一個 Release_Tag 之前，以 prod、lm-prod-smoke 與已通過 Staging 驗證的 digest 依相同順序執行', () => {
+    expect(first.indexOf('### Production')).toBeGreaterThan(first.indexOf('### Staging'));
+    expect(production).toContain('在推送第一個 Release_Tag **之前**');
+    const cmd = 'sudo cat "$S/lm-prod-smoke" | sudo /opt/lm/bin/lm-deploy prod smoke-account <verified-digest>';
+    const order = positions(production, ['E=prod DB=little_moments', '`no_admin`', cmd, 'LM_ENV=prod', '/app/tools/create-admin.js', cmd, '推送 Release_Tag']);
+    expect(order.every(i => i >= 0)).toBe(true);
+  });
+
+  test('Setup_Token 只是後備；Production 的 smoke-bot 是真實 member、密碼只在 Credential_Store、以 reset-password 更換並同步更新；Smoke_Fixture 只有 smoke-bot 與管理員可見', () => {
+    const ops = first.slice(first.indexOf('### Setup_Token'));
+    for (const s of ['`/setup` 不再使用', '真實的 member 帳號', '`lm-prod-smoke`', '/app/tools/reset-password.js smoke-bot',
+      '"$S/lm-<env>-smoke"', 'Reload existing configuration', '只有 smoke-bot 與管理員看得到', '下一次 Smoke_Test 會失敗']) {
+      expect(ops).toContain(s);
+    }
+  });
+
+  test('結束碼表涵蓋 lm-deploy smoke-account 與 Smoke_Provisioner 的 reason', () => {
+    const lmDeploy = read('../deploy/bin/lm-deploy');
+    for (const reason of ['operator_only', 'password_stdin_required', 'password_invalid', 'config_missing', 'db_start_failed',
+      'proxy_start_failed', 'migrate_failed', 'smoke_account_failed', 'invalid_phase', 'deploy_in_progress',
+      'no_admin', 'account_is_admin', 'account_disabled']) {
+      expect(first).toContain(`\`${reason}\``);
+    }
+    for (const reason of ['operator_only', 'password_stdin_required', 'db_start_failed', 'proxy_start_failed', 'smoke_account_failed']) {
+      expect(lmDeploy).toContain(` ${reason} `);
+    }
+  });
+
+  test('README 帳號維運章節說明 create-smoke-account 並連結該節；LAN 部署以 create-admin 為主、/setup 為後備', () => {
+    expect(accounts).toContain('三個指令');
+    expect(accounts).toContain('bun run create-smoke-account [--username <name>] [--fixture <title>] [--password-file <path>]');
+    for (const s of ['`smoke-bot`', '`Smoke Bot`', '`smoke-fixture`', '**冪等**', '**拒絕執行**', '**密碼來源只有三種**',
+      '`no_admin`', '`account_is_admin`', '`account_disabled`', '結束碼為 2', '結束碼為 1',
+      'lm-deploy <env> smoke-account', `(${LINK})`]) {
+      expect(accounts).toContain(s);
+    }
+    expect(lanSection).toContain(`(${LINK})`);
+    expect(lanSection.indexOf('`create-admin`')).toBeLessThan(lanSection.indexOf('`/setup` 只是後備'));
+  });
+
+  test('ci/jenkins/README.md 的 lm-staging-smoke、lm-prod-smoke 指出帳號由 lm-deploy <env> smoke-account 建立', () => {
+    for (const [id, env] of [['lm-staging-smoke', 'staging'], ['lm-prod-smoke', 'prod']]) {
+      const row = jenkinsReadme.split('\n').find(l => l.startsWith(`| \`release/\` | \`${id}\` |`));
+      expect(row).toContain(`\`lm-deploy ${env} smoke-account\``);
+      expect(row).toContain('(../../deploy/README.md#首次部署與-smoke-bot)');
+    }
+  });
+
+  test('新章節不含秘密：密碼／Token 類賦值只用佔位符，digest 只以 <digest> 表示', () => {
+    const assign = /\b([A-Z0-9_]*(?:PASSWORD|SECRET|TOKEN|API_KEY|PASSPHRASE))\s*[=:]\s*([^\s`|,;)]+)/gi;
+    const placeholder = /^(<[^>]*>?|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\$\(.*|\*+|…|\.\.\.)?$/;
+    for (const m of first.matchAll(assign)) {
+      const value = m[2].replace(/^['"]|['"]$/g, '');
+      expect({ name: m[1], placeholder: placeholder.test(value) }).toEqual({ name: m[1], placeholder: true });
+    }
+    expect(first).not.toMatch(/sha256:[0-9a-f]{8,}/);
+    expect(first).not.toMatch(/-----BEGIN [A-Z ]*PRIVATE KEY-----/);
   });
 });

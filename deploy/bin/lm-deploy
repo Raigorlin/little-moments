@@ -34,6 +34,14 @@
 #                            管理員、建立 smoke-fixture 並執行 Smoke_Test → `down -v`。不取部署鎖（改取
 #                            lm-<env>-drill.lock，不阻擋部署）、不寫入狀態檔、不修剪或刪除任何備份（失敗時亦同）。
 #                            docker／pg_restore 輸出寫入 state/drill-last.log（0600），不輸出到 stdout／stderr。
+#   smoke-account <digest> [--username <name>] [--fixture <title>]
+#                            只限 Host_Operator（root、未設定 SSH_ORIGINAL_COMMAND、SUDO_USER 不是部署帳號；Req 27.17）：
+#                            密碼由 stdin 讀入 state/.smoke-pw.XXXXXX（0600，任何結束路徑皆刪除）→ db／proxy 未執行時
+#                            啟動（db 等待健康檢查）→ backup → migrate → 以 ops profile 執行
+#                            /app/tools/create-smoke-account.js（密碼只經其 stdin）。不改槽位、不改 upstream.caddy
+#                            （Req 27.19–27.24；design.md Components §21.4）。
+#                            此子命令不在 SSH forced command 的允許清單（SSH_SUBCOMMANDS）內，部署憑證無法執行。
+#   用法：sudo cat <secret-file> | sudo /opt/lm/bin/lm-deploy <env> smoke-account <LM_IMAGE_REPO>@sha256:<hex>
 #
 # 輸出：stdout 每個步驟一行 JSON 物件（失敗時 {"ok":false,"reason":...}）；docker 與診斷訊息只寫 stderr。
 # 結束碼：0 成功；1 操作失敗；2 參數／設定錯誤；3 狀態不允許（例如已有未完成的部署）；4 鎖已被持有。
@@ -60,10 +68,13 @@
 #   LM_BACKUP_TIMEOUT=30m  LM_VERIFY_TIMEOUT=10m  LM_MIGRATE_TIMEOUT=30m  LM_BACKUP_MAX_AGE=3600
 #   LM_BACKUP_KEEP=14  LM_IMAGE_KEEP=3  LM_HEALTH_TIMEOUT=5  LM_HEALTH_INTERVAL=5（staging 為 10）  LM_HEALTH_WINDOW=120
 #   LM_HEALTH_NEED=3  LM_RESTORE_TIMEOUT=60m  LM_DRILL_UP_TIMEOUT=5m  LM_DRILL_TOOL_TIMEOUT=15m  LM_DRILL_DOWN_TIMEOUT=2m
+#   LM_DB_UP_TIMEOUT=5m  LM_SMOKE_TOOL_TIMEOUT=5m
+#   LM_TEST_OPERATOR=1（只供 bats：非 root 執行 smoke-account 時視為 Host_Operator）
 #   docker、timeout、flock、sha256sum、sleep、date 皆經 PATH 呼叫，可由測試替換。
 #
 # SSH forced command 經 sudo 時需在 sudoers 保留 SSH_ORIGINAL_COMMAND（deploy/host/sudoers.d/lm-deploy）。
-# 每個 token 只允許 [A-Za-z0-9@:/._=-]，且不得指向另一個環境。
+# 每個 token 只允許 [A-Za-z0-9@:/._=-]，且不得指向另一個環境；子命令必須在 SSH_SUBCOMMANDS 清單內
+# （不含 smoke-account，Req 27.18）。
 
 set -euo pipefail
 umask 077
@@ -82,6 +93,16 @@ readonly ZERO_DIGEST="sha256:000000000000000000000000000000000000000000000000000
 readonly APP_ENV_KEYS=" CAMPING_DATABASE_NAME CAMPING_DATABASE_USER CAMPING_DATABASE_PASSWORD CAMPING_SETUP_TOKEN "
 readonly APP_ENV_REQUIRED="CAMPING_DATABASE_NAME CAMPING_DATABASE_USER CAMPING_DATABASE_PASSWORD"
 readonly APP_ENV_MAX_BYTES=65536
+# SSH forced command（$SSH_ORIGINAL_COMMAND）只接受這些子命令（Req 27.18）。smoke-account 刻意不在清單內：
+# 部署憑證只能經 forced command 執行 lm-deploy <env>，因此無法建立帳號（Req 15.9）。
+readonly SSH_SUBCOMMANDS="backup migrate start health switch rollback finalize status prune app-env deploy drill"
+# smoke-account（design.md Components §21.4）
+readonly SMOKE_USER_RE='^[a-z][a-z0-9-]{2,31}$'
+readonly SMOKE_FIXTURE_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$'
+readonly SMOKE_PW_MAX=4096
+# Smoke_Provisioner 的單行 JSON 只在只含這些字元時嵌入輸出（不含空白、反斜線或控制字元）。
+readonly SMOKE_TOOL_JSON_RE='^\{[][{}"A-Za-z0-9_:,.-]*\}$'
+readonly SMOKE_TOOL_MAX=4096
 
 # ---------------------------------------------------------------------------------------------
 # 設定
@@ -190,9 +211,12 @@ cfg LM_RESTORE_TIMEOUT 60m "$DUR_RE"; RESTORE_TIMEOUT=$REPLY
 cfg LM_DRILL_UP_TIMEOUT 5m "$DUR_RE"; DRILL_UP_TIMEOUT=$REPLY
 cfg LM_DRILL_TOOL_TIMEOUT 15m "$DUR_RE"; DRILL_TOOL_TIMEOUT=$REPLY
 cfg LM_DRILL_DOWN_TIMEOUT 2m "$DUR_RE"; DRILL_DOWN_TIMEOUT=$REPLY
+cfg LM_DB_UP_TIMEOUT 5m "$DUR_RE"; DB_UP_TIMEOUT=$REPLY
+cfg LM_SMOKE_TOOL_TIMEOUT 5m "$DUR_RE"; SMOKE_TOOL_TIMEOUT=$REPLY
 
 usage() {
   printf '%s\n' '用法：lm-deploy <staging|prod> <backup|migrate|start|health|switch|rollback|finalize|status|prune|app-env|deploy|drill> [args]' >&2
+  printf '%s\n' '      lm-deploy <staging|prod> smoke-account <digest> [--username <name>] [--fixture <title>]（只限 Host_Operator，密碼經 stdin；不經 SSH forced command）' >&2
   CMD=${CMD:-usage}
   die "$EX_USAGE" usage "${1:-參數無效}"
 }
@@ -1281,6 +1305,108 @@ do_drill() {
 }
 
 # ---------------------------------------------------------------------------------------------
+# Smoke_Account 佈建（Req 27.17–27.24；design.md Components §21.4）
+# ---------------------------------------------------------------------------------------------
+#
+# 密碼只經 stdin → state/.smoke-pw.XXXXXX（0600）→ Smoke_Provisioner 容器的 stdin；從不放入變數、指令列參數、
+# 環境變數、stdout／stderr 或狀態檔。暫存檔列在 TMP_FILES，cleanup 在任何結束路徑刪除。
+
+SMOKE_PW_FILE=""
+
+# 只限 Host_Operator：在取鎖與任何 Docker 指令之前呼叫（Req 27.17）。
+require_operator() {
+  local msg="smoke-account 只限 Host_Operator 在 Deploy_Host 上以 sudo 執行"
+  # 經 SSH forced command（不論值）→ 部署憑證，拒絕。
+  [[ -z ${SSH_ORIGINAL_COMMAND+set} ]] || die "$EX_USAGE" operator_only "$msg"
+  # 非 root → 拒絕；唯一例外是非 sudo 執行（LM_TRUST_ENV=1）且 LM_TEST_OPERATOR=1（bats）。
+  if [[ ${EUID} -ne 0 ]] && ! [[ $LM_TRUST_ENV == 1 && ${LM_TEST_OPERATOR:-} == 1 ]]; then
+    die "$EX_USAGE" operator_only "$msg"
+  fi
+  # 部署帳號經 sudo（即使 sudoers 不允許此 argv，仍再擋一次）。
+  case ${SUDO_USER:-} in
+    lm-deploy-staging | lm-deploy-prod) die "$EX_USAGE" operator_only "$msg" ;;
+  esac
+  return 0
+}
+
+# stdin → 0600 暫存檔；空、超過 SMOKE_PW_MAX 位元組或含 NUL → 結束碼 2。之後 stdin 改為 /dev/null，
+# 後續的 docker compose exec／run（預設轉送 stdin）不會讀到任何內容。
+stage_smoke_password() {
+  local tmp size
+  mkdir -p -- "$STATE_DIR"
+  tmp=$(mktemp "$STATE_DIR/.smoke-pw.XXXXXX") || die "$EX_FAIL" internal "無法建立暫存檔"
+  TMP_FILES+=("$tmp")
+  chmod 0600 -- "$tmp"
+  head -c "$((SMOKE_PW_MAX + 1))" >"$tmp" || die "$EX_USAGE" password_invalid "無法讀取 stdin"
+  exec 0</dev/null
+  size=$(stat -c %s -- "$tmp")
+  ((size > 0)) || die "$EX_USAGE" password_invalid "stdin 沒有內容"
+  ((size <= SMOKE_PW_MAX)) || die "$EX_USAGE" password_invalid "stdin 超過 $SMOKE_PW_MAX 位元組"
+  [[ $(tr -d '\000' <"$tmp" | wc -c) -eq $size ]] || die "$EX_USAGE" password_invalid "stdin 不得包含 NUL 字元"
+  SMOKE_PW_FILE=$tmp
+}
+
+# service_running <svc>：docker compose ps --status running -q <svc> 有輸出即為執行中。
+service_running() {
+  local ids
+  ids=$("${COMPOSE_CMD[@]}" ps --status running -q "$1") || return 2
+  [[ -n $ids ]]
+}
+
+# db 未執行 → 啟動並等待健康檢查（DB_UP_TIMEOUT）；proxy 未執行 → 啟動。已執行中的服務不重新建立。
+ensure_services() {
+  CMD=services
+  local digest=$1 db=running proxy=running rc
+  build_compose "$digest"
+  if service_running db; then rc=0; else rc=$?; fi
+  ((rc != 2)) || die "$EX_FAIL" db_start_failed "無法查詢 db 服務狀態"
+  if ((rc != 0)); then
+    timeout -k 10s "$DB_UP_TIMEOUT" "${COMPOSE_CMD[@]}" up -d --wait --no-deps db >&2 ||
+      die "$EX_FAIL" db_start_failed "Database 未在 $DB_UP_TIMEOUT 內啟動並通過健康檢查"
+    db=started
+  fi
+  if service_running proxy; then rc=0; else rc=$?; fi
+  ((rc != 2)) || die "$EX_FAIL" proxy_start_failed "無法查詢 proxy 服務狀態"
+  if ((rc != 0)); then
+    "${COMPOSE_CMD[@]}" up -d --no-deps proxy >&2 || die "$EX_FAIL" proxy_start_failed "無法啟動 LM_Proxy"
+    proxy=started
+  fi
+  emit "{\"ok\":true,\"command\":\"services\",\"env\":$(jstr "$ENVN"),\"db\":$(jstr "$db"),\"proxy\":$(jstr "$proxy")}"
+}
+
+# do_smoke_account <digest> [tool-args...]：services → backup → migrate → Smoke_Provisioner。
+do_smoke_account() {
+  local digest=$1 out rc last="" line tool=null reason
+  shift
+  stage_smoke_password
+  ensure_services "$digest"
+  do_backup
+  do_migrate "$digest"
+  CMD=smoke-account
+  build_compose "$digest"
+  out=$(mktemp "$STATE_DIR/.smoke-out.XXXXXX") || die "$EX_FAIL" internal "無法建立暫存檔"
+  TMP_FILES+=("$out")
+  if timeout -k 10s "$SMOKE_TOOL_TIMEOUT" "${COMPOSE_CMD[@]}" --profile ops run --rm --no-deps -T \
+    --entrypoint bun migrate /app/tools/create-smoke-account.js "$@" <"$SMOKE_PW_FILE" >"$out"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  rm -f -- "$SMOKE_PW_FILE"
+  untrack "$SMOKE_PW_FILE"
+  SMOKE_PW_FILE=""
+  while IFS= read -r line || [[ -n $line ]]; do [[ -n $line ]] && last=$line; done <"$out"
+  if ((${#last} <= SMOKE_TOOL_MAX)) && [[ $last =~ $SMOKE_TOOL_JSON_RE ]]; then tool=$last; fi
+  if ((rc != 0)); then
+    reason="結束碼 $rc"
+    if ((rc == 124 || rc == 137)); then reason="未在 $SMOKE_TOOL_TIMEOUT 內完成"; fi
+    if [[ $tool =~ \"reason\":\"([a-z_]{1,32})\" ]]; then reason=${BASH_REMATCH[1]}; fi
+    die "$EX_FAIL" smoke_account_failed "Smoke_Provisioner 未完成（$reason）" "\"digest\":$(jstr "$digest"),\"tool\":$tool"
+  fi
+  emit "{\"ok\":true,\"command\":\"smoke-account\",\"env\":$(jstr "$ENVN"),\"digest\":$(jstr "$digest"),\"tool\":$tool}"
+}
+
+# ---------------------------------------------------------------------------------------------
 # 參數解析
 # ---------------------------------------------------------------------------------------------
 
@@ -1303,6 +1429,10 @@ parse_ssh_command() {
   for ((i = 0; i < ${#toks[@]}; i++)); do
     [[ ! ${toks[i]} =~ $ENV_RE ]] || usage "不得指定其他環境"
   done
+  # 只接受明列的子命令（Req 27.18）；smoke-account 等其他值在取鎖與任何 Docker 指令前拒絕。
+  if ((${#toks[@]} > 0)) && [[ " $SSH_SUBCOMMANDS " != *" ${toks[0]} "* ]]; then
+    usage "SSH forced command 不允許此子命令"
+  fi
   ARGS=("${toks[@]}")
 }
 
@@ -1409,6 +1539,48 @@ main() {
       (($# == 0)) || usage "drill 不接受參數"
       acquire_drill_lock; load_state; load_env_config
       do_drill
+      ;;
+    smoke-account)
+      # 第一個動作：只限 Host_Operator（取鎖與任何 Docker 指令之前，Req 27.17）。
+      require_operator
+      local sd="" su="" sf="" su_set=0 sf_set=0
+      local -a tool_args=()
+      while (($# > 0)); do
+        case $1 in
+          --username)
+            ((su_set == 0 && $# >= 2)) || usage "smoke-account 的 --username 需要一個值且只能指定一次"
+            su=$2 su_set=1
+            [[ $su =~ $SMOKE_USER_RE ]] || usage "--username 格式無效"
+            tool_args+=(--username "$su")
+            shift 2
+            ;;
+          --fixture)
+            ((sf_set == 0 && $# >= 2)) || usage "smoke-account 的 --fixture 需要一個值且只能指定一次"
+            sf=$2 sf_set=1
+            [[ $sf =~ $SMOKE_FIXTURE_RE ]] || usage "--fixture 格式無效"
+            tool_args+=(--fixture "$sf")
+            shift 2
+            ;;
+          -*) usage "smoke-account 參數無效" ;;
+          *)
+            [[ -z $sd ]] || usage "smoke-account 只接受一個 <digest>"
+            sd=$1
+            shift
+            ;;
+        esac
+      done
+      [[ -n $sd ]] || usage "smoke-account 需要 <digest>"
+      [[ ! -t 0 ]] || die "$EX_USAGE" password_stdin_required "密碼必須經 stdin 提供（例如 sudo cat <秘密檔> | sudo lm-deploy $ENVN smoke-account <digest>）"
+      trap 'exit 129' HUP
+      trap 'exit 130' INT
+      trap 'exit 143' TERM
+      acquire_lock; load_state
+      require_phase idle
+      load_env_config
+      parse_digest "$sd"
+      [[ -f "$ENV_DIR/app.env" ]] || die "$EX_USAGE" config_missing "找不到 app.env"
+      [[ -f "$ENV_DIR/db.env" ]] || die "$EX_USAGE" config_missing "找不到 db.env"
+      do_smoke_account "$DIGEST" "${tool_args[@]}"
       ;;
     *)
       usage "未知的子命令"

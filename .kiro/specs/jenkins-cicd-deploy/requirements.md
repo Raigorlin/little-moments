@@ -14,6 +14,7 @@
 - 每次執行皆可追蹤至 Commit SHA、Image_Digest、測試與安全報告、部署環境與結果。
 - 支援同主機配置（Deploy_Host 同時為 Jenkins 與 Registry 主機），並讓 Production_Environment 經同一主機上的 Edge_Proxy（Nginx Proxy Manager，前端為 Cloudflare）以 `https://www.our-littlemoments.com` 對網際網路公開：LM_Proxy 只採信 Edge_Trusted_Proxies 的轉送標頭，Docker 轉送層只對 Public_Port 接受任何來源（Requirement 8、25）。
 - Production_Environment 公開後，Deploy_Host 上的公開註冊預設關閉（帳號只能經旅行邀請連結建立），管理員可在管理頁開啟或再次關閉公開註冊，不需重新部署或重新啟動（Requirement 26）。
+- Staging_Environment 與 Production_Environment 的 Smoke_Test 合成帳號與合成行程由 Host_Operator 在 Deploy_Host 上以維運指令一次性建立，Deploy_Host 部署憑證的權限不擴大；並記載第一次部署的操作順序（Requirement 27）。
 
 不在範圍內：Requirement 25 以外的公開網際網路曝露（Staging_Environment、Registry 與 Deploy_Host 不對外公開；Jenkins 只公開 `/github-webhook/`）、Kubernetes、多主機叢集、負載／壓力測試、雲端 AI 收據辨識的啟用。具體工具與架構細節（Jenkinsfile 結構、掃描工具選型、反向代理、藍綠切換方式）於設計文件決定。
 
@@ -66,6 +67,10 @@
 - **Admin_Page**：只有管理員可使用的 `/admin` 頁面；其「網站設定」表單供管理員檢視與儲存應用程式設定。
 - **Account_UI**：由 `src/accounts-ui.js` 在瀏覽器產生的帳號相關頁面，包含 `/login`、`/register`、`/invite/<token>` 與 Admin_Page。
 - **Invite_Registration**：未登入訪客經有效旅行邀請連結 `/invite/<token>` 建立帳號並加入該旅行的流程（`POST /api/invites/<token>/register`）。
+- **Smoke_Account**：Smoke_Test 登入用的合成帳號，預設帳號名稱 `smoke-bot`、角色 member；每個環境各一個，密碼只存放於 Credential_Store 的 `lm-staging-smoke` 與 `lm-prod-smoke`。
+- **Smoke_Fixture**：Smoke_Account 在 `GET /api/trips` 中可見、標題恰為 `smoke-fixture`（或維運者指定名稱）的合成行程；Smoke_Test 以此確認行程讀取正常。
+- **Smoke_Provisioner**：建立 Smoke_Account 與 Smoke_Fixture 的維運工具 `scripts/create-smoke-account.mjs`，在 App_Image 內為 `/app/tools/create-smoke-account.js`。
+- **Host_Operator**：在 Deploy_Host 上以自己的登入帳號經 sudo（或直接以 root 登入）執行維運指令的維運者；不包含部署帳號（`lm-deploy-staging`、`lm-deploy-prod`），也不包含經 SSH forced command（設定了 `SSH_ORIGINAL_COMMAND`）的呼叫。
 
 ## Requirements
 
@@ -520,3 +525,39 @@
 18. THE README SHALL 在環境變數表列出 `CAMPING_REGISTRATION` 為 Registration_Seed、App_Server 未設定時的預設值 `open` 與 Deploy_Host 經 `compose.yaml` 未設定時傳入的 `closed`，並說明管理員在 Admin_Page 儲存 Registration_Policy 後 `CAMPING_REGISTRATION` 不再影響實際生效值，直到維運者移除 Settings_Store 中的該筆儲存值，以及移除的方式。
 19. THE `tests/*.test.js` 單元與 API 測試 SHALL 涵蓋第 1、2 條的決定順序（儲存值、Registration_Seed、預設值與無效儲存值）、管理員在同一個 App_Server 執行期間依序將 Registration_Policy 設為 `closed` 再設為 `open` 且每次儲存後的下一個 `POST /api/register` 與 `GET /api/session` 皆反映新值、第 6 條的 403、第 7 條的 400 且 Settings_Store 不變，以及兩種 Registration_Policy 下 Invite_Registration 皆成功。
 20. THE QA_Inventory SHALL 包含一個角色為 admin、頁面為 `/admin`、控制項為 `setting-registration` 的項目，情境為管理員將公開註冊由開放改為關閉再改回開放並確認 `/register` 的顯示隨之改變，且該項目對應至少 1 個在瀏覽器測試中執行的測試案例 ID（Requirement 5 第 1 與 4 條）。
+
+### Requirement 27: Smoke_Test 合成帳號與合成行程的佈建
+
+**User Story:** 身為維運者，我希望以 Host_Operator 執行、可重複執行的維運指令，在 Staging_Environment 與 Production_Environment 各建立一次 Smoke_Account 與 Smoke_Fixture，以便第一次部署後 Requirement 18.3 與 20.5 的 Smoke_Test 能通過，且 Deploy_Host 部署憑證的權限維持 Requirement 15.9 的範圍。
+
+背景：`scripts/smoke.mjs` 以 Smoke_Account 登入並要求 `GET /api/trips` 含 Smoke_Fixture，但 repository 中沒有任何流程在 Staging_Environment 或 Production_Environment 建立這兩項資料（只有還原演練在 drill Database 內建立自己的臨時資料）。Deploy_Host 的公開註冊預設關閉（Requirement 26），`create-admin` 在已有任何帳號時拒絕執行；而 `GET /api/session` 的 `needsSetup` 只在使用者數量為 0 時為 `true`，所以 Smoke_Account 一旦先於第一個管理員建立，該環境就無法再經首次管理員設定或 `create-admin` 建立管理員（Requirement 9.1、9.6）。本需求因此要求先建立管理員、再建立 Smoke_Account。
+
+#### Acceptance Criteria
+
+1. THE Smoke_Provisioner SHALL 只透過 `CAMPING_DATABASE_*` 環境變數（與 App_Server 相同的 `parseConfig` 驗證規則，Requirement 11.1、11.8）連線至 Database，且 THE App_Image SHALL 包含打包後的 `/app/tools/create-smoke-account.js`，並仍符合 Requirement 15.5 與 16.9 的映像內容規則。
+2. IF 任一 `CAMPING_DATABASE_*` 變數缺少或無效、指令列含未定義的選項（包含 `--password` 及 `--name=value` 形式）或多餘的位置參數，THEN THE Smoke_Provisioner SHALL 在連線 Database 前以結束碼 2 結束，且錯誤訊息只指出變數名稱或用法，不含任何設定值。
+3. THE Smoke_Provisioner SHALL 只從下列三種來源之一讀取 Smoke_Account 密碼：`--password-file <path>` 指定的單行檔案、終端機隱藏輸入（輸入兩次確認），或沒有終端機時 stdin 的一行；THE Smoke_Provisioner SHALL 不從指令列參數或環境變數讀取密碼，且不在任何輸出或稽核事件中包含密碼。
+4. IF 密碼長度不在 12 至 128 個字元之間、密碼輸入超過 4096 位元組，或密碼輸入含有一個以上的換行，THEN THE Smoke_Provisioner SHALL 以結束碼 1 結束且不寫入 Database。
+5. THE Smoke_Provisioner SHALL 預設 Smoke_Account 帳號名稱為 `smoke-bot`、顯示名稱為 `Smoke Bot`、Smoke_Fixture 標題為 `smoke-fixture`，並接受 `--username <name>` 與 `--fixture <title>` 覆寫；IF `--username` 不符合 App_Server 帳號名稱規則（`validateUsername`），或 `--fixture` 不是有效的行程標題（1 至 100 個字元、不含 U+0000）或含前後空白，THEN THE Smoke_Provisioner SHALL 在連線 Database 前以結束碼 2 結束。
+6. IF Database 無法連線，或缺少 App_Server 的資料表（遷移尚未套用），THEN THE Smoke_Provisioner SHALL 以結束碼 1 結束、不寫入任何資料，且錯誤訊息只含 Database 主機、連接埠與錯誤代碼。
+7. IF Database 中沒有任何未刪除的管理員帳號，THEN THE Smoke_Provisioner SHALL 以結束碼 1 結束、不建立任何帳號或行程，並輸出指出須先以 `create-admin` 建立第一個管理員的訊息（Requirement 9.1、9.6）。
+8. WHEN 帳號名稱為 Smoke_Account 名稱的使用者不存在，THE Smoke_Provisioner SHALL 建立角色為 member 的 Smoke_Account，以 Requirement 10.7 的 scrypt 參數雜湊密碼，並寫入一筆動作為 `smoke.account.create`、目標為該帳號、不含密碼或雜湊的稽核事件。
+9. WHEN 帳號名稱為 Smoke_Account 名稱的使用者已存在、角色為 member 且未被刪除，THE Smoke_Provisioner SHALL 保留該帳號的角色、顯示名稱、密碼雜湊與 Session 不變，並在輸出中標示該帳號為既有帳號（變更密碼由維運者以 `reset-password` 進行）。
+10. IF 帳號名稱為 Smoke_Account 名稱的使用者已存在且角色為 admin 或已被刪除，THEN THE Smoke_Provisioner SHALL 以結束碼 1 結束、不建立或修改任何帳號或行程，並輸出指出該帳號為管理員或已停用的訊息。
+11. WHEN Smoke_Account 可見的行程（與 `GET /api/trips` 對該帳號回傳的集合相同）中沒有標題恰為 Smoke_Fixture 標題者，THE Smoke_Provisioner SHALL 建立一個由 Smoke_Account 擁有且 Smoke_Account 為成員的行程，其行程狀態以 `POST /api/trips` 相同的程式路徑產生並通過 `isValidState`，開始與結束日期為固定的有效日期，並寫入一筆動作為 `smoke.fixture.create`、目標為該行程的稽核事件。
+12. WHEN Smoke_Account 可見的行程中已有標題恰為 Smoke_Fixture 標題者，THE Smoke_Provisioner SHALL 保留該行程不變，並在輸出中標示 Smoke_Fixture 為既有行程。
+13. THE Smoke_Provisioner SHALL 在單一個取得 App_Server 寫入鎖的寫入交易（`withWriteTx`）內完成第 7 至 12 條的檢查與寫入；IF 交易內任一步驟失敗，THEN THE Smoke_Provisioner SHALL 回復該交易的所有變更並以結束碼 1 結束。
+14. FOR ALL 初始 Database 狀態，以相同參數與密碼連續執行 Smoke_Provisioner 兩次時，第二次執行 SHALL 不寫入任何資料列（包含稽核事件），並回報 Smoke_Account 與 Smoke_Fixture 皆為既有（冪等性）。
+15. WHEN Smoke_Provisioner 成功完成，THE Smoke_Provisioner SHALL 在 stdout 輸出恰好一行 JSON，內容只含帳號名稱、Smoke_Account 為新建或既有、Smoke_Fixture 標題與其為新建或既有，並以結束碼 0 結束；輸出不含密碼、密碼雜湊、Session Token 或其他使用者的資料（Requirement 21.10）。
+16. WHEN Smoke_Provisioner 建立 Smoke_Account 與 Smoke_Fixture 後，以同一 Database 的 App_Server 及相同的帳號名稱、密碼與 Smoke_Fixture 標題執行 `scripts/smoke.mjs` 的 Smoke_Test，THE Smoke_Test SHALL 所有步驟皆通過。
+17. THE Deploy_Script SHALL 提供 `lm-deploy <env> smoke-account <digest> [--username <name>] [--fixture <title>]` 子命令，並只允許 Host_Operator 執行：IF 呼叫時已設定 `SSH_ORIGINAL_COMMAND`、有效使用者不是 root，或 `SUDO_USER` 為部署帳號（`lm-deploy-staging`、`lm-deploy-prod`），THEN THE Deploy_Script SHALL 在取得鎖或執行任何 Docker 指令前以結束碼 2 結束，並輸出指出此子命令只限 Host_Operator 的錯誤（Requirement 15.9）。
+18. THE Deploy_Script SHALL 只接受明列子命令清單內的 SSH forced command 子命令，且該清單不含 `smoke-account`；IF `SSH_ORIGINAL_COMMAND` 的子命令不在清單內，THEN THE Deploy_Script SHALL 在取得鎖或執行任何 Docker 指令前以結束碼 2 結束，使部署憑證無法建立帳號（Requirement 15.9）。
+19. IF `smoke-account` 的 `<digest>` 不是 `sha256:<64 hex>` 或 `<LM_IMAGE_REPO>@sha256:<64 hex>`、`--username` 或 `--fixture` 的值不符合第 5 條的格式、stdin 為終端機、stdin 沒有內容、超過 4096 位元組或含 NUL 字元，或該環境的 `app.env` 或 `db.env` 不存在，THEN THE Deploy_Script SHALL 在執行任何 Docker 指令前以結束碼 2 結束。
+20. IF 執行 `smoke-account` 時該環境的部署鎖已被持有，THEN THE Deploy_Script SHALL 以結束碼 4 結束；IF 該環境有未完成的部署（狀態不是 idle），THEN THE Deploy_Script SHALL 以結束碼 3 結束；兩種情況皆不執行任何 Docker 指令。
+21. WHEN Host_Operator 以有效參數執行 `smoke-account`，THE Deploy_Script SHALL 在持有該環境部署鎖期間依序：將 stdin 的密碼讀入只有 root 可讀寫的暫存檔；Database 服務未執行時啟動並在 5 分鐘內等到其健康檢查通過、LM_Proxy 服務未執行時啟動；依 Requirement 14.1 與 14.2 建立並驗證 Database 備份（Database 尚無資料表時亦同）；以 `<digest>` 的 App_Image 執行 Migration_Runner（Requirement 12.2、14.3）；最後以同一 App_Image 經 Compose 的 ops profile 執行 Smoke_Provisioner；任一步驟失敗即不執行後續步驟。
+22. THE Deploy_Script SHALL 只經 Smoke_Provisioner 容器的 stdin 傳遞 Smoke_Account 密碼，使密碼不出現在任何程序的指令列參數、環境變數、Deploy_Script 的 stdout 與 stderr、狀態檔或日誌，並在任何結束路徑刪除密碼暫存檔；THE Deploy_Script SHALL 不改變任何 App_Server 容器或 LM_Proxy 的上游設定。
+23. IF Database 未在 5 分鐘內通過健康檢查、LM_Proxy 無法啟動、備份失敗、Migration_Runner 失敗，或 Smoke_Provisioner 以非零結束碼結束，THEN THE Deploy_Script SHALL 以結束碼 1 結束，並輸出失敗步驟與原因（Smoke_Provisioner 輸出的單行 JSON 只在只含安全字元時原樣附上），且不輸出密碼。
+24. WHEN `smoke-account` 成功完成，THE Deploy_Script SHALL 在 stdout 以每個步驟一行 JSON 輸出 Database 與 LM_Proxy 的啟動結果、備份資訊（Requirement 14.8 的欄位）、Migration_Runner 結果與 Smoke_Provisioner 的輸出，並以結束碼 0 結束。
+25. THE `deploy/README.md` SHALL 包含「首次部署與 smoke-bot」一節，以編號步驟依序說明：(a) 前置條件：`install.sh` 已完成、`app.env` 與 `db.env` 已建立且與 Credential_Store 的 `lm-<env>-db` 一致、使用的 Image_Digest 由包含 Smoke_Provisioner 的 commit 建置；(b) Staging_Environment：第一次 `main` 建置的 Staging 部署預期失敗（全新主機在備份步驟以 `backup_create_failed` 失敗且不寫入 `app.env`；Database 已在執行且 `app.env` 已存在時在 Smoke_Test 失敗），兩種情況結束後部署狀態皆為 `idle`；自該建置封存的 `reports/image-digest.txt` 或 Console Output 中「App_Image 已推送：」那一行取得 Image_Digest；若 `/srv/lm/staging/app.env` 不存在，Host_Operator 以 Credential_Store 的值經 stdin 執行 `lm-deploy staging app-env` 寫入；Host_Operator 以 `sudo cat <controller-dir>/secrets/little-moments/release/lm-staging-smoke | sudo /opt/lm/bin/lm-deploy staging smoke-account <digest>` 執行（第一次執行啟動 Database 與 LM_Proxy、套用遷移後因沒有管理員而以結束碼 1 結束）；以 `create-admin` 建立 Staging_Environment 的第一個管理員；再次執行同一個 `smoke-account` 指令；以新的 commit 觸發一次新的 `main` 建置（合併 Pull Request 至 `main`，沒有待合併的變更時可為只含一個空 commit 的 Pull Request），且不對同一個 commit 在 `release/little-moments » main` 執行「Build Now」（Pipeline 拒絕覆寫既有的 `<LM_IMAGE_REPO>:<完整 Commit SHA>` 標籤，該建置在推送 App_Image 時失敗、不會部署至 Staging_Environment）；新建置的 Staging 部署應通過並取得 staging-verified 紀錄，且該建置的 Image_Digest 即為 Production_Environment 使用的已通過 Staging 驗證的 Image_Digest；(c) Production_Environment：在推送第一個 Release_Tag 前，以 `prod`、`lm-prod-smoke` 與已通過 Staging 驗證的 Image_Digest 依相同順序執行 `smoke-account`、`create-admin` 與再次 `smoke-account`，之後推送 Release_Tag 並核准；(d) Setup_Token 只在 Database 沒有任何帳號時用於 `/setup`，依本流程建立管理員後不再使用；(e) Smoke_Account 在 Production_Environment 是真實的 member 帳號，密碼只保存在 Credential_Store，變更時以 `reset-password` 設定新密碼並同步更新 Credential_Store；Smoke_Fixture 只有 Smoke_Account 與管理員可見。
+26. THE README 的帳號維運指令章節 SHALL 說明 `create-smoke-account` 的用途、選項與預設值、三種密碼來源、冪等行為（既有帳號與行程保留不變）、沒有管理員或帳號為管理員或已停用時拒絕執行、結束碼，以及在 Deploy_Host 上只由 Host_Operator 經 `lm-deploy <env> smoke-account` 執行，並連結第 25 條的章節；README 與 `deploy/README.md` SHALL 不含實際密碼或 Setup_Token（Requirement 24.9）。
+27. THE `tests/*.test.js` SHALL 在 Ephemeral_Database 上涵蓋第 2 至 16 條（新建、以相同參數再次執行無寫入、既有 member 帳號保留、管理員或已刪除帳號拒絕、沒有管理員時拒絕、三種密碼來源與拒絕 `--password`、交易失敗回復、Smoke_Fixture 可被 `runSmoke` 找到），並以靜態測試確認 `scripts/build-server.mjs` 打包 `/app/tools/create-smoke-account.js` 且映像內容檢查規則仍通過；THE `deploy/tests/*.bats` SHALL 以 fake docker 涵蓋第 17 至 24 條（digest 與參數驗證、`SSH_ORIGINAL_COMMAND` 已設定或非 root 時拒絕、SSH forced command 無法執行 `smoke-account`、鎖與狀態、密碼不出現在 fake docker 的參數紀錄而只經 Smoke_Provisioner 的 stdin 傳遞、Database 未執行時先啟動、備份與 Migration_Runner 皆在 Smoke_Provisioner 之前執行）。
