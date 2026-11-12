@@ -9,7 +9,10 @@ import { GENERIC_500, logRequestError } from './safe-log.js';
 import { AI_COST_DEFAULTS, PER_USER_WINDOW_MS, quotaDecision, utcDayStart, utcMonthStart } from './ai-cost.js';
 import { addParticipant, canDepart, dateRange, isValidState, myGear, normalizeParticipantName } from '../src/model.js';
 import { syncMealIngredients } from '../src/ingredients.js';
-import { RECEIPT_AI_KEY, RECEIPT_AI_POLICIES, receiptAiDecision, resolveReceiptAiPolicy } from './settings.js';
+import {
+  RECEIPT_AI_KEY, RECEIPT_AI_POLICIES, REGISTRATION_KEY, REGISTRATION_POLICIES,
+  receiptAiDecision, resolveReceiptAiPolicy, resolveRegistrationPolicy
+} from './settings.js';
 import { createAlertDispatcher, createSecurityEventStore, eventUsername } from './security-events.js';
 import { LEDGER_LIMITS, LedgerError, buildLedger, ledgerView, readLedgerRow, refreshSnapshotNames, requestHash, validateLedgerBody } from './ledger.js';
 import { isLoopbackAddress } from './config.js';
@@ -30,7 +33,6 @@ const USERNAME = /^[a-z][a-z0-9-]{2,31}$/;
 const COVER_KINDS = ['camp', 'mountain', 'lake', 'night', 'forest', 'beach', 'sunrise'];
 const STATUSES = ['planning', 'completed'];
 const ROLES = ['admin', 'member'];
-const REGISTRATION_POLICIES = ['open', 'closed'];
 const CARD_LIMITS = { title: 100, destination: 100, description: 1000, note: 1000 };
 const MAX_ACTIVE_INVITES = 20;
 const MAX_MEMBER_INVITES = 5;
@@ -263,20 +265,22 @@ const clientKey = info => (typeof info?.ip === 'string' && info.ip ? info.ip.sli
  * @param {object} [options.receiptAi] server/receipt-ai.js `createReceiptAi` 的回傳值
  * @param {object} [options.setup] server/setup-guard.js 的 guard；未提供時視為 loopback 綁定
  * @param {object} [options.aiCost] AI_Cost_Config（config.js `parseConfig` 的 `aiCost`）；預設 AI_COST_DEFAULTS
- * @param {'open'|'closed'} [options.registrationPolicy] 公開註冊政策；'closed' 時 /api/register 回應 403（邀請註冊不受影響）
+ * @param {'open'|'closed'|null} [options.registrationPolicySeed] Registration_Seed（CAMPING_REGISTRATION）；只在 settings 沒有
+ *   registrationPolicy 儲存值時使用，從不寫入。實際生效值為 'closed' 時 /api/register 回應 403（邀請註冊不受影響）
  * @param {'all'|'admins'|'off'|null} [options.receiptAiPolicySeed] 收據 AI 政策的啟動種子；只在 settings 沒有儲存值時使用，從不寫入
  * @param {{maxEvents?: number, maxAlerts?: number}} [options.securityEventLimits] 測試用：降低安全事件與警示的保留上限
  * @param {(line: string) => void} [options.alertLog] Security_Alert 的日誌輸出（預設 console.error）
  * @returns {Promise<{handle: Function, ping: Function, needsSetup: Function, createFirstAdmin: Function,
- *   resetPassword: Function, receiptAiPolicy: Function, registerAlertNotifier: Function, close: () => void}>}
+ *   resetPassword: Function, receiptAiPolicy: Function, registrationPolicy: Function, registerAlertNotifier: Function,
+ *   close: () => void}>}
  */
 export async function createAccountService({
-  db, now, receiptAi = null, setup = null, aiCost = AI_COST_DEFAULTS, registrationPolicy = 'open', receiptAiPolicySeed = null,
+  db, now, receiptAi = null, setup = null, aiCost = AI_COST_DEFAULTS, registrationPolicySeed = null, receiptAiPolicySeed = null,
   securityEventLimits = {}, alertLog = console.error
 } = {}) {
   const sql = db?.sql;
   if (typeof sql !== 'function' || typeof sql.begin !== 'function') throw new TypeError('createAccountService 需要 db.sql（Bun.SQL 連線池）');
-  if (!REGISTRATION_POLICIES.includes(registrationPolicy)) throw new TypeError('registrationPolicy 必須是 open 或 closed');
+  if (registrationPolicySeed !== null && !REGISTRATION_POLICIES.includes(registrationPolicySeed)) throw new TypeError('registrationPolicySeed 必須是 open、closed 或 null');
   if (receiptAiPolicySeed !== null && !RECEIPT_AI_POLICIES.includes(receiptAiPolicySeed)) throw new TypeError('receiptAiPolicySeed 必須是 all、admins、off 或 null');
   // 及早確認 Schema 已由 Migration_Runner 建立（含 0002 的資料表）；只回報結構性問題，不含連線設定。
   try {
@@ -287,8 +291,6 @@ export async function createAccountService({
   }
   // 未提供 setup guard 時視為 loopback 綁定：Setup_Token 停用，只有 loopback 用戶端能完成首次設定。
   const setupGuard = setup || createSetupGuard({ bindAddress: '127.0.0.1' });
-  // Only an explicit 'closed' locks public registration (Req 10.4); invite registration stays available.
-  const registrationOpen = registrationPolicy !== 'closed';
   const clock = () => { const value = now ? now() : Date.now(); return value instanceof Date ? value.getTime() : Number(value); };
   const iso = () => new Date(clock()).toISOString();
   const limiter = new RateLimiter(clock);
@@ -315,7 +317,18 @@ export async function createAccountService({
     const { value, source } = resolveReceiptAiPolicy(row?.value ?? null, receiptAiPolicySeed ?? null);
     return { value, source, updatedAt: row ? new Date(row.updated_at).toISOString() : null, updatedBy: row?.updated_by ?? null };
   }
-  const settingsBody = async () => ({ receiptAiPolicy: { ...(await receiptAiPolicy()), options: RECEIPT_AI_POLICIES } });
+  // Registration_Policy is read per request the same way, so an admin toggle applies to the next request (Req 26.1, 26.5).
+  // A stored value outside open/closed fails closed; the seed is never written (Req 26.2).
+  // Invite registration never consults it (Req 26.12).
+  async function registrationPolicy(e = sql) {
+    const row = await q.settingByKey(e, REGISTRATION_KEY);
+    const { value, source } = resolveRegistrationPolicy(row?.value ?? null, registrationPolicySeed);
+    return { value, source, updatedAt: row ? new Date(row.updated_at).toISOString() : null, updatedBy: row?.updated_by ?? null };
+  }
+  const settingsBody = async () => ({
+    receiptAiPolicy: { ...(await receiptAiPolicy()), options: RECEIPT_AI_POLICIES },
+    registrationPolicy: { ...(await registrationPolicy()), options: REGISTRATION_POLICIES }
+  });
 
   // Shared by POST /api/setup and the create-admin CLI (Req 8.5, 8.13). The write transaction re-checks the
   // user count under the advisory lock, so a concurrent creation gets 409 (Req 8.14, 9.11).
@@ -640,7 +653,7 @@ export async function createAccountService({
       return json(200, {
         user: user ? publicUser(user) : null, needsSetup: setupPending, setupTokenRequired: setupPending && setupGuard.required,
         // webSetup stays true: the web first-admin flow (with Setup_Token off loopback) is the only deployment mode.
-        webSetup: true, registrationOpen, inviteRegistration: !setupPending
+        webSetup: true, registrationOpen: (await registrationPolicy()).value === 'open', inviteRegistration: !setupPending
       });
     },
 
@@ -674,7 +687,7 @@ export async function createAccountService({
 
     async register(request, url, info) {
       // Checked before the limiter and before the body, so a closed site neither reads input nor spends the bucket.
-      if (!registrationOpen) fail(403, '目前不開放公開註冊，請使用旅行邀請連結建立帳號。');
+      if ((await registrationPolicy()).value !== 'open') fail(403, '目前不開放公開註冊，請使用旅行邀請連結建立帳號。');
       const key = `register:${clientKey(info)}`;
       if (limiter.blocked(key, LIMITS.register)) limited([key], '註冊嘗試太多次，請稍後再試。');
       limiter.hit(key, LIMITS.register);
@@ -1234,12 +1247,23 @@ export async function createAccountService({
       requireJsonType(request);
       await requireAdmin(request);
       const body = await readJson(request);
-      const value = body?.receiptAiPolicy;
-      if (!RECEIPT_AI_POLICIES.includes(value)) fail(400, '收據 AI 政策必須是 all、admins 或 off。');
+      // Validate every present key before writing anything, so an invalid field leaves both settings untouched (Req 26.7).
+      const hasReceipt = Object.hasOwn(body, 'receiptAiPolicy');
+      const hasRegistration = Object.hasOwn(body, 'registrationPolicy');
+      if (!hasReceipt && !hasRegistration) fail(400, '請至少提供一項設定。');
+      if (hasReceipt && !RECEIPT_AI_POLICIES.includes(body.receiptAiPolicy)) fail(400, '收據 AI 政策必須是 all、admins 或 off。');
+      if (hasRegistration && !REGISTRATION_POLICIES.includes(body.registrationPolicy)) fail(400, '公開註冊政策必須是 open 或 closed。');
+      // Only the keys present are written; each gets its own audit row (Req 26.4, 26.8).
       await tx(async t => {
         const admin = await requireAdmin(request, t);
-        await q.upsertSetting(t, RECEIPT_AI_KEY, value, clock(), admin.username);
-        await audit(t, admin.username, 'settings.receipt-ai', `receiptAiPolicy:${value}`);
+        if (hasReceipt) {
+          await q.upsertSetting(t, RECEIPT_AI_KEY, body.receiptAiPolicy, clock(), admin.username);
+          await audit(t, admin.username, 'settings.receipt-ai', `receiptAiPolicy:${body.receiptAiPolicy}`);
+        }
+        if (hasRegistration) {
+          await q.upsertSetting(t, REGISTRATION_KEY, body.registrationPolicy, clock(), admin.username);
+          await audit(t, admin.username, 'settings.registration', `registrationPolicy:${body.registrationPolicy}`);
+        }
       });
       return json(200, await settingsBody());
     }
@@ -1318,6 +1342,8 @@ export async function createAccountService({
     resetPassword,
     // { value, source: 'default'|'seed'|'stored', updatedAt, updatedBy }；serve.mjs 啟動摘要使用。
     receiptAiPolicy: () => receiptAiPolicy(),
+    // 同上形狀的實際生效 Registration_Policy；serve.mjs 啟動摘要與測試使用（Req 26.17）。
+    registrationPolicy: () => registrationPolicy(),
     // A future notifier (for example a LINE webhook) attaches here without touching alert detection (Req 23.16).
     registerAlertNotifier(notifier) { alertDispatcher.register(notifier); },
     // 只停止服務並中止進行中的 AI 辨識；連線池由呼叫端關閉（見上方 JSDoc）。可重複呼叫。

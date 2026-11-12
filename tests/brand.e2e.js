@@ -1,5 +1,6 @@
 import {test,expect} from './local-planner-fixture.js';
 import {seed,STORAGE_KEY,THEMES_KEY} from '../src/model.js';
+import {withRegistrationLock} from './support/registration-lock.js';
 const base=process.env.CAMPING_BASE_URL;
 const slogan='把平凡的日子，留成喜歡的回憶。';
 async function api(page,path,method='GET',body){
@@ -22,10 +23,13 @@ async function brand(page,href){
 }
 test.beforeEach(async({baseURL})=>expect(new URL(baseURL).port).toBe('5181'));
 
-test('[TC-BRAND-001] public login and registration use the new brand',async({page})=>{
- for(const [path,title] of [['/login','登入 · 日子拾光'],['/register','註冊旅伴帳號 · 日子拾光']]){
-  await page.goto(path);await brand(page,'/login');await expect(page).toHaveTitle(title);
- }
+test('[TC-BRAND-001] public login and registration use the new brand',async({page},testInfo)=>{
+ // /register depends on the public Registration_Policy, which TC-ADMIN-004 closes for a while.
+ await withRegistrationLock(testInfo,async()=>{
+  for(const [path,title] of [['/login','登入 · 日子拾光'],['/register','註冊旅伴帳號 · 日子拾光']]){
+   await page.goto(path);await brand(page,'/login');await expect(page).toHaveTitle(title);
+  }
+ });
  await page.goto('/login');await expect(page.getByRole('heading',{name:'登入日子拾光',exact:true})).toBeVisible();
  await expect(page.locator('meta[name="description"]')).toHaveAttribute('content',`日子拾光 LITTLE MOMENTS：${slogan}旅行規劃與回憶收藏的本機應用。`);
 });

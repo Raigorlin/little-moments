@@ -22,6 +22,7 @@
 | TC-ADMIN-001 | 是 | `tests/accounts.e2e.js` | admin edits another owner trip and disables account without deleting travel history |
 | TC-ADMIN-002 | 否 | `tests/trip-deletion.e2e.js` | admin deletes another owner trip in backend, revokes link and leaves other trips and account intact |
 | TC-ADMIN-003 | 否 | `tests/trip-deletion.e2e.js` | admin can cancel then confirm own trip deletion from home on phone and desktop |
+| TC-ADMIN-004 | 否 | `tests/admin-settings.e2e.js` | admin closes and reopens public registration without restart |
 
 ## 需新增的測試
 

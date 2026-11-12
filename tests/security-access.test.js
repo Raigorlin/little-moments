@@ -578,7 +578,7 @@ describe('examples: SQL payloads, admin access, outsider ledger, boundary cases'
       ['PATCH', `/api/admin/users/${other.id}`, admin, [{ role: 'owner' }, { displayName: 5 }]],
       ['POST', `/api/admin/users/${other.id}/delete`, admin, [{}, { confirmUsername: 'someone-else' }]],
       ['POST', `/api/admin/trips/${trip.id}/delete`, admin, [{ confirmTitle: trip.title, revision: rev }, { expectedUserId: admin.id, confirmTitle: '別的名字', revision: rev }]],
-      ['PATCH', '/api/admin/settings', admin, [{}, { receiptAiPolicy: 'maybe' }, { receiptAiPolicy: 5 }]]
+      ['PATCH', '/api/admin/settings', admin, [{}, { receiptAiPolicy: 'maybe' }, { receiptAiPolicy: 5 }, { registrationPolicy: 'Open' }, { receiptAiPolicy: 'all', registrationPolicy: 'maybe' }]]
     ];
     for (const [method, path, who, cases] of routes) {
       const raws = [...cases.map(c => JSON.stringify(c)), '{broken', '[1,2]', oversize];

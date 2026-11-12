@@ -661,7 +661,7 @@ describe('admin routes (Req 5)', () => {
     expect((await patch('admin')).status).toBe(200);
     expect((await call('local', 'GET', '/api/admin/users', { cookie: two })).status).toBe(200);
     expect((await patch('member')).status).toBe(200);
-    for (const [method, path, body] of [['GET', '/api/admin/users'], ['GET', '/api/admin/settings'], ['PATCH', '/api/admin/settings', { receiptAiPolicy: 'off' }]]) {
+    for (const [method, path, body] of [['GET', '/api/admin/users'], ['GET', '/api/admin/settings'], ['PATCH', '/api/admin/settings', { receiptAiPolicy: 'off' }], ['PATCH', '/api/admin/settings', { registrationPolicy: 'closed' }]]) {
       expect((await call('local', method, path, { cookie: two, body })).status).toBe(403);
     }
   });

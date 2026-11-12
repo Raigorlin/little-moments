@@ -1,9 +1,12 @@
 # 由 lm-deploy switch 產生 upstream.caddy：將 __COLOR__ 替換為 blue 或 green（只接受這兩個值），
 # 寫入同目錄暫存檔後 rename 為 upstream.caddy，再執行 caddy reload。請勿手動編輯 upstream.caddy。
 reverse_proxy app-__COLOR__:5173 {
-	# 不採信用戶端送來的轉送標頭：以 TCP 來源與實際協定覆寫。App 只採信 proxy 固定 IP 的這兩個標頭（Req 9.12）。
-	header_up X-Forwarded-For {remote_host}
-	header_up X-Forwarded-Proto {scheme}
+	# X-Forwarded-For 一律只有一個值（Req 25.2、25.3）：TCP 來源在 Edge_Trusted_Proxies 內時為 Caddyfile
+	# trusted_proxies_strict 解析出的用戶端 IP，其他來源為 TCP 來源 IP。取代 Caddy 預設的「既有值 + 來源」串接。
+	header_up X-Forwarded-For {client_ip}
+	# X-Forwarded-Proto 不明確覆寫，使用 Caddy 預設：TCP 來源受信任且最後一個值非空時沿用該值（無效值已由
+	# Caddyfile 的 @xfp_invalid 移除），否則設為本次連線的協定 http／https（Req 25.2、25.4、25.5）。
+	# App 仍只採信 proxy 固定 IP（PROXY_IP/32）送來的這兩個標頭（Req 9.12、25.10）。
 	# Host 標頭原樣轉送（Caddy 預設），由 App 依 Allowed_Hosts 檢查（Req 8.3）。
 
 	# 主動健康檢查：Host 必須在 Allowed_Hosts 內，否則 App 回應 421。

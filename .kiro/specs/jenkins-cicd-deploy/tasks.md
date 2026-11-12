@@ -675,6 +675,65 @@
     - 執行 `bun test tests/ci-*.test.js`，確認全部通過
     - _Requirements: 3.1, 3.2_
 
+- [x] 21. 同主機 Edge_Proxy（NPM + Cloudflare）部署
+  - [x] 21.1 Caddy 只信任 Edge_Trusted_Proxies 的轉送標頭
+    - 開始前以 Caddy 2.10 文件確認指令與預設行為：[全域選項](https://caddyserver.com/docs/caddyfile/options) 的 `trusted_proxies`、`trusted_proxies_strict`、`client_ip_headers`，[reverse_proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) 的 Defaults 與 headers；設計文件已依 v2.10.2 原始碼（`strictUntrustedClientIp`、`addForwardedHeaders`）整理行為表（design.md Components 第 18.2 節），與實測不符時以實測為準並回報
+    - `deploy/caddy/Caddyfile`：全域 `servers` 加入 `trusted_proxies static {$LM_EDGE_TRUSTED_PROXIES:127.0.0.1/32}`、`trusted_proxies_strict`、`client_ip_headers X-Forwarded-For`（保留現有 `timeouts`）；站台在 `handle` 之前以 `@xfp_invalid`（有 `X-Forwarded-Proto` 但不是恰為 `http`／`https`）搭配 `request_header @xfp_invalid -X-Forwarded-Proto`；更新檔頭的環境變數說明
+    - `deploy/caddy/upstream.caddy.tmpl`：`header_up X-Forwarded-For {client_ip}`，移除 `header_up X-Forwarded-Proto {scheme}` 改用 Caddy 預設（或等效的明確設定），更新註解（App 仍只採信 `PROXY_IP/32`）
+    - `deploy/compose/compose.yaml`：proxy 的 `environment` 加入 `LM_EDGE_TRUSTED_PROXIES: ${LM_EDGE_TRUSTED_PROXIES:-127.0.0.1/32}`；app 的 `CAMPING_TRUSTED_PROXIES` 維持 `${PROXY_IP}/32`；更新檔頭網路說明
+    - `deploy/compose/staging.env.example`：`LM_EDGE_TRUSTED_PROXIES=` 與 `LM_LAN_CIDR=` 皆為空並註明 Staging 不經 Edge_Proxy；`deploy/compose/prod.env.example`：`LM_PUBLIC_PORT=8082`（80／443 由 Edge_Proxy 使用；同步修正 HTTPS 範例註解中的 443）、`ALLOWED_HOSTS=<public-hostname>,<deploy-host-lan-ip>`、`LM_HEALTH_HOST=<public-hostname>`、`LM_EDGE_TRUSTED_PROXIES=<npm-docker-subnet> <cloudflare-ipv4-ranges> <cloudflare-ipv6-ranges>`、`LM_LAN_CIDR=<lan-cidr>`，只放佔位符並註明來源與更新方式
+    - `deploy/bin/lm-deploy`：在 `load_config`（早於任何 `docker compose` 呼叫）依 design.md 第 18.4 節驗證 `LM_EDGE_TRUSTED_PROXIES` 與 `LM_LAN_CIDR`，失敗以結束碼 2（`config_invalid`）結束且只輸出無效項目；更新檔頭的檔案說明
+    - 在釘選的 `caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d` 中以 `caddy adapt`／`caddy validate` 檢查 Caddyfile（含渲染後的 `upstream.caddy` 與 `tls-off.caddy`）在 `LM_EDGE_TRUSTED_PROXIES` 未設定、為空字串、為多個 IPv4／IPv6 CIDR 時皆可解析，含無效 CIDR 時失敗；沒有 Docker 時把指令與預期結果寫入任務回報與 runbook，列為手動檢查
+    - 選用（需要 Docker）：以 Caddyfile 與回傳收到標頭的測試 upstream 啟動 Caddy，驗證受信任／不受信任來源、偽造最左側與多個 `X-Forwarded-For`、`X-Forwarded-Proto` 為 `https`／`ftp`／多值時，轉送的 `X-Forwarded-For` 恰為一個預期位址、`X-Forwarded-Proto` 符合 Req 25.2–25.5
+    - 以 grep 找出 `tests/` 與 `deploy/tests/` 中斷言這些檔案內容的測試（例如 `tests/security-config.test.js` 的 `{remote_host}`／`{scheme}` 斷言、`deploy/tests/helpers/test_helper.bash` 產生的 `staging.env`）並更新；新增斷言：新指令存在、預設為 `127.0.0.1/32`、`upstream.caddy.tmpl` 不含 `{remote_host}`、App 的 Trusted_Proxies 仍為 `/32`、兩個 env 範本的 Edge 值（staging 空、prod 只含佔位符）與 `LM_PUBLIC_PORT=8082`
+    - `deploy/tests/lm-deploy.bats` 新增 Edge_Trusted_Proxies 案例：空值、Cloudflare 形式清單、`0.0.0.0/0`、`::/0`、`::ffff:0:0/96`、`192.168.0.0/16` 與 `192.168.1.0/24`（`LM_LAN_CIDR=192.168.1.0/24`）、65 個項目、無效語法、非空但缺少 `LM_LAN_CIDR`；拒絕時確認 fake docker 未被呼叫
+    - 執行受影響的 `bun test` 測試檔（例如 `bun test tests/security-config.test.js tests/ci-lint.test.js`），並比照先前在 WSL 下執行 `bats deploy/tests/lm-deploy.bats`
+    - _Requirements: 9.12, 25.1, 25.2, 25.3, 25.4, 25.5, 25.6, 25.7, 25.8, 25.9, 25.10, 25.11_
+
+  - [x] 21.2 DOCKER-USER Public_Port 例外
+    - `deploy/host/docker-user.rules`：在 `__LAN_CIDR__` 規則之後、DNAT DROP 之前新增 `-A DOCKER-USER -p tcp -m conntrack --ctstate DNAT --ctorigdstport __PUBLIC_PORT__ -j RETURN`，並更新檔頭的規則語意說明（Public_Port 放行任何來源、未宣告時為 0 行）
+    - `deploy/host/install.sh`：新增選用 `--public-port <port>[,...]`（0..8 個、1..65535 的十進位整數、無前導零、不重複，格式錯誤在 root 檢查前以結束碼 2 結束）；在變更任何檔案前比對 `/srv/lm/<env>/<env>.env`（不存在且在 `--envs` 中時改用 `deploy/compose/<env>.env.example`）的 `LM_PUBLIC_PORT`，相同即以結束碼 2 結束並指出連接埠與環境；渲染時每個 Public_Port 一行、未指定時 0 行，檔頭註解列出 Public_Port；更新用法說明與 `usage_die`
+    - `install.sh` 新增唯讀 `--render-rules` 模式（design.md 第 18.5 節）：執行相同的驗證與渲染後輸出到 stdout，不檢查 root、不寫檔、不呼叫 `iptables`／`systemctl`；僅此模式接受 `LM_SRV_ROOT` 覆寫
+    - `deploy/host/verify-host.sh`：解析規則檔中的 Public_Port 規則並在其等於任一環境的 `LM_PUBLIC_PORT` 時 FAIL；新增選用 `--public-port <port>[,...]|none` 預期值比對（與 `--lan-cidr` 相同方式）；新增 `proxy` 檢查群組（依第 18.4 節規則檢查各環境的 `LM_EDGE_TRUSTED_PROXIES`／`LM_LAN_CIDR`，staging 設有 Edge 值或宣告了 Public_Port 但 prod Edge 值為空時 WARN）；更新檔頭說明
+    - 以 `iptables-restore --test` 與套用後的 `iptables -S DOCKER-USER`（WSL 或測試容器）確認 Public_Port 規則的正規化輸出與樣板逐字相同；不同時修改樣板，並在任務回報中記錄實際輸出
+    - 新增 `deploy/tests/install-host.bats`：以 `--render-rules` 與 `LM_SRV_ROOT` 測試無 `--public-port` 時輸出與現有規則相同、`--public-port 80,443` 的規則位於所有 LAN RETURN 之後與 DROP 之前且順序與輸入相同、無效連接埠（`0`、`65536`、`08`、`abc`、空項目、重複、9 個）與等於 staging／prod `LM_PUBLIC_PORT` 的連接埠皆以結束碼 2 拒絕；verify-host 的 Public_Port 解析與順序檢查以固定規則檔案例測試
+    - 更新 `tests/deploy-host-config.test.js` 中逐行斷言 `docker-user.rules` 的測試，執行 `bun test tests/deploy-host-config.test.js`，並在 WSL 下執行 `bats deploy/tests`
+    - _Requirements: 8.6, 8.8, 8.9, 8.10, 25.8_
+
+  - [x] 21.3 註冊政策預設關閉並可由管理員切換
+    - 依 design.md Components 第 19 節實作；開始前重新讀取 `server/settings.js`、`server/accounts.js`（`receiptAiPolicy()`、`settingsBody`、`getSession`、`register`、`inviteRegister`、`adminPatchSettings`）、`server/config.js`（`parseConfig`、`policySummary`）、`scripts/serve.mjs` 與 `src/accounts-ui.js` 的管理頁設定表單
+    - `server/settings.js`：新增並匯出 `REGISTRATION_POLICIES`、`REGISTRATION_KEY = 'registrationPolicy'` 與 `resolveRegistrationPolicy(stored, seed)`（儲存值優先、無效儲存值為 `closed`、其次 seed、最後 `open`）；`server/config.js` 與 `server/accounts.js` 改從這裡匯入 `REGISTRATION_POLICIES`，`config.js` 保留 re-export
+    - `server/config.js`：`CAMPING_REGISTRATION` 仍驗證為 `open`／`closed`（無效值只指出變數名稱），結果改為 `config.registrationPolicySeed`（未設定或空字串為 `null`）；`policySummary(config, receiptAiPolicy, registrationPolicy)` 輸出 `registration=<value> (<source>) receiptAiPolicy=<value> (<source>)`，來源為 `admin setting`、`CAMPING_REGISTRATION` 或 `default`，無效值顯示 `closed`
+    - `server/accounts.js`：選項 `registrationPolicy` 改為 `registrationPolicySeed = null`（建構時驗證）；移除固定的 `registrationOpen`，新增每次讀取 Settings_Store 的 `registrationPolicy()`；`GET /api/session` 的 `registrationOpen` 與 `POST /api/register` 的 403（仍在限速器與讀取本文之前）改用實際生效值；`inviteRegister` 不變；`settingsBody` 回傳兩個政策（含 `options`）；`PATCH /api/admin/settings` 先驗證（兩個鍵都沒有或任一值無效為 400，不寫入），再於交易內只寫入出現的鍵，`registrationPolicy` 寫入稽核 `settings.registration`（`registrationPolicy:<value>`）；服務物件匯出 `registrationPolicy`
+    - `scripts/serve.mjs`：以 `registrationPolicySeed: config.registrationPolicySeed` 建立帳號服務，啟動摘要傳入 `await accounts.registrationPolicy?.()`；更新選項註解
+    - `src/accounts-ui.js`：「網站設定」表單加入 `setting-registration` 選單（開放／關閉）與依來源（儲存者與時間、`CAMPING_REGISTRATION`、預設 `open`）的說明文字；送出時只放入值有變更的欄位，沒有變更時顯示「沒有變更的設定。」且不送出；成功提示依變更的欄位為「公開註冊設定已更新」「收據 AI 設定已更新」或「網站設定已更新」並重新載入；`/register` 關閉頁維持讀取 `session.registrationOpen`
+    - `deploy/compose/compose.yaml`：`x-app.environment` 加入 `CAMPING_REGISTRATION: ${CAMPING_REGISTRATION:-closed}` 並註明只是啟動初始值；`deploy/compose/staging.env.example` 與 `deploy/compose/prod.env.example` 加入 `CAMPING_REGISTRATION=closed` 與相同說明；`deploy/bin/lm-deploy` 的 `unset` 清單加入 `CAMPING_REGISTRATION`（`APP_ENV_KEYS` 不變）
+    - 更新斷言舊介面的測試：`config.registrationPolicy`（`tests/config.test.js`、`tests/readme.test.js`）、以 `registrationPolicy:` 建立服務的測試（`tests/accounts.test.js`、`tests/publish.test.js`、`tests/security-headers.test.js`）、`policySummary` 的輸出格式，以及斷言 compose app 環境變數或 env 範本鍵的測試（`tests/security-config.test.js`、`tests/ci-lint.test.js`；`lm-deploy` 的 `unset` 清單若有斷言一併更新）；新增斷言：`CAMPING_REGISTRATION` 為 `${CAMPING_REGISTRATION:-closed}`、兩個 env 範本含 `CAMPING_REGISTRATION=closed`
+    - 撰寫 Property 48 的 property test（`tests/settings.test.js`，`numRuns: 100`，標記註解 `// Feature: jenkins-cicd-deploy, Property 48: Registration_Policy 決定順序`）
+      - **Property 48: Registration_Policy 決定順序**
+      - **Validates: Requirements 26.1, 26.2**
+    - API 測試（`tests/publish.test.js` 的 `registration policy` 區塊，使用 Ephemeral_Database）：同一個服務實例內管理員依序儲存 `closed`、`open`，每次儲存後的下一個 `POST /api/register` 與 `GET /api/session` 反映新值且不重新建立服務；Settings_Store 列與 `settings.registration` 稽核內容；seed `closed` 無儲存值時為 `closed`／`seed`，儲存 `open` 後 seed 不再生效；以 SQL 改為無效值時為 `closed`／`stored`；member 403；無效值與空本文 400 且兩個設定列與稽核不變；只含其中一個鍵時另一個設定不變；兩種政策下邀請註冊皆成功；關閉時被拒的 `/api/register` 不消耗限速
+    - `tests/support/registration-lock.js`：以 Playwright `outputDir` 下的 `registration.lock`（`openSync(..., 'wx')`，60 秒逾時、100 ms 重試、`finally` 刪除）提供跨 worker 互斥；`tests/accounts-auth.e2e.js` 的 TC-AUTH-001 與 `tests/brand.e2e.js` 的 TC-BRAND-001 在使用 `/register` 的區段持有該鎖
+    - 新增 `tests/admin-settings.e2e.js`：`[TC-ADMIN-004] admin closes and reopens public registration without restart`，持有註冊鎖，依 design.md「公開註冊政策（Req 26）」的 E2E 步驟驗證選單、說明文字、只送出 `registrationPolicy` 的本文、提示、未登入 context 的 `/register` 關閉頁與 `POST /api/register` 403，再改回開放並確認 `/register` 顯示表單；`finally` 以 API 存回 `open`
+    - `qa/inventory.json` 新增 `QA-ADMIN-004`（page `/admin`、control `setting-registration`、role `admin`、`critical: false`、`unauthorized: false`、`testCases: ["TC-ADMIN-004"]`）；`qa/tc-map.md` 加入 TC-ADMIN-004
+    - `README.md`：環境變數表的 `CAMPING_REGISTRATION` 列（Registration_Seed、App_Server 預設 `open`、Deploy_Host 經 `compose.yaml` 為 `closed`、管理員儲存後不再生效）；改寫「`CAMPING_REGISTRATION`……目前不由 `deploy/compose/compose.yaml` 傳入……因此 Deploy_Host 使用預設值」一句（`CAMPING_REGISTRATION` 改由 compose 傳入，其餘維持）；更新兩處 Registration policy 功能說明與啟動摘要範例；以編號步驟說明移除 Settings_Store 的 `registrationPolicy` 列以恢復 `CAMPING_REGISTRATION` 控制（只用佔位符）；同步更新 `tests/readme.test.js`
+    - 執行受影響的 `bun test` 測試檔（例如 `bun test tests/settings.test.js tests/config.test.js tests/config-secrets.test.js tests/accounts.test.js tests/publish.test.js tests/security-access.test.js tests/security-auth.test.js tests/security-csrf.test.js tests/security-headers.test.js tests/security-config.test.js tests/ci-lint.test.js tests/readme.test.js`，需要 PostgreSQL 的測試使用臨時 Ephemeral_Database，用完即刪）；以 `scripts/check-accounts.mjs`（設定 `CAMPING_BUN` 與 `CHROME_PATH`）執行 E2E，確認 TC-ADMIN-004、TC-AUTH-001 與 TC-BRAND-001 通過；執行 `scripts/qa-inventory.mjs` 的 validate 與 compare，確認 `QA-ADMIN-004` 為 pass
+    - _Requirements: 26.1, 26.2, 26.3, 26.4, 26.5, 26.6, 26.7, 26.8, 26.9, 26.10, 26.11, 26.12, 26.13, 26.14, 26.15, 26.16, 26.17, 26.18, 26.19, 26.20, 5.1, 5.4_
+
+  - [x] 21.4 填入同主機部署值與文件
+    - 開始編輯前，向使用者索取並確認下列只能由主機輸出得知的值，未確認前不得填入猜測值：Jenkins controller 的 LAN 連接埠（`ss -ltnp` 或 `docker ps` 的發布連接埠，用於 `LM_DAST_PROBE_TARGETS`）、Edge_Proxy 所在 Docker 網路的子網與 Docker 預設 `bridge` 的子網（`docker network inspect`，用於 runbook 的 `--lan-cidr` 範例）；Edge_Proxy 實際的來源位址只寫入 runbook 的確認步驟，不寫入 repository
+    - `Jenkinsfile`：`LM_DEPLOY_HOST='192.168.1.121'`、`LM_DEPLOY_PORT='22'`、`LM_STAGING_URL='http://192.168.1.121:8081'`、`LM_PROD_URL='http://192.168.1.121:8082'`、`LM_STAGING_DB_NAME='little_moments_staging'`、`LM_PROD_DB_NAME='little_moments'`、`LM_DAST_PROBE_TARGETS='192.168.1.121:22 192.168.1.121:80 192.168.1.121:443 192.168.1.121:8081 192.168.1.121:8082 192.168.1.121:8443 192.168.1.121:<已確認的 Jenkins 連接埠>'`；移除這些變數的 PLACEHOLDER 註解並說明 Smoke_Test 經 LAN origin 執行（Host `192.168.1.121` 在 `ALLOWED_HOSTS` 內）
+    - `ci/jenkins/pipelines/rollback.Jenkinsfile`、`ci/jenkins/pipelines/restore-drill.Jenkinsfile`：`LM_DEPLOY_HOST='192.168.1.121'`、`LM_DEPLOY_PORT='22'`，更新註解（known_hosts 須含 `192.168.1.121` 的主機金鑰）
+    - 以 grep 找出斷言舊佔位符（`deploy-host.lan.example`、`<deploy-host-ip>`、`<registry-ip>`、`<jenkins-ip>`）的測試並改為斷言上述值，執行 `bun test tests/ci-*.test.js`
+    - `ci/jenkins/README.md`：「仍待填入」移除已填入的部署主機值，保留需維運者確認的項目；新增 Edge_Proxy runbook 章節（或新增 `deploy/README.md` 並由 README 連結），以編號步驟涵蓋 design.md 第 18.6 節列出的內容：NPM Proxy Host（`www.our-littlemoments.com` → `http://192.168.1.121:8082`、Let's Encrypt、Force SSL、HSTS、不啟用 WebSocket）、Redirection Host（apex → `https://www.our-littlemoments.com`、301、保留路徑）、Cloudflare Proxied 與 SSL/TLS Full (strict)、Staging 不經 NPM 公開、Jenkins 只公開 `/github-webhook/`、`install.sh --lan-cidr 192.168.1.0/24,<npm-subnet>,<docker-bridge-subnet> --public-port 80,443`（或 NPM 改用 host 網路）、以 LM_Proxy 存取日誌確認 Edge_Proxy 來源位址後填入 `LM_EDGE_TRUSTED_PROXIES`、Cloudflare 範圍的更新（`https://www.cloudflare.com/ips-v4`、`https://www.cloudflare.com/ips-v6` → 比對 → 更新 `prod.env` → `docker compose … up -d --no-deps proxy` → 確認存取日誌記錄真實用戶端 IP）、`verify-host.sh --public-port 80,443`
+    - 根目錄 `README.md` 的「LAN 部署」：改寫「公開網際網路曝露不在支援範圍內」與「唯一的例外」兩段，說明 Production 只經 Edge_Proxy 公開、Staging／Registry／Deploy_Host 僅限 LAN、Jenkins 只公開 `/github-webhook/`，並連結 runbook；不加入任何 digest 或秘密值；同步更新 `tests/readme.test.js` 中相關斷言
+    - 執行 `bun test tests/readme.test.js tests/ci-jenkins-config.test.js tests/ci-*.test.js`
+    - _Requirements: 2.6, 8.6, 8.8, 24.3, 25.11, 25.12, 25.13_
+
+  - [x] 21.5 Checkpoint - 同主機 Edge_Proxy 變更後確認所有測試通過
+    - 執行 `bun run build`、`bun test tests/*.test.js`（需要 PostgreSQL 的測試使用臨時 Ephemeral_Database，用完即刪）、`bats deploy/tests`（WSL）、`semgrep --test ci/semgrep` 與秘密掃描（`bun scripts/scan-secrets.mjs`），確認全部通過，且 repository 中沒有任何秘密值或主機上才有的實際 Edge 設定（Cloudflare 範圍、Edge_Proxy 來源位址）。Ensure all tests pass, ask the user if questions arise.
+    - _Requirements: 8.6, 8.8, 8.9, 8.10, 25.1, 25.2, 25.3, 25.4, 25.5, 25.6, 25.7, 25.8, 25.9, 25.10, 25.11, 25.12, 25.13, 26.1, 26.2, 26.3, 26.4, 26.5, 26.6, 26.7, 26.8, 26.9, 26.10, 26.11, 26.12, 26.13, 26.14, 26.15, 26.16, 26.17, 26.18, 26.19, 26.20_
+
 ## Notes
 
 - 標記 `*` 的子任務為選用（property test、整合測試與額外檢查），可為加快 MVP 而略過。
@@ -683,6 +742,7 @@
 - 需要 PostgreSQL 的測試透過 `CAMPING_TEST_DATABASE_*` 連線至 Ephemeral_Database，本機建立方式見 README。
 - Jenkins、Deploy_Host 與 Registry 任務只產出設定檔、腳本與驗證腳本，實際套用到主機由維運者執行。
 - 任務 19 的值來自 192.168.1.121 上已驗證的部署（Jenkins controller、lm-trusted-1、lm-untrusted-1 與 LAN Registry）；design.md 中 Untrusted Agent 的「隔離 VLAN」在此部署以 rootless Docker 加主機 owner 防火牆實作。
+- 任務 21 依同主機配置（Deploy_Host = Jenkins = Registry = `192.168.1.121`）讓 Production 經 Nginx Proxy Manager 與 Cloudflare 公開；Edge_Proxy 與 Cloudflare 的設定是維運操作，repository 只提供設定檔、驗證與 runbook。Requirement 8.8–8.10 與 25 沒有新的 Correctness Property（行為由 Caddy 與主機上的 bash 腳本實作），以設定檢查、bats 與 Caddy 實測驗證。任務 21.3 依 Requirement 26 讓 Deploy_Host 的公開註冊預設關閉並可由管理員在 `/admin` 切換，新增 Property 48。
 - 任務 18 合併 security-harden：兩分支沒有共同歷史，以 main 的 `cd06606` 作為合成共同基底進行三方合併；應用程式功能採用 security-harden，部署、設定模型、Setup_Token 與 PostgreSQL 資料層採用 main；收據 AI 改為 OpenAI（`CAMPING_OPENAI_*`）。
 
 ## Task Dependency Graph
@@ -726,7 +786,12 @@
     { "id": 33, "tasks": ["19.5"] },
     { "id": 34, "tasks": ["19.6"] },
     { "id": 35, "tasks": ["20.1"] },
-    { "id": 36, "tasks": ["20.2"] }
+    { "id": 36, "tasks": ["20.2"] },
+    { "id": 37, "tasks": ["21.1"] },
+    { "id": 38, "tasks": ["21.2"] },
+    { "id": 39, "tasks": ["21.3"] },
+    { "id": 40, "tasks": ["21.4"] },
+    { "id": 41, "tasks": ["21.5"] }
   ]
 }
 ```

@@ -244,6 +244,17 @@
       "unauthorized": false
     },
     {
+      "id": "QA-ADMIN-004",
+      "page": "/admin",
+      "control": "setting-registration",
+      "role": "admin",
+      "scenario": "管理員在網站設定將公開註冊由開放改為關閉，再改回開放",
+      "expected": "關閉後未登入訪客的 /register 顯示需要旅行邀請連結的說明且沒有註冊表單、POST /api/register 回應 403；改回開放後 /register 顯示註冊表單，不需重新啟動",
+      "testCases": ["TC-ADMIN-004"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
       "id": "QA-TABS-001",
       "page": "/demo",
       "control": "section-tabs",

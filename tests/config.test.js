@@ -186,19 +186,20 @@ describe('parseConfig app-level settings', () => {
     return errors[0];
   };
 
-  test('defaults: registration open, no receipt AI policy seed, Requirement 18.1 AI limits', () => {
+  test('defaults: no registration or receipt AI policy seed, Requirement 18.1 AI limits', () => {
     const { config } = parseConfig({ ...DB_ENV });
-    expect(config.registrationPolicy).toBe('open');
+    expect(config.registrationPolicySeed).toBeNull();
+    expect('registrationPolicy' in config).toBe(false);
     expect(config.receiptAiPolicySeed).toBeNull();
     expect(config.aiCost).toEqual({ ...AI_COST_DEFAULTS });
     expect(Object.isFrozen(config.aiCost)).toBe(true);
     // 空字串等同未設定
     const empty = parseConfig({ ...DB_ENV, CAMPING_REGISTRATION: '', CAMPING_RECEIPT_AI_POLICY: '', ...Object.fromEntries(Object.values(AI_ENV).map(n => [n, ''])) });
-    expect(empty.config).toMatchObject({ registrationPolicy: 'open', receiptAiPolicySeed: null, aiCost: { ...AI_COST_DEFAULTS } });
+    expect(empty.config).toMatchObject({ registrationPolicySeed: null, receiptAiPolicySeed: null, aiCost: { ...AI_COST_DEFAULTS } });
   });
 
   test('accepted values are kept as given', () => {
-    for (const registration of ['open', 'closed']) expect(parseConfig({ ...DB_ENV, CAMPING_REGISTRATION: registration }).config.registrationPolicy).toBe(registration);
+    for (const registration of ['open', 'closed']) expect(parseConfig({ ...DB_ENV, CAMPING_REGISTRATION: registration }).config.registrationPolicySeed).toBe(registration);
     for (const seed of ['all', 'admins', 'off']) expect(parseConfig({ ...DB_ENV, CAMPING_RECEIPT_AI_POLICY: seed }).config.receiptAiPolicySeed).toBe(seed);
     const { config } = parseConfig({ ...DB_ENV, CAMPING_RECEIPT_AI_USER_LIMIT: '3', CAMPING_RECEIPT_AI_DAILY_LIMIT: '5', CAMPING_RECEIPT_AI_MONTHLY_LIMIT: '8' });
     expect(config.aiCost).toMatchObject({ perUser: 3, daily: 5, monthly: 8 });
@@ -249,13 +250,19 @@ describe('parseConfig app-level settings', () => {
 });
 
 describe('policySummary', () => {
-  test('names registration and the effective receipt AI policy with its source, nothing else', () => {
+  test('names the effective registration and receipt AI policies with their sources, nothing else (Req 26.17)', () => {
     const { config } = parseConfig({ ...DB_ENV, CAMPING_REGISTRATION: 'closed', CAMPING_RECEIPT_AI_POLICY: 'admins' });
-    expect(policySummary(config)).toBe('registration=closed receiptAiPolicy=admins (CAMPING_RECEIPT_AI_POLICY)');
-    expect(policySummary(config, { value: 'off', source: 'stored' })).toBe('registration=closed receiptAiPolicy=off (admin setting)');
-    expect(policySummary(parseConfig({ ...DB_ENV }).config)).toBe('registration=open receiptAiPolicy=all (default)');
-    // 不在允許值內的政策顯示為 off（與 settings.js 的 fail-closed 一致）
-    expect(policySummary(config, { value: 'everyone', source: 'stored' })).toBe('registration=closed receiptAiPolicy=off (admin setting)');
+    // 未提供帳號服務的回報時，依 config 的初始值推算
+    expect(policySummary(config)).toBe('registration=closed (CAMPING_REGISTRATION) receiptAiPolicy=admins (CAMPING_RECEIPT_AI_POLICY)');
+    expect(policySummary(config, { value: 'off', source: 'stored' })).toBe('registration=closed (CAMPING_REGISTRATION) receiptAiPolicy=off (admin setting)');
+    expect(policySummary(parseConfig({ ...DB_ENV }).config)).toBe('registration=open (default) receiptAiPolicy=all (default)');
+    // 三種來源
+    expect(policySummary(config, undefined, { value: 'open', source: 'stored' })).toBe('registration=open (admin setting) receiptAiPolicy=admins (CAMPING_RECEIPT_AI_POLICY)');
+    expect(policySummary(config, undefined, { value: 'closed', source: 'seed' })).toBe('registration=closed (CAMPING_REGISTRATION) receiptAiPolicy=admins (CAMPING_RECEIPT_AI_POLICY)');
+    expect(policySummary(config, undefined, { value: 'open', source: 'default' })).toBe('registration=open (default) receiptAiPolicy=admins (CAMPING_RECEIPT_AI_POLICY)');
+    // 不在允許值內的政策顯示為 off／closed（與 settings.js 的 fail-closed 一致）
+    expect(policySummary(config, { value: 'everyone', source: 'stored' }, { value: 'Open', source: 'stored' }))
+      .toBe('registration=closed (admin setting) receiptAiPolicy=off (admin setting)');
   });
 
   test('never contains secret values from the environment', () => {

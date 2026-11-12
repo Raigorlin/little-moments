@@ -10,6 +10,8 @@
 2. **應用程式變更**：新增設定模組（Bind_Address、Allowed_Hosts、Setup_Token、Database 連線）、`http.js` Host 檢查、Setup_Token 首次管理員流程、`/healthz` 健康端點、資料層由同步 SQLite 改為非同步 PostgreSQL、Migration_Runner、SQLite_Importer。
 3. **部署平台**：Deploy_Host 上 staging 與 production 兩套獨立 Compose 專案，每套包含 Caddy 反向代理、blue/green 兩個 App 容器槽位、PostgreSQL 與容器外備份目錄；部署由 SSH 受限金鑰觸發主機端部署腳本。
 4. **追蹤與治理**：Build_Record（JSON + 封存報告 + 建置描述）、Release_Gate 評估器、Approved_Exception 政策檔、QA_Inventory 比對、通知階段。
+5. **同主機 Edge_Proxy（Requirement 8.8–8.10、25）**：Deploy_Host、Jenkins 與 Registry 為同一台主機 `192.168.1.121`（LAN `192.168.1.0/24`）。主機上不由本 repository 管理的 Nginx Proxy Manager（Edge_Proxy）占用 80／443，路由器把網際網路 80／443 轉給它，Cloudflare 以 Proxied 記錄在前。Production_Environment 經 `https://www.our-littlemoments.com` 公開；LM_Proxy 只採信 Edge_Trusted_Proxies 的轉送標頭，DOCKER-USER 只對宣告的 Public_Port 接受任何來源。細節見 Components 第 18 節。
+6. **公開註冊政策（Requirement 26）**：Registration_Policy 改為每個請求從 Settings_Store 讀取（管理員儲存值優先，其次 `CAMPING_REGISTRATION`，最後 `open`），管理員在 `/admin` 切換後下一個請求即生效；Deploy_Host 的 `compose.yaml` 未設定時傳入 `closed`。細節見 Components 第 19 節。
 
 ### 現況盤點（已讀取的程式碼）
 
@@ -37,6 +39,9 @@
 | 簽章 | cosign 金鑰模式，`--tlog-upload=false`（LAN 無 Rekor） | Requirement 17 的簽章與驗證；Staging 驗證以 cosign attestation 附在 digest 上。 |
 | 掃描工具 | Gitleaks（秘密）、osv-scanner v2（`bun.lock`）、Semgrep CE + repo 內規則（SAST）、Trivy（映像）、Syft（SBOM）、OWASP ZAP + 自訂安全測試套件（DAST） | 皆可離線或固定版本執行並輸出 JSON／SARIF；細節見「工具選型」。 |
 | PBT 函式庫 | `fast-check@4.3.0`（devDependency，精確版本） | 在 `bun test` 下可直接使用，具 shrinking。 |
+| Edge 轉送標頭信任 | 在 LM_Proxy（Caddy）以 `servers { trusted_proxies static …; trusted_proxies_strict; client_ip_headers X-Forwarded-For }` 決定用戶端 IP，再以 `header_up X-Forwarded-For {client_ip}` 轉送單一值；App_Server 不變，仍只採信 `PROXY_IP/32` | 信任判斷集中在 Edge_Proxy 之後的第一跳；App 的 Trusted_Proxies 不必擴大到 Cloudflare 範圍或 Edge_Proxy 網段（Req 9.12、25.10）。 |
+| 公開連接埠例外 | DOCKER-USER 以 `--ctorigdstport` 對宣告的 Public_Port 放行，位於 DNAT DROP 之前；未宣告時規則與原本相同 | 只放行 Edge_Proxy 的 80／443，LM_Proxy 連接埠維持 LAN 限制（Req 8.6、8.8–8.10）。 |
+| 註冊政策來源 | 沿用收據 AI 政策的模式：Settings_Store 的 `registrationPolicy` 列優先，`CAMPING_REGISTRATION` 只是讀取時的後備值；本機預設 `open`，Compose 預設 `closed` | 不需重新部署即可切換（Req 26.5）；與既有 `resolveReceiptAiPolicy`、`/api/admin/settings` 同一套儲存、稽核與 UI；本機開發與既有測試維持 `open`。 |
 
 ### 先前的設計假設與需求對齊狀態
 
@@ -75,14 +80,15 @@ flowchart LR
     Dist[(Distribution registry)]
   end
 
-  subgraph DH[Deploy_Host（Ubuntu，Docker Compose）]
-    FW[DOCKER-USER：僅允許 LAN CIDR]
+  subgraph DH[Deploy_Host（Ubuntu，Docker Compose；同主機配置時與 Jenkins、Registry 同為 192.168.1.121）]
+    FW[DOCKER-USER：LAN CIDR 放行；Public_Port 80/443 任何來源；其餘 DNAT DROP]
+    NPM["Edge_Proxy：Nginx Proxy Manager :80/:443<br/>Let's Encrypt TLS，非本 repo 管理"]
     subgraph STG[Compose 專案 lm-staging]
       SP[Caddy :8081] --> SB[app-blue] & SG[app-green]
       SB & SG --> SDB[(PostgreSQL staging)]
     end
     subgraph PRD[Compose 專案 lm-prod]
-      PP[Caddy :80/:443] --> PB[app-blue] & PG[app-green]
+      PP[Caddy :8082<br/>trusted_proxies = Edge_Trusted_Proxies] --> PB[app-blue] & PG[app-green]
       PB & PG --> PDB[(PostgreSQL prod)]
     end
     BK[/var/backups/little-moments/<env><br/>0700 lm-ops/]
@@ -90,6 +96,9 @@ flowchart LR
   end
 
   Users[LAN 使用者] --> FW --> PP
+  Users --> FW --> SP
+  Inet[網際網路使用者] --> CF[Cloudflare（Proxied，Full strict）] --> RT[路由器 80/443 轉送] --> FW --> NPM
+  NPM -- "www 轉送至 192.168.1.121:8082" --> PP
   Repo -- webhook --> Ctrl
   Ctrl --> UA & TA
   UA -- pull build image --> RP
@@ -112,6 +121,9 @@ flowchart LR
 | Trusted Agent → Deploy_Host | 每環境一把 SSH 金鑰，`authorized_keys` 設定 `command="sudo /opt/lm/bin/lm-deploy staging",no-pty,no-port-forwarding,from="<agent IP>"`；部署帳號不在 `docker` 群組，sudoers 僅允許執行對應環境的固定腳本（Req 15.9）。 |
 | DAST 環境 | `docker network create --internal`，只含 Test_Environment、Ephemeral_Database 與 ZAP；啟動前執行隔離探測（Req 7.7、7.9）。 |
 | LAN → App | `DOCKER-USER` 規則僅允許 `LAN_CIDR` 至代理連接埠；DB 不發布連接埠（Req 8.6、11.10）。 |
+| 網際網路 → Edge_Proxy | Cloudflare（Proxied、Full strict）→ 路由器 80／443 → Edge_Proxy；DOCKER-USER 只對宣告的 Public_Port（80、443）接受任何來源，LM_Proxy 的 8081／8082、Registry 8443 仍只限 LAN CIDR（Req 8.6、8.8）。 |
+| Edge_Proxy → LM_Proxy（prod） | Edge_Proxy 以 `http://192.168.1.121:8082` 轉送；LM_Proxy 只對 TCP 來源在 Edge_Trusted_Proxies 內的請求採信 `X-Forwarded-For`（strict 由右往左）與 `X-Forwarded-Proto`（僅 `http`／`https`），其他來源一律以 TCP 來源與自身協定覆寫（Req 25.1–25.6）。 |
+| LM_Proxy → App | App 只採信 `PROXY_IP/32` 的轉送標頭，收到的 `X-Forwarded-For` 恰為一個位址（Req 9.12、25.3、25.10）。 |
 
 ### Jenkins Job 配置
 
@@ -535,13 +547,19 @@ volumes:
   pgdata: {}
 ```
 
-Staging 使用 `lm-staging`、`${LAN_IP}:8081`、不同 `db.env`／`app.env`（Req 18.6）。
+Staging 使用 `lm-staging`、`${LAN_IP}:8081`、不同 `db.env`／`app.env`（Req 18.6）。同主機配置下 Production 的 proxy 改發布於 `${LAN_IP}:8082`（`LM_PUBLIC_PORT=8082`），主機 80／443 由 Edge_Proxy 使用（第 18 節）。
 
-**LAN 網段限制**（Req 8.6）：`/etc/lm/docker-user.rules` 由 systemd unit 開機套用：
+**LAN 網段限制**（Req 8.6、8.8–8.10）：`/etc/lm/docker-user.rules` 由 `deploy/host/install.sh` 以 `deploy/host/docker-user.rules` 樣板渲染，systemd unit 開機時以 `iptables-restore --noflush` 套用（`iptables -S` 正規化形式）：
 
 ```
--A DOCKER-USER -i <lan-if> -p tcp -m conntrack --ctorigdstport 80,443,8081 ! -s ${LAN_CIDR} -j DROP
+-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
+-A DOCKER-USER -s <每個 --lan-cidr 一行> -m conntrack --ctstate DNAT -j RETURN
+-A DOCKER-USER -p tcp -m conntrack --ctstate DNAT --ctorigdstport <每個 --public-port 一行> -j RETURN
+-A DOCKER-USER -m conntrack --ctstate DNAT -j DROP
+-A DOCKER-USER -j RETURN
 ```
+
+未指定 `--public-port` 時第三類規則為 0 行，結果與原本完全相同（Req 8.10）。Public_Port 的驗證與 verify-host 檢查見第 18 節。
 
 **Blue/green 切換**：`upstream.caddy` 內容為 `reverse_proxy app-green:5173 { health_uri /healthz }`；`switch` 子命令以原子 rename 寫入後執行 `docker compose exec proxy caddy reload --config /etc/caddy/Caddyfile`，Caddyfile 設 `grace_period 30s`，既有連線在舊 upstream 上完成（Req 20.3）。
 
@@ -594,6 +612,259 @@ export function versionTagDecision(existingDigest, digest) {}   // 'create' | 'n
 5. 核准畫面與其後的 Production 部署一律使用此 digest（`repo@sha256:…`），不使用標籤（Req 17.7、20.1）。
 
 **OCI `version` 標籤的限制**：映像內容（含 OCI 標籤）在 `main` 建置時即固定，不重新建置就無法把 `org.opencontainers.image.version` 改成 Tag 名稱，否則 digest 會改變。因此沿用的映像其 `version` 標籤維持 `main-<短 SHA>`，Tag 名稱以 Registry 版本標籤（Req 16.6）與 Build_Record 的 `source.ref` 記錄。此做法已與 Req 16.5 對齊：`org.opencontainers.image.version` 一律為 `main-` 加 7 字元短 SHA，與 Req 1.4／16.1 的「不重新建置」一致。
+
+### 18. 同主機 Edge_Proxy（Nginx Proxy Manager + Cloudflare）（新增；Req 2.6、8.6、8.8–8.10、24.3、25）
+
+#### 18.1 主機配置與請求路徑
+
+Deploy_Host、Jenkins controller、兩個 Build_Agent 與 LAN Registry 都在 `192.168.1.121`（LAN `192.168.1.0/24`）。
+
+| 元件 | 位址 | 對網際網路公開 |
+|---|---|---|
+| Edge_Proxy（Nginx Proxy Manager 容器，非本 repository 管理） | 主機 `:80`、`:443`；路由器把網際網路 80／443 轉送至此 | 是（Public_Port 80、443） |
+| Production LM_Proxy | `192.168.1.121:8082` → 容器 `:8080` | 只經 Edge_Proxy 的 `www.our-littlemoments.com` Proxy Host |
+| Staging LM_Proxy | `192.168.1.121:8081` | 否（僅 LAN） |
+| LAN Registry | `192.168.1.121:8443` | 否 |
+| Jenkins controller | `192.168.1.121:<controller 連接埠>`（`deploy/jenkins/controller/compose.yaml` 綁定 `${LM_JENKINS_LAN_IP}:8080`，實際值待維運者以 `ss -ltnp` 確認）；Edge_Proxy 經 Docker 網路 `proxy` 轉送 `jenkins.our-littlemoments.com` | 只公開 `/github-webhook/`（POST） |
+| Deploy_Host SSH | `192.168.1.121:22` | 否 |
+
+```mermaid
+sequenceDiagram
+  participant B as 瀏覽器
+  participant CF as Cloudflare（Proxied）
+  participant R as 路由器
+  participant N as Edge_Proxy（NPM）
+  participant C as LM_Proxy（prod Caddy）
+  participant A as App_Server
+  B->>CF: https://www.our-littlemoments.com/...（XFF 可能被用戶端偽造）
+  CF->>R: HTTPS（Full strict），XFF 附加用戶端 IP
+  R->>N: :443
+  N->>C: http://192.168.1.121:8082，Host www…，XFF 附加 Cloudflare IP，XFP https
+  Note over C: TCP 來源 ∈ Edge_Trusted_Proxies → client_ip = XFF 由右往左第一個不受信任位址
+  C->>A: Host www…，X-Forwarded-For: <client_ip>（單一值），X-Forwarded-Proto: https
+  Note over A: TCP 來源 = PROXY_IP/32 → 有效網址 https://www.our-littlemoments.com
+```
+
+Apex `our-littlemoments.com` 由 Edge_Proxy 的 Redirection Host 以 301 轉至 `https://www.our-littlemoments.com` 並保留路徑；TLS（Let's Encrypt）、Force SSL 與 HSTS 也在 Edge_Proxy 設定。這些是維運設定，不是 repository 內的程式碼，由第 18.6 節的文件說明（Req 25.13）。Staging 不建立任何 Edge_Proxy 主機。
+
+#### 18.2 LM_Proxy 的轉送標頭處理（`deploy/caddy/Caddyfile`、`upstream.caddy.tmpl`）
+
+現況的 `upstream.caddy.tmpl` 以 `header_up X-Forwarded-For {remote_host}` 與 `header_up X-Forwarded-Proto {scheme}` 覆寫轉送標頭。放在 Edge_Proxy 之後時會有兩個問題：App 看到的協定一律是 `http`，`https://www…` 的 Origin 檢查失敗（所有登入與 POST 被拒），`ggc_session` 也不會加上 `Secure`；所有訪客的 IP 都變成 Edge_Proxy 的位址，共用同一個登入限速。
+
+改為由 Caddy 的 server 層決定用戶端 IP：
+
+```caddyfile
+{
+	servers {
+		# Edge_Trusted_Proxies（Req 25.7）；變數未設定時預設只信任容器 loopback，實際上沒有任何連線來自該位址，等同不信任任何來源。
+		# 已設定但為空字串時不套用預設，展開為零個範圍，同樣不信任任何來源。
+		trusted_proxies static {$LM_EDGE_TRUSTED_PROXIES:127.0.0.1/32}
+		# 由右往左解析 X-Forwarded-For，跳過受信任位址（Req 25.3）。
+		trusted_proxies_strict
+		client_ip_headers X-Forwarded-For
+		timeouts { … 現有設定不變 … }
+	}
+}
+
+{$LM_SITE_ADDRESS:http://:8080} {
+	…
+	# 受信任來源送來的 X-Forwarded-Proto 只接受恰為 http 或 https（Req 25.4、25.5）；
+	# 其他值與多個標頭行（以逗號合併後比對）一律移除，reverse_proxy 的預設行為會改以 {scheme} 設定。
+	# 不使用 header_regexp：它只要任一標頭行符合就成立，而 reverse_proxy 沿用的是最後一行。
+	@xfp_invalid {
+		header X-Forwarded-Proto *
+		not vars {http.request.header.X-Forwarded-Proto} http https
+	}
+	request_header @xfp_invalid -X-Forwarded-Proto
+	…
+	handle {
+		import /etc/caddy/upstream.caddy
+	}
+}
+```
+
+```caddyfile
+# upstream.caddy.tmpl
+reverse_proxy app-__COLOR__:5173 {
+	# 單一值：受信任來源為 strict 解析出的用戶端 IP，其他來源為 TCP 來源 IP（Req 25.2、25.3）。
+	header_up X-Forwarded-For {client_ip}
+	# X-Forwarded-Proto 不明確覆寫：Caddy 預設只在來源受信任且有值時沿用該值，否則設為本次連線的協定。
+	…（health_uri、health_headers、transport 不變）
+}
+```
+
+依 Caddy 2.10.2 的文件與原始碼確認的行為（實作任務必須再以釘選的 `caddy:2.10.2-alpine` 驗證）：
+
+| 來源 | `{client_ip}` | 轉送的 `X-Forwarded-For` | 轉送的 `X-Forwarded-Proto` |
+|---|---|---|---|
+| TCP 來源 ∈ Edge_Trusted_Proxies | `strictUntrustedClientIp`：合併所有 `X-Forwarded-For` 值，由右往左跳過無法解析與受信任的項目，取第一個不受信任位址；沒有則為 TCP 來源 | `header_up` 覆寫為 `{client_ip}`（取代預設的「既有值 + 來源」串接） | `addForwardedHeaders`：最後一個標頭行非空時沿用，否則為 `http`／`https`（依 `req.TLS`）。`@xfp_invalid` 先執行：只要合併後的值不是恰為單一 `http` 或 `https`（例如 `ftp`、`https, ftp`、兩行 `https`）就移除整個標頭，因此沿用的值只可能是 `http` 或 `https` |
+| 其他來源 | TCP 來源 | `{client_ip}` = TCP 來源 | 忽略傳入值，設為連線協定 |
+
+**為何不用 `header_regexp`**：`header_regexp` 對每個標頭行分別比對，任一行符合即成立；`addForwardedHeaders` 沿用的卻是最後一行。受信任來源送出 `X-Forwarded-Proto: https` 後接 `X-Forwarded-Proto: ftp` 時，`not header_regexp X-Forwarded-Proto ^(http|https)$` 不成立、標頭不會被移除，轉送給 App 的會是 `ftp`，違反 Req 25.5。`{http.request.header.X-Forwarded-Proto}` 以 `,` 串接所有標頭行，`vars` 比對的是整個串接值，所以只有恰為一行且值為 `http` 或 `https` 的請求會保留標頭。
+
+資料來源：[Caddy 全域選項 `trusted_proxies`、`trusted_proxies_strict`（v2.8 起）、`client_ip_headers`](https://caddyserver.com/docs/caddyfile/options)、[reverse_proxy 的 Defaults（X-Forwarded-* 只在受信任來源時沿用）](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)、Caddy v2.10.2 原始碼 [`modules/caddyhttp/server.go`](https://github.com/caddyserver/caddy/blob/v2.10.2/modules/caddyhttp/server.go)（`strictUntrustedClientIp`）與 [`reverseproxy/reverseproxy.go`](https://github.com/caddyserver/caddy/blob/v2.10.2/modules/caddyhttp/reverseproxy/reverseproxy.go)（`addForwardedHeaders`）。線上文件描述的是最新版，實作任務須以 2.10.2 映像實測確認。
+
+**空值等同現況（Req 25.6）**：`compose.yaml` 傳入 `LM_EDGE_TRUSTED_PROXIES: ${LM_EDGE_TRUSTED_PROXIES:-127.0.0.1/32}`；Compose 的 `:-` 在變數未設定與為空字串時都會代入預設值，所以經 Compose 啟動的容器一定拿到至少一個範圍。Caddyfile 的 `{$LM_EDGE_TRUSTED_PROXIES:127.0.0.1/32}` 只在變數**未設定**時代入預設；變數已設定但為空字串時會展開為不帶任何範圍的 `trusted_proxies static`，結果同樣是不信任任何來源，但這不是靠預設值達成。容器內沒有任何請求從 loopback 連到 Caddy 的站台監聽埠（健康檢查由 `docker compose exec proxy wget` 直接連 `app-<color>:5173`，`caddy reload` 走 `localhost:2019` 的管理 API），因此所有請求都屬於「其他來源」，轉送給 App 的兩個標頭與現在的 `{remote_host}`／`{scheme}` 相同。實作任務必須以 `caddy adapt`／`caddy validate` 確認變數未設定、為空字串與為多個 CIDR 時都能解析（Req 25.9：無法解析時 Caddy 啟動或 reload 失敗，`caddy reload` 失敗時保留舊設定）。
+
+**App 不變**：`CAMPING_TRUSTED_PROXIES` 仍為 `${PROXY_IP}/32`（Req 9.12、25.10）。App 收到的 `X-Forwarded-For` 只有一個位址，`resolveClient` 由右往左取第一個非代理位址即為該值；App 端對 `X-Forwarded-Proto` 只接受 `http`／`https` 的檢查保留，作為第二道防線。
+
+#### 18.3 設定（`<env>.env`、`compose.yaml`）
+
+| 變數 | Staging（`staging.env.example`） | Production（`prod.env.example`） | 驗證 |
+|---|---|---|---|
+| `LM_EDGE_TRUSTED_PROXIES` | 空（不經 Edge_Proxy） | `<npm-docker-subnet> <cloudflare-ipv4-ranges…> <cloudflare-ipv6-ranges…>`（佔位符；以空白分隔） | Deploy_Script（第 18.4 節）與 Caddy |
+| `LM_LAN_CIDR` | 空 | `<lan-cidr>`（Deploy_Host 所在實體 LAN，主機上為 `192.168.1.0/24`；只用於 Edge_Trusted_Proxies 的範圍檢查，與 `--lan-cidr` 不同） | Deploy_Script |
+| `LM_PUBLIC_PORT` | `8081` | `8082`（80／443 由 Edge_Proxy 使用） | 不得等於任何 Public_Port（第 18.5 節） |
+| `ALLOWED_HOSTS` | `<lan-hostname>,<deploy-host-lan-ip>` | `<public-hostname>,<deploy-host-lan-ip>` | App `parseConfig` |
+| `LM_HEALTH_HOST` | `<lan-hostname>` | `<public-hostname>`（LM_Proxy 主動健康檢查送出的 Host，須在 Allowed_Hosts 內） | Deploy_Script |
+
+實際值（`www.our-littlemoments.com`、`192.168.1.121`、Cloudflare 範圍、Edge_Proxy 來源網段）只寫在主機的 `/srv/lm/<env>/<env>.env`，repository 只放佔位符。`compose.yaml` 的 proxy 服務 `environment` 新增 `LM_EDGE_TRUSTED_PROXIES`（預設見上節）。變更此值後必須重新建立 proxy 容器（`docker compose … up -d --no-deps proxy`，會短暫中斷該環境的連線）；`caddy reload` 在既有容器內執行，看不到新的環境變數。
+
+**Edge_Proxy 來源位址**：Edge_Trusted_Proxies 中代表 Edge_Proxy 的項目必須是 LM_Proxy 實際看到的 TCP 來源。Edge_Proxy 容器連到 `192.168.1.121:8082` 時，封包經 Docker 的 DNAT 進入 lm-prod 的 `edge` 網路；視 Docker 版本與 `userland-proxy` 設定，Caddy 看到的可能是 Edge_Proxy 容器位址（落在其 Docker 網段內），也可能是 lm-prod `edge` 網路的閘道位址（MASQUERADE 或 docker-proxy）。維運者先以空的 `LM_EDGE_TRUSTED_PROXIES` 經公開網址送出一個請求，從 LM_Proxy 存取日誌的 `request.remote_ip` 取得實際位址，再填入該 /32 或 Edge_Proxy 的網段；不得填入涵蓋 LAN 或 Docker 預設 `bridge` 整個網段的範圍。
+
+#### 18.4 Deploy_Script 的 Edge_Trusted_Proxies 驗證（`deploy/bin/lm-deploy`，Req 25.7、25.8）
+
+在讀取設定的共用步驟（`load_config`，每個子命令都會執行、早於任何 `docker compose` 呼叫）加入：
+
+1. 以 `env_get` 讀取 `LM_EDGE_TRUSTED_PROXIES` 與 `LM_LAN_CIDR`（從不 source 檔案）。值為空時跳過其餘檢查。
+2. 以空白或 tab 分割為 1..64 個項目；任一項目必須是 IPv4 位址、IPv4 CIDR（前綴 1..32）、IPv6 位址或 IPv6 CIDR（前綴 1..128，語法以 `[0-9A-Fa-f:.]` 與單一 `::` 檢查）。前綴 0（`0.0.0.0/0`、`::/0`）與 IPv4-mapped IPv6（`::ffff:0:0/96` 範圍內）一律拒絕。
+3. `LM_LAN_CIDR` 必須存在且為 1..8 個以逗號分隔的 IPv4 網路位址 CIDR（與 `install.sh --lan-cidr` 相同格式）。
+4. 對每個 IPv4 項目 e（前綴 pe）與每個 LAN 網段 l（前綴 pl）：若 `pe <= pl` 且 `(l.network & mask(pe)) == (e.network & mask(pe))`，即 e 涵蓋整個 l，拒絕。
+5. 任一失敗：結束碼 2（`config_invalid`），訊息指出項目位置與原因（值本身不是秘密，但只輸出無效項目），不執行任何 Docker 指令。
+
+這部分以 bash 實作（Deploy_Host 不安裝 Bun），與 `install.sh` 的 `ipv4_to_int`／`cidr_ok` 相同寫法；以 `deploy/tests/lm-deploy.bats` 的表格式案例測試。Caddy 對語法的最終解析由第 18.2 節的 `caddy validate` 保證（Req 25.9）。
+
+#### 18.5 DOCKER-USER 的 Public_Port 例外（`deploy/host/`，Req 8.6、8.8–8.10）
+
+問題：現有規則對所有經 DNAT、來源不在 `--lan-cidr` 的連線 DROP。Edge_Proxy 發布的 80／443 也經 DNAT，套用規則後網際網路流量（含 GitHub webhook）全部被擋。
+
+`docker-user.rules` 樣板在 LAN 規則之後、DROP 之前新增一行佔位符規則（與 `__LAN_CIDR__` 相同模式）：
+
+```
+-A DOCKER-USER -p tcp -m conntrack --ctstate DNAT --ctorigdstport __PUBLIC_PORT__ -j RETURN
+```
+
+`--ctorigdstport` 比對 DNAT 前的原始目的連接埠（主機上的發布連接埠），因此只放行連到 80／443 的連線，不影響 LM_Proxy 的 8081／8082 或 Registry 8443。
+
+`install.sh`：
+
+- 新增選用參數 `--public-port <port>[,<port>...]`：0..8 個項目，每項 `^[1-9][0-9]{0,4}$` 且 ≤ 65535，不得重複；格式錯誤在 root 檢查前以結束碼 2 結束。
+- 在變更任何檔案前（root 檢查之後），讀取 `/srv/lm/staging/staging.env` 與 `/srv/lm/prod/prod.env` 的 `LM_PUBLIC_PORT`（存在者）；本次 `--envs` 包含、但主機上尚無 `<env>.env` 的環境，改讀 `deploy/compose/<env>.env.example`。任一 Public_Port 等於其中之一 → 結束碼 2，訊息指出衝突的連接埠與環境（Req 8.9）。
+- 渲染時每個 Public_Port 複製一行，未指定時該行為 0 行；檔頭註解列出 Public_Port。既有的 `grep -qx` DROP 檢查與 `iptables-restore --test` 驗證保留。
+- 為了讓 bats 不需 root 就能測試渲染與驗證，新增唯讀的 `--render-rules` 模式：執行相同的參數驗證、`LM_PUBLIC_PORT` 衝突檢查與渲染函式，把結果輸出到 stdout 後以結束碼 0 結束，不檢查 root、不寫入任何檔案、不呼叫 `iptables`／`systemctl`。只有此模式接受 `LM_SRV_ROOT`（預設 `/srv/lm`）覆寫 `LM_PUBLIC_PORT` 的讀取位置。
+
+規則以 `iptables -S` 的正規化形式撰寫，verify-host 依此比對順序。實作任務必須以 `iptables-restore --test` 與套用後的 `iptables -S DOCKER-USER`（主機或 WSL）確認上述 Public_Port 規則的輸出形式與樣板逐字相同（例如是否需要 `-p tcp`、選項順序），不同時改樣板而不是改比對邏輯。
+
+`verify-host.sh`：
+
+- 解析規則檔中 `^-A DOCKER-USER -p tcp -m conntrack --ctstate DNAT --ctorigdstport ([0-9]+) -j RETURN$` 的連接埠；任一等於 `/srv/lm/<env>/<env>.env` 的 `LM_PUBLIC_PORT` → FAIL。既有的「規則已載入」與「DOCKER-USER 開頭依序為規則檔內容」檢查自動涵蓋新規則與其順序。
+- 新增選用 `--public-port <port>[,...]|none`，與 `--lan-cidr` 相同方式比對集合；`none` 表示預期沒有 Public_Port。
+- 新增 `proxy` 檢查群組：以第 18.4 節相同規則檢查每個環境 `<env>.env` 的 `LM_EDGE_TRUSTED_PROXIES` 與 `LM_LAN_CIDR`（違規 → FAIL）；staging 設有 Edge_Trusted_Proxies → WARN（Staging 不經 Edge_Proxy）；宣告了 Public_Port 但 prod 的 Edge_Trusted_Proxies 為空 → WARN（經 Edge_Proxy 的請求會被視為 http，Origin 檢查失敗）。
+
+**`--lan-cidr` 在同主機配置下的內容**：DOCKER-USER 看到的是 DNAT 後、MASQUERADE 前的來源位址。下列連線都從 Docker bridge 網段經 DNAT 連到主機的發布連接埠，來源不在 `192.168.1.0/24`，必須把各自的網段加入 `--lan-cidr`，否則會被 DROP：
+
+| 來源 | 目的 | 網段（由維運者以 `docker network inspect` 確認） |
+|---|---|---|
+| Edge_Proxy 容器 | `192.168.1.121:8082` | Edge_Proxy 所在 Docker 網路（例如 `proxy` 網路的子網） |
+| Trusted Agent 的建置容器（`docker.image(...).inside` 的預設 bridge、`--network bridge` 的 crane／cosign） | Staging／Prod LM_Proxy（Smoke_Test）、Registry `:8443` | Docker 預設 `bridge`（通常為 `172.17.0.0/16`） |
+
+替代方案：Edge_Proxy 改用 host 網路，其連線由本機產生、走 OUTPUT 而不經 FORWARD，不受 DOCKER-USER 影響；此時 Edge_Trusted_Proxies 的 Edge_Proxy 項目仍須依第 18.3 節以存取日誌確認。兩種方式都寫入文件（Req 25.13 (f)），建議沿用 Edge_Proxy 現有的容器網路並加入其網段。Untrusted Agent 使用 rootless daemon（slirp4netns），其流量是本機程序送出，不經 FORWARD，由任務 19.3 的 owner 防火牆限制，不受上述網段影響。
+
+`--agent-from`（authorized_keys 的 `from=`）在同主機配置下是 Trusted Agent 容器連到主機 sshd 時的來源位址（`lm-jenkins-agent` Compose 網路的位址），同樣以 `docker inspect` 確認。
+
+#### 18.6 Jenkins 的同主機部署值與文件
+
+| 檔案 | 變數 | 值 |
+|---|---|---|
+| `Jenkinsfile`、`ci/jenkins/pipelines/rollback.Jenkinsfile`、`ci/jenkins/pipelines/restore-drill.Jenkinsfile` | `LM_DEPLOY_HOST`／`LM_DEPLOY_PORT` | `192.168.1.121`／`22`（known_hosts 憑證須含 `192.168.1.121` 的主機金鑰） |
+| `Jenkinsfile` | `LM_STAGING_URL` | `http://192.168.1.121:8081` |
+| `Jenkinsfile` | `LM_PROD_URL` | `http://192.168.1.121:8082` |
+| `Jenkinsfile` | `LM_STAGING_DB_NAME`／`LM_PROD_DB_NAME` | `little_moments_staging`／`little_moments`（須與主機 `db.env` 的 `POSTGRES_DB` 相同） |
+| `Jenkinsfile` | `LM_DAST_PROBE_TARGETS` | `192.168.1.121:22 192.168.1.121:80 192.168.1.121:443 192.168.1.121:8081 192.168.1.121:8082 192.168.1.121:8443 192.168.1.121:<jenkins-controller-port>`（Jenkins 連接埠由維運者確認後填入） |
+
+Smoke_Test 由 Trusted Agent 經 LAN origin 執行（`192.168.1.121` 在兩個環境的 `ALLOWED_HOSTS` 內）；請求不經 Edge_Proxy，App 看到 `http:`，Origin 為 `http://192.168.1.121:808x`，與現有 Smoke_Test 行為一致。
+
+文件（Req 24.3、25.12、25.13）：根目錄 `README.md` 的「LAN 部署」改寫「公開網際網路曝露不在支援範圍內」一段，並連結新的 Edge_Proxy runbook（放在 `ci/jenkins/README.md` 的新章節，或新增並連結 `deploy/README.md`）。Runbook 以編號步驟涵蓋：NPM Proxy Host（`www` → `http://192.168.1.121:8082`、Let's Encrypt、Force SSL、HSTS、不開 WebSocket）、Redirection Host（apex → `https://www…`、301、保留路徑）、Cloudflare Proxied 與 SSL/TLS Full (strict)、Staging 不建立 NPM 主機、Jenkins 只公開 `/github-webhook/`、`install.sh --lan-cidr 192.168.1.0/24,<npm-subnet>,<docker-bridge-subnet> --public-port 80,443`、Edge_Proxy 來源位址的確認方式、Cloudflare 範圍的更新（`https://www.cloudflare.com/ips-v4`、`https://www.cloudflare.com/ips-v6` → 比對 → 更新 `prod.env` → 重新建立 proxy 容器 → 以存取日誌確認真實用戶端 IP）。`ci/jenkins/README.md` 的「仍待填入」移除已填入的部署主機值，保留仍需維運者確認的 Jenkins 連接埠與網段。
+
+### 19. 公開註冊政策：部署預設關閉、管理員可切換（新增；Req 26）
+
+現況：`server/config.js` 的 `parseConfig` 把 `CAMPING_REGISTRATION` 解析為 `config.registrationPolicy`（未設定時 `open`）；`createAccountService({ registrationPolicy })` 在啟動時算出固定的 `registrationOpen`，`/api/register` 與 `GET /api/session` 都讀這個常數；`inviteRegister` 不檢查政策；`/api/admin/settings` 只處理 `receiptAiPolicy`。`compose.yaml` 沒有傳入 `CAMPING_REGISTRATION`，所以 Deploy_Host 目前是 `open`。不需要新的遷移：`settings` 資料表（`0002_security_harden.sql`）已有 `key`、`value`、`updated_at`、`updated_by`。
+
+#### 19.1 決定順序（`server/settings.js`）
+
+與 `resolveReceiptAiPolicy` 相同的純函式，供 PBT（Property 48）：
+
+```js
+export const REGISTRATION_POLICIES = Object.freeze(['open', 'closed']);
+export const REGISTRATION_KEY = 'registrationPolicy';
+const isRegistration = value => typeof value === 'string' && REGISTRATION_POLICIES.includes(value);
+
+// stored：Settings_Store 的值（沒有該列時為 null／undefined）；seed：Registration_Seed（未設定時為 null）。
+// 儲存值不在允許值內（手動修改 Database）時 fail closed 為 `closed`（Req 26.2）。
+export function resolveRegistrationPolicy(stored, seed) {
+  if (stored !== null && stored !== undefined) return { value: isRegistration(stored) ? stored : 'closed', source: 'stored' };
+  if (isRegistration(seed)) return { value: seed, source: 'seed' };
+  return { value: 'open', source: 'default' };
+}
+```
+
+`server/config.js` 與 `server/accounts.js` 改為從 `settings.js` 匯入 `REGISTRATION_POLICIES`，不再各自定義；`config.js` 保留 `REGISTRATION_POLICIES` 與 `DEFAULT_REGISTRATION_POLICY` 的匯出（re-export）以免既有匯入失效。
+
+#### 19.2 設定解析與啟動摘要（`server/config.js`、`scripts/serve.mjs`）
+
+- `parseConfig`：`config.registrationPolicy` 改為 `config.registrationPolicySeed`，未設定或空字串時為 `null`（與 `receiptAiPolicySeed` 相同），否則為驗證過的 `open`／`closed`；無效值的錯誤維持只指出 `CAMPING_REGISTRATION` 與允許值（Req 26.3）。
+- `policySummary(config, receiptAiPolicy, registrationPolicy)`：第三個參數為帳號服務回報的 `{value, source}`，未提供時以 `resolveRegistrationPolicy(null, config.registrationPolicySeed)` 推算。輸出改為 `registration=<value> (<source>) receiptAiPolicy=<value> (<source>)`，來源對照為 `stored` → `admin setting`、`seed` → `CAMPING_REGISTRATION`、`default` → `default`；不在允許值內的值顯示為 `closed`（Req 26.17）。摘要只由政策值與來源名稱組成。
+- `scripts/serve.mjs`：以 `registrationPolicySeed: config.registrationPolicySeed` 建立帳號服務，摘要改為 `policySummary(config, await accounts.receiptAiPolicy?.(), await accounts.registrationPolicy?.())`；更新檔內的選項註解。
+
+#### 19.3 帳號服務（`server/accounts.js`）
+
+- 選項 `registrationPolicy` 改為 `registrationPolicySeed = null`；不是 `null`、`open` 或 `closed` 時於建構時丟出 `TypeError`（沿用既有檢查方式）。移除啟動時固定的 `registrationOpen` 常數。
+- 新增與 `receiptAiPolicy()` 相同形狀的讀取函式，每次呼叫都讀 Settings_Store，使管理員的變更在下一個請求生效（Req 26.1、26.5）：
+
+```js
+async function registrationPolicy(e = sql) {
+  const row = await q.settingByKey(e, REGISTRATION_KEY);
+  const { value, source } = resolveRegistrationPolicy(row?.value ?? null, registrationPolicySeed);
+  return { value, source, updatedAt: row ? new Date(row.updated_at).toISOString() : null, updatedBy: row?.updated_by ?? null };
+}
+```
+
+- `GET /api/session`：`registrationOpen: (await registrationPolicy()).value === 'open'`，其他欄位不變（Req 26.13）。
+- `POST /api/register`：處理器第一個動作改為 `if ((await registrationPolicy()).value !== 'open') fail(403, '目前不開放公開註冊，請使用旅行邀請連結建立帳號。')`，仍在限速器與讀取本文之前（Req 26.10）。`inviteRegister` 不變（Req 26.12）。
+- `settingsBody()` 回傳 `{ receiptAiPolicy: {...receiptAiPolicy(), options: RECEIPT_AI_POLICIES}, registrationPolicy: {...registrationPolicy(), options: REGISTRATION_POLICIES} }`（Req 26.9）。
+- `PATCH /api/admin/settings`：`requireJsonType` → `requireAdmin` → `readJson` 後先驗證、再寫入：
+  1. 本文不是物件，或 `receiptAiPolicy` 與 `registrationPolicy` 兩個鍵都不存在 → 400「請至少提供一項設定。」。
+  2. 有 `receiptAiPolicy` 但不在 `RECEIPT_AI_POLICIES` → 400（既有訊息）；有 `registrationPolicy` 但不在 `REGISTRATION_POLICIES` → 400「公開註冊政策必須是 open 或 closed。」。任一欄位無效時整個請求不寫入（Req 26.7）。
+  3. `tx` 內再次 `requireAdmin(t)`，只對出現的鍵 `upsertSetting`；`receiptAiPolicy` 寫入 `settings.receipt-ai`（`receiptAiPolicy:<value>`，不變），`registrationPolicy` 寫入 `settings.registration`（`registrationPolicy:<value>`）。稽核的 `actor` 為管理員帳號（Req 26.4、26.8）。
+  4. 回應 200 與新的 `settingsBody()`。
+- 回傳的服務物件新增 `registrationPolicy`（供 `serve.mjs` 的啟動摘要與測試使用），並更新 JSDoc。
+
+稽核內容只有設定鍵與值，不含其他資料。同時儲存的兩個管理員以最後寫入者為準，兩筆稽核都會保留。
+
+#### 19.4 管理頁與註冊頁（`src/accounts-ui.js`）
+
+- 「網站設定」表單（`data-form="admin-settings"`）在收據 AI 選單之後加入 `selectField({ id: 'setting-registration', label: '公開註冊', ... })`，選項 `[['open', '開放：任何人都能在 /register 建立帳號'], ['closed', '關閉：只能經旅行邀請連結建立帳號']]`（Req 26.14）。
+- 說明文字 `registrationHelp(p)`：`stored` →「由 <帳號> 於 <時間> 設定。伺服器環境變數 CAMPING_REGISTRATION 不再生效。」；`seed` →「目前使用伺服器環境變數 CAMPING_REGISTRATION 的初始值。」；`default` →「目前使用預設值（open）。」。`selectField` 會跳脫說明文字，儲存者帳號與時間不會被當成 HTML。
+- 送出時只把值與載入時不同的欄位放進本文（Req 26.15、26.8）。沒有任何變更時在表單顯示「沒有變更的設定。」且不送出請求；成功時的提示：只改公開註冊為「公開註冊設定已更新」、只改收據 AI 維持「收據 AI 設定已更新」、兩者都改為「網站設定已更新」，接著重新載入設定；失敗時沿用 `showFormError(form, '尚未儲存：…')` 並保留選取值。
+- `/register` 的關閉頁與登入頁的「需要旅行邀請連結」說明不變：兩者讀 `GET /api/session` 的 `registrationOpen`，而該欄位已改為每個請求計算（Req 26.11、26.13）。
+
+只送出變更欄位的取捨：管理員無法用「原值再存一次」把 `seed`／`default` 來源固定為 `stored`。這個情況可先切換到另一個值再切回來達成，好處是兩個設定彼此獨立：儲存其中一個不會連帶把另一個固定為 `stored`（Req 26.8）。
+
+#### 19.5 部署設定（`deploy/compose/`、`deploy/bin/lm-deploy`）
+
+- `compose.yaml` 的 `x-app.environment` 加入 `CAMPING_REGISTRATION: ${CAMPING_REGISTRATION:-closed}`（`:-` 讓未設定與空字串都變成 `closed`），`app-blue`、`app-green`、`migrate` 經 `<<: *app` 取得（Req 26.16）。註解說明這只是 Registration_Seed，管理員在 `/admin` 儲存的值優先。`CAMPING_REGISTRATION` 屬非秘密設定，放在 `<env>.env`，不加入 `app.env` 的 `APP_ENV_KEYS`。
+- `staging.env.example`、`prod.env.example` 加入 `CAMPING_REGISTRATION=closed` 與相同說明。主機上既有、沒有這一行的 `<env>.env` 也會得到 `closed`。
+- `lm-deploy`：把 `CAMPING_REGISTRATION` 加入現有的 `unset` 清單（與 `CAMPING_OPENAI_*` 同一行），讓呼叫端環境無法覆寫 `<env>.env` 的值。
+- 不變更的部分：`drill.yaml`（還原演練使用合成管理員，還原後的 Settings_Store 列本來就隨備份還原）、Pipeline 的 Test_Environment 與 `ci/scripts/image-smoke.sh`（以 `docker run` 啟動、不經 `compose.yaml`，維持預設 `open`，`tests/security/support.js` 仍可經 `/api/register` 建立合成帳號）、`scripts/check-accounts.mjs`（已移除 `CAMPING_REGISTRATION`，E2E 以預設 `open` 啟動）。
+- 上線影響：Production 的 Settings_Store 目前沒有 `registrationPolicy` 列，部署本變更後實際生效值為 `closed`（來源 `seed`）。系統擁有者要開放時由管理員在 `/admin` 切換。
+
+#### 19.6 文件（`README.md`）
+
+- 環境變數表的 `CAMPING_REGISTRATION` 列：用途改為 Registration_Seed；預設值維持 `open`（`parseConfig` 與 `tests/readme.test.js` 比對的是 App_Server 的預設）；「未設定時的行為」寫明 App_Server 使用 `open`、Deploy_Host 的 `compose.yaml` 傳入 `closed`、管理員儲存後此值不再生效（Req 26.18）。
+- 改寫環境變數表後「`CAMPING_REGISTRATION`、`CAMPING_RECEIPT_AI_POLICY` 與 `CAMPING_RECEIPT_AI_*` 目前不由 `compose.yaml` 傳入……因此 Deploy_Host 使用預設值」一句：`CAMPING_REGISTRATION` 由 `compose.yaml` 自 `<env>.env` 傳入（預設 `closed`），其餘兩者維持原說明。
+- 「Registration policy」兩處功能說明改為：本機預設開放、Deploy_Host 預設關閉、管理員可在 `/admin` 切換且下一個請求生效。
+- 啟動摘要範例改為 `registration=… (<來源>) receiptAiPolicy=… (<來源>)`。
+- 恢復以 `CAMPING_REGISTRATION` 控制：以編號步驟說明移除儲存值，例如 `docker compose -f compose.yaml --env-file <env>.env exec db psql -U <database-user> -d <database-name> -c "DELETE FROM settings WHERE key = 'registrationPolicy';"`（佔位符，不含實際值），移除後下一個請求即改用 `CAMPING_REGISTRATION`。
 
 ## Data Models
 
@@ -745,13 +1016,47 @@ type InventoryResult = { id: string; status: 'pass' | 'fail' | 'missing'; detail
 
 `cosign attest --type https://little-moments.lan/attestations/staging-verified/v1 --predicate pred.json repo@digest`，predicate：`{commit, verifiedAt, build, healthChecks: 3, smoke: "pass"}`。Release_Tag 建置以 `cosign verify-attestation` 確認 digest 已通過 Staging（Req 19.5）。
 
+### Edge 設定與 Public_Port（非秘密）
+
+- `<env>.env`：`LM_EDGE_TRUSTED_PROXIES`（以空白分隔的 1..64 個 IP／CIDR，空值表示不採信任何 Edge 轉送標頭）、`LM_LAN_CIDR`（以逗號分隔的 1..8 個 IPv4 網路位址 CIDR；Edge_Trusted_Proxies 非空時必填）。欄位語意與各環境的值見 Components 第 18.3 節。
+- `/etc/lm/docker-user.rules`：檔頭註解列出允許的 LAN 網段與 Public_Port；每個 Public_Port 一行 `--ctorigdstport` RETURN 規則，位於 LAN RETURN 規則之後、DNAT DROP 之前（Components 第 18.5 節）。
+
+### Settings_Store 與註冊政策（Req 26）
+
+`settings` 資料表沿用 `0002_security_harden.sql`，不新增遷移。本需求新增一個鍵：
+
+| `key` | `value` | `updated_at` | `updated_by` |
+|---|---|---|---|
+| `receiptAiPolicy`（既有） | `all`／`admins`／`off` | 儲存時間（毫秒） | 管理員帳號 |
+| `registrationPolicy`（新增） | `open`／`closed`；其他值讀取時視為 `closed` | 儲存時間（毫秒） | 管理員帳號 |
+
+```ts
+type PolicySource = 'stored' | 'seed' | 'default';
+type RegistrationPolicyView = {
+  value: 'open' | 'closed'; source: PolicySource;
+  updatedAt: string | null;   // ISO 8601；source 不是 stored 時為 null
+  updatedBy: string | null;
+  options: ['open', 'closed'];
+};
+// GET／PATCH /api/admin/settings 的回應
+type SettingsBody = { receiptAiPolicy: { /* 既有欄位不變 */ }; registrationPolicy: RegistrationPolicyView };
+// PATCH 本文：至少一個鍵
+type SettingsPatch = { receiptAiPolicy?: 'all' | 'admins' | 'off'; registrationPolicy?: 'open' | 'closed' };
+```
+
+`parseConfig` 的 config 以 `registrationPolicySeed: 'open' | 'closed' | null` 取代 `registrationPolicy`。
+
 ## Correctness Properties
 
 *A property is a characteristic or behavior that should hold true across all valid executions of a system-essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.*
 
 本功能同時包含可做 PBT 的純邏輯（設定解析、Host 比對、Tag 驗證、政策評估、遷移規劃、匯入轉換、保留策略、Gate 排序）與不適合 PBT 的基礎設施（Jenkins 設定、Docker Compose、防火牆、cosign、Registry）。以下屬性只涵蓋前者；後者在 Testing Strategy 以整合、冒煙測試處理。
 
+Requirement 8 第 8–10 條與 Requirement 25 不新增屬性：用戶端 IP 與協定的決定由第三方的 Caddy 執行（不測試第三方函式庫本身的邏輯），Public_Port 與 Edge_Trusted_Proxies 的驗證以 bash 實作於 Deploy_Host 上的 `install.sh`、`verify-host.sh` 與 `lm-deploy`（主機不安裝 Bun，沒有可供 fast-check 呼叫的 JavaScript 函式）。這些行為改以 bats 表格式案例、設定內容檢查與以釘選 Caddy 映像執行的整合測試驗證（見 Testing Strategy）；App 端既有的 Property 46 仍涵蓋 App 只採信 `PROXY_IP/32` 的部分（Req 25.10）。
+
 經 Property Reflection 合併的項目：Pipeline 階段規劃（Req 1.2、1.3、1.4、1.8、2.8、7.1）合併為單一屬性；Approved_Exception 的到期、欄位缺漏、比對不符與秘密不可豁免合併為政策評估屬性；健康檢查連續成功與連續失敗的判定（Req 18、20）合併為一個偵測器屬性；匯入的密碼雜湊保留與可登入性由匯入往返屬性加上密碼往返屬性涵蓋；秘密遮罩與封存前偵測（Req 15.4）及 Gitleaks 結果遮罩（Req 6.4）合併為 Property 10；Release_Tag 的 digest 解析、Req 1.10 查無失敗與版本標籤不覆寫合併為 Property 47。
+
+Requirement 26 只新增 Property 48：第 1 條（決定順序）與第 2 條（無效儲存值 fail closed）是同一個純函式 `resolveRegistrationPolicy`，合併為一個屬性。其餘條文是 API、UI 或設定檔行為，輸入只有兩個政策值與三種來源，以範例、E2E 與設定內容檢查驗證（見 Testing Strategy）；第 3 條的無效 `CAMPING_REGISTRATION` 仍由 Property 12、13 涵蓋。
 
 ### Property 1: 階段規劃只對 Trusted_Ref 包含推送與部署
 
@@ -1035,6 +1340,12 @@ type InventoryResult = { id: string; status: 'pass' | 'fail' | 'missing'; detail
 
 **Validates: Requirements 1.4, 1.10, 16.6, 16.10, 19.5**
 
+### Property 48: Registration_Policy 決定順序
+
+*For any* 儲存值 `stored`（`null`、`undefined`、`open`、`closed`、任意字串含大小寫變體與前後空白如 `Open`、` closed`、`closed `，以及數字、布林、陣列等非字串）與 Registration_Seed `seed`（`null`、`open`、`closed`），`resolveRegistrationPolicy(stored, seed)` 回傳的 `value` 恆為 `open` 或 `closed`；`stored` 為 `null` 或 `undefined` 時，`seed` 為 `open`／`closed` 則結果為 `{ value: seed, source: 'seed' }`，否則為 `{ value: 'open', source: 'default' }`；`stored` 為其他任何值時 `source` 為 `stored`，且 `value` 在 `stored` 恰為 `open` 或 `closed` 時等於 `stored`、否則為 `closed`，與 `seed` 無關。
+
+**Validates: Requirements 26.1, 26.2**
+
 ## Error Handling
 
 ### 應用程式
@@ -1050,6 +1361,11 @@ type InventoryResult = { id: string; status: 'pass' | 'fail' | 'missing'; detail
 | Migration 失敗 | 該遷移回復，輸出版本號，非零結束；部署腳本收到後不啟動新容器 | 12.4、18.7 |
 | Checksum 不符 | 不修改 DB，結束碼 3 | 12.7 |
 | Importer 錯誤 | 交易回復，輸出表名與原因（不含資料列內容），非零結束 | 13.3、13.4、13.6、13.9 |
+| `CAMPING_REGISTRATION` 不是 `open`／`closed`（非空） | 只列出變數名與允許值，`exit(2)`，不連線 Database | 26.3 |
+| Settings_Store 的 `registrationPolicy` 值無效（手動修改） | 視為 `closed`（來源 `stored`），不改寫該列；`/admin` 顯示關閉與儲存者 | 26.2 |
+| `PATCH /api/admin/settings` 兩個鍵都沒有、任一值無效 | 400，所有設定與稽核不變 | 26.7 |
+| 非管理員讀寫設定 | 403（未登入 401），不寫入 | 26.6 |
+| 關閉時 `POST /api/register` | 讀取本文與限速前回應 403；邀請註冊照常 | 26.10、26.12 |
 
 錯誤訊息一律不含連線字串、密碼、token；`console.error` 只輸出錯誤名稱（沿用 `http.js` 的做法）。
 
@@ -1078,6 +1394,19 @@ type InventoryResult = { id: string; status: 'pass' | 'fail' | 'missing'; detail
 | 憑證不存在 | `withCredentials` 失敗，訊息只含憑證 ID | 15.3 |
 | 通知失敗 | 重試 3 次，摘要記錄管道名稱，不改結果 | 22.7 |
 
+### Deploy_Host 與 Edge_Proxy
+
+| 情境 | 行為 | 需求 |
+|---|---|---|
+| `--public-port` 格式錯誤、重複或超過 8 個 | `install.sh` 在 root 檢查前結束碼 2，不變更任何檔案或規則 | 8.9 |
+| Public_Port 等於任一環境的 `LM_PUBLIC_PORT` | `install.sh` 在變更任何檔案前結束碼 2，訊息指出連接埠與環境 | 8.9 |
+| 渲染後的規則缺少 DROP、仍含佔位符或 `iptables-restore --test` 失敗 | 不安裝，結束碼 1（沿用現有檢查） | 8.6 |
+| 規則檔含等於 `LM_PUBLIC_PORT` 的 Public_Port、Public_Port 集合與 `--public-port` 預期不同 | `verify-host.sh` FAIL | 8.8、8.9 |
+| `LM_EDGE_TRUSTED_PROXIES` 無效、超過 64 項、含 `/0` 或 IPv4-mapped IPv6、涵蓋整個 `LM_LAN_CIDR` 網段，或非空時 `LM_LAN_CIDR` 缺少／無效 | `lm-deploy` 在任何 `docker compose` 呼叫前結束碼 2（`config_invalid`），只輸出無效項目；`verify-host.sh` 的 `proxy` 群組 FAIL | 25.8 |
+| Caddy 無法解析 Edge_Trusted_Proxies | proxy 容器啟動失敗；`caddy reload` 失敗時 Caddy 保留舊設定，`lm-deploy switch` 回報失敗 | 25.9 |
+| 受信任來源送來非 `http`／`https` 的 `X-Forwarded-Proto` | Caddyfile 移除該標頭，轉送值改為連線協定；App 端另有相同檢查 | 25.5 |
+| 受信任來源的 `X-Forwarded-For` 缺少、無法解析或全部受信任 | `{client_ip}` 為 TCP 來源（Edge_Proxy 位址），App 照常處理 | 25.3 |
+
 所有 `post { always }` 區塊執行：封存並 scrub 報告、寫入 Build_Record 的 `result` 與 `firstFailedStage`、清除該建置的容器／網路／卷、`cleanWs()`、通知。
 
 ## Testing Strategy
@@ -1097,7 +1426,7 @@ type InventoryResult = { id: string; status: 'pass' | 'fail' | 'missing'; detail
 test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ }), { numRuns: 100 }); });
 ```
 
-- 檔案配置：`tests/config.test.js`（P12–P14）、`tests/http-security.test.js`（P15、P21、P22、P46）、`tests/setup-guard.test.js`（P16–P20）、`tests/password.test.js`（P23）、`tests/pg-behavior.test.js`（P24–P26）、`tests/migrations.test.js`（P27–P31）、`tests/import-sqlite.test.js`（P33–P36）、`tests/ci-policy.test.js`（P1–P11、P32、P37–P45、P47）。
+- 檔案配置：`tests/config.test.js`（P12–P14）、`tests/http-security.test.js`（P15、P21、P22、P46）、`tests/setup-guard.test.js`（P16–P20）、`tests/password.test.js`（P23）、`tests/pg-behavior.test.js`（P24–P26）、`tests/migrations.test.js`（P27–P31）、`tests/import-sqlite.test.js`（P33–P36）、`tests/ci-policy.test.js`（P1–P11、P32、P37–P45、P47）、`tests/settings.test.js`（P48，與既有的收據 AI 政策測試同檔）。
 - 產生器重點：Host 標頭含大小寫、port、IPv6；Tag 字串含前導零、超出範圍、後綴；Finding 嚴重度含 `unknown`；例外日期以評估日為中心 ±3 天以涵蓋當日邊界；SQL 產生器把破壞性關鍵字放進註解與字串；SQLite 資料集含 NULL、emoji、`Number.MAX_SAFE_INTEGER` 附近時間戳記。
 
 ### 單元與範例測試
@@ -1121,6 +1450,33 @@ test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ 
 - Jenkins：webhook 簽章錯誤請求被拒（Req 2.1、2.2）、fork PR 使用 `main` 的 Jenkinsfile（Req 2.7）、`ci/` 資料夾請求部署憑證失敗（Req 2.5）、Untrusted Agent 無法連線 Deploy_Host（Req 2.6）。
 - Deploy_Host：LAN 外來源無法連線（Req 8.6）、備份目錄權限（Req 14.4）、部署帳號無法操作另一環境（Req 15.9）。
 
+### 同主機 Edge_Proxy（Req 8.8–8.10、25）
+
+不適用 PBT 的原因見 Correctness Properties 開頭；改用下列測試：
+
+- **設定內容檢查**（`bun test`，更新 `tests/security-config.test.js` 等斷言 `{remote_host}`／`{scheme}` 的測試）：Caddyfile 的 `servers` 含 `trusted_proxies static {$LM_EDGE_TRUSTED_PROXIES:127.0.0.1/32}`、`trusted_proxies_strict`、`client_ip_headers X-Forwarded-For` 與 `@xfp_invalid` 處理；`upstream.caddy.tmpl` 含 `header_up X-Forwarded-For {client_ip}` 且不再含 `{remote_host}`；`compose.yaml` 的 proxy 傳入 `LM_EDGE_TRUSTED_PROXIES` 且預設為 `127.0.0.1/32`、App 的 `CAMPING_TRUSTED_PROXIES` 仍為 `${PROXY_IP…}/32`；`staging.env.example` 的 Edge 值為空、`prod.env.example` 只含佔位符且 `LM_PUBLIC_PORT=8082`。
+- **Caddy 解析檢查**：在釘選的 `caddy:2.10.2-alpine` 映像中對 Caddyfile 執行 `caddy adapt`／`caddy validate`，涵蓋 `LM_EDGE_TRUSTED_PROXIES` 未設定、為空字串、為多個 IPv4／IPv6 CIDR，以及含無效 CIDR（必須失敗）。沒有 Docker 時列為手動檢查並記錄指令。
+- **Caddy 轉送標頭整合測試**（選用，需要 Docker）：以 Caddyfile 與一個回傳收到標頭的測試 upstream 啟動 Caddy，分別以受信任與不受信任的來源送出含偽造最左側 `X-Forwarded-For`、多個 `X-Forwarded-For` 標頭、`X-Forwarded-Proto: https`／`ftp`／多值的請求，確認轉送的 `X-Forwarded-For` 恰為一個預期位址、`X-Forwarded-Proto` 依 Req 25.2–25.5。
+- **bats**：`deploy/tests/lm-deploy.bats` 新增 Edge_Trusted_Proxies 的接受與拒絕案例（空值、Cloudflare 形式的清單、`0.0.0.0/0`、`::/0`、`::ffff:0:0/96`、`192.168.0.0/16` 涵蓋 `192.168.1.0/24`、`192.168.1.0/24` 本身、65 個項目、無效語法、非空但缺少 `LM_LAN_CIDR`），確認拒絕時沒有呼叫 fake docker。新增 `deploy/tests/install-host.bats`，以 `--render-rules` 與 `LM_SRV_ROOT` 測試：無 `--public-port` 時輸出與現有規則相同、Public_Port 規則位於 LAN RETURN 之後與 DROP 之前、無效連接埠（`0`、`65536`、`08`、`abc`、重複、9 個）與等於 `LM_PUBLIC_PORT` 的連接埠以結束碼 2 拒絕。`verify-host.sh` 的規則解析以抽出的函式或固定規則檔案例測試。bats 沿用先前在 WSL 執行的方式。
+- **主機冒煙（維運者執行，不在 repository 自動化）**：`verify-host.sh --lan-cidr … --public-port 80,443`；從 LAN 外連 8081／8082／8443 失敗、連 80／443 成功；經 `https://www.our-littlemoments.com` 登入成功且 `ggc_session` 帶 `Secure`；LM_Proxy 存取日誌記錄真實用戶端 IP。
+
+### 公開註冊政策（Req 26）
+
+- **Property 48**（`tests/settings.test.js`）：`fc.assert(..., { numRuns: 100 })`，產生器涵蓋 Property 48 列出的儲存值與 Registration_Seed，並以決策表參考實作比對；保留既有的窮舉表測試寫法。
+- **設定解析與摘要**（`tests/config.test.js`）：`registrationPolicySeed` 未設定／空字串為 `null`、`open`／`closed` 原樣保留；`policySummary` 的三種來源與無效值顯示 `closed`；同步更新斷言 `config.registrationPolicy` 的既有測試與 `tests/readme.test.js`（README 預設值與 `resolveRegistrationPolicy(null, null).value` 一致）。
+- **API 測試**（`tests/publish.test.js` 的 `registration policy` 區塊，以 Ephemeral_Database 執行）：
+  - 同一個帳號服務實例內管理員依序儲存 `closed`、`open`：每次儲存後的下一個 `POST /api/register` 分別為 403／200、`GET /api/session` 的 `registrationOpen` 分別為 `false`／`true`，Settings_Store 列與 `settings.registration` 稽核（actor、`registrationPolicy:<value>`）正確（Req 26.4、26.5、26.13）。
+  - `registrationPolicySeed: 'closed'` 且無儲存值 → `closed`／`seed`；管理員儲存 `open` 後 → `open`／`stored`，seed 不再生效（Req 26.1、26.9）。
+  - 以 SQL 把儲存值改為 `Open` → 實際值 `closed`、來源 `stored`，列內容不變（Req 26.2）。
+  - member 的 GET／PATCH → 403；`{}`、`{registrationPolicy: 'Open'}`、`null`、`1`、`['open']`、`{receiptAiPolicy: 'all', registrationPolicy: 'maybe'}` → 400，且兩個設定列與稽核都不變（Req 26.6、26.7）。
+  - 只含 `receiptAiPolicy`、只含 `registrationPolicy`、兩者都含的 PATCH 只寫入出現的鍵（Req 26.8）。
+  - Registration_Policy 為 `closed` 與 `open` 時 `POST /api/invites/<token>/register` 皆成功並加入旅行（Req 26.12）；關閉時 21 次以上被拒的 `/api/register` 不消耗 `register` 限速（Req 26.10，延伸既有測試至 `stored` 來源）。
+  - 更新以 `registrationPolicy:` 建立服務的既有測試（`tests/accounts.test.js`、`tests/publish.test.js`、`tests/security-headers.test.js`）改用 `registrationPolicySeed`，並更新 `tests/security-access.test.js`、`tests/security-auth.test.js` 中 PATCH 本文的預期。
+- **設定內容檢查**（`tests/security-config.test.js` 或 `tests/ci-lint.test.js`）：`compose['x-app'].environment.CAMPING_REGISTRATION === '${CAMPING_REGISTRATION:-closed}'`；兩個 env 範本含 `CAMPING_REGISTRATION=closed`；`lm-deploy` 的 `unset` 清單含 `CAMPING_REGISTRATION`；`APP_ENV_KEYS` 不含它（Req 26.16）。
+- **E2E**（`tests/admin-settings.e2e.js`，`[TC-ADMIN-004]`）：管理員開啟 `/admin`，確認公開註冊選單為 `open` 且說明為預設值 → 改為關閉並儲存，確認送出的本文只有 `registrationPolicy`、提示文字與說明中的儲存者 → 未登入的新 context 開啟 `/register` 看到邀請連結說明且沒有註冊表單、`POST /api/register` 為 403 → 改回開放並儲存 → `/register` 顯示表單。`finally` 一律以 API 把政策存回 `open`。
+- **E2E 並行**：`playwright.config.js` 為 `fullyParallel: true, workers: 2`，所有 E2E 共用同一個 App_Server 與 Database。為避免 TC-ADMIN-004 關閉註冊的期間 TC-AUTH-001（經 `/register` 註冊）與 TC-BRAND-001（開啟 `/register`）失敗，新增 `tests/support/registration-lock.js`：以 `fs.openSync(<Playwright outputDir>/registration.lock, 'wx')` 取得跨 worker 的互斥鎖（逾時 60 秒、間隔 100 ms 重試，`finally` 刪除）。這三個測試在使用 `/register` 的區段持有該鎖。替代方案是把 TC-ADMIN-004 移到另一個依賴 `desktop`／`mobile` 的 Playwright project 最後執行，但 `scripts/qa-inventory.mjs` 以 project 名稱判斷視窗（只認 `desktop`／`mobile`），因此不採用。
+- **QA_Inventory**：新增 `QA-ADMIN-004`（`/admin`、`setting-registration`、admin、`critical: false`、`testCases: ["TC-ADMIN-004"]`），並在 `qa/tc-map.md` 加入 TC-ADMIN-004；以 `scripts/qa-inventory.mjs` validate／compare 確認對應到已執行的案例（Req 26.20、5.1、5.4）。
+
 ## Open Risks
 
 1. **資料層重寫工作量**：`server/accounts.js` 約 50 個同步 prepared statement、所有路由與 `tx` 呼叫點都要改為 async，測試檔也要全面改寫。這是本功能最大的工作項目，也最容易引入行為差異。緩解：先建立 `queries.js` 一對一轉換、以既有測試作回歸基準、用全域 advisory lock 保留單一寫入者語意；Bun.SQL 若在 BIGINT 型別、錯誤型別或重連上有問題，切換到 `postgres@3.4.7`。
@@ -1131,3 +1487,8 @@ test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ 
 6. **反向代理信任設定**：`CAMPING_TRUSTED_PROXIES` 設定過寬（例如整個 LAN CIDR）會讓 LAN 用戶端偽造 `X-Forwarded-For` 繞過限速，設定錯誤則可能讓 Origin 檢查因協定不符而拒絕所有寫入。部署腳本把 Compose `app` 網路固定子網中代理容器的固定 IP（/32）寫入設定，並以安全套件驗證；README 註明不得設為 LAN 網段。
 7. **Release_Tag digest 解析依賴 SHA 標籤**：若有人手動刪除或改寫 Registry 中的完整 SHA 標籤，Release_Tag 會依 Req 1.10 失敗或取到錯誤映像。緩解：Registry 關閉刪除、推送帳號只限 `release/`，且「映像」關卡另以 `main` Build_Record 的 fingerprint 與 attestation 的 commit 交叉比對。
 8. **伺服器打包**：為了讓最終映像不含 `src/`，伺服器以 `Bun.build --target=bun` 打包。打包行為（動態 import、`import.meta.url` 路徑解析）須以映像層級的 Smoke_Test 驗證。
+9. **Production 對網際網路公開後的攻擊面**：原設計假設只有 LAN 用戶端。Requirement 26 讓 Deploy_Host 的公開註冊預設為 `closed`；管理員在 `/admin` 開放後，任何網際網路使用者都能註冊帳號，直到再次關閉。首次管理員設定若尚未完成，任何人都能嘗試（仍需 Setup_Token）；記憶體限速器在每次部署後重置（Open Risk 3）的影響也變大。上線前應確認 Production 已建立管理員。另外，管理員儲存設定後 `<env>.env` 的 `CAMPING_REGISTRATION` 不再生效，維運者若只改 `prod.env` 會以為已關閉；README 須說明這一點與移除儲存值的方式（Components 第 19.6 節）。
+10. **Edge_Proxy 來源位址不固定**：LM_Proxy 看到的 Edge_Proxy 位址取決於 Docker 的 DNAT／MASQUERADE 與 `userland-proxy` 設定，Docker 升級或 Edge_Proxy 重建後可能改變。位址改變時 Edge_Trusted_Proxies 不再涵蓋 Edge_Proxy，App 會把公開請求視為 `http` 而拒絕所有 POST（fail closed，不會放寬信任）。若 Caddy 看到的是 lm-prod `edge` 網路的閘道位址，同主機其他容器經發布連接埠連入時也會被視為受信任來源；這些都是維運者控制的容器，風險可接受，但應優先讓 Edge_Proxy 以穩定的容器位址出現。
+11. **Cloudflare 範圍為靜態清單**：Cloudflare 新增範圍而清單未更新時，經新範圍送達的請求會以 Cloudflare 位址作為用戶端 IP（多個訪客共用限速），不會造成偽造。Runbook 要求定期比對。
+12. **IPv6 發布連接埠**：DOCKER-USER 規則只涵蓋 iptables（IPv4）。LM_Proxy 只綁定 IPv4 的 `LAN_IP`；Edge_Proxy 若以 `[::]:80/443` 發布，IPv6 流量不受這些規則限制，但 Edge_Proxy 本來就是公開的。
+13. **同主機的 Docker bridge 網段放行**：為了讓 Edge_Proxy 與 Trusted Agent 的建置容器經發布連接埠連到 LM_Proxy 與 Registry，`--lan-cidr` 須包含它們的 Docker 網段（Components 第 18.5 節）。這些網段上的任何容器都能連到 8081／8082／8443；DAST 的 Test_Environment 使用 `--internal` 網路、Untrusted Agent 使用 rootless daemon，不在這些網段內。

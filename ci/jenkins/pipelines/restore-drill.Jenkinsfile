@@ -48,8 +48,9 @@ pipeline {
     // 更新方式：重新執行 infra/build-image，以新 digest 在同一個 commit 內取代根目錄 Jenkinsfile 與
     // ci/jenkins/pipelines/{rollback,restore-drill,digest-lookup}.Jenkinsfile 的 BUILD_IMAGE；格式不符時 Init 失敗（fail closed）。
     BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f'
-    // PLACEHOLDER：Deploy_Host 的 LAN 主機名稱與 SSH 連接埠（非秘密）；known_hosts 憑證須含對應的主機金鑰。
-    LM_DEPLOY_HOST = 'deploy-host.lan.example'
+    // Deploy_Host 的 LAN 位址與 SSH 連接埠（非秘密；與根目錄 Jenkinsfile 相同）。known_hosts 憑證
+    // （lm-deploy-known-hosts）須含 192.168.1.121 的主機金鑰（連接埠非 22 時為 `[host]:port` 形式）。
+    LM_DEPLOY_HOST = '192.168.1.121'
     LM_DEPLOY_PORT = '22'
     LM_RECORD = 'reports/build-record.json'
     LM_DRILL_DIR = 'reports/drill'

@@ -5,7 +5,7 @@
 // 除部署設定外，也驗證 security-harden 的應用層設定（預設值與驗證規則相同）：
 // CAMPING_REGISTRATION、CAMPING_RECEIPT_AI_POLICY 與收據 AI 用量上限（AI_ENV）。
 import { isIP } from 'node:net';
-import { RECEIPT_AI_POLICIES, resolveReceiptAiPolicy } from './settings.js';
+import { RECEIPT_AI_POLICIES, REGISTRATION_POLICIES, resolveReceiptAiPolicy, resolveRegistrationPolicy } from './settings.js';
 
 /**
  * 單一設定值無效。`setting` 為變數名稱，`reason` 為原因（不含設定值）。
@@ -30,8 +30,9 @@ export const MIN_SETUP_TOKEN_LENGTH = 32;
 export const MAX_ALLOWED_HOSTS = 32;
 export const MAX_HOST_LENGTH = 253;
 
-// 註冊政策（security-harden）：未設定時為 open。
-export const REGISTRATION_POLICIES = Object.freeze(['open', 'closed']);
+// 註冊政策（Requirement 26）：允許值定義於 server/settings.js，此處保留匯出以免既有匯入失效。
+// CAMPING_REGISTRATION 只是 Registration_Seed；未設定且 Settings_Store 沒有儲存值時為 open。
+export { REGISTRATION_POLICIES };
 export const DEFAULT_REGISTRATION_POLICY = 'open';
 
 // 收據 AI 用量設定（security-hardening Requirement 18；原 server/ai-cost.js）。
@@ -451,12 +452,13 @@ export function parseConfig(env = {}) {
     }
   }
 
-  // 註冊政策（security-harden）：open／closed，未設定時 open
-  let registrationPolicy = DEFAULT_REGISTRATION_POLICY;
+  // Registration_Seed（Req 26.1、26.3）：open／closed；未設定或空字串時為 null（server/settings.js 解析為 open）。
+  // 管理員在介面儲存的值優先於此初始值。
+  let registrationPolicySeed = null;
   const registrationRaw = env.CAMPING_REGISTRATION;
   if (!isUnset(registrationRaw)) {
     if (!REGISTRATION_POLICIES.includes(registrationRaw)) fail('CAMPING_REGISTRATION', `必須是 ${REGISTRATION_POLICIES.join('、')} 其中之一`);
-    else registrationPolicy = registrationRaw;
+    else registrationPolicySeed = registrationRaw;
   }
 
   // 收據 AI 政策的初始值（security-harden）：all／admins／off；未設定時為 null（server/settings.js 解析為 all）。
@@ -475,7 +477,7 @@ export function parseConfig(env = {}) {
   if (errors.length) return { ok: false, errors };
   return {
     ok: true,
-    config: { bindAddress, port, allowedHosts, setupTokenMode, setupToken, trustedProxies, database, registrationPolicy, receiptAiPolicySeed, aiCost: ai.aiCost },
+    config: { bindAddress, port, allowedHosts, setupTokenMode, setupToken, trustedProxies, database, registrationPolicySeed, receiptAiPolicySeed, aiCost: ai.aiCost },
   };
 }
 
@@ -486,18 +488,25 @@ export function redactedSummary(config) {
 }
 
 const POLICY_SOURCES = Object.freeze({ default: 'default', seed: 'CAMPING_RECEIPT_AI_POLICY', stored: 'admin setting' });
+const REGISTRATION_SOURCES = Object.freeze({ default: 'default', seed: 'CAMPING_REGISTRATION', stored: 'admin setting' });
 
 /**
- * 啟動時的應用層設定摘要：註冊政策與實際生效的收據 AI 政策。只由設定欄位與政策值組成，不含秘密。
+ * 啟動時的應用層設定摘要：實際生效的註冊政策與收據 AI 政策及其來源（Req 26.17）。
+ * 只由政策值與來源名稱組成，不含秘密。
  * @param {object} config parseConfig 的 config
  * @param {{value:string, source:string}|string} [receiptAiPolicy] 帳號服務回報的實際政策；未提供時依 config 的初始值推算
+ * @param {{value:string, source:string}|string} [registrationPolicy] 帳號服務回報的實際註冊政策；未提供時依 config 的初始值推算
  */
-export function policySummary(config, receiptAiPolicy) {
-  const registration = REGISTRATION_POLICIES.includes(config?.registrationPolicy) ? config.registrationPolicy : DEFAULT_REGISTRATION_POLICY;
+export function policySummary(config, receiptAiPolicy, registrationPolicy) {
+  const registration = typeof registrationPolicy === 'string'
+    ? { value: registrationPolicy, source: 'default' }
+    : registrationPolicy ?? resolveRegistrationPolicy(null, config?.registrationPolicySeed ?? null);
+  const registrationValue = REGISTRATION_POLICIES.includes(registration?.value) ? registration.value : 'closed';
+  const registrationSource = REGISTRATION_SOURCES[registration?.source] ?? 'default';
   const policy = typeof receiptAiPolicy === 'string'
     ? { value: receiptAiPolicy, source: 'default' }
     : receiptAiPolicy ?? resolveReceiptAiPolicy(null, config?.receiptAiPolicySeed ?? null);
   const value = RECEIPT_AI_POLICIES.includes(policy?.value) ? policy.value : 'off';
   const source = POLICY_SOURCES[policy?.source] ?? 'default';
-  return `registration=${registration} receiptAiPolicy=${value} (${source})`;
+  return `registration=${registrationValue} (${registrationSource}) receiptAiPolicy=${value} (${source})`;
 }

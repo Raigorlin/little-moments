@@ -698,9 +698,23 @@ test('service requires a Database pool, never a file path, and closes cleanly', 
 });
 
 describe('service options and local CLI hooks (security-harden, task 18.4)', () => {
-  test('invalid registrationPolicy or receiptAiPolicySeed is refused at construction', async () => {
-    await expect(createAccountService({ db: serviceDb(db.sql), registrationPolicy: 'invite-only' })).rejects.toThrow(TypeError);
+  test('invalid registrationPolicySeed or receiptAiPolicySeed is refused at construction', async () => {
+    for (const seed of ['invite-only', 'Open', '']) {
+      await expect(createAccountService({ db: serviceDb(db.sql), registrationPolicySeed: seed })).rejects.toThrow(TypeError);
+    }
     await expect(createAccountService({ db: serviceDb(db.sql), receiptAiPolicySeed: 'everyone' })).rejects.toThrow(TypeError);
+  });
+
+  test('registrationPolicy() reports default, seed and stored sources; the seed is never written (Req 26.1)', async () => {
+    expect(await svc.registrationPolicy()).toEqual({ value: 'open', source: 'default', updatedAt: null, updatedBy: null });
+    const seeded = await createAccountService({ db: serviceDb(db.sql), registrationPolicySeed: 'closed', now: () => clockMs });
+    try {
+      expect(await seeded.registrationPolicy()).toEqual({ value: 'closed', source: 'seed', updatedAt: null, updatedBy: null });
+      expect(Number((await db.sql`SELECT COUNT(*) AS n FROM settings`)[0].n)).toBe(0);
+      const { cookie } = await setupAdmin();
+      ok(await call('PATCH', '/api/admin/settings', { cookie, body: { registrationPolicy: 'open' } }));
+      expect(await seeded.registrationPolicy()).toEqual({ value: 'open', source: 'stored', updatedAt: new Date(clockMs).toISOString(), updatedBy: 'admin-one' });
+    } finally { seeded.close(); }
   });
 
   test('receiptAiPolicy() reports default, seed and stored sources; the seed is never written', async () => {

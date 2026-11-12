@@ -78,9 +78,40 @@ describe('reverse proxy config (deploy/caddy)', () => {
     // Dot-prefixed paths are refused by the App_Server's static allowlist (tests/http.test.js).
   });
 
-  test('client-sent forwarding headers are overwritten before they reach the App_Server (Req 9.12)', () => {
-    expect(upstream).toMatch(/header_up\s+X-Forwarded-For\s+\{remote_host\}/);
-    expect(upstream).toMatch(/header_up\s+X-Forwarded-Proto\s+\{scheme\}/);
+  // jenkins-cicd-deploy task 21.1 (Req 25): the server decides the client IP; only Edge_Trusted_Proxies are trusted.
+  test('only Edge_Trusted_Proxies are trusted for forwarding headers, defaulting to 127.0.0.1/32 (Req 25.1–25.3, 25.6, 25.7)', () => {
+    const servers = /^\s*servers\s*\{([\s\S]*?)^\s*timeouts\s*\{[^}]*\}\s*\}/m.exec(site);
+    expect(servers).not.toBeNull();
+    const opts = servers[1].split('\n').map(l => l.trim()).filter(Boolean);
+    expect(opts).toEqual([
+      'trusted_proxies static {$LM_EDGE_TRUSTED_PROXIES:127.0.0.1/32}',
+      'trusted_proxies_strict',
+      'client_ip_headers X-Forwarded-For',
+    ]);
+    // Existing timeouts are kept.
+    expect(servers[0]).toMatch(/read_header\s+10s[\s\S]*read_body\s+60s[\s\S]*idle\s+2m/);
+    expect(config.match(/trusted_proxies\s+static/g)).toHaveLength(1);
+    expect(config).not.toMatch(/private_ranges/);
+  });
+
+  test('X-Forwarded-For is a single {client_ip} value and X-Forwarded-Proto uses the Caddy default (Req 9.12, 25.2–25.5)', () => {
+    expect(upstream).toMatch(/^\s*header_up\s+X-Forwarded-For\s+\{client_ip\}\s*$/m);
+    expect(upstream).not.toMatch(/\{remote_host\}/);
+    expect(upstream).not.toMatch(/header_up\s+[-+]?X-Forwarded-Proto\b/);
+    // reverse_proxy has no trusted_proxies of its own; only the server-level list applies.
+    expect(upstream).not.toMatch(/\btrusted_proxies\b/);
+  });
+
+  test('an X-Forwarded-Proto that is not exactly http or https is removed before the proxy (Req 25.4, 25.5)', () => {
+    const matcher = /@xfp_invalid\s*\{\n([\s\S]*?)\n\s*\}/.exec(site);
+    expect(matcher).not.toBeNull();
+    expect(matcher[1].split('\n').map(l => l.trim()).filter(Boolean)).toEqual([
+      'header X-Forwarded-Proto *',
+      'not vars {http.request.header.X-Forwarded-Proto} http https',
+    ]);
+    const strip = site.search(/^\s*request_header\s+@xfp_invalid\s+-X-Forwarded-Proto\s*$/m);
+    expect(strip).toBeGreaterThan(-1);
+    expect(strip).toBeLessThan(site.search(/^\s*handle\b/m));
   });
 });
 
@@ -213,6 +244,62 @@ describe('deploy/compose', () => {
     // The App services pin the key to the empty string, so app.env or <env>.env cannot supply it.
     expect(keySeen).toBeGreaterThan(0);
     for (const file of ENV_EXAMPLES) expect(read(file)).not.toMatch(/^\s*CAMPING_OPENAI_API_KEY\s*=/m);
+  });
+
+  test('the proxy gets Edge_Trusted_Proxies with a 127.0.0.1/32 default; the App trusts only PROXY_IP/32 (Req 25.6, 25.7, 25.10)', () => {
+    const compose = YAML.parse(read('deploy/compose/compose.yaml'));
+    expect(compose.services.proxy.environment.LM_EDGE_TRUSTED_PROXIES).toBe('${LM_EDGE_TRUSTED_PROXIES:-127.0.0.1/32}');
+    expect(compose['x-app'].environment.CAMPING_TRUSTED_PROXIES).toBe('${PROXY_IP:?PROXY_IP 未設定}/32');
+    // Edge_Trusted_Proxies never reaches the App_Server.
+    expect(JSON.stringify(compose['x-app'])).not.toContain('LM_EDGE_TRUSTED_PROXIES');
+  });
+
+  test('public registration defaults to closed on the Deploy_Host, and the caller cannot override it (Req 26.16)', () => {
+    const text = read('deploy/compose/compose.yaml');
+    const compose = YAML.parse(text);
+    // `:-` turns both unset and empty into closed; app-blue, app-green and migrate get it through <<: *app.
+    expect(compose['x-app'].environment.CAMPING_REGISTRATION).toBe('${CAMPING_REGISTRATION:-closed}');
+    for (const svc of ['app-blue', 'app-green', 'migrate']) {
+      expect(new RegExp(`^  ${svc}:\\n    <<: \\*app$`, 'm').test(text.replace(/\r\n/g, '\n'))).toBe(true);
+    }
+    for (const env of ['staging', 'prod']) {
+      expect(read(`deploy/compose/${env}.env.example`)).toMatch(/^CAMPING_REGISTRATION=closed$/m);
+    }
+    const deploy = read('deploy/bin/lm-deploy').replace(/\r\n/g, '\n');
+    const unset = /^unset ((?:[^\n]*\\\n)*[^\n]*)$/m.exec(deploy)?.[1].replace(/\\\n/g, ' ').trim().split(/\s+/) ?? [];
+    expect(unset).toContain('CAMPING_REGISTRATION');
+    // Non-secret setting: it lives in <env>.env, never in app.env.
+    const appEnvKeys = /^readonly APP_ENV_KEYS="([^"]*)"$/m.exec(deploy)?.[1].trim().split(/\s+/) ?? [];
+    expect(appEnvKeys.length).toBeGreaterThan(0);
+    expect(appEnvKeys).not.toContain('CAMPING_REGISTRATION');
+  });
+});
+
+describe('Compose variable templates for Edge_Proxy (Req 25.6–25.8)', () => {
+  const env = name => Object.fromEntries(lines(read(`deploy/compose/${name}.env.example`))
+    .map(l => /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(l)).filter(Boolean).map(m => [m[1], m[2]]));
+
+  test('staging is not behind the Edge_Proxy: both values are empty', () => {
+    const s = env('staging');
+    expect(s.LM_EDGE_TRUSTED_PROXIES).toBe('');
+    expect(s.LM_LAN_CIDR).toBe('');
+    expect(s.LM_PUBLIC_PORT).toBe('8081');
+  });
+
+  test('prod uses port 8082 and only placeholders for public and Edge values', () => {
+    const p = env('prod');
+    expect(p.LM_PUBLIC_PORT).toBe('8082');
+    expect(p.ALLOWED_HOSTS).toBe('<public-hostname>,<deploy-host-lan-ip>');
+    expect(p.LM_HEALTH_HOST).toBe('<public-hostname>');
+    expect(p.LM_EDGE_TRUSTED_PROXIES).toBe('<npm-docker-subnet> <cloudflare-ipv4-ranges> <cloudflare-ipv6-ranges>');
+    expect(p.LM_LAN_CIDR).toBe('<lan-cidr>');
+    // No address literal in either template value (real values live only on the Deploy_Host).
+    for (const name of ['staging', 'prod']) {
+      const e = env(name);
+      for (const key of ['LM_EDGE_TRUSTED_PROXIES', 'LM_LAN_CIDR', 'ALLOWED_HOSTS', 'LM_HEALTH_HOST']) {
+        expect(e[key]).not.toMatch(/\d+\.\d+\.\d+\.\d+|[0-9a-f]*:[0-9a-f]*:/i);
+      }
+    }
   });
 });
 

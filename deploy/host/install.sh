@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
-# Deploy_Host 主機安全設定安裝（Requirement 8.6、11.10、14.4、15.9；design.md Components §12、
-# Security Boundaries）。以 root 在 Deploy_Host 上、自 repository 的 deploy/host/ 執行；可重複執行。
+# Deploy_Host 主機安全設定安裝（Requirement 8.6、8.8–8.10、11.10、14.4、15.9；design.md Components §12、
+# §18.5、Security Boundaries）。以 root 在 Deploy_Host 上、自 repository 的 deploy/host/ 執行；可重複執行。
 #
 # 用法：
-#   sudo deploy/host/install.sh --lan-cidr <CIDR>[,<CIDR>...] [--envs staging,prod]
-#        [--agent-from <IP|CIDR>[,...]] [--staging-key <公鑰檔>] [--prod-key <公鑰檔>]
+#   sudo deploy/host/install.sh --lan-cidr <CIDR>[,<CIDR>...] [--public-port <port>[,<port>...]]
+#        [--envs staging,prod] [--agent-from <IP|CIDR>[,...]] [--staging-key <公鑰檔>] [--prod-key <公鑰檔>]
+#   deploy/host/install.sh --render-rules --lan-cidr <CIDR>[,...] [--public-port <port>[,...]] [--envs ...]
 #
 #   --lan-cidr     允許連線至 Docker 發布連接埠的 LAN 網段（IPv4 網路位址，前綴 /8–/32，最多 8 個）。
 #                  網段外來源無法與 proxy／Registry 建立 TCP 連線（Req 8.6）。必要。
+#   --public-port  接受任何來源連線的 Docker 發布連接埠（Public_Port，例如同主機 Edge_Proxy 的 80,443；
+#                  Req 8.8）。0–8 個、以逗號分隔、1–65535 的十進位整數（無前導零）、不得重複，且不得等於
+#                  staging／prod `<env>.env` 的 LM_PUBLIC_PORT（LM_Proxy 連接埠維持 LAN 限制；Req 8.9）。
+#                  未指定時 DOCKER-USER 規則不含任何 Public_Port 例外（Req 8.10）。
+#   --render-rules 唯讀：執行相同的參數驗證與 LM_PUBLIC_PORT 衝突檢查，把渲染後的 DOCKER-USER 規則輸出到
+#                  stdout 後以結束碼 0 結束；不需要 root、不寫入任何檔案、不呼叫 iptables／systemctl。
+#                  只有此模式接受環境變數 LM_SRV_ROOT（預設 /srv/lm）覆寫 <env>.env 的讀取位置（測試用）。
 #   --envs         要安裝的環境（預設 staging,prod）。
 #   --agent-from   Trusted_Build_Agent 的 IPv4 位址或 CIDR（authorized_keys 的 from=）。提供任一公鑰時必要。
 #   --staging-key  staging 部署公鑰檔（一行 OpenSSH 公鑰，不含選項）；未提供時不變更既有 authorized_keys。
@@ -21,7 +29,8 @@
 #                                         upstream.caddy.tmpl，首次安裝時產生指向 blue 的 upstream.caddy）、
 #                                         state/ 0700；<env>.env 只在不存在時由範本建立（0644，需替換佔位符）
 #   /var/backups/little-moments/<env>/    lm-ops:lm-ops 0700（不屬於 Docker 卷、不在 repository，Req 14.4）
-#   /etc/lm/docker-user.rules             root 0644；以 iptables-restore --test 驗證後安裝
+#   /etc/lm/docker-user.rules             root 0644；以 iptables-restore --test 驗證後安裝（檔頭註解列出
+#                                         LAN 網段與 Public_Port）
 #   /etc/systemd/system/lm-docker-user.service   enable 並套用（開機時於 docker.service 之前套用）
 #   /etc/sudoers.d/lm-deploy              root 0440；以 visudo -cf 驗證後安裝，安裝後再驗證整體設定
 #   ~lm-deploy-<env>/.ssh/authorized_keys root 0644（forced command、from=、no-pty）
@@ -32,7 +41,7 @@
 #
 # 安裝後執行 deploy/host/verify-host.sh 確認設定已生效。
 #
-# 結束碼：0 成功；1 安裝失敗；2 參數錯誤。
+# 結束碼：0 成功；1 安裝失敗；2 參數錯誤（含 Public_Port 與 LM_PUBLIC_PORT 衝突；在變更任何檔案前結束）。
 
 set -euo pipefail
 umask 022
@@ -58,7 +67,7 @@ warn() { printf '[install] WARN: %s\n' "$*" >&2; }
 die() { printf '[install] ERROR: %s\n' "$*" >&2; exit 1; }
 usage_die() {
   printf '[install] %s\n' "$*" >&2
-  printf '%s\n' '用法：install.sh --lan-cidr <CIDR>[,...] [--envs staging,prod] [--agent-from <IP|CIDR>[,...]] [--staging-key FILE] [--prod-key FILE]' >&2
+  printf '%s\n' '用法：install.sh [--render-rules] --lan-cidr <CIDR>[,...] [--public-port <port>[,...]] [--envs staging,prod] [--agent-from <IP|CIDR>[,...]] [--staging-key FILE] [--prod-key FILE]' >&2
   exit 2
 }
 
@@ -78,16 +87,24 @@ DEPLOY_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd -P)
 # ---------------------------------------------------------------------------------------------
 
 LAN_CIDRS=""
+PUBLIC_PORTS_ARG=""
+PUBLIC_PORTS_SET=0
+RENDER_ONLY=0
 ENVS="staging,prod"
 AGENT_FROM=""
 declare -A KEY_FILE=([staging]="" [prod]="")
 
 while (($# > 0)); do
   case $1 in
-    --lan-cidr | --envs | --agent-from | --staging-key | --prod-key)
+    --render-rules)
+      RENDER_ONLY=1
+      shift
+      ;;
+    --lan-cidr | --public-port | --envs | --agent-from | --staging-key | --prod-key)
       (($# >= 2)) || usage_die "$1 需要一個值"
       case $1 in
         --lan-cidr) LAN_CIDRS=$2 ;;
+        --public-port) PUBLIC_PORTS_ARG=$2 PUBLIC_PORTS_SET=1 ;;
         --envs) ENVS=$2 ;;
         --agent-from) AGENT_FROM=$2 ;;
         --staging-key) KEY_FILE[staging]=$2 ;;
@@ -142,6 +159,26 @@ for e in "${ENV_LIST[@]}"; do
   SEEN_ENV[$e]=1
 done
 
+# Public_Port（Req 8.8、8.9）：0–8 個、1–65535 的十進位整數（無前導零）、不得重複。格式錯誤在 root 檢查前結束。
+readonly PUBLIC_PORT_MAX=8
+declare -a PUBLIC_PORTS=()
+if ((PUBLIC_PORTS_SET == 1)); then
+  [[ -n $PUBLIC_PORTS_ARG ]] || usage_die "--public-port 不得為空（不宣告 Public_Port 時請省略此參數）"
+  [[ $PUBLIC_PORTS_ARG != ,* && $PUBLIC_PORTS_ARG != *, && $PUBLIC_PORTS_ARG != *,,* ]] ||
+    usage_die "--public-port 含空項目：$PUBLIC_PORTS_ARG"
+  IFS=, read -r -a PUBLIC_PORTS <<<"$PUBLIC_PORTS_ARG"
+  [[ $(IFS=,; printf '%s' "${PUBLIC_PORTS[*]}") == "$PUBLIC_PORTS_ARG" ]] || usage_die "--public-port 格式無效"
+  ((${#PUBLIC_PORTS[@]} <= PUBLIC_PORT_MAX)) ||
+    usage_die "--public-port 最多 $PUBLIC_PORT_MAX 個連接埠（目前 ${#PUBLIC_PORTS[@]} 個）"
+  declare -A SEEN_PORT=()
+  for p in "${PUBLIC_PORTS[@]}"; do
+    [[ $p =~ ^[1-9][0-9]{0,4}$ ]] && ((p <= 65535)) ||
+      usage_die "--public-port 項目無效（需為 1–65535 的十進位整數，不得有前導零）：$p"
+    [[ -z ${SEEN_PORT[$p]:-} ]] || usage_die "--public-port 重複：$p"
+    SEEN_PORT[$p]=1
+  done
+fi
+
 for e in staging prod; do
   [[ -z ${KEY_FILE[$e]} || -n ${SEEN_ENV[$e]:-} ]] || usage_die "--$e-key 對應的環境不在 --envs 中"
 done
@@ -188,6 +225,104 @@ if [[ -n ${PUBKEY[staging]} && -n ${PUBKEY[prod]} ]]; then
 fi
 
 # ---------------------------------------------------------------------------------------------
+# DOCKER-USER 規則渲染與 Public_Port 衝突檢查（安裝與 --render-rules 共用）
+# ---------------------------------------------------------------------------------------------
+
+SRC_RULES="$SCRIPT_DIR/docker-user.rules"
+readonly DROP_RULE='-A DOCKER-USER -m conntrack --ctstate DNAT -j DROP'
+
+# env_value <file> <key>：與 lm-deploy 的 env_get 相同（最後一筆為準、去除 CR 與成對引號），結果在 REPLY；
+# 從不 source 檔案。
+env_value() {
+  local file=$1 key=$2 line val=""
+  REPLY=""
+  [[ -f $file && -r $file ]] || return 0
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=${line%$'\r'}
+    [[ $line == "$key="* ]] && val=${line#"$key="}
+  done <"$file"
+  if [[ $val =~ ^\"(.*)\"$ || $val =~ ^\'(.*)\'$ ]]; then val=${BASH_REMATCH[1]}; fi
+  REPLY=$val
+}
+
+# check_public_port_conflicts <srv-root>：任一 Public_Port 等於 staging／prod `<env>.env` 的 LM_PUBLIC_PORT 時
+# 以結束碼 2 結束（Req 8.9）。主機上已有 <srv-root>/<env>/<env>.env 時讀取它；尚無且本次 --envs 包含該環境時
+# 改讀 deploy/compose/<env>.env.example（本次安裝會由它建立 <env>.env）；兩者皆非時不檢查該環境。
+check_public_port_conflicts() {
+  local root=$1 env f src lp p
+  ((${#PUBLIC_PORTS[@]} > 0)) || return 0
+  for env in staging prod; do
+    f="$root/$env/$env.env"
+    if [[ -e $f ]]; then
+      [[ -f $f && -r $f ]] || die "無法讀取 $f，無法確認 Public_Port 未與 LM_PUBLIC_PORT 衝突"
+      src=$f
+    elif [[ -d $root/$env && ! -x $root/$env ]]; then
+      die "無法存取 $root/$env，無法確認 Public_Port 未與 LM_PUBLIC_PORT 衝突（請以 root 執行）"
+    elif [[ -n ${SEEN_ENV[$env]:-} ]]; then
+      src="$DEPLOY_DIR/compose/$env.env.example"
+      [[ -f $src && -r $src ]] || die "找不到來源檔：$src"
+    else
+      continue
+    fi
+    env_value "$src" LM_PUBLIC_PORT
+    lp=$REPLY
+    if [[ ! $lp =~ ^[0-9]{1,5}$ ]]; then
+      warn "$src 的 LM_PUBLIC_PORT 未設定或不是整數（${lp:-<empty>}），略過 $env 的 Public_Port 衝突檢查"
+      continue
+    fi
+    for p in "${PUBLIC_PORTS[@]}"; do
+      ((10#$lp != p)) || usage_die "--public-port $p 等於 $env 的 LM_PUBLIC_PORT（$src）；LM_Proxy 連接埠必須維持 LAN 網段限制（Req 8.6、8.9）"
+    done
+  done
+}
+
+# render_rules：以 SRC_RULES 樣板輸出 DOCKER-USER 規則到 stdout。每個 LAN 網段一行 __LAN_CIDR__ 規則、每個
+# Public_Port 依輸入順序一行 __PUBLIC_PORT__ 規則（未宣告時 0 行，輸出與只有 LAN 限制時逐字相同；Req 8.10）。
+render_rules() {
+  local line c p
+  printf '# 由 deploy/host/install.sh 產生；請勿手動編輯（樣板：deploy/host/docker-user.rules）。\n'
+  printf '# 允許的 LAN 網段：%s\n' "${CIDR_LIST[*]}"
+  if ((${#PUBLIC_PORTS[@]} > 0)); then
+    printf '# Public_Port（接受任何來源的 TCP 連線）：%s\n' "${PUBLIC_PORTS[*]}"
+  fi
+  while IFS= read -r line || [[ -n $line ]]; do
+    # 樣板註解不複製（其中提到佔位符名稱）；只保留規則本體。
+    [[ -z $line || $line == \#* ]] && continue
+    if [[ $line == *__LAN_CIDR__* ]]; then
+      for c in "${CIDR_LIST[@]}"; do printf '%s\n' "${line//__LAN_CIDR__/$c}"; done
+    elif [[ $line == *__PUBLIC_PORT__* ]]; then
+      for p in "${PUBLIC_PORTS[@]}"; do printf '%s\n' "${line//__PUBLIC_PORT__/$p}"; done
+    else
+      printf '%s\n' "$line"
+    fi
+  done <"$SRC_RULES"
+}
+
+# check_rendered <text>：沒有未取代的佔位符，且含 DNAT DROP 規則。
+check_rendered() {
+  ! grep -q '__[A-Z_]*__' <<<"$1" || die "docker-user.rules 仍含未取代的佔位符"
+  grep -qxF -- "$DROP_RULE" <<<"$1" || die "docker-user.rules 缺少 DROP 規則"
+}
+
+src_ok() {
+  [[ -f $1 && -r $1 ]] || die "找不到來源檔：$1"
+  # Windows 檢出（CRLF）的檔案在 sudoers／iptables／bash 中會被拒絕或誤判。
+  ! grep -q $'\r' -- "$1" || die "來源檔含 CR（請以 LF 檢出，見 .gitattributes）：$1"
+}
+
+# --render-rules：唯讀，不需 root；只有此模式接受 LM_SRV_ROOT（安裝模式固定讀取 /srv/lm）。
+if ((RENDER_ONLY == 1)); then
+  SRV_ROOT=${LM_SRV_ROOT:-$LM_ROOT}
+  [[ $SRV_ROOT == /* ]] || usage_die "LM_SRV_ROOT 必須為絕對路徑：$SRV_ROOT"
+  src_ok "$SRC_RULES"
+  check_public_port_conflicts "$SRV_ROOT"
+  rendered=$(render_rules)
+  check_rendered "$rendered"
+  printf '%s\n' "$rendered"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------------------------
 # 前置檢查
 # ---------------------------------------------------------------------------------------------
 
@@ -201,7 +336,6 @@ SRC_COMPOSE="$DEPLOY_DIR/compose/compose.yaml"
 SRC_DRILL="$DEPLOY_DIR/compose/drill.yaml"
 SRC_CADDY_DIR="$DEPLOY_DIR/caddy"
 CADDY_FILES=(Caddyfile tls-off.caddy tls-internal.caddy tls-file.caddy upstream.caddy.tmpl)
-SRC_RULES="$SCRIPT_DIR/docker-user.rules"
 SRC_UNIT="$SCRIPT_DIR/$UNIT_NAME"
 SRC_SUDOERS="$SCRIPT_DIR/sudoers.d/lm-deploy"
 SRC_AUTHKEYS="$SCRIPT_DIR/authorized_keys.tmpl"
@@ -209,11 +343,10 @@ SRC_AUTHKEYS="$SCRIPT_DIR/authorized_keys.tmpl"
 srcs=("$SRC_LM_DEPLOY" "$SRC_COMPOSE" "$SRC_DRILL" "$SRC_RULES" "$SRC_UNIT" "$SRC_SUDOERS" "$SRC_AUTHKEYS")
 for f in "${CADDY_FILES[@]}"; do srcs+=("$SRC_CADDY_DIR/$f"); done
 for e in "${ENV_LIST[@]}"; do srcs+=("$DEPLOY_DIR/compose/$e.env.example"); done
-for f in "${srcs[@]}"; do
-  [[ -f $f && -r $f ]] || die "找不到來源檔：$f"
-  # Windows 檢出（CRLF）的檔案在 sudoers／iptables／bash 中會被拒絕或誤判。
-  ! grep -q $'\r' -- "$f" || die "來源檔含 CR（請以 LF 檢出，見 .gitattributes）：$f"
-done
+for f in "${srcs[@]}"; do src_ok "$f"; done
+
+# 在建立帳號或變更任何檔案、DOCKER-USER 規則之前（Req 8.9）。
+check_public_port_conflicts "$LM_ROOT"
 
 # path_safe <path>：路徑本身與所有上層目錄皆為 root 擁有、群組／其他人不可寫，且不是符號連結。
 path_safe() {
@@ -361,25 +494,13 @@ install_backup_dirs() {
 }
 
 install_firewall() {
-  local tmp line c
+  local tmp rendered
   install -d -o root -g root -m 0755 -- "$LM_ETC"
+  rendered=$(render_rules)
+  check_rendered "$rendered"
   tmp=$(mktemp "$LM_ETC/.docker-user.rules.XXXXXX")
   TMP_FILES+=("$tmp")
-  {
-    printf '# 由 deploy/host/install.sh 產生；請勿手動編輯（樣板：deploy/host/docker-user.rules）。\n'
-    printf '# 允許的 LAN 網段：%s\n' "${CIDR_LIST[*]}"
-    while IFS= read -r line || [[ -n $line ]]; do
-      # 樣板註解不複製（其中提到佔位符名稱）；只保留規則本體。
-      [[ -z $line || $line == \#* ]] && continue
-      if [[ $line == *__LAN_CIDR__* ]]; then
-        for c in "${CIDR_LIST[@]}"; do printf '%s\n' "${line//__LAN_CIDR__/$c}"; done
-      else
-        printf '%s\n' "$line"
-      fi
-    done <"$SRC_RULES"
-  } >"$tmp"
-  ! grep -q '__[A-Z_]*__' -- "$tmp" || die "docker-user.rules 仍含未取代的佔位符"
-  grep -qx -- '-A DOCKER-USER -m conntrack --ctstate DNAT -j DROP' "$tmp" || die "docker-user.rules 缺少 DROP 規則"
+  printf '%s\n' "$rendered" >"$tmp"
   iptables-restore --test --noflush "$tmp" || die "docker-user.rules 驗證失敗（iptables-restore --test）"
   chown root:root -- "$tmp"
   chmod 0644 -- "$tmp"
@@ -393,7 +514,7 @@ install_firewall() {
   else
     systemctl restart "$UNIT_NAME" || die "套用 DOCKER-USER 規則失敗（systemctl status $UNIT_NAME）"
   fi
-  log "已套用 DOCKER-USER 規則（允許：${CIDR_LIST[*]}）"
+  log "已套用 DOCKER-USER 規則（LAN 網段：${CIDR_LIST[*]}；Public_Port：${PUBLIC_PORTS[*]:-無}）"
 }
 
 install_sudoers() {
@@ -466,4 +587,4 @@ install_firewall
 install_sudoers
 for e in "${ENV_LIST[@]}"; do install_authorized_keys "$e"; done
 
-log "完成。請執行：sudo $SCRIPT_DIR/verify-host.sh --envs $(IFS=,; printf '%s' "${ENV_LIST[*]}")"
+log "完成。請執行：sudo $SCRIPT_DIR/verify-host.sh --envs $(IFS=,; printf '%s' "${ENV_LIST[*]}") --lan-cidr $LAN_CIDRS --public-port ${PUBLIC_PORTS_ARG:-none}"

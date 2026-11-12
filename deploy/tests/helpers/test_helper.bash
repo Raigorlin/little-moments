@@ -37,6 +37,8 @@ ALLOWED_HOSTS=lm.lan,192.0.2.10
 LM_HEALTH_HOST=lm.lan
 LM_CADDY_DIR=./caddy
 LM_IMAGE_REPO=$REPO
+LM_EDGE_TRUSTED_PROXIES=
+LM_LAN_CIDR=
 EOF
   printf 'POSTGRES_DB=little_moments\nPOSTGRES_USER=lm_app\nPOSTGRES_PASSWORD=placeholder\n' >"$ENV_DIR/db.env"
   render_upstream green
@@ -82,6 +84,9 @@ refute_call() {
     printf 'unexpected docker call matching: %s\n--- docker.log ---\n' "$1"; cat "$FAKE_DOCKER_LOG"; return 1
   fi
 }
+
+# set_edge <LM_EDGE_TRUSTED_PROXIES> [LM_LAN_CIDR]：在 staging.env 末尾覆寫兩個值（env_get 以最後一筆為準）。
+set_edge() { printf 'LM_EDGE_TRUSTED_PROXIES=%s\nLM_LAN_CIDR=%s\n' "$1" "${2:-}" >>"$ENV_DIR/staging.env"; }
 
 assert_no_docker_calls() {
   if [[ -s $FAKE_DOCKER_LOG ]]; then printf 'expected no docker calls\n'; cat "$FAKE_DOCKER_LOG"; return 1; fi

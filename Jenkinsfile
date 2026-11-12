@@ -72,9 +72,12 @@ pipeline {
     LM_ZAP_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/zap@sha256:c2d63bbb2d907a5c5257914fb20e26e969c92b25f265def7f89f08203f912882'
     // 隔離探測（ci/dast/isolation-probe.sh，Req 7.7、7.9）必須「無法連線」的位址：Deploy_Host 的 SSH 與 App／代理連接埠、
     // Staging／Production 連接埠、Registry、Jenkins 與其他 LAN 主機（另含探測腳本預設的網際網路位址與預設閘道）。
-    // PLACEHOLDER：以 IP 位址字面值取代 <...>（`a.b.c.d:port` 或 `[IPv6]:port`，以空白分隔；不接受主機名稱，
-    // 因 --internal 網路內無法解析主機名稱會使探測失去意義）。未取代時 DAST 階段在建立 Test_Environment 前失敗。
-    LM_DAST_PROBE_TARGETS = '<deploy-host-ip>:22 <deploy-host-ip>:80 <deploy-host-ip>:443 <deploy-host-ip>:8081 <registry-ip>:8443 <jenkins-ip>:443'
+    // 同主機配置（design.md 第 18.6 節）：全部在 Deploy_Host 192.168.1.121 上——SSH 22、Edge_Proxy（NPM）80／443 與
+    // 管理介面 81、Jenkins controller 8080、Staging／Production LM_Proxy 8081／8082、維運者的暫時預覽 App 8090、
+    // LAN Registry 8443。只接受 IP 位址字面值（`a.b.c.d:port` 或 `[IPv6]:port`，以空白分隔；--internal 網路內
+    // 無法解析主機名稱會使探測失去意義），格式不符時 DAST 階段在建立 Test_Environment 前失敗。
+    // 主機新增發布連接埠時一併加入（以 `sudo ss -ltnp` 確認）。
+    LM_DAST_PROBE_TARGETS = '192.168.1.121:22 192.168.1.121:80 192.168.1.121:443 192.168.1.121:81 192.168.1.121:8080 192.168.1.121:8081 192.168.1.121:8082 192.168.1.121:8090 192.168.1.121:8443'
     // App_Image 掃描、SBOM、Registry 操作與簽章工具（Design「工具選型」：Trivy、Syft、crane、cosign v2）。
     // Build_Image 不含這些工具；與掃描器相同，鏡像至 LAN Registry 並只以 digest 引用。
     // 上游（linux/amd64）：docker.io/anchore/syft:v1.57.1、gcr.io/go-containerregistry/crane:v0.22.1、
@@ -90,14 +93,15 @@ pipeline {
     LM_REGISTRY_PUSH_CREDENTIALS = 'lm-registry-push'
     LM_COSIGN_KEY_CREDENTIALS = 'lm-cosign-key'
     LM_COSIGN_PASSPHRASE_CREDENTIALS = 'lm-cosign-passphrase'
-    // Staging 部署（Req 15.1、15.2、15.9、18）：Deploy_Host 的 LAN 主機名稱與 SSH 連接埠（非秘密）。
-    // PLACEHOLDER：以實際主機名稱取代；known_hosts 憑證須含對應的主機金鑰（連接埠非 22 時為 `[host]:port` 形式）。
-    LM_DEPLOY_HOST = 'deploy-host.lan.example'
+    // Staging 部署（Req 15.1、15.2、15.9、18）：Deploy_Host 的 LAN 位址與 SSH 連接埠（非秘密）。
+    // known_hosts 憑證（lm-deploy-known-hosts）須含 192.168.1.121 的主機金鑰（連接埠非 22 時為 `[host]:port` 形式）。
+    LM_DEPLOY_HOST = '192.168.1.121'
     LM_DEPLOY_PORT = '22'
-    // Staging 代理的 LAN origin（deploy/compose/staging.env 的 LAN_IP:LM_PUBLIC_PORT；主機名稱須在 ALLOWED_HOSTS 內）。
-    // Smoke_Test 由 Trusted Agent 經此位址執行；HTTPS 時以 LM_SCAN_CA_BUNDLE（內部 CA）驗證憑證。PLACEHOLDER。
-    LM_STAGING_URL = 'http://deploy-host.lan.example:8081'
-    // Staging Database 名稱（非秘密；與 Deploy_Host 上 /srv/lm/staging/db.env 的 POSTGRES_DB 相同）。PLACEHOLDER。
+    // Staging 代理的 LAN origin（/srv/lm/staging/staging.env 的 LAN_IP:LM_PUBLIC_PORT）。Smoke_Test 由 Trusted Agent
+    // 經此 LAN origin 執行，不經 Edge_Proxy：Host 為 192.168.1.121（須在 staging.env 的 ALLOWED_HOSTS 內），
+    // App 看到的協定為 http。HTTPS 時以 LM_SCAN_CA_BUNDLE（內部 CA）驗證憑證。
+    LM_STAGING_URL = 'http://192.168.1.121:8081'
+    // Staging Database 名稱（非秘密；須與 Deploy_Host 上 /srv/lm/staging/db.env 的 POSTGRES_DB 相同）。
     LM_STAGING_DB_NAME = 'little_moments_staging'
     // staging-verified attestation 的 predicate type（與 ci/resolve-digest.mjs STAGING_PREDICATE_TYPE 相同）。
     LM_STAGING_PREDICATE_TYPE = 'https://little-moments.lan/attestations/staging-verified/v1'
@@ -115,10 +119,11 @@ pipeline {
     LM_STAGING_DB_CREDENTIALS = 'lm-staging-db'
     LM_STAGING_SETUP_TOKEN_CREDENTIALS = 'lm-staging-setup-token'
     LM_STAGING_SMOKE_CREDENTIALS = 'lm-staging-smoke'
-    // Production 代理的 LAN origin（deploy/compose/prod.env 的 LAN_IP:LM_PUBLIC_PORT；主機名稱須在 ALLOWED_HOSTS 內）。
-    // 觀察期的 Smoke_Test 由 Trusted Agent 經此位址執行；HTTPS 時以 LM_SCAN_CA_BUNDLE（內部 CA）驗證憑證。PLACEHOLDER。
-    LM_PROD_URL = 'http://deploy-host.lan.example'
-    // Production Database 名稱（非秘密；與 Deploy_Host 上 /srv/lm/prod/db.env 的 POSTGRES_DB 相同）。PLACEHOLDER。
+    // Production 代理的 LAN origin（/srv/lm/prod/prod.env 的 LAN_IP:LM_PUBLIC_PORT；80／443 由 Edge_Proxy 使用）。
+    // 觀察期的 Smoke_Test 由 Trusted Agent 經此 LAN origin 執行，不經 Edge_Proxy 與 Cloudflare：Host 為 192.168.1.121
+    // （須在 prod.env 的 ALLOWED_HOSTS 內），App 看到的協定為 http。HTTPS 時以 LM_SCAN_CA_BUNDLE（內部 CA）驗證憑證。
+    LM_PROD_URL = 'http://192.168.1.121:8082'
+    // Production Database 名稱（非秘密；須與 Deploy_Host 上 /srv/lm/prod/db.env 的 POSTGRES_DB 相同）。
     LM_PROD_DB_NAME = 'little_moments'
     // Release_Tag 與 Production 憑證（只定義於 release/ 資料夾範圍，只在對應步驟的 withCredentials 內提供；Req 15.1、15.2）：
     //   lm-jenkins-api-readonly  Username with password：Jenkins 帳號 + API token（僅 Overall/Read、Job/Read、Run/Artifacts）；

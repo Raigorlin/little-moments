@@ -29,14 +29,14 @@ catch(err){
  process.exit(3);
 }
 // 帳號服務選項（任務 18.4 的 server/accounts.js 依此實作）：
-//   registrationPolicy   'open'｜'closed'
-//   receiptAiPolicySeed  'all'｜'admins'｜'off'｜null（管理員儲存的政策優先）
-//   aiCost               AI_Cost_Config（用量上限與模型設定，server/ai-cost.js 的 quotaDecision 使用）
+//   registrationPolicySeed  'open'｜'closed'｜null（CAMPING_REGISTRATION；管理員儲存的政策優先，未設定時為 open）
+//   receiptAiPolicySeed     'all'｜'admins'｜'off'｜null（管理員儲存的政策優先）
+//   aiCost                  AI_Cost_Config（用量上限與模型設定，server/ai-cost.js 的 quotaDecision 使用）
 const accounts=await createAccountService({
  db,setup,
  receiptAi:createReceiptAi({env:process.env,cost:config.aiCost}),
  aiCost:config.aiCost,
- registrationPolicy:config.registrationPolicy,
+ registrationPolicySeed:config.registrationPolicySeed,
  receiptAiPolicySeed:config.receiptAiPolicySeed,
 });
 const server=Bun.serve({hostname:config.bindAddress,port:config.port,maxRequestBodySize:4_194_304,fetch:createHttpHandler({
@@ -45,8 +45,8 @@ const server=Bun.serve({hostname:config.bindAddress,port:config.port,maxRequestB
 })});
 // 啟動訊息（Req 8.5）：只含 bind、實際連接埠與 Allowed_Hosts；前綴供 check-accounts.mjs 等待。
 console.log(`Camping accounts ready: ${redactedSummary({...config,port:server.port})}`);
-// 應用層設定摘要：只含政策值與其來源，不含秘密。
-console.log(`Camping accounts settings: ${policySummary(config,await accounts.receiptAiPolicy?.())}`);
+// 應用層設定摘要（Req 26.17）：只含政策值與其來源，不含秘密。
+console.log(`Camping accounts settings: ${policySummary(config,await accounts.receiptAiPolicy?.(),await accounts.registrationPolicy?.())}`);
 console.log(isLoopbackAddress(config.bindAddress)
  ?'First visit: create your own administrator. No default credentials. Listening on loopback only.'
  :'First visit: create your own administrator with the setup token. No default credentials.');

@@ -55,18 +55,34 @@ describe('deploy/host', () => {
     expect(line.endsWith(' __PUBKEY__')).toBe(true);
   });
 
-  test('DOCKER-USER 規則：只放行 LAN 網段的 DNAT 連線，其餘 DNAT 一律 DROP', () => {
+  test('DOCKER-USER 規則：只放行 LAN 網段與 Public_Port 的 DNAT 連線，其餘 DNAT 一律 DROP（Req 8.6、8.8）', () => {
     const rules = body(read('docker-user.rules'));
     expect(rules).toEqual([
       '*filter',
       ':DOCKER-USER - [0:0]',
       '-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN',
       '-A DOCKER-USER -s __LAN_CIDR__ -m conntrack --ctstate DNAT -j RETURN',
+      // Public_Port 例外位於所有 LAN RETURN 之後、DROP 之前；未宣告時 install.sh 渲染為 0 行（Req 8.10）。
+      '-A DOCKER-USER -p tcp -m conntrack --ctstate DNAT --ctorigdstport __PUBLIC_PORT__ -j RETURN',
       '-A DOCKER-USER -m conntrack --ctstate DNAT -j DROP',
       '-A DOCKER-USER -j RETURN',
       'COMMIT',
     ]);
     expect(rules.some(l => / -j ACCEPT\b/.test(l))).toBe(false);
+  });
+
+  test('install.sh／verify-host.sh：--public-port、--render-rules 與 proxy 檢查（Req 8.8–8.10、25.8）', () => {
+    const install = read('install.sh');
+    expect(install).toContain('--public-port) PUBLIC_PORTS_ARG=$2 PUBLIC_PORTS_SET=1 ;;');
+    expect(install).toContain('--render-rules)');
+    expect(install).toContain('check_public_port_conflicts "$LM_ROOT"');
+    // 格式驗證與 --render-rules 都在 root 檢查之前。
+    const rootCheck = install.indexOf('[[ ${EUID} -eq 0 ]] || die');
+    expect(install.indexOf('usage_die "--public-port 項目無效')).toBeLessThan(rootCheck);
+    expect(install.indexOf('if ((RENDER_ONLY == 1)); then')).toBeLessThan(rootCheck);
+    const verify = read('verify-host.sh');
+    expect(verify).toContain("readonly PORT_RULE_RE='^-A DOCKER-USER -p tcp -m conntrack --ctstate DNAT --ctorigdstport ([0-9]+) -j RETURN$'");
+    for (const fn of ['check_rules_static', 'check_proxy', 'edge_problems']) expect(verify).toContain(`${fn}() {`);
   });
 
   test('systemd unit：在 docker.service 之前套用，且不以 Requires= 連帶重啟 Docker', () => {

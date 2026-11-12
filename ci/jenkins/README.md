@@ -258,19 +258,26 @@ Jenkins 解除 keepLog 需要 Run/Delete，與 Req 21.12「非管理員不可刪
 - 映像 digest：`Jenkinsfile` 與 `build-image.Jenkinsfile` 的鏡像工具映像（gitleaks、osv-scanner、Trivy、Semgrep、Syft、crane、cosign、ZAP）、`LM_POSTGRES_IMAGE`、`deploy/compose/` 的 db 與 proxy、`deploy/registry/compose.yaml` 的 Caddy 與 registry、`Dockerfile` 與 `ci/build-image/Dockerfile` 的 `FROM`、`BUN_SHA256`、`NODE_SHA256`（Bun 1.3.14，見 `ci/toolchain.json`）。
 - `BUILD_IMAGE`（`Jenkinsfile`、`rollback.Jenkinsfile`、`restore-drill.Jenkinsfile`、`digest-lookup.Jenkinsfile`）：四個檔案使用同一個 `registry.our-littlemoments.com:8443/little-moments/build-image@sha256:` digest，為 `infra/build-image` 建置 commit `5e809e4` 的輸出。`ci/build-image/Dockerfile` 或 `ci/toolchain.json` 變更後，重新執行 `infra/build-image`，以建置描述與 `reports/build-image-digest.txt` 的新 digest 在同一個 commit 內取代這四個檔案的 `BUILD_IMAGE`，並同步更新斷言此值的測試（`tests/ci-lint.test.js` 的 `BUILD_IMAGE_REF`、`ci-rollback-pipeline`、`ci-restore-drill`、`ci-digest-lookup`）。
 - `deploy/registry/htpasswd.example` 刻意只含佔位符；實際的 `secrets/htpasswd` 只存在 Registry 主機上（見 [`deploy/registry/README.md`](../../deploy/registry/README.md)）。
+- 同主機部署值（Deploy_Host、Jenkins controller、兩個 agent 與 LAN Registry 都在 `192.168.1.121`；design.md 第 18.6 節）：
+  - `Jenkinsfile`、`ci/jenkins/pipelines/rollback.Jenkinsfile`、`restore-drill.Jenkinsfile`：`LM_DEPLOY_HOST` 為 `192.168.1.121`、`LM_DEPLOY_PORT` 為 `22`。
+  - `Jenkinsfile`：`LM_STAGING_URL` 為 `http://192.168.1.121:8081`、`LM_PROD_URL` 為 `http://192.168.1.121:8082`。Smoke_Test 由 Trusted Agent 經這兩個 LAN origin 執行，不經 Edge_Proxy；`192.168.1.121` 必須在兩個環境 `<env>.env` 的 `ALLOWED_HOSTS` 內。
+  - `Jenkinsfile`：`LM_STAGING_DB_NAME` 為 `little_moments_staging`、`LM_PROD_DB_NAME` 為 `little_moments`（須與 Deploy_Host 上同環境 `db.env` 的 `POSTGRES_DB` 相同）。
+  - `Jenkinsfile`：`LM_DAST_PROBE_TARGETS` 為主機上所有已發布的連接埠：`22`（sshd）、`80`／`443`（NPM）、`81`（NPM 管理介面）、`8080`（Jenkins controller）、`8081`／`8082`（Staging／Production LM_Proxy）、`8090`（維運者的暫時預覽 App）、`8443`（LAN Registry），全部以 `192.168.1.121:<port>` 表示。主機新增或移除發布連接埠時（`sudo ss -ltnp`）同步更新此清單與 `tests/ci-jenkinsfile.test.js`。
+- Production 經同主機 Edge_Proxy 對外公開的設定步驟見 [`deploy/README.md`](../../deploy/README.md)。
 
 ## 仍待填入
 
-以下項目與 Deploy_Host 或首次建置有關，尚未填入。未填入時對應的 Pipeline 階段會 fail closed。
+以下項目與 Deploy_Host 或首次建置有關，尚未填入或需要維運者在主機上確認。未填入時對應的 Pipeline 階段會 fail closed。
 
-- `Jenkinsfile`、`ci/jenkins/pipelines/rollback.Jenkinsfile`、`restore-drill.Jenkinsfile`：`LM_DEPLOY_HOST`／`LM_DEPLOY_PORT`（目前為 `deploy-host.lan.example`、`22`）。
-- `Jenkinsfile`：`LM_STAGING_URL`、`LM_PROD_URL`、`LM_DAST_PROBE_TARGETS`（IP 位址字面值，以空白分隔的 `<IP>:<port>`）、Staging／Production Database 名稱（`LM_STAGING_DB_NAME`、`LM_PROD_DB_NAME`，須與 Deploy_Host 上 `db.env` 的 `POSTGRES_DB` 相同）。
+- `lm-deploy-known-hosts`：必須含 `192.168.1.121` 的主機金鑰（見下表）。
+- Edge_Proxy 的實際來源位址與 Cloudflare 範圍只寫在 Deploy_Host 的 `/srv/lm/prod/prod.env`（`LM_EDGE_TRUSTED_PROXIES`），不寫入 repository；確認方式見 [`deploy/README.md`](../../deploy/README.md)。
+- `install.sh --lan-cidr` 使用的 Docker 網段是主機目前由 Docker 分配的值；重新建立 NPM、Jenkins agent 或 Docker 預設 `bridge` 網路後，以 `docker network inspect` 重新確認（見 [`deploy/README.md`](../../deploy/README.md)）。
 - Registry 的 Deploy_Host 拉取帳號（例如 `lm-pull-staging`、`lm-pull-prod`）：Deploy_Host 安裝時再加入 `secrets/htpasswd`。
 - 以下秘密檔目前的內容是字面值 `placeholder`（非空，所以 Job DSL 會建立憑證，但用到它的步驟會失敗）。填入後執行「Reload existing configuration」：
 
 | 秘密檔（`secrets/little-moments/` 之下） | 填入方式 |
 |---|---|
-| `release/lm-deploy-known-hosts` | Deploy_Host 安裝後，在 controller 主機執行 `ssh-keyscan -p <port> <deploy-host>`，並與 Deploy_Host 主控台上 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` 顯示的指紋比對後寫入（連接埠非 22 時為 `[host]:port` 形式） |
+| `release/lm-deploy-known-hosts` | Deploy_Host 安裝後，在 controller 主機執行 `ssh-keyscan -p 22 192.168.1.121`，並與 Deploy_Host 主控台上 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` 顯示的指紋比對後寫入（連接埠非 22 時為 `[host]:port` 形式） |
 | `release/lm-cosign-key`、`release/lm-cosign-pub` | 以 cosign 2.x 的 `generate-key-pair` 產生，密碼使用 `release/lm-cosign-passphrase` 的值（見下方指令）；離線另存一份 `cosign.key` |
 | `release/lm-jenkins-api-readonly.password` | 以 `lm-api-readonly` 登入一次（密碼為 `API_READONLY_PASSWORD`），在「使用者 → Security → API Token」產生 token、以 `put` 寫入後登出 |
 | `release/lm-jenkins-api-retention.password` | 同上，帳號 `lm-retention-bot`（密碼為 `RETENTION_BOT_PASSWORD`） |

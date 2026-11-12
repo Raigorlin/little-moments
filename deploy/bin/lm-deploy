@@ -38,7 +38,14 @@
 # 輸出：stdout 每個步驟一行 JSON 物件（失敗時 {"ok":false,"reason":...}）；docker 與診斷訊息只寫 stderr。
 # 結束碼：0 成功；1 操作失敗；2 參數／設定錯誤；3 狀態不允許（例如已有未完成的部署）；4 鎖已被持有。
 #
-# 檔案（<LM_ROOT>/<env>/）：compose.yaml、<env>.env（含 LM_IMAGE_REPO、LM_HEALTH_HOST）、app.env、db.env、
+# 設定驗證：需要 Compose 的子命令在任何 docker 呼叫前讀取 <env>.env 並驗證；Edge_Trusted_Proxies
+#   （LM_EDGE_TRUSTED_PROXIES：空白分隔、1–64 個 IPv4／IPv6 位址或 CIDR）非空時，拒絕無法解析、前綴 0、
+#   IPv4-mapped IPv6（與 ::ffff:0:0/96 重疊）、涵蓋 LM_LAN_CIDR 任一整個網段的項目，以及 LM_LAN_CIDR 未設定或
+#   無效（1–8 個逗號分隔的 IPv4 網路位址/8–/32）；失敗以結束碼 2（config_invalid）結束，只輸出無效項目
+#   （Req 25.7、25.8；design.md Components §18.4）。
+#
+# 檔案（<LM_ROOT>/<env>/）：compose.yaml、<env>.env（含 LM_IMAGE_REPO、LM_HEALTH_HOST、LM_EDGE_TRUSTED_PROXIES、
+#   LM_LAN_CIDR）、app.env、db.env、
 #   caddy/{Caddyfile,upstream.caddy.tmpl,upstream.caddy}、state/lm.state（唯一狀態來源，key=value，
 #   讀取時逐項驗證、從不 source）與 state/active.json（每次寫入狀態時產生的 JSON 快照）。
 #
@@ -89,7 +96,7 @@ else
 fi
 # 呼叫端環境中的這些值會覆寫 <env>.env，一律移除，讓 Compose 專案設定只來自 Deploy_Host 上的檔案。
 unset CAMPING_OPENAI_API_KEY CAMPING_OPENAI_API_KEY_FILE CAMPING_OPENAI_MODEL_ID \
-  CAMPING_OPENAI_IMAGE_DETAIL CAMPING_OPENAI_MAX_COMPLETION_TOKENS \
+  CAMPING_OPENAI_IMAGE_DETAIL CAMPING_OPENAI_MAX_COMPLETION_TOKENS CAMPING_REGISTRATION \
   COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_PROFILES COMPOSE_ENV_FILES APP_IMAGE_BLUE APP_IMAGE_GREEN APP_IMAGE_NEW
 
 CMD=""
@@ -248,6 +255,180 @@ load_env_config() {
   [[ $v =~ ^(\./)?[A-Za-z0-9._/-]+$|^/[A-Za-z0-9._/-]+$ && $v != *..* ]] || die "$EX_USAGE" config_invalid "LM_CADDY_DIR 格式無效"
   if [[ $v == /* ]]; then CADDY_DIR=$v; else CADDY_DIR="$ENV_DIR/${v#./}"; fi
   CADDY_DIR=${CADDY_DIR%/}
+  check_edge_proxies "$envfile"
+}
+
+# ---------------------------------------------------------------------------------------------
+# Edge_Trusted_Proxies（Req 25.7、25.8；design.md Components §18.4）
+# ---------------------------------------------------------------------------------------------
+# 與 deploy/host/install.sh 的 ipv4_to_int／cidr_ok 相同寫法。語法比照 Caddy（Go netip）：八位元組與前綴不得有
+# 前導零、IPv6 不接受 zone。Caddy 對語法的最終解析由 `caddy validate` 保證（Req 25.9）。
+
+readonly EDGE_MAX=64 LAN_CIDR_MAX=8
+
+# ipv4_to_int <a.b.c.d>：格式有效時把整數放在 REPLY 並回傳 0。
+ipv4_to_int() {
+  local ip=$1 o n=0 IFS=.
+  [[ $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  for o in $ip; do
+    [[ $o =~ ^(0|[1-9][0-9]{0,2})$ ]] && ((o <= 255)) || return 1
+    n=$((n * 256 + o))
+  done
+  REPLY=$n
+}
+
+v4_mask() { REPLY=$(((0xFFFFFFFF << (32 - $1)) & 0xFFFFFFFF)); }
+
+# v6_side <text> <ipv4-at-end-allowed>：以 ':' 分隔的群組轉為 16 位元整數，放在 V6_SIDE。
+v6_side() {
+  local s=$1 v4=$2 g i last
+  local -a arr=()
+  V6_SIDE=()
+  [[ -n $s ]] || return 0
+  [[ $s != :* && $s != *: ]] || return 1
+  IFS=: read -r -a arr <<<"$s"
+  last=$((${#arr[@]} - 1))
+  for ((i = 0; i <= last; i++)); do
+    g=${arr[i]}
+    if [[ $g == *.* ]]; then
+      [[ $v4 == 1 && $i -eq $last ]] || return 1
+      ipv4_to_int "$g" || return 1
+      V6_SIDE+=("$((REPLY >> 16))" "$((REPLY & 0xFFFF))")
+    else
+      [[ $g =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+      V6_SIDE+=("$((16#$g))")
+    fi
+  done
+}
+
+# ipv6_groups <addr>：語法有效時把 8 個 16 位元整數放在 V6 並回傳 0（最多一個 '::'；結尾可為內嵌 IPv4）。
+ipv6_groups() {
+  local a=$1 head tail fill i
+  local -a h=() t=()
+  V6=()
+  [[ $a =~ ^[0-9A-Fa-f:.]+$ && $a == *:* && $a != *:::* && $a != *::*::* ]] || return 1
+  if [[ $a == *::* ]]; then
+    head=${a%%::*}
+    tail=${a#*::}
+    v6_side "$head" 0 || return 1
+    h=("${V6_SIDE[@]}")
+    v6_side "$tail" 1 || return 1
+    t=("${V6_SIDE[@]}")
+    fill=$((8 - ${#h[@]} - ${#t[@]}))
+    ((fill >= 1)) || return 1
+    V6=("${h[@]}")
+    for ((i = 0; i < fill; i++)); do V6+=(0); done
+    V6+=("${t[@]}")
+  else
+    v6_side "$a" 1 || return 1
+    ((${#V6_SIDE[@]} == 8)) || return 1
+    V6=("${V6_SIDE[@]}")
+  fi
+}
+
+# edge_entry <entry>：有效時回傳 0，E_FAMILY（4｜6）、E_INT（IPv4 整數）、E_P（前綴）為結果；
+# 無效時把原因放在 REPLY 並回傳 1。
+edge_entry() {
+  local e=$1 addr p="" bits i b mask same=1
+  local -a mapped=(0 0 0 0 0 65535)
+  E_FAMILY="" E_INT=0 E_P=0
+  addr=$e
+  if [[ $e == */* ]]; then
+    addr=${e%/*}
+    p=${e#*/}
+    [[ $p =~ ^(0|[1-9][0-9]{0,2})$ ]] || { REPLY="前綴長度無效"; return 1; }
+  fi
+  if [[ $addr == *:* ]]; then
+    ipv6_groups "$addr" || { REPLY="不是有效的 IPv6 位址或 CIDR"; return 1; }
+    p=${p:-128}
+    ((p <= 128)) || { REPLY="IPv6 前綴長度必須為 1–128"; return 1; }
+    ((p >= 1)) || { REPLY="前綴長度不得為 0"; return 1; }
+    # 與 ::ffff:0:0/96 重疊（落在其中或涵蓋它）即拒絕：比對兩者共同前綴長度內的位元。
+    bits=$((p < 96 ? p : 96))
+    for ((i = 0; i < 6; i++)); do
+      b=$((bits - 16 * i))
+      ((b > 0)) || break
+      ((b <= 16)) || b=16
+      mask=$(((0xFFFF << (16 - b)) & 0xFFFF))
+      if (((V6[i] & mask) != (mapped[i] & mask))); then same=0; break; fi
+    done
+    ((same == 0)) || { REPLY="不允許 IPv4-mapped IPv6（::ffff:0:0/96）範圍"; return 1; }
+    E_FAMILY=6
+  else
+    ipv4_to_int "$addr" || { REPLY="不是有效的 IPv4 位址或 CIDR"; return 1; }
+    E_INT=$REPLY
+    p=${p:-32}
+    ((p <= 32)) || { REPLY="IPv4 前綴長度必須為 1–32"; return 1; }
+    ((p >= 1)) || { REPLY="前綴長度不得為 0"; return 1; }
+    E_FAMILY=4
+  fi
+  E_P=$p
+}
+
+# check_edge_proxies <envfile>：LM_EDGE_TRUSTED_PROXIES 為空（或只有空白）時不檢查；否則驗證項目數、每個項目，
+# 以及 LM_LAN_CIDR（必填）與涵蓋關係。失敗以結束碼 2 結束，訊息只列出無效項目。
+check_edge_proxies() {
+  local envfile=$1 lanraw e c p v n i j m bad_json="" msg=""
+  local -a entries=() lans=() lan_int=() lan_p=() bad=()
+  env_get "$envfile" LM_EDGE_TRUSTED_PROXIES
+  read -r -a entries <<<"$REPLY" || true
+  n=${#entries[@]}
+  ((n > 0)) || return 0
+  ((n <= EDGE_MAX)) || die "$EX_USAGE" config_invalid \
+    "LM_EDGE_TRUSTED_PROXIES 有 $n 個項目，最多 $EDGE_MAX 個" '"field":"LM_EDGE_TRUSTED_PROXIES"'
+
+  env_get "$envfile" LM_LAN_CIDR
+  lanraw=$REPLY
+  [[ -n $lanraw ]] || die "$EX_USAGE" config_invalid \
+    "LM_EDGE_TRUSTED_PROXIES 已設定，但 LM_LAN_CIDR 未設定" '"field":"LM_LAN_CIDR"'
+  IFS=, read -r -a lans <<<"$lanraw" || true
+  if [[ $lanraw == ,* || $lanraw == *, || $lanraw == *,,* ]] || ((${#lans[@]} < 1 || ${#lans[@]} > LAN_CIDR_MAX)); then
+    die "$EX_USAGE" config_invalid "LM_LAN_CIDR 必須為 1 至 $LAN_CIDR_MAX 個以逗號分隔的網段" '"field":"LM_LAN_CIDR"'
+  fi
+  for c in "${lans[@]}"; do
+    # 與 install.sh --lan-cidr 相同：IPv4 網路位址、前綴 8..32。
+    p=${c#*/}
+    if [[ $c == */* && $p =~ ^[1-9][0-9]?$ ]] && ((p >= 8 && p <= 32)) && ipv4_to_int "${c%/*}"; then
+      v=$REPLY
+      v4_mask "$p"
+      if (((v & REPLY) == v)); then
+        lan_int+=("$v")
+        lan_p+=("$p")
+        continue
+      fi
+    fi
+    bad+=("$c")
+  done
+  if ((${#bad[@]} > 0)); then
+    die "$EX_USAGE" config_invalid "LM_LAN_CIDR 含無效網段（需為 IPv4 網路位址/8–/32）：${bad[*]}" \
+      "\"field\":\"LM_LAN_CIDR\",\"invalid\":$(jarr "${bad[@]}")"
+  fi
+
+  for ((i = 0; i < n; i++)); do
+    e=${entries[i]}
+    if edge_entry "$e"; then
+      [[ $E_FAMILY == 4 ]] || continue
+      for ((j = 0; j < ${#lan_int[@]}; j++)); do
+        ((E_P <= lan_p[j])) || continue
+        v4_mask "$E_P"
+        m=$REPLY
+        if (((lan_int[j] & m) == (E_INT & m))); then
+          REPLY="涵蓋 LM_LAN_CIDR 網段 ${lans[j]}"
+          bad+=("$e")
+          msg+="${msg:+；}#$((i + 1)) $e：$REPLY"
+          continue 2
+        fi
+      done
+    else
+      bad+=("$e")
+      msg+="${msg:+；}#$((i + 1)) $e：$REPLY"
+    fi
+  done
+  if ((${#bad[@]} > 0)); then
+    bad_json=$(jarr "${bad[@]}")
+    die "$EX_USAGE" config_invalid "LM_EDGE_TRUSTED_PROXIES 含無效項目：$msg" \
+      "\"field\":\"LM_EDGE_TRUSTED_PROXIES\",\"invalid\":$bad_json"
+  fi
 }
 
 # 正規化 digest 參數 → DIGEST（sha256:...）。

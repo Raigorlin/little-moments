@@ -5,8 +5,9 @@
 // CAMPING_PUBLIC_ORIGIN) was dropped in the merge (task 18.3), so its cases were removed: proxied login with the
 // Public_Origin, the removed web setup, the deployment meta tag and `const PUBLISHED=true;` in sw.js, and the
 // proxied X-Forwarded-For buckets. Requests behind Trusted_Proxies are covered by tests/http-origin.test.js and
-// tests/proxy-resolve.test.js. The settings below come from parseConfig (CAMPING_REGISTRATION,
-// CAMPING_RECEIPT_AI_POLICY) and reach createAccountService as registrationPolicy and receiptAiPolicySeed.
+// tests/proxy-resolve.test.js. The seeds below come from parseConfig (CAMPING_REGISTRATION,
+// CAMPING_RECEIPT_AI_POLICY) and reach createAccountService as registrationPolicySeed and receiptAiPolicySeed;
+// values an admin stores through PATCH /api/admin/settings take precedence (jenkins-cicd-deploy Requirement 26).
 //
 // Runs against a PostgreSQL Ephemeral_Database (CAMPING_TEST_DATABASE_*, tests/support/pg.js). Each describe
 // seeds the shared test schema in its own beforeAll; the describes run in order.
@@ -23,7 +24,7 @@ const DIST = resolve(import.meta.dir, '..', process.env.CAMPING_DIST || 'dist');
 const LOCAL_BASE = 'http://127.0.0.1:5173';
 const LOCAL_HOST = '127.0.0.1:5173';
 const PASS = 'correct horse battery';
-const CLOSED = { registrationPolicy: 'closed' };
+const CLOSED = { registrationPolicySeed: 'closed' };
 const peerAt = address => ({ requestIP: () => ({ address }) });
 const loopbackPeer = peerAt('127.0.0.1');
 
@@ -83,7 +84,28 @@ afterEach(async () => {
 describe('registration policy', () => {
   const body = { username: 'new-person', displayName: '新朋友', password: PASS };
   const CLOSED_MESSAGE = '目前不開放公開註冊，請使用旅行邀請連結建立帳號。';
-  beforeAll(seedAccounts, 60_000);
+  const REG_OPTIONS = ['open', 'closed'];
+  let admin, member, seq = 0;
+  beforeAll(async () => { ({ admin, member } = await seedAccounts()); }, 60_000);
+  // Each test starts with nothing in the Settings_Store and no settings audit rows; afterEach has already closed the services.
+  beforeEach(async () => {
+    await db.sql`DELETE FROM settings`;
+    await db.sql`DELETE FROM audit WHERE action LIKE 'settings.%'`;
+  });
+
+  // A distinct client address per attempt keeps the register limit out of the way where a test does not test it.
+  const nextPeer = () => { const k = ++seq; return peerAt(`10.200.${(k >> 8) & 255}.${k & 255}`); };
+  const newBody = () => ({ username: `policy-user-${++seq}`, displayName: '政策旅伴', password: PASS });
+  const serviceOf = () => opened.at(-1);
+  const patch = (handler, who, payload) => direct(handler, 'PATCH', '/api/admin/settings', { cookie: who.cookie, body: payload });
+  const adminSettings = async handler => {
+    const res = await direct(handler, 'GET', '/api/admin/settings', { cookie: admin.cookie });
+    expect(res.status).toBe(200);
+    return res.json();
+  };
+  const sessionOpen = async handler => (await (await direct(handler, 'GET', '/api/session')).json()).registrationOpen;
+  const settingRows = () => query('SELECT key, value, updated_at, updated_by FROM settings ORDER BY key');
+  const settingsAudits = () => query("SELECT actor, action, target FROM audit WHERE action LIKE 'settings.%' ORDER BY id");
 
   test('open registration creates an account', async () => {
     const handler = await open({ empty: true });
@@ -123,6 +145,174 @@ describe('registration policy', () => {
     expect(await flags(await direct(await open(), 'GET', '/api/session'))).toEqual({ needsSetup: false, webSetup: true, registrationOpen: true, inviteRegistration: true });
     expect(await flags(await direct(await open(CLOSED), 'GET', '/api/session'))).toEqual({ needsSetup: false, webSetup: true, registrationOpen: false, inviteRegistration: true });
     expect(await flags(await direct(await open({ ...CLOSED, empty: true }), 'GET', '/api/session'))).toEqual({ needsSetup: true, webSetup: true, registrationOpen: false, inviteRegistration: false });
+  });
+
+  // jenkins-cicd-deploy Requirement 26: the Settings_Store value set by an admin, read on every request.
+  test('an admin closes then reopens registration on one running service; the next register and session follow each save', async () => {
+    const handler = await open();
+    const service = serviceOf();
+    for (const [policy, status, isOpen] of [['closed', 403, false], ['open', 200, true]]) {
+      const res = await patch(handler, admin, { registrationPolicy: policy });
+      expect(res.status).toBe(200);
+      const saved = await res.json();
+      expect(saved.registrationPolicy).toMatchObject({ value: policy, source: 'stored', updatedBy: 'admin-one', options: REG_OPTIONS });
+      // Only registrationPolicy was sent, so receipt AI stays on its default with no row (Req 26.8).
+      expect(saved.receiptAiPolicy).toMatchObject({ value: 'all', source: 'default', updatedAt: null, updatedBy: null });
+
+      const attempt = newBody();
+      const reg = await direct(handler, 'POST', '/api/register', { body: attempt, peer: nextPeer() });
+      expect(reg.status).toBe(status);
+      if (isOpen) expect((await reg.json()).user.username).toBe(attempt.username);
+      else expect(await reg.json()).toEqual({ error: CLOSED_MESSAGE });
+      expect(await sessionOpen(handler)).toBe(isOpen);
+      expect(await service.registrationPolicy()).toMatchObject({ value: policy, source: 'stored', updatedBy: 'admin-one' });
+
+      const rows = await settingRows();
+      expect(rows.map(r => [r.key, r.value, r.updated_by])).toEqual([['registrationPolicy', policy, 'admin-one']]);
+      expect((await settingsAudits()).at(-1)).toEqual({ actor: 'admin-one', action: 'settings.registration', target: `registrationPolicy:${policy}` });
+    }
+    expect((await settingsAudits()).map(a => a.target)).toEqual(['registrationPolicy:closed', 'registrationPolicy:open']);
+  });
+
+  test('the seed applies only while nothing is stored, and the default is open', async () => {
+    const unseeded = await open();
+    expect((await adminSettings(unseeded)).registrationPolicy).toEqual({ value: 'open', source: 'default', updatedAt: null, updatedBy: null, options: REG_OPTIONS });
+
+    const handler = await open(CLOSED);
+    expect((await adminSettings(handler)).registrationPolicy).toEqual({ value: 'closed', source: 'seed', updatedAt: null, updatedBy: null, options: REG_OPTIONS });
+    expect((await direct(handler, 'POST', '/api/register', { body: newBody(), peer: nextPeer() })).status).toBe(403);
+    expect(await sessionOpen(handler)).toBe(false);
+
+    const before = Date.now();
+    expect((await patch(handler, admin, { registrationPolicy: 'open' })).status).toBe(200);
+    const stored = (await adminSettings(handler)).registrationPolicy;
+    expect(stored).toMatchObject({ value: 'open', source: 'stored', updatedBy: 'admin-one', options: REG_OPTIONS });
+    expect(new Date(stored.updatedAt).toISOString()).toBe(stored.updatedAt);
+    expect(Date.parse(stored.updatedAt)).toBeGreaterThanOrEqual(before - 1000);
+    expect((await direct(handler, 'POST', '/api/register', { body: newBody(), peer: nextPeer() })).status).toBe(200);
+    expect(await sessionOpen(handler)).toBe(true);
+  });
+
+  test('a stored value outside open/closed fails closed with source stored and is left as it is', async () => {
+    const handler = await open();
+    expect((await patch(handler, admin, { registrationPolicy: 'open' })).status).toBe(200);
+    await query("UPDATE settings SET value = 'Open' WHERE key = 'registrationPolicy'");
+    expect((await adminSettings(handler)).registrationPolicy).toMatchObject({ value: 'closed', source: 'stored', updatedBy: 'admin-one' });
+    const res = await direct(handler, 'POST', '/api/register', { body: newBody(), peer: nextPeer() });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: CLOSED_MESSAGE });
+    expect(await sessionOpen(handler)).toBe(false);
+    expect((await settingRows()).map(r => [r.key, r.value])).toEqual([['registrationPolicy', 'Open']]);
+  });
+
+  test('a member gets 403, and invalid or empty bodies get 400, leaving both setting rows and the audit unchanged', async () => {
+    const handler = await open();
+    // Both keys in one request: both are stored, each with its own audit entry (Req 26.8).
+    const both = await patch(handler, admin, { receiptAiPolicy: 'admins', registrationPolicy: 'closed' });
+    expect(both.status).toBe(200);
+    expect((await settingsAudits()).map(a => a.action).sort()).toEqual(['settings.receipt-ai', 'settings.registration']);
+    const rowsBefore = await settingRows();
+    const auditsBefore = await settingsAudits();
+    expect(rowsBefore.map(r => [r.key, r.value])).toEqual([['receiptAiPolicy', 'admins'], ['registrationPolicy', 'closed']]);
+
+    expect((await direct(handler, 'GET', '/api/admin/settings', { cookie: member.cookie })).status).toBe(403);
+    for (const payload of [{ registrationPolicy: 'open' }, { receiptAiPolicy: 'all', registrationPolicy: 'open' }]) {
+      expect((await patch(handler, member, payload)).status).toBe(403);
+    }
+    const cases = [
+      [{}, '請至少提供一項設定。'],
+      [{ registrationPolicy: 'Open' }, '公開註冊政策必須是 open 或 closed。'],
+      [{ registrationPolicy: ' closed' }, '公開註冊政策必須是 open 或 closed。'],
+      [{ registrationPolicy: null }, '公開註冊政策必須是 open 或 closed。'],
+      [{ registrationPolicy: ['open'] }, '公開註冊政策必須是 open 或 closed。'],
+      [{ receiptAiPolicy: 'all', registrationPolicy: 'maybe' }, '公開註冊政策必須是 open 或 closed。'],
+      [{ receiptAiPolicy: 'everyone', registrationPolicy: 'open' }, '收據 AI 政策必須是 all、admins 或 off。'],
+      [null, null], [1, null], [['open'], null]
+    ];
+    for (const [payload, message] of cases) {
+      const res = await patch(handler, admin, payload);
+      expect(res.status).toBe(400);
+      if (message) expect(await res.json()).toEqual({ error: message });
+    }
+    expect(await settingRows()).toEqual(rowsBefore);
+    expect(await settingsAudits()).toEqual(auditsBefore);
+    expect(await sessionOpen(handler)).toBe(false);
+  });
+
+  test('a PATCH with one key stores only that key, leaving the other setting (including no row) unchanged', async () => {
+    let now = Date.now();
+    const handler = await open({ now: () => now });
+    expect((await patch(handler, admin, { receiptAiPolicy: 'off' })).status).toBe(200);
+    expect((await settingRows()).map(r => r.key)).toEqual(['receiptAiPolicy']);
+    expect((await adminSettings(handler)).registrationPolicy).toMatchObject({ value: 'open', source: 'default' });
+    const receiptRow = (await settingRows())[0];
+
+    now += 60_000;
+    expect((await patch(handler, admin, { registrationPolicy: 'closed' })).status).toBe(200);
+    const afterRegistration = await settingRows();
+    expect(afterRegistration[0]).toEqual(receiptRow);
+    expect(afterRegistration.map(r => [r.key, r.value])).toEqual([['receiptAiPolicy', 'off'], ['registrationPolicy', 'closed']]);
+    const registrationRow = afterRegistration[1];
+
+    now += 60_000;
+    expect((await patch(handler, admin, { receiptAiPolicy: 'admins' })).status).toBe(200);
+    const afterReceipt = await settingRows();
+    expect(afterReceipt[1]).toEqual(registrationRow);
+    expect(afterReceipt[0].value).toBe('admins');
+
+    now += 60_000;
+    expect((await patch(handler, admin, { receiptAiPolicy: 'all', registrationPolicy: 'open' })).status).toBe(200);
+    const afterBoth = await settingRows();
+    expect(afterBoth.map(r => [r.key, r.value, Number(r.updated_at)])).toEqual([['receiptAiPolicy', 'all', now], ['registrationPolicy', 'open', now]]);
+    expect((await settingsAudits()).map(a => a.target)).toEqual([
+      'receiptAiPolicy:off', 'registrationPolicy:closed', 'receiptAiPolicy:admins', 'receiptAiPolicy:all', 'registrationPolicy:open'
+    ]);
+  });
+
+  test('invite registration succeeds under a stored closed and a stored open policy', async () => {
+    const handler = await open();
+    for (const policy of ['closed', 'open']) {
+      expect((await patch(handler, admin, { registrationPolicy: policy })).status).toBe(200);
+      expect(await sessionOpen(handler)).toBe(policy === 'open');
+      const trip = await direct(handler, 'POST', '/api/trips', { cookie: admin.cookie, body: { title: `邀請 ${policy}`, startDate: '2025-07-01', endDate: '2025-07-02', expectedUserId: admin.id } });
+      expect(trip.status).toBe(201);
+      const tripId = (await trip.json()).trip.id;
+      const invite = await direct(handler, 'POST', `/api/trips/${tripId}/invites`, { cookie: admin.cookie, body: { expectedUserId: admin.id } });
+      expect(invite.status).toBe(201);
+      const { token } = await invite.json();
+      const attempt = { ...newBody(), name: `受邀 ${policy}` };
+      const res = await direct(handler, 'POST', `/api/invites/${token}/register`, { body: attempt, peer: nextPeer() });
+      expect(res.status).toBe(200);
+      const result = await res.json();
+      expect(result.tripId).toBe(tripId);
+      expect(result.user).toMatchObject({ username: attempt.username, role: 'member' });
+      expect((await query('SELECT COUNT(*) AS n FROM trip_members WHERE trip_id = ?', tripId))[0].n).toBe(2);
+    }
+  });
+
+  test('closed by a stored value, refused /api/register attempts do not spend the register bucket', async () => {
+    const handler = await open();
+    expect((await patch(handler, admin, { registrationPolicy: 'closed' })).status).toBe(200);
+    const peer = nextPeer();
+    const keys = [];
+    const { hit, blocked } = RateLimiter.prototype;
+    RateLimiter.prototype.hit = function (key, limit) { keys.push(key); return hit.call(this, key, limit); };
+    RateLimiter.prototype.blocked = function (key, limit) { keys.push(key); return blocked.call(this, key, limit); };
+    try {
+      // 25 attempts exceed the register limit of 20; each must still be the closed 403, never 429.
+      for (let i = 0; i < 25; i++) {
+        const res = await direct(handler, 'POST', '/api/register', { body: newBody(), peer });
+        expect(res.status).toBe(403);
+        expect(await res.json()).toEqual({ error: CLOSED_MESSAGE });
+      }
+    } finally {
+      RateLimiter.prototype.hit = hit;
+      RateLimiter.prototype.blocked = blocked;
+    }
+    expect(keys.filter(key => key.startsWith('register:'))).toEqual([]);
+    // Reopened, the same client still has its whole bucket.
+    expect((await patch(handler, admin, { registrationPolicy: 'open' })).status).toBe(200);
+    expect((await direct(handler, 'POST', '/api/register', { body: newBody(), peer })).status).toBe(200);
   });
 });
 
@@ -640,7 +830,8 @@ describe('receipt AI policy', () => {
     for (const value of ['ALL', 'none', '', ' all', null, 7, true, ['all'], undefined]) {
       const res = await setPolicy(handler, admin, value);
       expect(res.status).toBe(400);
-      expect(await res.json()).toEqual({ error: INVALID_POLICY });
+      // undefined drops the key, so the body is {} and neither setting is present (Req 26.7).
+      expect(await res.json()).toEqual({ error: value === undefined ? '請至少提供一項設定。' : INVALID_POLICY });
     }
     expect(await settings(handler)).toEqual(stored);
     await expectOutcome(await recognize(handler, member), { status: 403, error: ADMINS_ONLY });

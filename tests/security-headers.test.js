@@ -166,7 +166,7 @@ beforeAll(async () => {
   if (setup.status !== 200) throw new Error(`setup failed: ${setup.status}`);
   cookies.local = sessionCookie(setup);
 
-  const pubAccounts = await createAccountService({ db: serviceDb(db.sql), registrationPolicy: 'closed' });
+  const pubAccounts = await createAccountService({ db: serviceDb(db.sql), registrationPolicySeed: 'closed' });
   services.push(pubAccounts);
   h.published = makeHandler(pubAccounts, PUBLISHED);
   const login = await proxied(h.published, 'POST', '/api/login', { body: { username: 'admin-one', password: PASS } });

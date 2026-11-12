@@ -175,6 +175,10 @@
     "7.5 撰寫 Property 35 的 property test（`tests/import-sqlite-failure.test.js`）": {
       "status": "passed",
       "lastRunTimestamp": 1794244004954
+    },
+    "21.3 註冊政策預設關閉並可由管理員切換": {
+      "status": "passed",
+      "lastRunTimestamp": 1794466681969
     }
   },
   "executionHistory": {
@@ -2653,6 +2657,73 @@
         "executionId": "8c0d3373-0c30-41cc-b47d-5b304507ccac",
         "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
         "timestamp": 1794461348900
+      }
+    ],
+    "21.1 Caddy 只信任 Edge_Trusted_Proxies 的轉送標頭": [
+      {
+        "executionId": "d64fbba0-bce5-40db-a3c5-b915d9f53bd4",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794463234459
+      },
+      {
+        "executionId": "d64fbba0-bce5-40db-a3c5-b915d9f53bd4",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794464033139
+      }
+    ],
+    "21.2 DOCKER-USER Public_Port 例外": [
+      {
+        "executionId": "d64fbba0-bce5-40db-a3c5-b915d9f53bd4",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794464033386
+      },
+      {
+        "executionId": "d64fbba0-bce5-40db-a3c5-b915d9f53bd4",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794464819832
+      }
+    ],
+    "21.3 註冊政策預設關閉並可由管理員切換": [
+      {
+        "executionId": "dd8b5e86-95e2-4962-a387-beb944ae41c2",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794465909682
+      },
+      {
+        "executionId": "dd8b5e86-95e2-4962-a387-beb944ae41c2",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794468055046
+      }
+    ],
+    "21.4 填入同主機部署值與文件": [
+      {
+        "executionId": "64ece60f-2b46-4598-96ba-74ef2b557d91",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794468259237
+      },
+      {
+        "executionId": "64ece60f-2b46-4598-96ba-74ef2b557d91",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794469347195
+      }
+    ],
+    "21.5 Checkpoint - 同主機 Edge_Proxy 變更後確認所有測試通過": [
+      {
+        "executionId": "64ece60f-2b46-4598-96ba-74ef2b557d91",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794469347968
+      },
+      {
+        "executionId": "64ece60f-2b46-4598-96ba-74ef2b557d91",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794471865757
+      }
+    ],
+    "21. 同主機 Edge_Proxy（NPM + Cloudflare）部署": [
+      {
+        "executionId": "64ece60f-2b46-4598-96ba-74ef2b557d91",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794471865993
       }
     ]
   }

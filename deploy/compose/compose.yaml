@@ -17,9 +17,12 @@
 #
 # 網路：
 #   edge  一般 bridge，只有 proxy；唯一發布連接埠的服務，綁定 ${LAN_IP}。LAN 網段限制由
-#         deploy/host 的 DOCKER-USER 規則在 Docker 轉送層生效（Req 8.6）。
+#         deploy/host 的 DOCKER-USER 規則在 Docker 轉送層生效（Req 8.6）。Production 另經同主機的
+#         Edge_Proxy（Nginx Proxy Manager + Cloudflare）連到此連接埠；proxy 只採信 LM_EDGE_TRUSTED_PROXIES
+#         （Edge_Trusted_Proxies）來源送來的 X-Forwarded-For／X-Forwarded-Proto（Req 25.1–25.6）。
 #   app   internal、固定子網；proxy ↔ app-blue／app-green。proxy 使用固定 IP，App 只採信該 /32
-#         的 X-Forwarded-*（Req 9.12；design Open Risks 6：不得設為整個 LAN 網段）。
+#         的 X-Forwarded-*（Req 9.12、25.10；design Open Risks 6：不得設為整個 LAN 網段），
+#         不論 LM_EDGE_TRUSTED_PROXIES 的內容。
 #   data  internal；app-blue／app-green／migrate ↔ db。proxy 不在此網路，無法直接連線 Database。
 # db 不宣告 ports，不發布到 Deploy_Host 任何介面（Req 11.10）。
 
@@ -54,6 +57,9 @@ x-app: &app
     CAMPING_DATABASE_SSLMODE: disable
     CAMPING_DIST: /app/dist
     CAMPING_MIGRATIONS_DIR: /app/migrations
+    # 公開註冊政策（Req 26.16）：這只是啟動初始值（Registration_Seed），未設定或空字串時為 closed，
+    # 帳號只能經旅行邀請連結建立。管理員在 /admin 儲存的值優先，儲存後此值不再生效。
+    CAMPING_REGISTRATION: ${CAMPING_REGISTRATION:-closed}
     # 雲端 AI 收據辨識（OpenAI）預設停用（Req 15.6）：未設定時為空字串，App 沒有可用的金鑰即停用。
     # 金鑰只以金鑰檔提供（CAMPING_OPENAI_API_KEY_FILE），CAMPING_OPENAI_API_KEY 固定為空字串，
     # 不經 <env>.env、app.env 或呼叫端環境傳入。只有 Release_Approver 針對特定環境明確啟用時，
@@ -95,6 +101,9 @@ services:
       LM_SITE_ADDRESS: ${LM_SITE_ADDRESS:-http://:8080}
       LM_TLS_MODE: ${LM_TLS_MODE:-off}
       LM_HEALTH_HOST: ${LM_HEALTH_HOST:?LM_HEALTH_HOST 未設定}
+      # Edge_Trusted_Proxies（Req 25.7）；未設定或為空字串時為 127.0.0.1/32，等同不信任任何來源（Req 25.6）。
+      # 格式由 lm-deploy 驗證（Req 25.8）。變更後須重新建立 proxy 容器（up -d --no-deps proxy）。
+      LM_EDGE_TRUSTED_PROXIES: ${LM_EDGE_TRUSTED_PROXIES:-127.0.0.1/32}
     volumes:
       # 掛載整個目錄（唯讀）：lm-deploy switch 在主機端以 rename 原子更新 upstream.caddy，
       # 目錄 bind mount 才能看見新的 inode（單檔 bind mount 會停留在舊檔）。

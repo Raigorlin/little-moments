@@ -654,25 +654,44 @@ async function renderAdmin(user) {
     }
     return '目前使用預設值（all）。';
   };
+  // Public Registration_Policy (Req 26.14). Same escaping as above for updatedBy and the time.
+  const registrationOptions = [['open', '開放：任何人都能在 /register 建立帳號'], ['closed', '關閉：只能經旅行邀請連結建立帳號']];
+  const registrationHelp = p => {
+    if (p.source === 'seed') return '目前使用伺服器環境變數 CAMPING_REGISTRATION 的初始值。';
+    if (p.source === 'stored') {
+      const at = new Date(p.updatedAt);
+      return `由 ${p.updatedBy || '管理員'} 於 ${Number.isFinite(+at) ? at.toLocaleString('zh-TW', { hour12: false }) : p.updatedAt || '未知時間'} 設定。伺服器環境變數 CAMPING_REGISTRATION 不再生效。`;
+    }
+    return '目前使用預設值（open）。';
+  };
   const settingsHtml = () => {
     if (errors.settings) return errorBlock(errors.settings);
-    const p = settings?.receiptAiPolicy;
-    if (!p) return loading;
-    return `<form class="acct-form" data-form="admin-settings" novalidate>${selectField({ id: 'setting-receipt-ai', label: '收據 AI 辨識', value: p.value, options: policyOptions, help: policyHelp(p) })}${formError()}<div class="form-actions"><button type="submit" class="button primary">儲存設定</button></div></form>`;
+    const p = settings?.receiptAiPolicy, r = settings?.registrationPolicy;
+    if (!p || !r) return loading;
+    return `<form class="acct-form" data-form="admin-settings" novalidate>${selectField({ id: 'setting-receipt-ai', label: '收據 AI 辨識', value: p.value, options: policyOptions, help: policyHelp(p) })}${selectField({ id: 'setting-registration', label: '公開註冊', value: r.value, options: registrationOptions, help: registrationHelp(r) })}${formError()}<div class="form-actions"><button type="submit" class="button primary">儲存設定</button></div></form>`;
   };
   const bindSettings = () => {
     const form = app.querySelector('form[data-form="admin-settings"]');
     if (!form) return;
+    // Values as loaded: only fields that differ are sent, so saving one setting never pins the other (Req 26.8, 26.15).
+    const loaded = { receiptAiPolicy: settings?.receiptAiPolicy?.value, registrationPolicy: settings?.registrationPolicy?.value };
     form.addEventListener('submit', async event => {
       event.preventDefault();
       if (form.getAttribute('aria-busy') === 'true') return;
       const receiptAiPolicy = form.elements['setting-receipt-ai'].value;
+      const registrationPolicy = form.elements['setting-registration'].value;
       if (!policyOptions.some(([v]) => v === receiptAiPolicy)) return showFormError(form, '收據 AI 政策必須是 all、admins 或 off。');
+      if (!registrationOptions.some(([v]) => v === registrationPolicy)) return showFormError(form, '公開註冊政策必須是 open 或 closed。');
+      const body = {};
+      if (receiptAiPolicy !== loaded.receiptAiPolicy) body.receiptAiPolicy = receiptAiPolicy;
+      if (registrationPolicy !== loaded.registrationPolicy) body.registrationPolicy = registrationPolicy;
+      if (!Object.keys(body).length) return showFormError(form, '沒有變更的設定。');
+      const message = body.receiptAiPolicy && body.registrationPolicy ? '網站設定已更新' : body.registrationPolicy ? '公開註冊設定已更新' : '收據 AI 設定已更新';
       showFormError(form, '');
       setBusy(form, true, '儲存中…');
       try {
-        await api(ENDPOINTS.adminSettings, { method: 'PATCH', body: { receiptAiPolicy } });
-        setBusy(form, false); toast('收據 AI 設定已更新'); await load();
+        await api(ENDPOINTS.adminSettings, { method: 'PATCH', body });
+        setBusy(form, false); toast(message); await load();
       } catch (err) { setBusy(form, false); showFormError(form, `尚未儲存：${err.message}`); }
     });
   };

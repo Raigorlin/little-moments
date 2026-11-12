@@ -2,7 +2,7 @@
 
 ## Introduction
 
-本功能為「日子拾光 · LITTLE MOMENTS」建立由 GitHub Webhook 觸發、Jenkins Multibranch Pipeline 執行的 CI/CD 流程，將應用程式以 Docker 容器部署到區域網路（LAN）內的 Ubuntu Linux 主機，並供 LAN 內使用者存取。
+本功能為「日子拾光 · LITTLE MOMENTS」建立由 GitHub Webhook 觸發、Jenkins Multibranch Pipeline 執行的 CI/CD 流程，將應用程式以 Docker 容器部署到區域網路（LAN）內的 Ubuntu Linux 主機，並供 LAN 內使用者存取；Production_Environment 另可經 Edge_Proxy 供網際網路使用者存取（Requirement 25）。
 
 目前專案為 Bun 後端搭配 SQLite（`bun:sqlite`、`data/accounts.sqlite`、`CAMPING_DB`），伺服器固定綁定 `127.0.0.1`，`server/http.js` 與 `server/accounts.js` 僅接受 loopback 主機名稱，首次管理員設定僅限 loopback 用戶端。Repository 目前沒有 `Dockerfile`、`Jenkinsfile` 或 Docker Compose 設定。瀏覽器測試工具 `scripts/check-accounts.mjs` 預設使用 Windows 的 Chrome 路徑，並需要 `CAMPING_BUN` 環境變數。
 
@@ -12,8 +12,10 @@
 - 將持久化由 SQLite 遷移至資料庫伺服器（預設 PostgreSQL，最終選擇由設計階段確認），包含版本化 Schema 遷移、既有 SQLite 資料的一次性遷移、部署前備份，以及隔離的臨時測試資料庫。
 - Staging 與正式環境部署同一個 Image_Digest，正式發布需人工核准，健康檢查失敗時自動回滾。
 - 每次執行皆可追蹤至 Commit SHA、Image_Digest、測試與安全報告、部署環境與結果。
+- 支援同主機配置（Deploy_Host 同時為 Jenkins 與 Registry 主機），並讓 Production_Environment 經同一主機上的 Edge_Proxy（Nginx Proxy Manager，前端為 Cloudflare）以 `https://www.our-littlemoments.com` 對網際網路公開：LM_Proxy 只採信 Edge_Trusted_Proxies 的轉送標頭，Docker 轉送層只對 Public_Port 接受任何來源（Requirement 8、25）。
+- Production_Environment 公開後，Deploy_Host 上的公開註冊預設關閉（帳號只能經旅行邀請連結建立），管理員可在管理頁開啟或再次關閉公開註冊，不需重新部署或重新啟動（Requirement 26）。
 
-不在範圍內：公開網際網路曝露、Kubernetes、多主機叢集、負載／壓力測試、雲端 AI 收據辨識的啟用。具體工具與架構細節（Jenkinsfile 結構、掃描工具選型、反向代理、藍綠切換方式）於設計文件決定。
+不在範圍內：Requirement 25 以外的公開網際網路曝露（Staging_Environment、Registry 與 Deploy_Host 不對外公開；Jenkins 只公開 `/github-webhook/`）、Kubernetes、多主機叢集、負載／壓力測試、雲端 AI 收據辨識的啟用。具體工具與架構細節（Jenkinsfile 結構、掃描工具選型、反向代理、藍綠切換方式）於設計文件決定。
 
 ## Glossary
 
@@ -27,10 +29,10 @@
 - **App_Server**：由 `scripts/serve.mjs`、`server/http.js` 與 `server/accounts.js` 組成的 Bun 應用程式伺服器。
 - **App_Image**：Pipeline 在所有品質與安全關卡通過後建置的正式應用程式 Docker 映像。
 - **Image_Digest**：App_Image 於 Registry 中的內容雜湊（`sha256:` 開頭）。
-- **Registry**：位於 LAN 的私有 Container Registry。
-- **Deploy_Host**：位於 LAN、以 Docker Compose 執行 App_Server 與 Database 的 Ubuntu Linux 主機。
-- **Staging_Environment**：用於驗證 App_Image 的環境，與 Production_Environment 使用不同資料庫與資料。
-- **Production_Environment**：LAN 使用者實際使用的環境。
+- **Registry**：位於 LAN 的私有 Container Registry；可與 Jenkins、Deploy_Host 位於同一台主機。
+- **Deploy_Host**：位於 LAN、以 Docker Compose 執行 App_Server 與 Database 的 Ubuntu Linux 主機；可與 Jenkins controller、Build_Agent 與 Registry 為同一台主機（同主機配置，例如 `192.168.1.121`）。
+- **Staging_Environment**：用於驗證 App_Image 的環境，與 Production_Environment 使用不同資料庫與資料；僅供 LAN 存取。
+- **Production_Environment**：LAN 使用者實際使用的環境；亦可經 Edge_Proxy 供網際網路使用者存取（Requirement 25）。
 - **Database**：App_Server 使用的資料庫伺服器（預設 PostgreSQL）。
 - **Migration_Runner**：依序套用版本化 Schema 遷移並記錄已套用版本的元件。
 - **SQLite_Importer**：將既有 `accounts.sqlite` 資料一次性匯入 Database 的工具。
@@ -52,6 +54,18 @@
 - **Release_Gate**：Pipeline 中決定是否繼續發布的通過條件檢查點。
 - **Critical_High_Finding**：嚴重度為 Critical 或 High 的安全掃描結果。
 - **Approved_Exception**：已記錄理由、核准人與到期日的安全掃描例外或誤報判定。
+- **LM_Proxy**：每個環境 Compose 專案中的 Caddy 反向代理（`proxy` 服務），以 `<env>.env` 的 `LM_PUBLIC_PORT` 發布於 Deploy_Host 的 LAN 位址，並將請求轉送至目前作用中的 App_Server 槽位；本文件其他需求中的「reverse proxy」即指 LM_Proxy。
+- **Edge_Proxy**：不由本 repository 管理、與 Deploy_Host 位於同一台主機的 TLS 終結反向代理（Nginx Proxy Manager 容器）；占用 Deploy_Host 的 80／443 連接埠，接收經 Cloudflare 與路由器轉送的網際網路流量，並將 Production_Environment 的公開主機名稱轉送至 Production_Environment 的 LM_Proxy。
+- **Edge_Trusted_Proxies**：每個環境於 `<env>.env` 設定的非秘密 IP 位址或 CIDR 清單（Edge_Proxy 連線至 LM_Proxy 時的來源位址與 Cloudflare 公布的 IP 範圍）；LM_Proxy 只採信 TCP 來源位於此清單內之請求的 `X-Forwarded-For` 與 `X-Forwarded-Proto`。與 App_Server 的 Trusted_Proxies 為不同設定。
+- **Public_Port**：維運者安裝 Deploy_Host 防火牆時明確宣告、接受任何來源連線的 Docker 發布 TCP 連接埠；僅限 Edge_Proxy 的連接埠（例如 80、443）。
+- **Host_Installer**：Deploy_Host 主機安全設定安裝腳本 `deploy/host/install.sh`。
+- **Deploy_Script**：Deploy_Host 上由部署帳號經 sudo 執行的部署腳本 `/opt/lm/bin/lm-deploy`。
+- **Registration_Policy**：公開註冊政策，值為 `open` 或 `closed`。`open` 時任何能連線至 App_Server 的人都能在 `/register` 建立帳號；`closed` 時新帳號只能經 Invite_Registration 建立。
+- **Registration_Seed**：環境變數 `CAMPING_REGISTRATION` 提供的 Registration_Policy 啟動初始值；只在 Settings_Store 沒有 Registration_Policy 儲存值時使用，App_Server 不將其寫入 Settings_Store。
+- **Settings_Store**：Database 的 `settings` 資料表，存放管理員在 Admin_Page 儲存的應用程式設定（收據 AI 政策與 Registration_Policy）；每列包含設定鍵、值、儲存時間與儲存者帳號。
+- **Admin_Page**：只有管理員可使用的 `/admin` 頁面；其「網站設定」表單供管理員檢視與儲存應用程式設定。
+- **Account_UI**：由 `src/accounts-ui.js` 在瀏覽器產生的帳號相關頁面，包含 `/login`、`/register`、`/invite/<token>` 與 Admin_Page。
+- **Invite_Registration**：未登入訪客經有效旅行邀請連結 `/invite/<token>` 建立帳號並加入該旅行的流程（`POST /api/invites/<token>/register`）。
 
 ## Requirements
 
@@ -83,7 +97,7 @@
 3. IF 已通過簽章驗證的 Webhook 事件不屬於 Requirement 1 定義的 Pull Request 建立、更新或重新開啟、推送至 `main` 或其他分支、或 Release_Tag 推送事件，THEN THE Jenkins SHALL 不觸發建置。
 4. WHILE 執行 Untrusted_PR 建置，THE Pipeline SHALL 僅提供 Ephemeral_Database 的臨時憑證，且不提供 Registry 推送憑證、Deploy_Host 部署憑證、映像簽章金鑰、Staging_Environment 或 Production_Environment 的 Database 憑證、Setup_Token 或 `CAMPING_OPENAI_*` 值。
 5. IF Untrusted_PR 建置向 Credential_Store 請求第 4 條列出的任一憑證，THEN THE Pipeline SHALL 不提供該憑證值並將建置標記為失敗。
-6. WHILE 執行 Untrusted_PR 建置，THE Pipeline SHALL 在無法建立網路連線至 Deploy_Host、Staging_Environment、Production_Environment 及其 Database 的 Build_Agent 上執行，並於建置結束後（不論成功或失敗）刪除該建置的工作目錄與容器。
+6. WHILE 執行 Untrusted_PR 建置，THE Pipeline SHALL 在無法經 LAN 或 Deploy_Host 本機建立網路連線至 Deploy_Host、Staging_Environment、Production_Environment 及其 Database 的 Build_Agent 上執行（同主機配置下，該 Build_Agent 對該主機僅可連線至 Jenkins controller 與 Registry 的連接埠；經網際網路連線至 Requirement 25 的公開網址與任何網際網路主機相同，不在此限），並於建置結束後（不論成功或失敗）刪除該建置的工作目錄與容器。
 7. WHEN Untrusted_PR 來自 fork 或 PR 作者不具 repository 寫入權限，THE Jenkins SHALL 使用 `main` 分支的 `Jenkinsfile` 執行建置，而不使用 PR 中修改過的 `Jenkinsfile`。
 8. THE Pipeline SHALL 僅在 Trusted_Ref 建置中執行 App_Image 推送與部署階段，且此限制同樣適用於在 Jenkins 手動觸發或重新執行的建置。
 
@@ -179,8 +193,11 @@
 3. IF 請求缺少 Host 標頭，或 Host 標頭在移除 `:<port>` 後綴並轉為小寫後與 Allowed_Hosts 中任一項目（不分大小寫）皆不完全相符，THEN THE App_Server SHALL 回應 HTTP 421 並附上 `server/http.js` 中 `SECURITY_HEADERS` 定義的安全標頭，且不執行任何 API 處理、靜態檔案讀取或資料寫入。
 4. IF Bind_Address 不是 loopback 位址（`127.0.0.0/8` 或 `::1`）且 Allowed_Hosts 環境變數未設定或為空字串，THEN THE App_Server SHALL 在 5 秒內以非零結束碼結束、不監聽任何連接埠，並輸出指出缺少 Allowed_Hosts 設定的錯誤訊息。
 5. WHEN App_Server 成功開始監聽，THE App_Server SHALL 輸出一行包含實際 Bind_Address、實際連接埠與完整 Allowed_Hosts 清單的啟動訊息，且啟動輸出中不包含 Setup_Token、Database 憑證、Session 密鑰或任何 `CAMPING_OPENAI_*` 值。
-6. THE Deploy_Host SHALL 僅接受來源 IP 位於設定 LAN 網段（以 CIDR 表示）內的主機連線至 App_Server 連接埠，並使來自該網段以外來源的 TCP 連線無法建立；此限制 SHALL 同樣適用於 Docker 發布的連接埠（Docker 發布連接埠的流量會繞過 UFW 等主機防火牆規則，因此限制須在 Docker 轉送層生效），使網段外來源即使直接連線至 Docker 發布的連接埠也無法建立連線。
+6. THE Deploy_Host SHALL 僅接受來源 IP 位於設定 LAN 網段（以 CIDR 表示）內的主機連線至 App_Server 連接埠，並使來自該網段以外來源的 TCP 連線無法建立；此限制 SHALL 同樣適用於第 8 條 Public_Port 以外的所有 Docker 發布連接埠（包含 Staging_Environment 與 Production_Environment 的 LM_Proxy 連接埠；Docker 發布連接埠的流量會繞過 UFW 等主機防火牆規則，因此限制須在 Docker 轉送層生效），使網段外來源即使直接連線至這些 Docker 發布的連接埠也無法建立連線。
 7. IF Bind_Address 不是有效的 IP 位址字面值、`PORT` 不是 1 至 65535 的整數，或 Allowed_Hosts 含有空項目、萬用字元（`*`）、超過 32 個項目或超過 253 字元的項目，THEN THE App_Server SHALL 在 5 秒內以非零結束碼結束、不監聽任何連接埠，並輸出指出無效設定名稱的錯誤訊息（不含秘密值）。
+8. WHERE 維運者以 Host_Installer 宣告 1 至 8 個 Public_Port，THE Deploy_Host SHALL 接受任何來源 IP 對這些 Public_Port 的 TCP 連線，同時 Staging_Environment 與 Production_Environment 的 LM_Proxy 連接埠維持第 6 條的 LAN 網段限制。
+9. IF 宣告的任一 Public_Port 不是 1 至 65535 的十進位整數、與其他宣告項目重複、宣告項目超過 8 個，或等於 Staging_Environment 或 Production_Environment（已安裝或本次安裝）任一環境 `<env>.env` 的 `LM_PUBLIC_PORT`，THEN THE Host_Installer SHALL 在變更任何 DOCKER-USER 規則前以結束碼 2 結束，並輸出指出無效連接埠的錯誤訊息。
+10. WHERE 未宣告任何 Public_Port，THE Host_Installer SHALL 安裝與第 6 條相同、不含任何 Public_Port 例外的 DOCKER-USER 規則。
 
 ### Requirement 9: 首次管理員設定保護
 
@@ -446,7 +463,7 @@
 
 1. THE README SHALL 針對 Bind_Address、Allowed_Hosts、Setup_Token 與 Database 連線設定，逐項列出環境變數名稱、用途、是否必填、預設值，以及未設定時的 App_Server 行為（包含 Requirement 8 第 4 條的非 loopback Bind_Address 未設定 Allowed_Hosts 時拒絕啟動，以及 Requirement 9 第 2 條的 Setup_Token 自動產生並僅輸出至 Deploy_Host 本機日誌）。
 2. THE README 所列的 Bind_Address 與 Allowed_Hosts 預設值 SHALL 與 App_Server 實作一致，分別為 `127.0.0.1`，以及 `127.0.0.1`、`localhost` 與 `[::1]`。
-3. THE README SHALL 明確說明 LAN 部署僅允許區域網路存取、Deploy_Host 僅將 App_Server 連接埠開放給設定的 LAN 網段，且公開網際網路曝露（包含連接埠轉發、反向代理對外公開與通道服務）不在支援範圍內。
+3. THE README SHALL 明確說明 Staging_Environment、Registry 與 Deploy_Host 僅允許區域網路存取、Deploy_Host 僅將 Public_Port 以外的 Docker 發布連接埠開放給設定的 LAN 網段、Production_Environment 僅能經 Requirement 25 的 Edge_Proxy 對網際網路公開、Jenkins 僅公開 `/github-webhook/`，且其他公開網際網路曝露方式（包含其他連接埠轉發、其他對外公開的反向代理與通道服務）不在支援範圍內。
 4. THE README SHALL 依執行順序以編號步驟說明 SQLite_Importer 的使用方式，至少包含：匯入前建立來源 `accounts.sqlite` 檔案與目標 Database 的備份、執行匯入的指令、比對輸出的每個資料表來源與目標筆數，以及以既有使用者帳號登入驗證。
 5. THE README SHALL 說明 SQLite_Importer 在目標 Database 已包含使用者資料時中止匯入，以及匯入失敗時回復已匯入資料並輸出失敗資料表名稱的行為與維運者後續處理步驟。
 6. THE README SHALL 以編號步驟說明由 Release_Approver 手動觸發、將 Production_Environment 切換至 Deploy_Host 保留的最近 3 個 Image_Digest 之一的回滾操作，並註明回滾時 Database Schema 保持不變。
@@ -454,3 +471,52 @@
 8. THE README SHALL 說明在本機執行 `bun test tests/*.test.js` 與 `playwright.config.js` 定義的瀏覽器測試時，建立 Ephemeral_Database、指定測試使用該 Ephemeral_Database 的環境變數，以及測試結束後銷毀 Ephemeral_Database 的指令。
 9. THE README SHALL 不包含任何實際秘密值，包含 Database 密碼、Setup_Token、Registry 憑證、Deploy_Host 部署憑證與 `CAMPING_OPENAI_API_KEY`，且所有範例值皆以佔位符表示。
 10. THE README SHALL 註明 Database 憑證與 Setup_Token 僅由 Credential_Store 提供，且不得寫入 repository 或 App_Image。
+
+### Requirement 25: 在同主機 Edge_Proxy 之後公開 Production_Environment
+
+**User Story:** 身為系統擁有者，我希望 Production_Environment 經同一主機上的 Edge_Proxy 與 Cloudflare 以 `https://www.our-littlemoments.com` 對網際網路公開，且 App_Server 仍取得真實用戶端 IP 與協定，以便公開存取時登入、Origin 檢查、Secure Cookie 與限速都正確運作，而 LAN 用戶端無法偽造轉送標頭。
+
+#### Acceptance Criteria
+
+1. WHEN LM_Proxy 收到 TCP 來源 IP 位於該環境 Edge_Trusted_Proxies 內的請求，THE LM_Proxy SHALL 依本需求第 3、4 與 5 條，以該請求的 `X-Forwarded-For` 與 `X-Forwarded-Proto` 決定轉送給 App_Server 的這兩個標頭值。
+2. WHEN LM_Proxy 收到 TCP 來源 IP 不在 Edge_Trusted_Proxies 內的請求，THE LM_Proxy SHALL 以該 TCP 來源 IP 作為唯一的 `X-Forwarded-For` 值、以 LM_Proxy 接收該請求所用的協定作為 `X-Forwarded-Proto` 值轉送給 App_Server，不論請求原本是否附帶這兩個標頭。
+3. WHEN LM_Proxy 依第 1 條決定用戶端 IP，THE LM_Proxy SHALL 取 `X-Forwarded-For` 由右往左第一個可解析為 IP 位址且不在 Edge_Trusted_Proxies 內的項目作為用戶端 IP（不存在此項目時為 TCP 來源 IP），並以只含該用戶端 IP 的單一 `X-Forwarded-For` 值轉送給 App_Server，使用戶端於最左側自行加入的位址不會成為用戶端 IP。
+4. WHEN LM_Proxy 收到 TCP 來源 IP 位於 Edge_Trusted_Proxies 內、且 `X-Forwarded-Proto` 值恰為 `http` 或 `https` 的請求，THE LM_Proxy SHALL 將該值原樣作為轉送給 App_Server 的 `X-Forwarded-Proto`。
+5. IF TCP 來源 IP 位於 Edge_Trusted_Proxies 內的請求缺少 `X-Forwarded-Proto`，或其值不是恰為 `http` 或 `https`，THEN THE LM_Proxy SHALL 以 LM_Proxy 接收該請求所用的協定作為轉送給 App_Server 的 `X-Forwarded-Proto`。
+6. WHERE 一個環境的 Edge_Trusted_Proxies 未設定或為空字串，THE LM_Proxy SHALL 對該環境的所有請求套用第 2 條，使轉送給 App_Server 的 `X-Forwarded-For` 與 `X-Forwarded-Proto` 與未支援 Edge_Trusted_Proxies 時相同。
+7. THE LM_Proxy SHALL 自該環境 `<env>.env` 的非秘密設定 `LM_EDGE_TRUSTED_PROXIES` 讀取 Edge_Trusted_Proxies，格式為以空白分隔、1 至 64 個 IPv4 或 IPv6 位址或 CIDR 項目。
+8. IF Edge_Trusted_Proxies 含有無法解析為 IP 位址或 CIDR 的項目、超過 64 個項目、前綴長度為 0 的項目（例如 `0.0.0.0/0`、`::/0`），或範圍涵蓋該環境 `<env>.env` 的 `LM_LAN_CIDR`（Deploy_Host 所在實體 LAN 網段）任一整個網段的項目，或 Edge_Trusted_Proxies 非空但 `LM_LAN_CIDR` 未設定或無效，THEN THE Deploy_Script SHALL 在執行任何 Docker Compose 動作前以結束碼 2 結束、輸出指出無效項目的錯誤訊息，且不變更 LM_Proxy 的執行中設定。
+9. IF LM_Proxy 啟動或重新載入設定時無法解析 Edge_Trusted_Proxies，THEN THE LM_Proxy SHALL 拒絕套用該設定（啟動失敗，或重新載入失敗並保留重新載入前的設定），且不以採信更多來源的設定處理任何請求。
+10. THE Deploy_Host SHALL 將 App_Server 的 Trusted_Proxies 設定為僅含 LM_Proxy 固定 IP 的 /32 項目，不論 Edge_Trusted_Proxies 的內容（Requirement 9 第 12 條維持不變）。
+11. WHEN 用戶端經 Cloudflare 與 Edge_Proxy 以 `https://www.our-littlemoments.com` 送出請求，THE App_Server SHALL 以協定 `https:` 與 Host `www.our-littlemoments.com` 重建請求網址，使 Requirement 10 第 1 條的 Origin 比對以 `https://www.our-littlemoments.com` 進行、第 5 條的 `Secure` 屬性被加上，且 Requirement 9 第 8 條與 Requirement 7 第 6 條所述的限速以該用戶端的真實 IP 計算。
+12. THE README（或其連結的部署文件）SHALL 記載 Edge_Trusted_Proxies 中 Cloudflare 範圍為維運者維護的靜態清單、其來源（`https://www.cloudflare.com/ips-v4` 與 `https://www.cloudflare.com/ips-v6`），以及以編號步驟說明的更新流程：下載兩份清單、與 `prod.env` 現值比對、更新 `LM_EDGE_TRUSTED_PROXIES`、重新建立 LM_Proxy 容器，並確認經公開網址的請求在 LM_Proxy 存取日誌中記錄真實用戶端 IP。
+13. THE README（或其連結的部署文件）SHALL 以編號步驟說明 Edge_Proxy 與 Cloudflare 的設定：(a) Proxy Host `www.our-littlemoments.com` 轉送至 `http://<deploy-host-lan-ip>:<prod LM_PUBLIC_PORT>`，使用 Let's Encrypt 憑證並啟用 Force SSL 與 HSTS、不啟用 WebSocket 支援；(b) Redirection Host `our-littlemoments.com` 以 HTTP 301 轉址至 `https://www.our-littlemoments.com` 並保留路徑；(c) Cloudflare DNS 記錄為 Proxied，且 SSL/TLS 加密模式為 Full (strict)；(d) Staging_Environment 不經 Edge_Proxy 公開；(e) Jenkins 只公開 `/github-webhook/`；(f) Host_Installer 的 LAN 網段包含 Edge_Proxy 連線至 LM_Proxy 時的 Docker 來源網段（或 Edge_Proxy 改用 host 網路），並以 Public_Port 宣告 80 與 443。
+
+### Requirement 26: 公開註冊預設關閉並可由管理員切換
+
+**User Story:** 身為系統擁有者，我希望 Production_Environment 對網際網路公開時，公開註冊一開始就是關閉的、帳號只能經旅行邀請連結建立，並能在 Admin_Page 開啟或再次關閉公開註冊而不需重新部署或重新啟動，以便控制誰能建立帳號。
+
+本需求延伸 security-hardening spec 引用的 Registration_Policy（`publish-behind-nginx` PBN 10）：保留 `CAMPING_REGISTRATION` 的驗證與 `open` 預設值，改為以 Settings_Store 儲存值為優先，並讓 Deploy_Host 的預設值為 `closed`。
+
+#### Acceptance Criteria
+
+1. WHEN App_Server 處理需要 Registration_Policy 的請求，THE App_Server SHALL 於該請求當下依下列順序決定實際生效的 Registration_Policy 與其來源：Settings_Store 有 Registration_Policy 儲存值時使用該值（來源 `stored`）；否則 Registration_Seed 為 `open` 或 `closed` 時使用該值（來源 `seed`）；否則使用 `open`（來源 `default`）。
+2. IF Settings_Store 中的 Registration_Policy 儲存值不是恰為 `open` 或 `closed`，THEN THE App_Server SHALL 將實際生效的 Registration_Policy 視為 `closed`、來源為 `stored`，並保留該儲存值不變。
+3. IF `CAMPING_REGISTRATION` 設定為非空字串且不是恰為 `open` 或 `closed`，THEN THE App_Server SHALL 在連線 Database 或監聽任何連接埠前以非零結束碼結束，並輸出只指出變數名稱與允許值、不含該值的錯誤訊息。
+4. WHEN 管理員以 `PATCH /api/admin/settings` 送出 `registrationPolicy` 欄位值恰為 `open` 或 `closed` 的請求，THE App_Server SHALL 在同一個 Database 交易內將該值、儲存時間與該管理員帳號寫入 Settings_Store，並寫入一筆動作為 `settings.registration`、內容包含該管理員帳號與新值的稽核事件，再回應 HTTP 200 與第 9 條的設定內容。
+5. WHEN Settings_Store 的 Registration_Policy 儲存值被寫入，THE App_Server SHALL 對寫入完成後收到的下一個請求套用新值，不需重新啟動 App_Server 或重新部署。
+6. IF 已登入但不是管理員的使用者送出 `GET /api/admin/settings` 或 `PATCH /api/admin/settings`，THEN THE App_Server SHALL 回應 HTTP 403、保留 Settings_Store 內容不變，且不寫入任何設定稽核事件。
+7. IF `PATCH /api/admin/settings` 的請求本文含有 `registrationPolicy` 但其值不是恰為字串 `open` 或 `closed`、含有 `receiptAiPolicy` 但其值不是恰為字串 `all`、`admins` 或 `off`，或兩個欄位都不存在，THEN THE App_Server SHALL 回應 HTTP 400、保留 Settings_Store 中所有設定不變，且不寫入任何設定稽核事件。
+8. WHEN 管理員以 `PATCH /api/admin/settings` 送出只含 `registrationPolicy` 與 `receiptAiPolicy` 其中一個有效欄位的請求，THE App_Server SHALL 只儲存該欄位對應的設定，並保持另一個設定的 Settings_Store 狀態（含沒有儲存值的狀態）不變；兩個欄位皆存在且有效時，THE App_Server SHALL 儲存兩者並各寫入一筆稽核事件。
+9. WHEN 管理員以 `GET /api/admin/settings` 讀取設定，THE App_Server SHALL 回傳 `registrationPolicy` 的實際生效值、來源（`stored`、`seed` 或 `default`）、可選值 `open` 與 `closed`，以及來源為 `stored` 時的儲存時間與儲存者帳號，且 `receiptAiPolicy` 的回傳欄位與內容維持不變。
+10. WHILE 實際生效的 Registration_Policy 為 `closed`，THE App_Server SHALL 對 `POST /api/register` 回應 HTTP 403 與表示需使用旅行邀請連結建立帳號的錯誤訊息，且不讀取請求本文、不計入註冊限速次數、不建立帳號。
+11. WHILE 實際生效的 Registration_Policy 為 `closed`，THE Account_UI SHALL 在 `/register` 顯示目前不開放公開註冊、需向旅伴索取旅行邀請連結的說明與前往登入的連結，並以該說明取代註冊表單。
+12. THE App_Server SHALL 在實際生效的 Registration_Policy 為 `open` 與 `closed` 時皆依既有規則處理 Invite_Registration，使持有有效旅行邀請連結的未登入訪客可建立帳號並加入該旅行。
+13. WHEN App_Server 回應 `GET /api/session`，THE App_Server SHALL 依該請求當下實際生效的 Registration_Policy 設定 `registrationOpen` 欄位：`open` 時為 `true`，`closed` 時為 `false`。
+14. WHEN 管理員開啟 Admin_Page，THE Account_UI SHALL 在「網站設定」表單中，於收據 AI 設定之外顯示 id 為 `setting-registration`、選項為開放（`open`）與關閉（`closed`）的公開註冊選單並選取實際生效值，且在選單說明文字顯示來源：來源為 `stored` 時顯示儲存者帳號與儲存時間，來源為 `seed` 時指出環境變數 `CAMPING_REGISTRATION`，來源為 `default` 時指出預設值 `open`。
+15. WHEN 管理員在 Admin_Page 變更公開註冊選單並儲存「網站設定」表單，THE Account_UI SHALL 只在請求本文送出值與載入時不同的設定欄位；請求成功時顯示公開註冊設定已更新的提示並重新載入設定，請求失敗時在表單顯示錯誤訊息並保留選取值。
+16. THE `deploy/compose/compose.yaml` SHALL 將 `<env>.env` 的 `CAMPING_REGISTRATION` 傳入 `app-blue`、`app-green` 與 `migrate` 服務的環境變數，並於該值未設定或為空字串時傳入 `closed`；`deploy/compose/staging.env.example` 與 `deploy/compose/prod.env.example` SHALL 包含 `CAMPING_REGISTRATION=closed`。
+17. WHEN App_Server 啟動完成，THE App_Server SHALL 在啟動摘要中輸出實際生效的 Registration_Policy 與其來源（`admin setting`、`CAMPING_REGISTRATION` 或 `default`），且該摘要不包含任何秘密值。
+18. THE README SHALL 在環境變數表列出 `CAMPING_REGISTRATION` 為 Registration_Seed、App_Server 未設定時的預設值 `open` 與 Deploy_Host 經 `compose.yaml` 未設定時傳入的 `closed`，並說明管理員在 Admin_Page 儲存 Registration_Policy 後 `CAMPING_REGISTRATION` 不再影響實際生效值，直到維運者移除 Settings_Store 中的該筆儲存值，以及移除的方式。
+19. THE `tests/*.test.js` 單元與 API 測試 SHALL 涵蓋第 1、2 條的決定順序（儲存值、Registration_Seed、預設值與無效儲存值）、管理員在同一個 App_Server 執行期間依序將 Registration_Policy 設為 `closed` 再設為 `open` 且每次儲存後的下一個 `POST /api/register` 與 `GET /api/session` 皆反映新值、第 6 條的 403、第 7 條的 400 且 Settings_Store 不變，以及兩種 Registration_Policy 下 Invite_Registration 皆成功。
+20. THE QA_Inventory SHALL 包含一個角色為 admin、頁面為 `/admin`、控制項為 `setting-registration` 的項目，情境為管理員將公開註冊由開放改為關閉再改回開放並確認 `/register` 的顯示隨之改變，且該項目對應至少 1 個在瀏覽器測試中執行的測試案例 ID（Requirement 5 第 1 與 4 條）。

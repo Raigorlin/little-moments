@@ -11,6 +11,7 @@ import {
   AI_ENV, AI_COST_DEFAULTS,
 } from '../server/config.js';
 import { createReceiptAi } from '../server/receipt-ai.js';
+import { resolveRegistrationPolicy } from '../server/settings.js';
 import { findLeaks } from '../ci/scrub.mjs';
 
 const read = rel => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
@@ -183,7 +184,11 @@ describe('預設值與 parseConfig 一致（Req 24.2）', () => {
   });
 
   test('註冊政策、收據 AI 政策與 AI_Cost_Config 的預設值與 parseConfig 一致；無效值拒絕啟動且只指出該變數', () => {
-    expect(rowOf('CAMPING_REGISTRATION').defaultValue).toBe(result.config.registrationPolicy);
+    // 註冊政策的初始值未設定時為 null；沒有儲存值時由 server/settings.js 解析為 open（Req 26.1、26.18）。
+    expect(result.config.registrationPolicySeed).toBeNull();
+    expect(rowOf('CAMPING_REGISTRATION').defaultValue).toBe(resolveRegistrationPolicy(null, result.config.registrationPolicySeed).value);
+    const registrationRow = rowOf('CAMPING_REGISTRATION');
+    for (const text of ['Registration_Seed', '`closed`', '`compose.yaml`', '`/admin`']) expect(registrationRow.purpose + registrationRow.behavior).toContain(text);
     // 收據 AI 政策沒有初始值（null）；未儲存設定時由 server/settings.js 解析為 all。
     expect(rowOf('CAMPING_RECEIPT_AI_POLICY').defaultValue).toBeNull();
     expect(result.config.receiptAiPolicySeed).toBeNull();
@@ -261,5 +266,51 @@ describe('README 不含秘密（Req 24.9）', () => {
     const secret = process.env.CAMPING_TEST_DATABASE_PASSWORD;
     if (!secret) return; // 未提供時略過；密碼絕不寫入測試檔
     expect(findLeaks(readme, [{ id: 'CAMPING_TEST_DATABASE_PASSWORD', value: secret }]).length).toBe(0);
+  });
+});
+
+describe('公開範圍與 Edge_Proxy runbook（Req 24.3、25.12、25.13）', () => {
+  const lanSection = /^## LAN 部署\n([\s\S]*?)(?=^## )/m.exec(readme)?.[1] ?? '';
+  const runbookBytes = readFileSync(fileURLToPath(new URL('../deploy/README.md', import.meta.url)));
+  const runbook = runbookBytes.toString('utf8');
+
+  test('LAN 部署章節說明 Production 只經 Edge_Proxy、其他只限 LAN、Jenkins 只公開 webhook，並連結 runbook', () => {
+    expect(lanSection).toContain('**Staging、LAN Registry 與 Deploy_Host（SSH、LM_Proxy 連接埠）只允許區域網路存取。**');
+    expect(lanSection).toContain('**Production 只能經同主機的 Edge_Proxy 對網際網路公開**');
+    expect(lanSection).toContain('**Jenkins 只公開 `/github-webhook/`**');
+    expect(lanSection).toContain('其他公開網際網路曝露方式**不在支援範圍內**');
+    expect(lanSection).toContain('[`deploy/README.md`](deploy/README.md)');
+    expect(lanSection).not.toContain('唯一的例外');
+  });
+
+  test('runbook 為 UTF-8 無 BOM、LF 換行，涵蓋 Edge_Proxy、Cloudflare 與主機防火牆步驟', () => {
+    expect([...runbookBytes.subarray(0, 3)]).not.toEqual([0xef, 0xbb, 0xbf]);
+    expect(runbook).not.toContain('\r');
+    for (const s of [
+      'Forward Hostname／IP `192.168.1.121`；Forward Port `8082`', '**不要**開啟 Websockets Support', 'Force SSL', 'HSTS Enabled',
+      'Forward Domain `www.our-littlemoments.com`；HTTP Code `301`；開啟 Preserve Path', '**Proxied**', '**Full (strict)**',
+      '不要為 Staging 建立任何 DNS 記錄或 NPM 主機', '`/github-webhook/`',
+      'LAN=192.168.1.0/24,172.17.0.0/16,172.20.0.0/16,172.21.0.0/16,172.22.0.0/16', '--public-port 80,443',
+      'https://www.cloudflare.com/ips-v4', 'https://www.cloudflare.com/ips-v6', 'up -d --no-deps proxy',
+      'verify-host.sh --lan-cidr "$LAN" --public-port 80,443', '"remote_ip"', '"client_ip"',
+    ]) expect(runbook).toContain(s);
+  });
+
+  test('runbook 不含秘密，也不含主機上才有的 Edge 值（Cloudflare 範圍、Edge_Proxy 來源位址）', () => {
+    expect(runbook).not.toMatch(/-----BEGIN [A-Z ]*PRIVATE KEY-----/);
+    expect(runbook).not.toMatch(/\b(ghp|gho|ghs|ghu|github_pat)_[A-Za-z0-9_]{20,}/);
+    expect(runbook).not.toMatch(/\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}/);
+    for (const m of runbook.matchAll(/[0-9a-f]{32,}/gi)) {
+      // 唯一允許的長十六進位字串是 Compose 已釘選的 Caddy 映像 digest。
+      expect(m[0]).toBe('4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d');
+    }
+    // IPv4 位址只能是 LAN、本主機目前的 Docker 網段與文件保留網段（RFC 5737）。
+    const allowed = new Set(['192.168.1.0/24', '192.168.1.121', '172.17.0.0/16', '172.20.0.0/16', '172.21.0.0/16', '172.22.0.0/16']);
+    for (const m of runbook.matchAll(/\b\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?/g)) {
+      const ok = allowed.has(m[0]) || /^(192\.0\.2|198\.51\.100|203\.0\.113)\./.test(m[0]) || m[0] === '0.0.0.0';
+      expect({ address: m[0], ok }).toEqual({ address: m[0], ok: true });
+    }
+    // IPv6 只能是文件保留網段 2001:db8::/32。
+    for (const m of runbook.matchAll(/\b[0-9a-f]{1,4}:[0-9a-f:]*::?[0-9a-f:]*\/\d{1,3}/gi)) expect(m[0]).toBe('2001:db8::/32');
   });
 });

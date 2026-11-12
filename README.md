@@ -15,7 +15,7 @@ This repository contains source code only. It contains no real accounts, trips, 
 
 - **Accounts and trips:** Create an administrator on first run, register member accounts, create multiple planning or completed trips, choose an illustrated cover, and keep each trip's history separate.
 - **Invitations and permissions:** Invite companions with single-use trip invitation links. A signed-out visitor can preview the trip and create an account from the link, even when public registration is closed. Trip creators and administrators manage membership and delete trip content; collaborators plan within their permissions.
-- **Registration policy:** Public registration at `/register` is open by default. The server can close it (`CAMPING_REGISTRATION=closed`); new accounts then come only from trip invitation links.
+- **Registration policy:** Public registration at `/register` is open by default when you run the server locally and closed by default on the Deploy_Host; while closed, new accounts come only from trip invitation links. An administrator can open or close it in the 網站設定 form on `/admin`, and the change applies to the next request without a restart or redeploy.
 - **Trip overview:** See the trip dates, destination, companions, and a departure countdown centered on the camping illustration alongside trip progress.
 - **Five section tabs and the trip menu:** A trip has five tabs: 行程表 (schedule), 料理菜單 (meals), 採買清單 (shopping), 裝備分工 (gear), and 分帳記帳 (expenses). The former 旅伴與車輛 and 旅行設定 tabs are gone. Their actions are in the **旅行選單** (trip menu) opened from the menu button next to the trip title: edit the trip, add or edit companions, add, edit or delete vehicles, switch identity, export, import, print, scene motion settings, and reset. Old links to a removed tab open the schedule tab; stored companions, vehicles, and trip details are unchanged.
 - **Itinerary:** Plan dated and timed stops for everyone, one vehicle or several, add notes and map links, mark stops complete, and filter by vehicle. Each vehicle can have its own departure time and meeting place. The add-stop button sits beside the date tabs.
@@ -48,7 +48,7 @@ On a phone, swipe left or right across a trip to move between the five tabs. Swi
 - **See and revoke links.** Trip managers and administrators see every active link of the trip; members see their own. The link's creator, the trip organizer, or an administrator can revoke a link.
 - **Join as a signed-in user.** Opening the link while signed in shows the trip and adds you as a companion after you enter a name.
 - **Register through the link.** A signed-out visitor sees a preview (trip name, destination, dates, and who invited them) and can create an account that joins the trip in one step. This works whether public registration is open or closed.
-- **Registration policy.** With `CAMPING_REGISTRATION=open` (the default), anyone who can reach the server can register at `/register`. With `closed`, `/register` explains that an invitation link is needed and the registration API answers 403. Login and registration attempts are rate-limited per account name and per client address; a 429 response carries `Retry-After`.
+- **Registration policy.** While public registration is open, anyone who can reach the server can register at `/register`. While it is closed, `/register` explains that an invitation link is needed and the registration API answers 403. It is open by default locally and closed by default on the Deploy_Host (`deploy/compose/compose.yaml` passes `CAMPING_REGISTRATION=closed` when the value is unset). An administrator switches it with the 公開註冊 menu on `/admin`; the next request uses the new value, and from then on `CAMPING_REGISTRATION` no longer applies (see [環境變數](#環境變數) to hand control back to it). Login and registration attempts are rate-limited per account name and per client address; a 429 response carries `Retry-After`.
 
 Account names are 3–32 characters, start with a lowercase letter, and use lowercase letters, numbers, or hyphens. Passwords are 12–128 characters. There is **no default account or password**.
 
@@ -134,7 +134,7 @@ JPEG, PNG, and WebP receipt photos are supported. Images over 10 MB or 20 megapi
 
 ## 環境變數
 
-App_Server（`scripts/serve.mjs`，映像中為 `/app/server/serve.js`）啟動時以 `server/config.js` 的 `parseConfig` 驗證下列變數（OpenAI 金鑰兩列由 `server/receipt-ai.js` 讀取，不經 `parseConfig`）。任何錯誤都只輸出「變數名稱＋原因」，不輸出值，並在連線 Database 或監聽任何連接埠之前以結束碼 2 結束；Database 在 30 秒內（1–5 秒間隔重試）仍無法連線時以結束碼 3 結束，訊息只含主機與連接埠。啟動成功時輸出 `Camping accounts ready: bind=… port=… allowedHosts=…` 與 `Camping accounts settings: registration=… receiptAiPolicy=… (<來源>)` 兩行，不含任何秘密。
+App_Server（`scripts/serve.mjs`，映像中為 `/app/server/serve.js`）啟動時以 `server/config.js` 的 `parseConfig` 驗證下列變數（OpenAI 金鑰兩列由 `server/receipt-ai.js` 讀取，不經 `parseConfig`）。任何錯誤都只輸出「變數名稱＋原因」，不輸出值，並在連線 Database 或監聽任何連接埠之前以結束碼 2 結束；Database 在 30 秒內（1–5 秒間隔重試）仍無法連線時以結束碼 3 結束，訊息只含主機與連接埠。啟動成功時輸出 `Camping accounts ready: bind=… port=… allowedHosts=…` 與 `Camping accounts settings: registration=… (<來源>) receiptAiPolicy=… (<來源>)` 兩行（來源為 `admin setting`、對應的環境變數名稱或 `default`），不含任何秘密。
 
 <!-- env-table:start -->
 | 名稱 | 用途 | 必填 | 預設值 | 未設定時 |
@@ -152,7 +152,7 @@ App_Server（`scripts/serve.mjs`，映像中為 `/app/server/serve.js`）啟動�
 | `CAMPING_DATABASE_SSLMODE` | Database TLS 模式：`disable`、`require` 或 `verify-full` | 否 | `disable` | 不使用 TLS（Compose 內部網路）。其他值拒絕啟動 |
 | `CAMPING_DIST` | 前端建置成品目錄（相對路徑以工作目錄為基準） | 否 | `dist` | 使用 `dist`。目錄內沒有 `index.html` 時拒絕啟動 |
 | `CAMPING_MIGRATIONS_DIR` | 遷移目錄（`scripts/migrate.mjs`、`scripts/import-sqlite.mjs` 使用） | 否 | 腳本上一層的 `migrations/` | repository 中為 `migrations/`；映像中為 `/app/migrations` |
-| `CAMPING_REGISTRATION` | 公開註冊政策：`open` 或 `closed`。`closed` 時 `/register` 不開放、註冊 API 回應 403，帳號只能由旅行邀請連結建立 | 否 | `open` | 開放公開註冊（空字串視同未設定）。其他值拒絕啟動，錯誤只指出變數名稱 |
+| `CAMPING_REGISTRATION` | Registration_Seed：公開註冊政策的啟動初始值，`open` 或 `closed`。`closed` 時 `/register` 不開放、註冊 API 回應 403，帳號只能由旅行邀請連結建立。管理員在 `/admin` 儲存的設定優先，此值從不寫入 Database | 否 | `open` | App_Server 使用 `open`（空字串視同未設定）；Deploy_Host 的 `compose.yaml` 在未設定或空字串時傳入 `closed`。管理員在 `/admin` 儲存公開註冊設定後此值不再生效，直到移除 Database 中的儲存值（見下方步驟）。其他值拒絕啟動，錯誤只指出變數名稱 |
 | `CAMPING_RECEIPT_AI_POLICY` | 收據 AI 政策的啟動初始值：`all`、`admins` 或 `off`。管理員在 `/admin` 儲存的設定優先，此值從不寫入 Database | 否 | — | 沒有初始值：管理頁未儲存設定時使用 `all`（仍需有效金鑰才會啟用）。其他值拒絕啟動，錯誤只指出變數名稱 |
 | `CAMPING_OPENAI_MODEL_ID` | 收據 AI 使用的 OpenAI 模型 ID：`gpt-` 後接 1–80 個英文字母、數字、`.`、`_` 或 `-` | 否 | `gpt-6-luna` | 使用 `gpt-6-luna`（空字串視同未設定）。格式不符時拒絕啟動 |
 | `CAMPING_OPENAI_IMAGE_DETAIL` | 送給 OpenAI 的圖片細節：`low`、`high` 或 `auto` | 否 | `high` | 使用 `high`（空字串視同未設定）。其他值拒絕啟動 |
@@ -164,7 +164,13 @@ App_Server（`scripts/serve.mjs`，映像中為 `/app/server/serve.js`）啟動�
 | `CAMPING_OPENAI_API_KEY` | 以環境變數直接提供 OpenAI API 金鑰（設定時優先於金鑰檔；`docker inspect` 與程序列表看得到，不建議使用） | 否 | 空 | 改讀 `CAMPING_OPENAI_API_KEY_FILE`。**Compose 中固定為空字串**，Deploy_Host 上的金鑰只能以金鑰檔提供 |
 <!-- env-table:end -->
 
-`CAMPING_DB` 不是設定欄位：設定時只輸出警告，值不會被讀取或輸出。`CAMPING_REGISTRATION`、`CAMPING_RECEIPT_AI_POLICY` 與 `CAMPING_RECEIPT_AI_*` 目前不由 `deploy/compose/compose.yaml` 傳入（`lm-deploy <env> app-env` 也只接受 Database 與 Setup_Token 的鍵），因此 Deploy_Host 使用預設值；收據 AI 政策可由管理員在 `/admin` 調整。
+`CAMPING_DB` 不是設定欄位：設定時只輸出警告，值不會被讀取或輸出。`CAMPING_REGISTRATION` 由 `deploy/compose/compose.yaml` 從 `<env>.env` 傳入，未設定或空字串時為 `closed`（`staging.env.example` 與 `prod.env.example` 都是 `CAMPING_REGISTRATION=closed`），`lm-deploy` 會移除呼叫端環境中的同名變數。`CAMPING_RECEIPT_AI_POLICY` 與 `CAMPING_RECEIPT_AI_*` 目前不由 `compose.yaml` 傳入（`lm-deploy <env> app-env` 也只接受 Database 與 Setup_Token 的鍵），因此 Deploy_Host 使用預設值；收據 AI 政策與公開註冊政策都可由管理員在 `/admin` 調整。
+
+管理員在 `/admin` 儲存公開註冊設定後，Database 的 `settings` 資料表會有一筆 `registrationPolicy`，`CAMPING_REGISTRATION` 從此不再影響實際生效值。要恢復由 `CAMPING_REGISTRATION` 控制：
+
+1. 在 Deploy_Host 上確認 `<env>.env` 的 `CAMPING_REGISTRATION` 是想要的值（`open` 或 `closed`）。
+2. 移除儲存值：`sudo docker exec lm-<env>-db-1 psql -U <database-user> -d <database-name> -c "DELETE FROM settings WHERE key = 'registrationPolicy';"`（Compose 專案為 `lm-<env>`，db 容器名稱可用 `sudo docker ps --filter label=com.docker.compose.project=lm-<env> --filter label=com.docker.compose.service=db` 確認；`<database-user>`、`<database-name>` 為同環境 `app.env` 的 `CAMPING_DATABASE_USER`、`CAMPING_DATABASE_NAME`）。直接用 `docker exec` 而不經 `docker compose`，因為 `compose.yaml` 需要只由 `lm-deploy` 提供的 `APP_IMAGE_*`。
+3. 不需重新啟動：下一個請求即改用 `CAMPING_REGISTRATION`。在 `/admin` 的公開註冊說明會顯示「目前使用伺服器環境變數 CAMPING_REGISTRATION 的初始值。」。
 
 工具與測試使用的變數（不影響 App_Server）：
 
@@ -248,12 +254,14 @@ bun scripts/scan-secrets.mjs [--root <dir>] [--allowlist <file>]
 
 Build_Image 與本機開發使用相同的工具鏈（Bun 1.3.14，見 `ci/toolchain.json`）。Caddy proxy（`deploy/caddy/`）是唯一發布連接埠的服務；App 容器以 `CAMPING_BIND_ADDRESS=0.0.0.0` 在 internal 網路內監聽，`CAMPING_ALLOWED_HOSTS` 取自 `<env>.env` 的 `ALLOWED_HOSTS`，`CAMPING_TRUSTED_PROXIES` 只設為 proxy 的固定 `/32`；Database 不發布任何連接埠。
 
-**存取範圍只限區域網路：**
+**存取範圍：**
 
-- proxy 只綁定 `<env>.env` 的 `LAN_IP`。`deploy/host/install.sh --lan-cidr <CIDR>` 安裝的 DOCKER-USER 規則（`deploy/host/docker-user.rules`）只允許來源位於設定 LAN 網段的主機連線至 Docker 發布的連接埠，網段外來源無法建立 TCP 連線（規則位於 Docker 轉送層，UFW／INPUT 規則擋不住 Docker 發布的連接埠）。
-- 安裝後以 `sudo deploy/host/verify-host.sh --lan-cidr <CIDR>` 確認防火牆、Database 未發布、備份目錄權限與部署帳號設定。
-- **公開網際網路曝露不在支援範圍內**，包含路由器連接埠轉發、對外公開的反向代理、以及任何通道服務（tunnel）。不要為了對外公開而移除 Allowed_Hosts、Setup_Token 或 LAN 網段限制。
-- 唯一的例外是 Jenkins 的 `/github-webhook/`：GitHub 需要從網際網路送出 webhook，所以 Nginx Proxy Manager 只公開這個路徑且只接受 POST，Jenkins 的其他路徑只允許 LAN（見 [`ci/jenkins/README.md`](ci/jenkins/README.md)）。App、LAN Registry 與 Deploy_Host 都不對外公開。
+- proxy 只綁定 `<env>.env` 的 `LAN_IP`。`deploy/host/install.sh --lan-cidr <CIDR>[,...] [--public-port <port>[,...]]` 安裝的 DOCKER-USER 規則（`deploy/host/docker-user.rules`）只允許來源位於設定 LAN 網段的主機連線至 Public_Port 以外的 Docker 發布連接埠（包含 Staging 與 Production 的 LM_Proxy 連接埠），網段外來源無法建立 TCP 連線（規則位於 Docker 轉送層，UFW／INPUT 規則擋不住 Docker 發布的連接埠）。Public_Port 是同主機 Edge_Proxy（Nginx Proxy Manager）發布的 80／443，接受任何來源。
+- 安裝後以 `sudo deploy/host/verify-host.sh --lan-cidr <CIDR>[,...] --public-port <port>[,...]|none` 確認防火牆、Database 未發布、備份目錄權限、部署帳號與 Edge_Trusted_Proxies 設定。
+- **Staging、LAN Registry 與 Deploy_Host（SSH、LM_Proxy 連接埠）只允許區域網路存取。**
+- **Production 只能經同主機的 Edge_Proxy 對網際網路公開**：Cloudflare（Proxied、SSL/TLS Full (strict)）→ Nginx Proxy Manager 的 `www.our-littlemoments.com` Proxy Host → Production LM_Proxy 的 LAN 連接埠；apex `our-littlemoments.com` 以 301 轉址至 `https://www.our-littlemoments.com`。LM_Proxy 只採信 `LM_EDGE_TRUSTED_PROXIES`（Edge_Proxy 與 Cloudflare 的位址）送來的 `X-Forwarded-For`／`X-Forwarded-Proto`，App 仍只採信 proxy 的固定 `/32`。設定步驟、Docker 網段與 Cloudflare 範圍的更新見 [`deploy/README.md`](deploy/README.md)。
+- **Jenkins 只公開 `/github-webhook/`**：GitHub 需要從網際網路送出 webhook，所以 Nginx Proxy Manager 只公開這個路徑且只接受 POST，Jenkins 的其他路徑只允許 LAN（見 [`ci/jenkins/README.md`](ci/jenkins/README.md)）。
+- 其他公開網際網路曝露方式**不在支援範圍內**，包含其他路由器連接埠轉發、其他對外公開的反向代理、以及任何通道服務（tunnel）。不要為了對外公開而移除 Allowed_Hosts、Setup_Token 或 LAN 網段限制。
 
 首次管理員設定：Pipeline 由 Credential_Store 提供 `CAMPING_SETUP_TOKEN`（`lm-<env>-setup-token`）。若 `app.env` 未設定，App 每次啟動自動產生設定碼並只寫入容器日誌，只能在 Deploy_Host 本機以 `sudo docker logs lm-<env>-app-<color>-1 2>&1 | grep Setup_Token` 讀取；建立管理員後即失效。也可以在 Deploy_Host 上以 `create-admin` 建立（見[帳號維運指令](#帳號維運指令create-admin-與-reset-password)）。
 

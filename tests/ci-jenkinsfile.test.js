@@ -664,13 +664,15 @@ describe('Trusted_Ref 專用階段：Migration Compatibility 與 DAST（Req 7、
     expect(app).toContain('-e CAMPING_BIND_ADDRESS=0.0.0.0');
     expect(app).toContain('-e "CAMPING_ALLOWED_HOSTS=$LM_DAST_APP"');
     expect(app).toContain('--mount "type=bind,src=$WORKSPACE,dst=/app,readonly"');
-    // 隔離探測目標的 PLACEHOLDER 不是 IP 位址字面值，未取代即失敗（fail closed）。
+    // 隔離探測目標：同主機 192.168.1.121 上所有已發布的連接埠（design.md 第 18.6 節），每項都通過格式檢查；
+    // 主機名稱與未取代的佔位符不是 IP 位址字面值，格式檢查拒絕（fail closed）。
     const probeFn = functionBody('List dastProbeTargets()');
     const probeRe = new RegExp(/==~ \/(\^[^\n]+\$)\//.exec(probeFn)?.[1]);
-    const placeholder = /LM_DAST_PROBE_TARGETS\s*=\s*'([^']+)'/.exec(source)?.[1].split(' ');
-    expect(placeholder.length).toBeGreaterThan(0);
-    for (const t of placeholder) expect(probeRe.test(t)).toBe(false);
+    const targets = /LM_DAST_PROBE_TARGETS\s*=\s*'([^']+)'/.exec(source)?.[1].split(' ');
+    expect(targets).toEqual([22, 80, 443, 81, 8080, 8081, 8082, 8090, 8443].map((p) => `192.168.1.121:${p}`));
+    for (const t of targets) expect(probeRe.test(t)).toBe(true);
     for (const t of ['192.168.1.10:22', '[fd00::1]:443']) expect(probeRe.test(t)).toBe(true);
+    for (const t of ['<deploy-host-ip>:22', 'deploy-host.lan.example:22', '192.168.1.121']) expect(probeRe.test(t)).toBe(false);
     expect(runDast).toContain('set -f');
   });
 
@@ -1608,5 +1610,29 @@ describe('收尾 post { always } 與 post { cleanup }（13.8；Req 2.6、15.4、
     // Init 尚未載入 notify.groovy 時於收尾載入。
     expect(functionBody('def postNotifier()')).toContain("load('ci/notify.groovy')");
     expect([...code.matchAll(/\.notifyAll\(/g)].length).toBe(2);
+  });
+});
+
+describe('同主機部署值（design.md 第 18.6 節）', () => {
+  const envValue = (text, name) => new RegExp(`^\\s*${name} = '([^']*)'$`, 'm').exec(text)?.[1];
+
+  test('Jenkinsfile、rollback 與 restore-drill 的 Deploy_Host 為 192.168.1.121:22，不再有佔位符', () => {
+    for (const file of ['Jenkinsfile', 'ci/jenkins/pipelines/rollback.Jenkinsfile', 'ci/jenkins/pipelines/restore-drill.Jenkinsfile']) {
+      const text = readFileSync(resolve(root, file), 'utf8');
+      expect({ file, host: envValue(text, 'LM_DEPLOY_HOST'), port: envValue(text, 'LM_DEPLOY_PORT') })
+        .toEqual({ file, host: '192.168.1.121', port: '22' });
+      expect({ file, placeholder: /deploy-host\.lan\.example|<deploy-host-ip>|<registry-ip>|<jenkins-ip>/.test(text) })
+        .toEqual({ file, placeholder: false });
+    }
+  });
+
+  test('Smoke_Test 的 LAN origin 與 Database 名稱', () => {
+    expect(envValue(source, 'LM_STAGING_URL')).toBe('http://192.168.1.121:8081');
+    expect(envValue(source, 'LM_PROD_URL')).toBe('http://192.168.1.121:8082');
+    expect(envValue(source, 'LM_STAGING_DB_NAME')).toBe('little_moments_staging');
+    expect(envValue(source, 'LM_PROD_DB_NAME')).toBe('little_moments');
+    // 兩個 URL 都通過 assertStagingConfig／assertProductionConfig 的格式檢查。
+    const urlRe = /^https?:\/\/[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[1-9][0-9]{0,4})?$/;
+    for (const name of ['LM_STAGING_URL', 'LM_PROD_URL']) expect(urlRe.test(envValue(source, name))).toBe(true);
   });
 });

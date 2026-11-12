@@ -416,3 +416,95 @@ PY
   [ "$(count_files 'staging-20240101T000010Z-*')" -eq 0 ]
   [ "$(count_files 'staging-20240101T000011Z-*')" -eq 0 ]
 }
+
+# ---------------------------------------------------------------------------------------------
+# Req 25.7、25.8：Edge_Trusted_Proxies（LM_EDGE_TRUSTED_PROXIES）與 LM_LAN_CIDR 在任何 Docker 動作前驗證
+# 範例只使用文件用位址（RFC 5737／3849）與私有網段，不含實際的 Cloudflare 範圍。
+# ---------------------------------------------------------------------------------------------
+
+@test "edge: empty or whitespace-only LM_EDGE_TRUSTED_PROXIES skips the check (LM_LAN_CIDR not required)" {
+  idle_green
+  local v
+  for v in '' '   ' $'\t'; do
+    : >"$FAKE_DOCKER_LOG"
+    set_edge "$v"
+    lm staging health green
+    assert_status 0
+    assert_call 'exec -T proxy wget'
+  done
+}
+
+@test "edge: a Cloudflare-style IPv4/IPv6 list with an Edge_Proxy subnet is accepted" {
+  idle_green
+  set_edge $'172.18.0.0/16 192.168.1.121/32 198.51.100.0/24  203.0.113.0/25\t2001:db8::/32 2001:DB8:abcd::/48 64:ff9b::192.0.2.0/120 2001:db8::1 198.51.100.7' \
+    192.168.1.0/24
+  lm staging health green
+  assert_status 0
+  assert_call 'exec -T proxy wget'
+}
+
+@test "edge: 64 entries are accepted" {
+  idle_green
+  local i list=""
+  for ((i = 0; i < 64; i++)); do list+="10.0.$i.0/24 "; done
+  set_edge "$list" 192.168.1.0/24
+  lm staging health green
+  assert_status 0
+}
+
+@test "edge: invalid, prefix-0, IPv4-mapped and LAN-covering entries exit 2 before any docker call" {
+  idle_green
+  local bad
+  for bad in 0.0.0.0/0 ::/0 ::ffff:0:0/96 ::ffff:192.168.1.0/120 ::/8 192.168.0.0/16 192.168.1.0/24 192.0.0.0/2 \
+    not-an-ip 10.0.0.256 010.0.0.1 10.0.0.0/33 10.0.0.0/08 2001:db8::/129 2001:db8:::1 1::2::3 fe80::1%eth0 \
+    '[2001:db8::1]' 1:2:3:4:5:6:7:8:9 '*' 10.0.0.0/8/9; do
+    : >"$FAKE_DOCKER_LOG"
+    set_edge "198.51.100.0/24 $bad 2001:db8::/32" 192.168.1.0/24
+    lm staging deploy "$D2"
+    assert_status 2
+    assert_contains "$(last_line)" '"reason":"config_invalid"'
+    assert_contains "$(last_line)" '"field":"LM_EDGE_TRUSTED_PROXIES"'
+    assert_contains "$(last_line)" "#2 $bad："
+    # 只輸出無效項目。
+    [[ $(last_line) != *198.51.100.0/24* && $(last_line) != *2001:db8::/32* ]]
+    assert_no_docker_calls
+  done
+}
+
+@test "edge: every invalid entry is reported with its position" {
+  idle_green
+  set_edge '0.0.0.0/0 198.51.100.0/24 bogus' 192.168.1.0/24
+  lm staging deploy "$D2"
+  assert_status 2
+  assert_contains "$(last_line)" '"invalid":["0.0.0.0/0","bogus"]'
+  assert_contains "$(last_line)" '#1 0.0.0.0/0：前綴長度不得為 0'
+  assert_contains "$(last_line)" '#3 bogus'
+  assert_no_docker_calls
+}
+
+@test "edge: more than 64 entries exit 2 before any docker call" {
+  idle_green
+  local i list=""
+  for ((i = 0; i < 65; i++)); do list+="10.0.$i.0/24 "; done
+  set_edge "$list" 192.168.1.0/24
+  lm staging deploy "$D2"
+  assert_status 2
+  assert_contains "$(last_line)" '"reason":"config_invalid"'
+  assert_contains "$(last_line)" '65 個項目'
+  assert_no_docker_calls
+}
+
+@test "edge: non-empty LM_EDGE_TRUSTED_PROXIES requires a valid LM_LAN_CIDR" {
+  idle_green
+  local lan
+  for lan in '' 192.168.1.1/24 192.168.1.0/7 192.168.1.0/24, 'a,b' 2001:db8::/32 \
+    1.0.0.0/8,2.0.0.0/8,3.0.0.0/8,4.0.0.0/8,5.0.0.0/8,6.0.0.0/8,7.0.0.0/8,8.0.0.0/8,9.0.0.0/8; do
+    : >"$FAKE_DOCKER_LOG"
+    set_edge 198.51.100.0/24 "$lan"
+    lm staging deploy "$D2"
+    assert_status 2
+    assert_contains "$(last_line)" '"reason":"config_invalid"'
+    assert_contains "$(last_line)" '"field":"LM_LAN_CIDR"'
+    assert_no_docker_calls
+  done
+}
