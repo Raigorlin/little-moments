@@ -187,7 +187,7 @@ describe('restore-drill.Jenkinsfile', () => {
     expect(jfCode).toMatch(/if \(status == 'SUCCESS' && env\.LM_DRILL_PASSED != 'true'\) \{\s*status = 'FAILURE'/);
   });
 
-  test('SSH：憑證只以 withCredentials 綁定、嚴格主機金鑰檢查；Build_Image 以 digest 引用（PLACEHOLDER fail closed）', () => {
+  test('SSH：憑證只以 withCredentials 綁定、嚴格主機金鑰檢查；Build_Image 以固定 digest 引用', () => {
     expect([...jfCode.matchAll(/credentialsId:/g)].length).toBe(3);
     expect(jfCode).toContain("sshUserPrivateKey(credentialsId: env.LM_SSH_PROD_CREDENTIALS, keyFileVariable: 'LM_SSH_KEY', usernameVariable: 'LM_SSH_USER')");
     expect(jfCode).toContain("file(credentialsId: env.LM_KNOWN_HOSTS_CREDENTIALS, variable: 'LM_KNOWN_HOSTS')");
@@ -195,7 +195,7 @@ describe('restore-drill.Jenkinsfile', () => {
       expect(jf).toContain(opt);
     }
     expect(jf).not.toMatch(/StrictHostKeyChecking=(no|accept-new)|ssh-keyscan/);
-    expect(/BUILD_IMAGE = '([^']+)'/.exec(jfCode)?.[1]).toMatch(/@sha256:<digest>$/);
+    expect(/BUILD_IMAGE = '([^']+)'/.exec(jfCode)?.[1]).toBe('registry.our-littlemoments.com:8443/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f');
     expect(jfCode).toContain('ReplayCause');
   });
 });

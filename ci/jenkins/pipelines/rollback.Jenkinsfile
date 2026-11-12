@@ -43,8 +43,10 @@ pipeline {
   }
 
   environment {
-    // PLACEHOLDER：`sha256:<digest>` 必須由維運者以 infra/build-image 輸出的實際 digest 取代；未取代時 Init 失敗（fail closed）。
-    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:<digest>'
+    // Build_Image 只以 digest 引用（Req 3.1）。digest 來源：infra/build-image Job 建置 commit 5e809e4 的輸出。
+    // 更新方式：重新執行 infra/build-image，以新 digest 在同一個 commit 內取代根目錄 Jenkinsfile 與
+    // ci/jenkins/pipelines/{rollback,restore-drill,digest-lookup}.Jenkinsfile 的 BUILD_IMAGE；格式不符時 Init 失敗（fail closed）。
+    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f'
     // PLACEHOLDER：Deploy_Host 的 LAN 主機名稱與 SSH 連接埠（非秘密）；known_hosts 憑證須含對應的主機金鑰
     // （連接埠非 22 時為 `[host]:port` 形式）。
     LM_DEPLOY_HOST = 'deploy-host.lan.example'
@@ -489,7 +491,7 @@ def inBuildImage(Closure body) {
 String buildImageDigest() {
   String ref = env.BUILD_IMAGE ?: ''
   if (!(ref ==~ /^[a-z0-9][a-z0-9.\-]*(:[0-9]+)?\/[a-z0-9][a-z0-9._\/\-]*@sha256:[0-9a-f]{64}$/)) {
-    error('Build_Image 必須以 <registry>/<repo>@sha256:<64 hex> 引用；請以 infra/build-image 輸出的 digest 取代 PLACEHOLDER')
+    error('Build_Image 必須以 <registry>/<repo>@sha256:<64 hex> 引用；請以 infra/build-image 輸出的 digest 更新 BUILD_IMAGE')
   }
   return ref.substring(ref.indexOf('@') + 1)
 }

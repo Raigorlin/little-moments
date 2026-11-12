@@ -540,7 +540,7 @@ describe('digest-lookup CLI', () => {
     const src = readFileSync(resolve(import.meta.dir, '..', 'ci', 'jenkins', 'pipelines', 'digest-lookup.Jenkinsfile'), 'utf8');
     expect(src.match(/string\(name: '([A-Z_]+)'/g)).toEqual(["string(name: 'DIGEST'"]);
     expect(src).not.toMatch(/booleanParam|choice\(|SKIP|BYPASS/i);
-    expect(src).toContain("BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:<digest>'");
+    expect(src).toContain("BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f'");
     expect(src).toContain('bun ci/digest-lookup.mjs --digest "$LM_DIGEST" --out "$LM_LOOKUP_OUT"');
     expect(src).toContain('查無對應紀錄');
     // 所有 sh 腳本皆為單引號或三個單引號字串（不經 Groovy 插值）。

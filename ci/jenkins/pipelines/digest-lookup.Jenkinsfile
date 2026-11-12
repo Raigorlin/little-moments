@@ -31,9 +31,11 @@ pipeline {
 
   environment {
     // Build_Image 只以 digest 引用（Req 3.1）。
-    // PLACEHOLDER：`sha256:<digest>` 必須由維運者以 infra/build-image Job 輸出的實際 digest 取代；
-    // 未取代時格式檢查會使建置失敗（fail closed），不會退回任何可變 tag。
-    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:<digest>'
+    // digest 來源：infra/build-image Job 建置 commit 5e809e4 的輸出（建置描述與 reports/build-image-digest.txt）。
+    // 更新方式：重新執行 infra/build-image，以新 digest 在同一個 commit 內取代根目錄 Jenkinsfile 與
+    // ci/jenkins/pipelines/{rollback,restore-drill,digest-lookup}.Jenkinsfile 的 BUILD_IMAGE。
+    // 格式不符時格式檢查會使建置失敗（fail closed），不會退回任何可變 tag。
+    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f'
     LM_REGISTRY_PULL_CREDENTIALS = 'lm-registry-pull'
     LM_JENKINS_API_CREDENTIALS = 'lm-jenkins-api-readonly'
     LM_LOOKUP_OUT = 'reports/digest-lookup.json'
@@ -137,7 +139,7 @@ pipeline {
 String buildImageDigest() {
   String ref = env.BUILD_IMAGE ?: ''
   if (!(ref ==~ /^[a-z0-9][a-z0-9.\-]*(:[0-9]+)?\/[a-z0-9][a-z0-9._\/\-]*@sha256:[0-9a-f]{64}$/)) {
-    error('Build_Image 必須以 <registry>/<repo>@sha256:<64 hex> 引用；請以 infra/build-image 輸出的 digest 取代本檔中的 PLACEHOLDER')
+    error('Build_Image 必須以 <registry>/<repo>@sha256:<64 hex> 引用；請以 infra/build-image 輸出的 digest 更新本檔的 BUILD_IMAGE')
   }
   return ref.substring(ref.indexOf('@') + 1)
 }

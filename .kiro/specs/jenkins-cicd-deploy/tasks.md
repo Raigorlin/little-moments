@@ -668,6 +668,13 @@
     - 更新斷言 Node.js 下載檔名或格式的測試，執行 `bun test tests/ci-build-image-pipeline.test.js tests/ci-lint.test.js tests/ci-toolchain.test.js`
     - _Requirements: 3.1, 3.2_
 
+  - [x] 20.2 固定 Build_Image digest
+    - 第一次成功的 `infra/build-image`（commit 5e809e4）輸出 `registry.our-littlemoments.com:8443/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f`
+    - 將 `Jenkinsfile`、`ci/jenkins/pipelines/rollback.Jenkinsfile`、`ci/jenkins/pipelines/restore-drill.Jenkinsfile`、`ci/jenkins/pipelines/digest-lookup.Jenkinsfile` 的 `BUILD_IMAGE` 由 `sha256:<digest>` 佔位符改為上述 digest，並把「PLACEHOLDER」註解改為說明 digest 來源（infra/build-image、commit 5e809e4）與更新方式；`build-image.Jenkinsfile` 不變
+    - 更新斷言佔位符的測試（`tests/ci-lint.test.js`、`tests/ci-rollback-pipeline.test.js`、`tests/ci-digest-lookup.test.js` 等），改為斷言四個檔案使用同一個固定 digest 且格式為 64 位十六進位；保留「不得使用可變 tag」的檢查；搜尋 docs／README 中說明 BUILD_IMAGE 仍為佔位符的段落並同步更新
+    - 執行 `bun test tests/ci-*.test.js`，確認全部通過
+    - _Requirements: 3.1, 3.2_
+
 ## Notes
 
 - 標記 `*` 的子任務為選用（property test、整合測試與額外檢查），可為加快 MVP 而略過。
@@ -718,7 +725,8 @@
     { "id": 32, "tasks": ["19.3"] },
     { "id": 33, "tasks": ["19.5"] },
     { "id": 34, "tasks": ["19.6"] },
-    { "id": 35, "tasks": ["20.1"] }
+    { "id": 35, "tasks": ["20.1"] },
+    { "id": 36, "tasks": ["20.2"] }
   ]
 }
 ```

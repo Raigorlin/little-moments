@@ -8,8 +8,8 @@
 //   * CAMPING_OPENAI_* 預設為空字串，Jenkins 不定義 OpenAI 憑證（Req 15.6–15.8）
 //
 // 本檔只針對上列需求做彙整檢查；各 Pipeline 的細部結構檢查在 ci-jenkinsfile／ci-build-image-pipeline 等測試中。
-// sha256:<digest> PLACEHOLDER 在這裡視為合格的固定形式：未取代時映像解析失敗（fail closed），
-// 由 infra/build-image 的 Validate 與各 Pipeline 的 Init 階段另行拒絕。
+// Dockerfile FROM 解析器與 Compose db 的檢查把 sha256:<digest> PLACEHOLDER 視為合格的固定形式：未取代時映像解析失敗
+// （fail closed），由 infra/build-image 的 Validate 另行拒絕。BUILD_IMAGE 已固定（tasks 20.2），只接受 64 位十六進位 digest。
 
 import { describe, expect, test } from 'bun:test';
 import { YAML } from 'bun';
@@ -169,7 +169,7 @@ describe('Build_Image 以 digest 引用（Req 3.1）', () => {
       // infra/build-image 自己產生 Build_Image，不以 BUILD_IMAGE 執行；其他 Pipeline 都必須定義。
       if (!file.endsWith('build-image.Jenkinsfile')) expect(refs.length).toBe(1);
       for (const ref of refs) {
-        expect(ref).toMatch(/^[a-z0-9][a-z0-9.-]*(:[0-9]+)?\/[a-z0-9][a-z0-9._/-]*@sha256:(?:[0-9a-f]{64}|<digest>)$/);
+        expect(ref).toMatch(/^[a-z0-9][a-z0-9.-]*(:[0-9]+)?\/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$/);
       }
       // 不以可變 tag 拉取 Build_Image（docker.image(...) 只接受 env.BUILD_IMAGE）。
       for (const m of code.matchAll(/docker\.image\(([^)]*)\)/g)) expect(m[1].trim()).toBe('env.BUILD_IMAGE');
@@ -182,6 +182,8 @@ describe('Build_Image 以 digest 引用（Req 3.1）', () => {
 // ---------------------------------------------------------------------------
 
 const REGISTRY = 'registry.our-littlemoments.com:8443';
+// infra/build-image 第一次成功建置（commit 5e809e4）輸出的 Build_Image（tasks 20.2）。
+const BUILD_IMAGE_REF = `${REGISTRY}/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f`;
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Jenkinsfile 的鏡像映像變數 → deploy/registry/mirror.list 的名稱。
 const MIRROR_VARS = {
@@ -200,20 +202,25 @@ describe('LAN Registry 與映像的實際值（tasks 19.4）', () => {
       expect({ v, n: refs.length }).toEqual({ v, n: 1 });
       expect(refs[0]).toMatch(new RegExp(`^${escapeRe(REGISTRY)}/little-moments/mirror/${escapeRe(name)}@sha256:[0-9a-f]{64}$`));
     }
-    // 沒有其他未列入的鏡像映像變數，也沒有殘留的 digest PLACEHOLDER（BUILD_IMAGE 除外）。
+    // 沒有其他未列入的鏡像映像變數，也沒有殘留的 digest PLACEHOLDER。
     const mirrorVars = [...rootCode.matchAll(/^\s*([A-Z_]+)\s*=\s*'[^']*\/mirror\/[^']*@sha256:/gm)].map((m) => m[1]);
     expect(mirrorVars.sort()).toEqual(Object.keys(MIRROR_VARS).sort());
     const placeholders = [...rootCode.matchAll(/^\s*([A-Z_]+)\s*=\s*'[^']*@sha256:<digest>'/gm)].map((m) => m[1]);
-    expect(placeholders).toEqual(['BUILD_IMAGE']);
+    expect(placeholders).toEqual([]);
     expect(envValues(rootCode, 'LM_TRIVY_DB_REPOSITORY')).toEqual([`${REGISTRY}/little-moments/mirror/trivy-db:2`]);
     expect(envValues(rootCode, 'LM_IMAGE_REPO')).toEqual([`${REGISTRY}/little-moments`]);
     expect(envValues(rootCode, 'LM_POSTGRES_IMAGE')).toEqual(['postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3']);
   });
 
-  test('BUILD_IMAGE 仍為 LAN Registry 上的 PLACEHOLDER（待 infra/build-image 首次推送後填入）', () => {
-    for (const file of pipelineFiles.filter((f) => !f.endsWith('build-image.Jenkinsfile'))) {
-      expect({ file, refs: envValues(stripComments(read(file)), 'BUILD_IMAGE') })
-        .toEqual({ file, refs: [`${REGISTRY}/little-moments/build-image@sha256:<digest>`] });
+  test('BUILD_IMAGE 固定為 infra/build-image（commit 5e809e4）輸出的 digest，四個 Pipeline 使用同一個值', () => {
+    const users = pipelineFiles.filter((f) => !f.endsWith('build-image.Jenkinsfile'));
+    expect(users.sort()).toEqual(['Jenkinsfile', ...['digest-lookup', 'restore-drill', 'rollback'].map((f) => `${PIPELINE_DIR}/${f}.Jenkinsfile`)].sort());
+    for (const file of users) {
+      const refs = envValues(stripComments(read(file)), 'BUILD_IMAGE');
+      expect({ file, refs }).toEqual({ file, refs: [BUILD_IMAGE_REF] });
+      expect(refs[0]).toMatch(new RegExp(`^${escapeRe(REGISTRY)}/little-moments/build-image@sha256:[0-9a-f]{64}$`));
+      // 原始檔中也沒有殘留的 `<digest>` 或以可變 tag 引用 build-image。
+      expect({ file, bad: /build-image@sha256:<digest>|build-image:[A-Za-z0-9._-]+'/.test(read(file)) }).toEqual({ file, bad: false });
     }
     const bi = stripComments(read(`${PIPELINE_DIR}/build-image.Jenkinsfile`));
     expect(envValues(bi, 'LM_BI_REPO')).toEqual([`${REGISTRY}/little-moments/build-image`]);

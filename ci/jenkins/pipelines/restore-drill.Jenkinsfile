@@ -3,7 +3,7 @@
 // 排程：cron `H 3 1,15 * *`（每月 1 日與 15 日，兩次演練間隔最多 16 日，滿足「最多 30 日」）；亦可手動觸發。
 //
 // 流程：
-//   Init   checkout、Build_Image（只以 digest 引用，PLACEHOLDER 未取代時失敗）、Deploy_Host 名稱格式檢查
+//   Init   checkout、Build_Image（只以 digest 引用，格式不符時失敗）、Deploy_Host 名稱格式檢查
 //   Drill  經 SSH 執行 `lm-deploy prod drill`（forced command 綁定 prod，子命令經 SSH_ORIGINAL_COMMAND 傳入）：
 //          Deploy_Host 取最新已驗證的 Production 備份並重算 sha256 → 在獨立 Compose 專案 lm-drill-prod-<8 hex>
 //          （只有 internal 網路與匿名卷，不連接 Production 的網路或資料卷）pg_restore → Migration_Runner 補齊遷移
@@ -44,8 +44,10 @@ pipeline {
   }
 
   environment {
-    // PLACEHOLDER：`sha256:<digest>` 必須由維運者以 infra/build-image 輸出的實際 digest 取代；未取代時 Init 失敗（fail closed）。
-    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:<digest>'
+    // Build_Image 只以 digest 引用（Req 3.1）。digest 來源：infra/build-image Job 建置 commit 5e809e4 的輸出。
+    // 更新方式：重新執行 infra/build-image，以新 digest 在同一個 commit 內取代根目錄 Jenkinsfile 與
+    // ci/jenkins/pipelines/{rollback,restore-drill,digest-lookup}.Jenkinsfile 的 BUILD_IMAGE；格式不符時 Init 失敗（fail closed）。
+    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f'
     // PLACEHOLDER：Deploy_Host 的 LAN 主機名稱與 SSH 連接埠（非秘密）；known_hosts 憑證須含對應的主機金鑰。
     LM_DEPLOY_HOST = 'deploy-host.lan.example'
     LM_DEPLOY_PORT = '22'
@@ -299,7 +301,7 @@ def inBuildImage(Closure body) {
 String buildImageDigest() {
   String ref = env.BUILD_IMAGE ?: ''
   if (!(ref ==~ /^[a-z0-9][a-z0-9.\-]*(:[0-9]+)?\/[a-z0-9][a-z0-9._\/\-]*@sha256:[0-9a-f]{64}$/)) {
-    error('Build_Image 必須以 <registry>/<repo>@sha256:<64 hex> 引用；請以 infra/build-image 輸出的 digest 取代 PLACEHOLDER')
+    error('Build_Image 必須以 <registry>/<repo>@sha256:<64 hex> 引用；請以 infra/build-image 輸出的 digest 更新 BUILD_IMAGE')
   }
   return ref.substring(ref.indexOf('@') + 1)
 }

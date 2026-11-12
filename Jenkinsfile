@@ -33,9 +33,11 @@ pipeline {
 
   environment {
     // Build_Image 只以 digest 引用（Req 3.1）。
-    // PLACEHOLDER：`sha256:<digest>` 必須由維運者以 infra/build-image Job 輸出的實際 digest 取代；
-    // 未取代時 Init 階段的格式檢查會使建置失敗（fail closed），不會退回任何可變 tag。
-    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:<digest>'
+    // digest 來源：infra/build-image Job 建置 commit 5e809e4 的輸出（建置描述與 reports/build-image-digest.txt）。
+    // 更新方式：ci/build-image/Dockerfile 或 ci/toolchain.json 變更後重新執行 infra/build-image，
+    // 以新輸出的 digest 在同一個 commit 內取代本檔與 ci/jenkins/pipelines/{rollback,restore-drill,digest-lookup}.Jenkinsfile 的 BUILD_IMAGE。
+    // 格式不是 `<registry>/<repo>@sha256:<64 hex>` 時 Init 階段失敗（fail closed），不會退回任何可變 tag。
+    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f'
     // Build_Record 路徑（封存前由 post 階段經 ci/scrub.mjs 處理）。
     LM_RECORD = 'reports/build-record.json'
     // 憑證 ID（值只存在 Credential_Store；ci/ 與 release/ 資料夾各自定義）。
@@ -4911,7 +4913,7 @@ boolean isPinnedImage(String ref) {
 String buildImageDigest() {
   String ref = env.BUILD_IMAGE ?: ''
   if (!isPinnedImage(ref)) {
-    error('Build_Image 必須以 <registry>/<repo>@sha256:<64 hex> 引用；請以 infra/build-image 輸出的 digest 取代 Jenkinsfile 中的 PLACEHOLDER')
+    error('Build_Image 必須以 <registry>/<repo>@sha256:<64 hex> 引用；請以 infra/build-image 輸出的 digest 更新 Jenkinsfile 的 BUILD_IMAGE')
   }
   return ref.substring(ref.indexOf('@') + 1)
 }

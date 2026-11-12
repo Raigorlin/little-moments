@@ -2636,6 +2636,23 @@
         "executionId": "0f4d95ae-63bc-4ce6-bb5f-30c41c14d0b7",
         "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
         "timestamp": 1794459422939
+      },
+      {
+        "executionId": "8c0d3373-0c30-41cc-b47d-5b304507ccac",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794461348991
+      }
+    ],
+    "20.2 固定 Build_Image digest": [
+      {
+        "executionId": "8c0d3373-0c30-41cc-b47d-5b304507ccac",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794461035816
+      },
+      {
+        "executionId": "8c0d3373-0c30-41cc-b47d-5b304507ccac",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794461348900
       }
     ]
   }

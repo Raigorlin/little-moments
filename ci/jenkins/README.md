@@ -256,6 +256,7 @@ Jenkins 解除 keepLog 需要 Run/Delete，與 Req 21.12「非管理員不可刪
 - `ci/release-approvers.json`：唯一的 Release_Approver `jacklin` 與其 git email。
 - LAN Registry 一律為 `registry.our-littlemoments.com:8443`：`Jenkinsfile`、`ci/jenkins/pipelines/*.Jenkinsfile` 與 `deploy/compose/*.env.example` 的 `LM_IMAGE_REPO`。
 - 映像 digest：`Jenkinsfile` 與 `build-image.Jenkinsfile` 的鏡像工具映像（gitleaks、osv-scanner、Trivy、Semgrep、Syft、crane、cosign、ZAP）、`LM_POSTGRES_IMAGE`、`deploy/compose/` 的 db 與 proxy、`deploy/registry/compose.yaml` 的 Caddy 與 registry、`Dockerfile` 與 `ci/build-image/Dockerfile` 的 `FROM`、`BUN_SHA256`、`NODE_SHA256`（Bun 1.3.14，見 `ci/toolchain.json`）。
+- `BUILD_IMAGE`（`Jenkinsfile`、`rollback.Jenkinsfile`、`restore-drill.Jenkinsfile`、`digest-lookup.Jenkinsfile`）：四個檔案使用同一個 `registry.our-littlemoments.com:8443/little-moments/build-image@sha256:` digest，為 `infra/build-image` 建置 commit `5e809e4` 的輸出。`ci/build-image/Dockerfile` 或 `ci/toolchain.json` 變更後，重新執行 `infra/build-image`，以建置描述與 `reports/build-image-digest.txt` 的新 digest 在同一個 commit 內取代這四個檔案的 `BUILD_IMAGE`，並同步更新斷言此值的測試（`tests/ci-lint.test.js` 的 `BUILD_IMAGE_REF`、`ci-rollback-pipeline`、`ci-restore-drill`、`ci-digest-lookup`）。
 - `deploy/registry/htpasswd.example` 刻意只含佔位符；實際的 `secrets/htpasswd` 只存在 Registry 主機上（見 [`deploy/registry/README.md`](../../deploy/registry/README.md)）。
 
 ## 仍待填入
@@ -264,7 +265,6 @@ Jenkins 解除 keepLog 需要 Run/Delete，與 Req 21.12「非管理員不可刪
 
 - `Jenkinsfile`、`ci/jenkins/pipelines/rollback.Jenkinsfile`、`restore-drill.Jenkinsfile`：`LM_DEPLOY_HOST`／`LM_DEPLOY_PORT`（目前為 `deploy-host.lan.example`、`22`）。
 - `Jenkinsfile`：`LM_STAGING_URL`、`LM_PROD_URL`、`LM_DAST_PROBE_TARGETS`（IP 位址字面值，以空白分隔的 `<IP>:<port>`）、Staging／Production Database 名稱（`LM_STAGING_DB_NAME`、`LM_PROD_DB_NAME`，須與 Deploy_Host 上 `db.env` 的 `POSTGRES_DB` 相同）。
-- `BUILD_IMAGE`（`Jenkinsfile`、`rollback.Jenkinsfile`、`restore-drill.Jenkinsfile`、`digest-lookup.Jenkinsfile`）：仍為 `@sha256:<digest>`。首次執行 `infra/build-image` 後，以建置描述與 `reports/build-image-digest.txt` 的 digest 取代。
 - Registry 的 Deploy_Host 拉取帳號（例如 `lm-pull-staging`、`lm-pull-prod`）：Deploy_Host 安裝時再加入 `secrets/htpasswd`。
 - 以下秘密檔目前的內容是字面值 `placeholder`（非空，所以 Job DSL 會建立憑證，但用到它的步驟會失敗）。填入後執行「Reload existing configuration」：
 

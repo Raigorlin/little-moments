@@ -229,14 +229,14 @@ describe('SSH 與憑證', () => {
     expect(source).not.toMatch(/StrictHostKeyChecking=(no|accept-new)|ssh-keyscan|known_hosts\s*>>/);
   });
 
-  test('Build_Image 只以 digest 引用；PLACEHOLDER 未取代時格式檢查失敗（fail closed）', () => {
+  test('Build_Image 以固定 digest 引用；格式檢查接受 64 位十六進位 digest、拒絕 PLACEHOLDER 與可變 tag（fail closed）', () => {
     const image = /BUILD_IMAGE = '([^']+)'/.exec(code)?.[1];
-    expect(image).toMatch(/@sha256:<digest>$/);
+    expect(image).toBe('registry.our-littlemoments.com:8443/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f');
     const groovyRe = /ref ==~ \/(.+)\/\)\)/.exec(methodBody('buildImageDigest'))?.[1];
     expect(groovyRe).toBeTruthy();
     const re = new RegExp(groovyRe.replace(/\\\//g, '/'));
-    expect(re.test(image)).toBe(false);
-    expect(image).toBe('registry.our-littlemoments.com:8443/little-moments/build-image@sha256:<digest>');
+    expect(re.test(image)).toBe(true);
+    expect(re.test('registry.our-littlemoments.com:8443/little-moments/build-image@sha256:<digest>')).toBe(false);
     expect(re.test(`registry.our-littlemoments.com:8443/little-moments/build-image@sha256:${'a'.repeat(64)}`)).toBe(true);
     expect(re.test('registry.our-littlemoments.com:8443/little-moments/build-image:latest')).toBe(false);
   });
