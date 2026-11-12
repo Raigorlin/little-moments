@@ -614,7 +614,7 @@ CREATE TABLE trips (
   id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id),
   title TEXT NOT NULL, destination TEXT NOT NULL, start_date TEXT NOT NULL, end_date TEXT NOT NULL,
   description TEXT NOT NULL, note TEXT NOT NULL,
-  cover_kind TEXT NOT NULL CHECK (cover_kind IN ('camp','mountain','lake','night')),
+  cover_kind TEXT NOT NULL CHECK (cover_kind IN ('camp','mountain','lake','night','forest','beach','sunrise')),
   status TEXT NOT NULL CHECK (status IN ('planning','completed')),
   revision INTEGER NOT NULL, people_count INTEGER NOT NULL, state_json TEXT NOT NULL,
   created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL

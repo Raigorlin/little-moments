@@ -193,7 +193,8 @@ describe('Unit Tests 與 Browser Tests 階段（Req 4、5、23.1、23.5）', () 
   test('Ephemeral_Database：digest 固定、internal 網路、tmpfs、不發布連接埠、建置標籤（Req 4.2、4.8）', () => {
     const ref = /LM_POSTGRES_IMAGE\s*=\s*'([^']+)'/.exec(source)?.[1];
     expect(ref).toMatch(/^postgres:[^@\s]+@sha256:/);
-    // 與 deploy/compose/compose.yaml 的 db 使用同一個 repo:tag 與 PLACEHOLDER 形式。
+    // 與 deploy/compose/compose.yaml 的 db 使用同一個 repo:tag 與 digest。
+    expect(ref).toMatch(/@sha256:[0-9a-f]{64}$/);
     const compose = readFileSync(resolve(root, 'deploy/compose/compose.yaml'), 'utf8');
     expect(compose).toContain(`image: ${ref}`);
     expect(startDb).toContain('docker network create --internal');
@@ -357,7 +358,7 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
   test('掃描器映像以 LAN Registry 的 @sha256: digest 固定，且於拉取前驗證（Req 3.1、6.8）', () => {
     for (const name of ['LM_GITLEAKS_IMAGE', 'LM_OSV_SCANNER_IMAGE', 'LM_TRIVY_IMAGE', 'LM_SEMGREP_IMAGE']) {
       const ref = new RegExp(`${name}\\s*=\\s*'([^']+)'`).exec(source)?.[1];
-      expect(ref).toMatch(/^registry\.lan\.example:8443\/[^@\s]+@sha256:/);
+      expect(ref).toMatch(/^registry\.our-littlemoments\.com:8443\/[^@\s]+@sha256:[0-9a-f]{64}$/);
       expect(functionBody('List scannerImages()')).toContain(`env.${name}`);
     }
     expect(functionBody('List scannerImages()')).toContain('isPinnedImage(s)');
@@ -567,7 +568,7 @@ describe('Trusted_Ref 專用階段：Migration Compatibility 與 DAST（Req 7、
     const pullImagesFn = functionBody('void pullImages(List refs)');
     expect(pullImagesFn).toContain('"$LM_IMAGE_REPO":v[0-9]*.[0-9]*.[0-9]*)');
     expect(pullImagesFn).toContain('"$registry"/*@sha256:*) ;;');
-    expect(/LM_IMAGE_REPO\s*=\s*'([^']+)'/.exec(source)?.[1]).toBe('registry.lan.example:8443/little-moments');
+    expect(/LM_IMAGE_REPO\s*=\s*'([^']+)'/.exec(source)?.[1]).toBe('registry.our-littlemoments.com:8443/little-moments');
   });
 
   test('遷移相容性結果寫入 Build_Record：狀態、Release_Tag、digest、遷移檔、原因與失敗的 Smoke_Test 項目（Req 12.5、12.8）', () => {
@@ -630,7 +631,7 @@ describe('Trusted_Ref 專用階段：Migration Compatibility 與 DAST（Req 7、
 
   test('ZAP：digest 固定、--internal 網路、速率 20 rps；ZAP 計畫通過 ci/dast/targets.mjs 驗證（Req 7.2、7.4）', async () => {
     const ref = /LM_ZAP_IMAGE\s*=\s*'([^']+)'/.exec(source)?.[1];
-    expect(ref).toMatch(/^registry\.lan\.example:8443\/[^@\s]+@sha256:/);
+    expect(ref).toMatch(/^registry\.our-littlemoments\.com:8443\/[^@\s]+@sha256:[0-9a-f]{64}$/);
     expect(functionBody('List dastImages()')).toContain('isPinnedImage(ref)');
     for (const k of ['description=lm-dast', 'enabled=true', 'matchStr=.*', 'regex=true', 'reqsPerSec=20', 'groupBy=RULE']) {
       expect(runDast).toContain(`-config 'network.ratelimit.rules.rule(0).${k}'`);
@@ -799,7 +800,7 @@ describe('main 專用的映像階段：Image Build → Image Scan → SBOM → I
   test('映像工具以 LAN Registry 的 @sha256: digest 固定，且於拉取前驗證（Req 3.1、17.3）', () => {
     const tools = functionBody('List imageToolImages()');
     for (const name of ['LM_TRIVY_IMAGE', 'LM_SYFT_IMAGE', 'LM_CRANE_IMAGE', 'LM_COSIGN_IMAGE']) {
-      expect(new RegExp(`${name}\\s*=\\s*'([^']+)'`).exec(source)?.[1]).toMatch(/^registry\.lan\.example:8443\/[^@\s]+@sha256:/);
+      expect(new RegExp(`${name}\\s*=\\s*'([^']+)'`).exec(source)?.[1]).toMatch(/^registry\.our-littlemoments\.com:8443\/[^@\s]+@sha256:[0-9a-f]{64}$/);
       expect(tools).toContain(`env.${name}`);
     }
     expect(tools).toContain('isPinnedImage(s)');

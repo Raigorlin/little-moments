@@ -170,29 +170,38 @@ describe('PLACEHOLDER 與版本檢查（fail closed）', () => {
     expect(v).toMatch(/if \(rc != 0\) \{[\s\S]*error\(/);
   });
 
-  test('目前 repo 的 Dockerfile 仍含 PLACEHOLDER 時會被 Validate 的模式偵測到', () => {
+  test('目前 repo 的 Dockerfile 已填入實際值，符合 Validate 的模式', () => {
     const dockerfile = readFileSync(resolve(root, 'ci/build-image/Dockerfile'), 'utf8');
     const codeLines = dockerfile.split('\n').filter((l) => !/^\s*#/.test(l));
     const placeholders = codeLines.filter((l) => l.includes('sha256:<') || /^\s*ARG\s+[A-Za-z0-9_]+=</.test(l));
     const from = codeLines.filter((l) => /^\s*FROM\s/i.test(l));
     const pinned = from.filter((l) => /^\s*FROM\s+[^\s@]+@sha256:[0-9a-f]{64}(\s+AS\s+[A-Za-z0-9_.-]+)?\s*$/.test(l));
-    // 原始 PLACEHOLDER（FROM ...@sha256:<digest>、ARG *_SHA256=<...>）存在時，Validate 的模式必定判定失敗；
-    // 全部填入後則 FROM 必須全部固定（否則同樣失敗）。
-    const hasRaw = /^FROM .*@sha256:<digest>/m.test(dockerfile) || /^ARG \w+_SHA256=</m.test(dockerfile);
-    expect(placeholders.length > 0 || pinned.length < from.length).toBe(hasRaw);
+    expect(placeholders).toEqual([]);
     expect(from.length).toBeGreaterThan(0);
+    expect(pinned).toEqual(from);
+    for (const name of ['BUN_SHA256', 'NODE_SHA256']) {
+      expect(codeLines.some((l) => new RegExp(`^\\s*ARG\\s+${name}=[0-9a-f]{64}\\s*$`).test(l))).toBe(true);
+    }
+    // syntax 前端同樣以 digest 固定。
+    expect(dockerfile.split('\n')[0]).toMatch(/^# syntax=docker\/dockerfile:1\.10@sha256:[0-9a-f]{64}$/);
+    // 未填入時的 sha256 檢查仍保留（fail closed）。
+    expect(dockerfile).toContain('case "${NODE_SHA256}" in "<"*)');
+    expect(dockerfile).toContain('case "${BUN_SHA256}" in "<"*)');
   });
 
-  test('crane 只以 digest 引用；PLACEHOLDER 未取代時 Init 失敗', () => {
+  test('crane 只以 digest 引用（LAN Registry 的鏡像）；格式不符時 Init 失敗', () => {
     const crane = /LM_CRANE_IMAGE = '([^']+)'/.exec(code)?.[1];
-    expect(crane).toMatch(/^registry\.lan\.example:8443\/.+@sha256:<digest>$/);
+    expect(crane).toMatch(/^registry\.our-littlemoments\.com:8443\/little-moments\/mirror\/crane@sha256:[0-9a-f]{64}$/);
     expect(stage('Init')).toContain("assertDigestRef('LM_CRANE_IMAGE', env.LM_CRANE_IMAGE)");
     const groovyRe = /void assertDigestRef[\s\S]*?ref ==~ \/(.+)\/\)\)/.exec(code)?.[1];
     expect(groovyRe).toBeTruthy();
     const re = new RegExp(groovyRe.replace(/\\\//g, '/'));
-    expect(re.test(crane)).toBe(false);
-    expect(re.test(`registry.lan.example:8443/little-moments/mirror/crane@sha256:${'a'.repeat(64)}`)).toBe(true);
-    expect(re.test('registry.lan.example:8443/little-moments/mirror/crane:latest')).toBe(false);
+    expect(re.test(crane)).toBe(true);
+    expect(re.test('registry.our-littlemoments.com:8443/little-moments/mirror/crane@sha256:<digest>')).toBe(false);
+    expect(re.test('registry.our-littlemoments.com:8443/little-moments/mirror/crane:latest')).toBe(false);
+    // 與根目錄 Jenkinsfile 使用同一個 crane 映像。
+    const root_ = readFileSync(resolve(root, 'Jenkinsfile'), 'utf8');
+    expect(/LM_CRANE_IMAGE = '([^']+)'/.exec(root_)?.[1]).toBe(crane);
   });
 });
 
@@ -207,7 +216,7 @@ describe('建置、工具鏈驗證與推送順序（Req 3.1、3.2）', () => {
       expect(b).toContain(`--label "${l}"`);
     }
     expect(b).not.toMatch(/--build-arg/);
-    expect(/LM_BI_REPO = '([^']+)'/.exec(code)?.[1]).toBe('registry.lan.example:8443/little-moments/build-image');
+    expect(/LM_BI_REPO = '([^']+)'/.exec(code)?.[1]).toBe('registry.our-littlemoments.com:8443/little-moments/build-image');
   });
 
   test('在推送前於剛建置的映像內（無網路、唯讀）執行 verify-toolchain 與 verify-env', () => {

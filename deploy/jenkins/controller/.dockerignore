@@ -1,0 +1,3 @@
+# 建置內容只允許 plugins.txt：secrets/、casc/ 與 .env 絕不能進入 build context。
+*
+!plugins.txt

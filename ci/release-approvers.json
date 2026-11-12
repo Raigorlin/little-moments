@@ -1,8 +1,7 @@
 {
-  "$comment": "Release_Approver 清單（Requirement 12.6、19.3、20.10）。schema 1：approvers[] 每項 { jenkinsId: Jenkins 使用者 ID, emails: 該使用者的 git commit 作者 email（1 個以上） }。jenkinsId 不得重複。以下皆為佔位符，部署前由維運者以實際 Jenkins ID 與 email 取代；請勿提交真實秘密。",
+  "$comment": "Release_Approver 清單（Requirement 12.6、19.3、20.10）。schema 1：approvers[] 每項 { jenkinsId: Jenkins 使用者 ID, emails: 該使用者的 git commit 作者 email（1 個以上） }。jenkinsId 不得重複。以下為實際值（非秘密）。目前只有一位 Release_Approver（jacklin），他同時是主要作者：jacklin 撰寫的破壞性遷移無法被核准（Requirement 12.6、Property 32：核准人不得為遷移作者）。需要核准這類遷移之前，請先加入第二位 Release_Approver。",
   "schema": 1,
   "approvers": [
-    { "jenkinsId": "jenkins-id-placeholder-1", "emails": ["approver1@example.invalid"] },
-    { "jenkinsId": "jenkins-id-placeholder-2", "emails": ["approver2@example.invalid"] }
+    { "jenkinsId": "jacklin", "emails": ["thawtunoo@gmail.com"] }
   ]
 }

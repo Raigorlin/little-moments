@@ -1,0 +1,15 @@
+# Pipeline 使用的第三方工具映像，由 mirror.sh 以 linux/amd64 單一平台複製到
+#   <LM_REGISTRY>/little-moments/mirror/<名稱>:<上游 tag>
+# 格式：每行「<上游映像:tag> <名稱>」，以空白分隔；# 開頭的行與空行略過。
+# 更新版本：修改此檔的 tag → 執行 mirror.sh → 以輸出的 `...@sha256:<digest>` 取代 Jenkinsfile 的
+# LM_*_IMAGE（crane 另含 ci/jenkins/pipelines/build-image.Jenkinsfile 的 LM_CRANE_IMAGE）。
+# trivy-db（Trivy 漏洞資料庫）不在此清單：mirror.sh 最後另行複製，Registry 主機的
+# lm-mirror-trivy-db.timer 每日更新。
+ghcr.io/gitleaks/gitleaks:v8.30.1 gitleaks
+ghcr.io/google/osv-scanner:v2.7.1 osv-scanner
+docker.io/aquasec/trivy:0.76.2 trivy
+docker.io/semgrep/semgrep:1.185.0 semgrep
+docker.io/anchore/syft:v1.57.1 syft
+gcr.io/go-containerregistry/crane:v0.22.1 crane
+ghcr.io/sigstore/cosign/cosign:v2.6.5 cosign
+ghcr.io/zaproxy/zaproxy:2.17.0 zap

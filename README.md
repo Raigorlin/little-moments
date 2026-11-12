@@ -92,7 +92,7 @@ JPEG, PNG, and WebP receipt photos are supported. Images over 10 MB or 20 megapi
 
 ## 本機執行
 
-需要 **Bun 1.3+**（版本以 `ci/toolchain.json` 為準）與一個 PostgreSQL 17 Database。資料改存於 PostgreSQL；`CAMPING_DB`（舊 SQLite 路徑）已不再讀取，設定時只會輸出警告。
+需要 **Bun 1.3.14**（與 `ci/toolchain.json` 及 Build_Image 的工具鏈相同）與一個 PostgreSQL 17 Database。資料改存於 PostgreSQL；`CAMPING_DB`（舊 SQLite 路徑）已不再讀取，設定時只會輸出警告。
 
 1. 安裝與建置前端：
 
@@ -241,13 +241,19 @@ bun scripts/scan-secrets.mjs [--root <dir>] [--allowlist <file>]
 
 ## LAN 部署
 
-部署架構：Jenkins（`Jenkinsfile`、[`ci/jenkins/`](ci/jenkins/README.md)）建置並簽章 App_Image，推送至 LAN Registry（[`deploy/registry/`](deploy/registry/)：`compose.yaml`、`config.yml`、`Caddyfile` 與 `verify-registry.sh`），再經 SSH forced command 呼叫 Deploy_Host 上的 `/opt/lm/bin/lm-deploy`，以 Docker Compose（`deploy/compose/compose.yaml`）做 blue/green 切換。Jenkins 的設定、資料夾憑證與驗證步驟見 [`ci/jenkins/README.md`](ci/jenkins/README.md)。Caddy proxy（`deploy/caddy/`）是唯一發布連接埠的服務；App 容器以 `CAMPING_BIND_ADDRESS=0.0.0.0` 在 internal 網路內監聽，`CAMPING_ALLOWED_HOSTS` 取自 `<env>.env` 的 `ALLOWED_HOSTS`，`CAMPING_TRUSTED_PROXIES` 只設為 proxy 的固定 `/32`；Database 不發布任何連接埠。
+部署架構：Jenkins（`Jenkinsfile`、[`ci/jenkins/`](ci/jenkins/README.md)）建置並簽章 App_Image，推送至 LAN Registry（`registry.our-littlemoments.com:8443`，[`deploy/registry/`](deploy/registry/README.md)），再經 SSH forced command 呼叫 Deploy_Host 上的 `/opt/lm/bin/lm-deploy`，以 Docker Compose（`deploy/compose/compose.yaml`）做 blue/green 切換。Jenkins 的設定、資料夾憑證與驗證步驟見 [`ci/jenkins/README.md`](ci/jenkins/README.md)。安裝步驟：
+
+- Jenkins controller 與兩個 Build_Agent（`lm-trusted-1`、在 rootless Docker 上執行的 `lm-untrusted-1`）：[`deploy/jenkins/README.md`](deploy/jenkins/README.md)。
+- LAN Registry（DNS、內部 CA、帳號、`verify-registry.sh`、工具鏡像與 Trivy 資料庫的每日更新）：[`deploy/registry/README.md`](deploy/registry/README.md)。
+
+Build_Image 與本機開發使用相同的工具鏈（Bun 1.3.14，見 `ci/toolchain.json`）。Caddy proxy（`deploy/caddy/`）是唯一發布連接埠的服務；App 容器以 `CAMPING_BIND_ADDRESS=0.0.0.0` 在 internal 網路內監聽，`CAMPING_ALLOWED_HOSTS` 取自 `<env>.env` 的 `ALLOWED_HOSTS`，`CAMPING_TRUSTED_PROXIES` 只設為 proxy 的固定 `/32`；Database 不發布任何連接埠。
 
 **存取範圍只限區域網路：**
 
 - proxy 只綁定 `<env>.env` 的 `LAN_IP`。`deploy/host/install.sh --lan-cidr <CIDR>` 安裝的 DOCKER-USER 規則（`deploy/host/docker-user.rules`）只允許來源位於設定 LAN 網段的主機連線至 Docker 發布的連接埠，網段外來源無法建立 TCP 連線（規則位於 Docker 轉送層，UFW／INPUT 規則擋不住 Docker 發布的連接埠）。
 - 安裝後以 `sudo deploy/host/verify-host.sh --lan-cidr <CIDR>` 確認防火牆、Database 未發布、備份目錄權限與部署帳號設定。
 - **公開網際網路曝露不在支援範圍內**，包含路由器連接埠轉發、對外公開的反向代理、以及任何通道服務（tunnel）。不要為了對外公開而移除 Allowed_Hosts、Setup_Token 或 LAN 網段限制。
+- 唯一的例外是 Jenkins 的 `/github-webhook/`：GitHub 需要從網際網路送出 webhook，所以 Nginx Proxy Manager 只公開這個路徑且只接受 POST，Jenkins 的其他路徑只允許 LAN（見 [`ci/jenkins/README.md`](ci/jenkins/README.md)）。App、LAN Registry 與 Deploy_Host 都不對外公開。
 
 首次管理員設定：Pipeline 由 Credential_Store 提供 `CAMPING_SETUP_TOKEN`（`lm-<env>-setup-token`）。若 `app.env` 未設定，App 每次啟動自動產生設定碼並只寫入容器日誌，只能在 Deploy_Host 本機以 `sudo docker logs lm-<env>-app-<color>-1 2>&1 | grep Setup_Token` 讀取；建立管理員後即失效。也可以在 Deploy_Host 上以 `create-admin` 建立（見[帳號維運指令](#帳號維運指令create-admin-與-reset-password)）。
 

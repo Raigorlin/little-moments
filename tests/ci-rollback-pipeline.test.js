@@ -236,8 +236,9 @@ describe('SSH 與憑證', () => {
     expect(groovyRe).toBeTruthy();
     const re = new RegExp(groovyRe.replace(/\\\//g, '/'));
     expect(re.test(image)).toBe(false);
-    expect(re.test(`registry.lan.example:8443/little-moments/build-image@sha256:${'a'.repeat(64)}`)).toBe(true);
-    expect(re.test('registry.lan.example:8443/little-moments/build-image:latest')).toBe(false);
+    expect(image).toBe('registry.our-littlemoments.com:8443/little-moments/build-image@sha256:<digest>');
+    expect(re.test(`registry.our-littlemoments.com:8443/little-moments/build-image@sha256:${'a'.repeat(64)}`)).toBe(true);
+    expect(re.test('registry.our-littlemoments.com:8443/little-moments/build-image:latest')).toBe(false);
   });
 });
 

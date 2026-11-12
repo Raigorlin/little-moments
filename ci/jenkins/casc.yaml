@@ -1,21 +1,22 @@
 # 日子拾光 · LITTLE MOMENTS — Jenkins Configuration as Code（Requirement 1.9、2.1–2.3、2.6、15.1、18.9、19.3、20.12、21.12；
 # Design「信任邊界」「Jenkins Job 配置」）。
 #
-# 載入方式：controller 設定 CASC_JENKINS_CONFIG 指向本檔（或其所在目錄），LM_CASC_DIR 指向同一目錄（jobs.groovy 所在處）。
+# 載入方式：controller 設定 CASC_JENKINS_CONFIG 指向 casc 目錄（含本檔、local-security.yaml 與 jobs.groovy），
+# LM_CASC_DIR 指向同一目錄（jobs.groovy 所在處）。
 #
 # 秘密：本檔不含任何秘密值。`${NAME}` 由 Configuration as Code 的秘密來源於載入時解析
 # （環境變數，或 SECRETS 目錄（預設 /run/secrets）下的同名檔案，例如 Docker／Kubernetes secret 掛載）。
 # 未提供時 Configuration as Code 載入失敗，不以空值建立憑證。請勿提交真實值。
 #
-# PLACEHOLDER：jenkins.lan.example、agent 名稱與數量、管理員群組名稱須由維運者依實際環境取代。
-# security realm（LDAP／OIDC 等）依組織環境另行設定；它必須提供下列群組：
-#   lm-jenkins-admins     Jenkins 管理員
+# 本檔的主機名稱（jenkins.our-littlemoments.com）、agent 名稱與數量、管理員帳號皆為實際部署的值。
+# security realm：本機使用者資料庫，定義於 ci/jenkins/local-security.yaml（管理員 jacklin 與兩個 API token 帳號）。
+# 下列群組保留供日後改用外部 security realm（LDAP／OIDC 等）時使用；本機使用者資料庫沒有群組，這些項目目前不生效：
 #   lm-developers         開發者（ci/ 的 Job/Build、Job/Cancel）
 #   lm-release-approvers  Release_Approver（成員須與 ci/release-approvers.json 的 jenkinsId 一致，見 README）
 #   lm-auditors           稽核者（release/digest-lookup 的 Job/Build）
 #
-# 注意：本檔無法在本機套用；各 plugin 的 Configuration as Code 屬性名稱未經 Jenkins 實際驗證。
-# 部署前請以「Manage Jenkins → Configuration as Code → Reference」對照安裝的 plugin 版本。
+# 驗證：本檔已在實際的 Jenkins LTS（jdk21）controller 上以 Configuration as Code 載入。
+# 升級 plugin 後請以「Manage Jenkins → Configuration as Code → Reference」對照屬性名稱。
 
 jenkins:
   systemMessage: "日子拾光 · LITTLE MOMENTS CI/CD（設定由 ci/jenkins/casc.yaml 管理，請勿在 UI 修改）"
@@ -30,21 +31,20 @@ jenkins:
   markupFormatter:
     rawHtml:
       disableSyntaxHighlighting: true
-  crumbIssuer:
-    standard:
-      excludeClientIPFromCrumb: false
-  remotingSecurity:
-    enabled: true
+  # CSRF：不設定 crumbIssuer，使用 core 預設的 DefaultCrumbIssuer（新版 core 已移除 excludeClientIPFromCrumb 屬性）。
 
   # Matrix Authorization（Req 21.12）：非管理員沒有 Run/Delete、Run/Update、Job/Configure、Run/Replay，
   # 也沒有 Credentials/*、Lockable Resources/* 與 Overall/Administer。
   # 資料夾與 Job 層級的額外授權（只增加 Job/Build、Job/Cancel，以及 lm-retention-bot 在 release/little-moments 的
   # Run/Update 例外）定義於 ci/jenkins/jobs.groovy。
+  # 在本機使用者資料庫（local-security.yaml）下，只有 `authenticated` 與 user 項目生效；
+  # 其他 group 項目保留供日後改用外部 security realm。
   authorizationStrategy:
     projectMatrix:
       entries:
-        - group:
-            name: "lm-jenkins-admins"
+        # 唯一的管理員。
+        - user:
+            name: "jacklin"
             permissions:
               - "Overall/Administer"
         - group:
@@ -75,6 +75,7 @@ jenkins:
   #   lm-trusted    release/ 與 infra/ 的建置（可連線 Deploy_Host、Registry 推送）
   #   lm-untrusted  ci/ 的建置（隔離 VLAN，防火牆拒絕連線至 Deploy_Host、Staging／Production 與其 Database）
   # Job Restrictions 再限制「哪些 Job 可以使用哪個 agent」，使 PR 的 Jenkinsfile 即使改寫 label 也無法在 Trusted Agent 執行。
+  # 兩個 agent 在同一主機上，各自使用不同的工作目錄（remoteFS），且容器內外路徑相同。
   nodes:
     - permanent:
         name: "lm-trusted-1"
@@ -97,7 +98,7 @@ jenkins:
         labelString: "lm-untrusted"
         mode: EXCLUSIVE
         numExecutors: 2
-        remoteFS: "/var/lib/jenkins-agent"
+        remoteFS: "/var/lib/jenkins-untrusted"
         retentionStrategy: "always"
         launcher:
           inbound:
@@ -123,12 +124,12 @@ credentials:
 
 unclassified:
   location:
-    url: "https://jenkins.lan.example/"   # PLACEHOLDER
+    url: "https://jenkins.our-littlemoments.com/"
 
   # GitHub plugin：webhook 以 lm-github-webhook-secret 驗證 HMAC-SHA256 簽章（常數時間比較）；
   # 缺少簽章或簽章不一致時回應 4xx 且不觸發建置（Req 2.1、2.2）。Jenkins 不自行管理 GitHub 上的 hook。
   gitHubPluginConfig:
-    hookUrl: "https://jenkins.lan.example/github-webhook/"   # PLACEHOLDER
+    hookUrl: "https://jenkins.our-littlemoments.com/github-webhook/"
     hookSecretConfigs:
       - credentialsId: "lm-github-webhook-secret"
         signatureAlgorithm: "SHA256"

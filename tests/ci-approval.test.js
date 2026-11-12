@@ -2,8 +2,10 @@
 // **Validates: Requirements 12.6**
 import { describe, expect, test } from 'bun:test';
 import fc from 'fast-check';
+import { readFileSync } from 'node:fs';
 
 import {
+  DEFAULT_APPROVERS_FILE,
   destructiveApprovalAllowed,
   isReleaseApprover,
   loadApprovers,
@@ -383,5 +385,27 @@ describe('main CLI', () => {
     expect(ok.calls).toHaveLength(0);
     expect(runMain(['release', '--approver', 'mallory'], { doc }).code).toBe(1);
     expect(runMain(['release', '--approver', 'alice'], { doc: { approvers: [...doc.approvers, ...doc.approvers] } }).code).toBe(1);
+  });
+});
+
+// ---------- repository 內的 ci/release-approvers.json（tasks 19.2） ----------
+
+describe('ci/release-approvers.json', () => {
+  const repoDoc = JSON.parse(readFileSync(DEFAULT_APPROVERS_FILE, 'utf8'));
+
+  test('唯一的 Release_Approver 為 jacklin，且 approval 模組接受此清單', () => {
+    expect(repoDoc.schema).toBe(1);
+    expect(repoDoc.approvers).toEqual([{ jenkinsId: 'jacklin', emails: ['thawtunoo@gmail.com'] }]);
+    expect(loadApprovers(repoDoc)).toEqual({ ok: true, approvers: [{ jenkinsId: 'jacklin', emails: ['thawtunoo@gmail.com'] }] });
+    expect(isReleaseApprover('jacklin', repoDoc)).toBe(true);
+    // CLI 以預設路徑讀取 repository 內的清單。
+    const logs = [];
+    expect(main(['release', '--approver', 'jacklin'], { log: (m) => logs.push(m), error: () => {} })).toBe(0);
+    expect(JSON.parse(logs[0])).toMatchObject({ command: 'release', approver: 'jacklin', allowed: true });
+  });
+
+  test('單一核准人：jacklin 撰寫的破壞性遷移無法被核准（Property 32）', () => {
+    expect(destructiveApprovalAllowed('jacklin', repoDoc, ['thawtunoo@gmail.com']).allowed).toBe(false);
+    expect(destructiveApprovalAllowed('jacklin', repoDoc, ['someone-else@example.invalid']).allowed).toBe(true);
   });
 });

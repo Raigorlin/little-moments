@@ -538,6 +538,129 @@
 - [x] 17. Final checkpoint - 確認所有測試通過
   - 執行 `bun run build`、`bun test tests/*.test.js`、`scripts/check-accounts.mjs`、`bun scripts/lint-migrations.mjs` 與 `semgrep --test ci/semgrep`，確認全部通過。Ensure all tests pass, ask the user if questions arise.
 
+- [x] 18. 合併 security-harden 分支至 main（以 PostgreSQL 資料層與 main 的部署方式為準）
+  - [x] 18.1 移除 mobile-ux-enhance 分支的 Jenkinsfile
+    - 以獨立 worktree 操作，不改變目前工作目錄的分支：`git worktree add ../little-moments-mobile-ux -b mobile-ux-enhance origin/mobile-ux-enhance`，`git rm Jenkinsfile`，本機提交 `Remove Jenkinsfile: Jenkins builds use the Jenkinsfile on main`，不推送；完成後 `git worktree remove ../little-moments-mobile-ux`（保留本機分支 `mobile-ux-enhance`）
+    - 該檔案要求不存在的 `docker-host` 標籤，使 `ci/little-moments` 對此分支的建置一直排隊；推送後此分支沒有 Jenkinsfile，Multibranch 不再為它建立 Job
+    - _Requirements: 1.1_
+
+  - [x] 18.2 建立合併分支並開始三方合併
+    - 開始前確認 working tree 只有兩個已知的未提交修改：`ci/jenkins/jobs.groovy`（任務 19.1 使用）與 `.kiro/specs/jenkins-cicd-deploy/tasks.md`；整個任務 18 都不得 stage 或提交這兩個檔案
+    - `git switch -c merge/security-harden main`
+    - 兩個分支沒有共同歷史（security-harden 以新的 root commit `7b93010` 開始，內容是 main 的 `cd06606` 之後的新版程式碼）。以 `git commit-tree` 建立兩個不屬於任何分支的合成 commit，沿用原 commit 的 author、committer、日期與訊息：`c1` 的 tree 為 `7b93010^{tree}`、parent 為 `cd06606`；`c2` 的 tree 為 `09e2e05^{tree}`、parent 為 `c1`；確認 `git diff 09e2e05 <c2>` 為空
+    - `git merge --no-ff --no-commit <c2>`，合併訊息 `Merge branch 'security-harden' (09e2e05) into main`；不提交，合併狀態保留至 18.9
+    - 不納入（自 index 與 working tree 移除）：`.tmp-e2e-dist/`、`tmp-menu-check/`、`test-results-*/`（建置輸出與失敗的測試結果）、根目錄的空檔 `requirements.md`、`docker-compose.yml` 與 `docs/deploy-nginx.md`（另一套部署方式）；`.gitignore` 加入 `.tmp-e2e-dist/`、`tmp-menu-check/`、`test-results*/`
+    - 部署相關一律保留 main 的版本：`Dockerfile`、`Jenkinsfile`、`ci/`、`deploy/`；`.dockerignore` 以 main 為準，只加入 security-harden 新增且仍適用的排除項目
+    - `package.json`：合併兩邊的 scripts 與 dependencies（保留 main 的 PostgreSQL 相依與腳本）；`bun.lock` 以 Bun 1.3.14 重新產生（例如 `bunx bun@1.3.14 install`；本機 Bun 1.4.4 可能寫入 1.3.14 不支援的欄位），並以同版本確認 `bun install --frozen-lockfile` 通過
+    - 其餘衝突留給 18.3–18.8；報告列出所有仍有衝突或需要改寫的檔案
+    - _Requirements: 3.4, 3.5, 16.3_
+
+  - [x] 18.3 設定與 HTTP：以 main 的 `server/config.js` 為準整合 security-harden 的設定
+    - 不採用 security-harden `server/deploy-config.js` 的部署模式（`CAMPING_PUBLISHED`、`CAMPING_PUBLIC_ORIGIN`、`CAMPING_LOCAL_EXTRA_HOSTS`、`CAMPING_ALLOW_NON_LOOPBACK_BIND`、`CAMPING_DOCKER_LOCAL_ONLY`、`HOST`、`CAMPING_DB`／`resolveDbPath`）：Bind_Address、Allowed_Hosts、Trusted_Proxies、Setup_Token 與 `CAMPING_DATABASE_*` 維持 main 的行為（Requirement 8、9、10）
+    - 應用層設定移入 `parseConfig`，預設值與 security-harden 相同：`CAMPING_REGISTRATION`（`open`／`closed`）、`CAMPING_RECEIPT_AI_POLICY`（`all`／`admins`／`off`）與 `server/ai-cost.js` 的用量上限變數；無效值拒絕啟動，錯誤只指出變數名稱；`ai-cost.js` 改用 `config.js` 的錯誤型別
+    - `server/http.js`、`scripts/serve.mjs`：以 main 的 `/healthz`、Host 檢查（421）與 `resolveClient` 為準，加入 security-harden 的 `server/safe-log.js`（通用 500 訊息、錯誤日誌不含請求內容）與安全標頭變更；security-harden 對 Host、Origin 或轉送標頭的檢查若比 main 嚴格則保留；啟動訊息符合 Requirement 8.5
+    - 刪除 `server/deploy-config.js` 與 `tests/deploy-config.test.js`，仍適用的案例移到 main 的 config 與 http 測試；`scripts/create-admin.mjs`、`reset-password.mjs` 對 deploy-config 的引用在 18.6 處理
+    - 執行 config、http、security-config 與 security-headers 相關測試檔
+    - _Requirements: 8.1, 8.2, 8.3, 8.5, 8.7, 9.12, 10.1, 10.5_
+
+  - [x] 18.4 資料層：把 security-harden 的 SQLite 程式碼改寫為 PostgreSQL
+    - 新增 `migrations/0002_*.sql`：`settings`、`receipt_ai_usage`、`security_events`、`security_alerts`（含 security-harden 定義的索引）、`invites` 新欄位 `id`（唯一索引）、`used_at`、`used_by`（參照 `users`），以及 security-harden 對 `trips` 的結構變更（對照其 `server/accounts.js` 的 trips 重建邏輯）；型別與命名沿用 `0001_initial.sql`；可在交易內執行；通過 `bun scripts/lint-migrations.mjs`（若需要破壞性變更須標記 `-- lm:destructive`）
+    - `server/accounts.js`：security-harden 新增的功能（邀請連結、註冊政策、收據 AI 政策與用量、安全事件與警示、密碼重設等）改寫為 main 的非同步 `server/db/` 連線與交易（寫入交易取得 `pg_advisory_xact_lock`），保留 main 已有的 PostgreSQL 行為與 Setup_Token 流程
+    - `server/security-events.js`、`server/settings.js` 與其他新模組改用 PostgreSQL；保留 security-harden 的上限（安全事件 5000 筆、警示 1000 筆）與清理規則
+    - runtime 程式碼（`server/`、`scripts/serve.mjs`）不得匯入 `bun:sqlite`；只有 SQLite_Importer 可以
+    - SQLite_Importer（`server/db/import-plan.js`、`scripts/import-sqlite.mjs`）：`tableOrder` 與轉換加入新資料表與欄位；來源可以是舊版（沒有新表或新欄位）或 security-harden 版的 `accounts.sqlite`，兩者都能匯入且筆數比對正確；更新匯入測試
+    - 對 Ephemeral_Database 執行 accounts、ledger、import、migrations 與 security-events 相關測試檔
+    - _Requirements: 11.1, 11.10, 12.1, 12.6, 12.9, 13.1, 13.10_
+
+  - [x] 18.5 收據 AI：以 security-harden 的 OpenAI 實作取代 Bedrock
+    - 採用 security-harden 的 `server/receipt-ai.js`、`src/receipt-ai-client.js` 與 `server/ai-cost.js`（`CAMPING_OPENAI_*`）；移除所有 `CAMPING_BEDROCK_*`
+    - 部署端維持「預設停用、只有 release/ 可啟用」：`deploy/compose/compose.yaml`、`drill.yaml`、`*.env.example` 與 `deploy/bin/lm-deploy` 的 `CAMPING_BEDROCK_*` 改為對應的 `CAMPING_OPENAI_*`，預設空字串；`ci/` 不得定義任何 `CAMPING_OPENAI_*` 憑證；`scripts/check-accounts.mjs`、`scripts/security-suite.mjs`、`ci/semgrep` 規則與 `ci/jenkins/README.md` 同步
+    - 啟動訊息、日誌與 Build_Record 都不得出現金鑰值；`scripts/scan-secrets.mjs` 保留 OpenAI 金鑰規則
+    - 更新 `requirements.md` 的 2.4、8.5、15.6–15.8 與 `design.md` 對應段落：`CAMPING_BEDROCK_*` 改為 `CAMPING_OPENAI_*`，規則本身不變
+    - 更新相關測試（receipt-ai、config-secrets、ci-lint、ci-restore-drill、readme 等），執行受影響的測試檔與 `bats deploy/tests`
+    - _Requirements: 2.4, 8.5, 15.6, 15.7, 15.8_
+
+  - [x] 18.6 前端與維運腳本
+    - `src/`：採用 security-harden 的介面與功能（含移除「車輛設定」「旅行設定」分頁、mobile swipe、行程選單、分帳自動對應類別）；`src/accounts-ui.js` 的衝突保留兩邊：main 的首次管理員 Setup_Token 流程與 security-harden 的帳號介面
+    - `scripts/create-admin.mjs`、`scripts/reset-password.mjs` 改用 `CAMPING_DATABASE_*` 連線 PostgreSQL，密碼只由 stdin 或檔案讀取；加入 `scripts/build-server.mjs` 的輸出（`/app/tools/create-admin.js`、`/app/tools/reset-password.js`），可在 Deploy_Host 以 App_Image 執行
+    - `scripts/scan-secrets.mjs`、`secret-rules.mjs`、`secret-allowlist.json` 與 `scripts/build.mjs` 保留，確認引用的路徑仍存在
+    - 執行 `bun run build` 與相關測試檔
+    - _Requirements: 9.1, 10.1, 16.2_
+
+  - [x] 18.7 測試與 QA_Inventory
+    - security-harden 新增與修改的測試改用 main 的 PostgreSQL 測試支援（`tests/support/pg.js`），不再建立 SQLite 檔；兩邊都修改的測試檔保留兩邊的案例
+    - `qa/inventory.json`：更新指向已移除分頁或改名控制項的項目，對應的測試案例 ID 必須存在；`bun scripts/qa-inventory.mjs validate` 通過
+    - `scripts/check-accounts.mjs` 與 `playwright.config.js` 維持 main 的 `CHROME_PATH`／`CAMPING_BUN` 規則
+    - 對 Ephemeral_Database 執行 `bun test tests/*.test.js` 與 `scripts/check-accounts.mjs`，修正失敗
+    - _Requirements: 3.9, 4.1, 5.1, 5.3, 5.4, 10.10_
+
+  - [x] 18.8 README 與文件
+    - 合併 `README.md`：保留 main 的部署、環境變數表與操作步驟；加入 security-harden 的功能說明；環境變數表加入 18.3 與 18.5 的新變數（`tests/readme.test.js` 檢查預設值與 `parseConfig` 一致）；不含長十六進位字串或秘密
+    - 保留 `docs/security-report.md` 與 `docs/security-review.md`，在開頭註明其中的 SQLite 與 nginx 部署內容已由 PostgreSQL 與 Jenkins 部署取代
+    - 執行 `bun test tests/readme.test.js`
+    - _Requirements: 24.1, 24.2, 24.9_
+
+  - [x] 18.9 Checkpoint - 合併完成，提交前確認
+    - 沒有衝突標記（`git diff --check` 與搜尋 `<<<<<<<`）；runtime 程式碼沒有 `bun:sqlite`；`ci/jenkins/jobs.groovy` 與 tasks.md 未被 stage
+    - 執行 `bun run build`、`bun test tests/*.test.js`（Ephemeral_Database，用完即刪）、`scripts/check-accounts.mjs`、`bun scripts/lint-migrations.mjs`、`bats deploy/tests` 與 `semgrep --test ci/semgrep`，全部通過
+    - 請使用者確認後才提交合併 commit；提交前不開始任務 19；不推送任何分支（包含 18.1 的 mobile-ux-enhance）。Ensure all tests pass, ask the user if questions arise.
+
+  - [x] 18.10 移除 0002 的破壞性變更並提交合併 commit（使用者已同意）
+    - 尚未有任何 Staging／Production Database（只有可丟棄的 preview Database），因此把 trips.cover_kind 新增的 `forest`、`beach`、`sunrise` 直接併入 `migrations/0001_initial.sql` 的 CHECK 條件；`migrations/0002_security_harden.sql` 刪除 trips 的 DROP／ADD CONSTRAINT 與 `-- lm:destructive` 標記及相關說明
+    - 唯一的 Release_Approver 同時是遷移作者，無法核准自己的破壞性遷移（Property 32），因此 0002 必須是非破壞性；`bun scripts/lint-migrations.mjs` 不再回報 destructive
+    - 更新受影響的測試（例如 `tests/migrations-0002.test.js`、遷移與匯入相關測試），對 Ephemeral_Database 執行相關測試與完整 `bun test tests/*.test.js`
+    - 使用者已確認：以 `Merge branch 'security-harden' (09e2e05) into main` 提交合併 commit 於 `merge/security-harden`；只提交 index，不包含 `ci/jenkins/jobs.groovy`、`tasks.md`、`tasks.meta.json`；不推送任何分支
+    - _Requirements: 12.6, 12.9_
+
+- [x] 19. 依 192.168.1.121 的實際部署同步設定（上線時發現的修正與實際值）
+  - [x] 19.1 修正 `ci/jenkins/jobs.groovy` 的 Job DSL 憑證名稱與秘密處理
+    - 以 working tree 尚未提交的修改為基礎（`secret` 與 `privateKey` 已改用 `hudson.util.Secret.fromString(...)`），修復 `gitHubApp` 分支中遺失方法名稱的 ` {`（第 244 行附近）
+    - 憑證 DSL 方法改為 Job DSL 接受的名稱（CasC 的 symbol 會被 Job DSL 拒絕）：`gitHubApp`→`gitHubAppCredentials`、`string`→`stringCredentialsImpl`、`file`→`fileCredentialsImpl`（另加 `file(null)`，為 FileCredentialsImpl 的必要參數）、`directEntry`→`directEntryPrivateKeySource`；`usernamePassword`、`basicSSHUserPrivateKey` 不變
+    - 移除 `owner(...)`：github-branch-source 的 GitHubAppCredentials 已改用 `repositoryAccessStrategy`（預設由存取的 repository 推定 owner）；`gitHubApp` 類型不再讀取或要求 `<id>.owner` 秘密檔（`secretParts`、`resolveCredentials` 與檔頭註解一併更新）
+    - 每個憑證的建立與整個 `folderCredentialsProperty` 以 try/catch 包裝，改丟出只含「資料夾/憑證 ID（類型）」與例外類別名稱的 `IllegalStateException`，不附原例外訊息或 cause（Job DSL 的 MissingMethodException 會列出參數值，曾把私鑰印到日誌）
+    - `GITHUB_OWNER = 'Raigorlin'`，移除 `GITHUB_OWNER`／`GITHUB_REPO` 的 PLACEHOLDER 標記與檔頭說明
+    - `buildRetention`（branch-api 的 BuildRetentionBranchProperty）維持不變：已標示 deprecated 但仍套用保留天數；警告說明見 19.5
+    - 更新 `tests/ci-jenkins-config.test.js` 中與 jobs.groovy 相關的檢查，執行 `bun test tests/ci-jenkins-config.test.js`
+    - _Requirements: 1.1, 2.4, 2.5, 15.1, 15.3, 21.3, 21.4, 21.5_
+
+  - [x] 19.2 更新 `ci/jenkins/casc.yaml`，新增 `ci/jenkins/local-security.yaml`，更新 `ci/release-approvers.json`
+    - casc.yaml：刪除 `crumbIssuer`（新版 core 的 DefaultCrumbIssuer 已無 `excludeClientIPFromCrumb`，預設 issuer 仍提供 CSRF 保護）與 `remotingSecurity`（AdminWhitelistRule 已無作用，只產生警告）
+    - casc.yaml：`location.url` 為 `https://jenkins.our-littlemoments.com/`，`hookUrl` 為 `https://jenkins.our-littlemoments.com/github-webhook/`
+    - casc.yaml：Overall/Administer 改授與使用者 `jacklin`（取代 `lm-jenkins-admins` 群組）；其他群組項目保留供日後改用外部 security realm，在本機使用者資料庫下不生效，以註解說明
+    - casc.yaml：`lm-untrusted-1` 的 `remoteFS` 改為 `/var/lib/jenkins-untrusted`（兩個 agent 在同一主機，各自需要容器內外路徑相同的工作目錄）
+    - local-security.yaml：`jenkins.securityRealm.local`（`allowsSignup: false`），使用者 `jacklin`、`lm-retention-bot`、`lm-api-readonly`，密碼分別為 `${JENKINS_ADMIN_PASSWORD}`、`${RETENTION_BOT_PASSWORD}`、`${API_READONLY_PASSWORD}`（CasC 秘密來源，不含任何值）
+    - release-approvers.json：唯一 Release_Approver `jacklin`（email `thawtunoo@gmail.com`）；`$comment` 說明單一核准人無法核准自己撰寫的破壞性遷移
+    - 更新 `tests/ci-jenkins-config.test.js`（管理員為使用者 jacklin、remoteFS、local-security.yaml 每位使用者的密碼皆為 `${VAR}`、沒有 crumbIssuer 與 remotingSecurity），執行 `bun test tests/ci-jenkins-config.test.js tests/ci-approval.test.js`
+    - _Requirements: 2.1, 2.6, 12.6, 19.3, 21.12_
+
+  - [x] 19.3 新增 Jenkins controller 與兩個 agent 的容器設定（`deploy/jenkins/`）
+    - `controller/`：`Dockerfile`（`FROM jenkins/jenkins:lts-jdk21`、關閉 setup wizard、`COPY --chown=jenkins:jenkins plugins.txt`、`jenkins-plugin-cli` 後確認 `configuration-as-code` 與 `job-dsl` 已下載，否則建置失敗）、`.dockerignore`（只允許 `plugins.txt`）、`plugins.txt`（與 `ci/jenkins/README.md` 的必要 plugins 表一致）、`compose.yaml`（`name: lm-jenkins`；只綁定 `${LM_JENKINS_LAN_IP}:8080`；`CASC_JENKINS_CONFIG`、`LM_CASC_DIR`、`SECRETS`；`./casc` 與 `./secrets` 唯讀；網路 `default` 與外部 `proxy`）
+    - `agent/`：共用 `Dockerfile`（`jenkins/inbound-agent:latest-jdk21` 加上 `docker:cli` 的 docker CLI 與 cli-plugins）、`.dockerignore`（`*`）、`.gitignore`（`*.secret`、`.env`）；`trusted.compose.yaml`（`lm-trusted-1`：主機 docker.sock、`group_add: ${DOCKER_GID}`、同路徑 `/var/lib/jenkins-agent`）；`untrusted.compose.yaml`（`lm-untrusted-1`：只掛載 rootless daemon 的 `${SOCK}`、`group_add: ${SOCK_GID}`、同路徑 `/var/lib/jenkins-untrusted`，絕不掛載主機的 docker.sock）
+    - `agent/untrusted/`：`lm-untrusted-fw`（OUTPUT 的 owner 規則套用於 lm-untrusted 的 uid 與 subuid 範圍：丟棄 REPLY 方向封包；只允許 DNS、Jenkins `:8080` 與 Registry `:8443`；拒絕本機其他連接埠、10/8、172.16/12、192.168/16、100.64/10、169.254/16 與所有 IPv6）、`lm-untrusted-fw.service.in`（`Before=` 且 `RequiredBy=user@<uid>.service`：防火牆未套用時 rootless daemon 不啟動）、`docker-rootless-override.conf`（`DOCKERD_ROOTLESS_ROOTLESSKIT_DETACH_NETNS=false`：Docker 29.5 起預設讓 `--net=host` 加入真正的主機網路；`DOCKERD_ROOTLESS_ROOTLESSKIT_NET=slirp4netns`）
+    - 新增 `tests/deploy-jenkins.test.js`：untrusted 不掛載主機 docker.sock、兩個 agent 的工作目錄與 casc.yaml 的 `remoteFS` 一致、防火牆規則與 override、controller Dockerfile 的 `--chown` 與 plugin 檢查、plugins.txt 與 README 表一致；執行 `bun test tests/deploy-jenkins.test.js`
+    - _Requirements: 2.4, 2.5, 2.6_
+
+  - [x] 19.4 LAN Registry 修正與所有映像的實際 digest
+    - Registry 一律為 `registry.our-littlemoments.com:8443`：取代 `Jenkinsfile`、`ci/jenkins/pipelines/*.Jenkinsfile` 與 `deploy/compose/*.env.example`（`LM_IMAGE_REPO`）中的 `registry.lan.example:8443` 與 `<registry-host>:<port>`；`BUILD_IMAGE` 仍保留 `@sha256:<digest>`，待 infra/build-image 首次推送後填入
+    - 鏡像映像（linux/amd64，`registry.our-littlemoments.com:8443/little-moments/mirror/<name>@sha256:<digest>`）：gitleaks v8.30.1 `b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb`、osv-scanner v2.7.1 `bc10cae80da100d32572aea48cfc48e592be9adc4a8b0820fd5d2c2db71f9446`、trivy 0.76.2 `6fa071ef8daa2e58b90cbf1710bedca91adbb3bf98693533226f442035b836a6`、semgrep 1.185.0 `f83a64e8a7d985eaa51ee3978c9c882be946964c68633fba5d2817cf297a3912`、syft v1.57.1 `c31c09c21a75c7c0b1f4082358614115536fa4f1d2e0bdab2d11f5257360338a`、crane v0.22.1 `18efc5092649b2a674d384663044e04edf76705c4faa2875e8a322b4e80f070a`（`Jenkinsfile` 與 `build-image.Jenkinsfile`）、cosign v2.6.5 `404b8081d833085d12c21cda889c6f2f3731328768257c760e32fcf070be2cf9`、zap 2.17.0 `c2d63bbb2d907a5c5257914fb20e26e969c92b25f265def7f89f08203f912882`
+    - 上游映像：`postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3`（`LM_POSTGRES_IMAGE`、`deploy/compose/compose.yaml` 與 `drill.yaml` 的 db）、`caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d`（`deploy/compose/compose.yaml` 的 proxy）、`caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb` 與 `registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e`（`deploy/registry/compose.yaml` 與 `htpasswd.example`）
+    - `deploy/registry/compose.yaml`：proxy 連接埠改為 `${LM_REGISTRY_LAN_IP}:8443:8443`（主機 443 由 Nginx Proxy Manager 使用，Pipeline 引用 `:8443`）；proxy 加上 `cap_add: [NET_BIND_SERVICE]` 與說明註解（官方 Caddy 二進位檔帶 cap_net_bind_service 檔案能力，`cap_drop: [ALL]` 時 execve 以 EPERM 失敗）
+    - Bun 改為 1.3.14（Docker Hub 沒有 `oven/bun:1.3.0-distroless`，distroless 自 1.3.4 起提供；`bun.lock` 含 1.3.0 不支援的 `configVersion`）：`ci/toolchain.json`；`ci/build-image/Dockerfile`（`FROM mcr.microsoft.com/playwright:v1.56.1-noble@sha256:f1e7e01021efd65dd1a2c56064be399f3e4de00fd021ac561325f2bfbb2b837a`、`BUN_VERSION=1.3.14`、`BUN_SHA256=951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f`、`NODE_SHA256=00bbd05e306ea68b6e13e17360d0e2f680b493ef95f2fea1c4296ff7437530bc`）；根目錄 `Dockerfile`（`oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4`、`oven/bun:1.3.14-distroless@sha256:c28c51287af70bab8e0b66fc4b6a30cfb92a727ebc88045223adc9f4c9d09307`）；兩個 Dockerfile 的 syntax 行為 `docker/dockerfile:1.10@sha256:865e5dd094beca432e8c0a1d5e1c465db5f998dca4e439981029b3b81fb39ed5`
+    - 新增 `deploy/registry/mirror.list`（上游映像與版本）、`mirror.sh`（以 lm-push 與 crane 複製 mirror.list 的映像與 `mirror.gcr.io/aquasec/trivy-db:2`，輸出 digest）、`lm-mirror-trivy-db` 與其 `.service`、`.timer`（每日 04:30 複製 trivy-db）
+    - 更新斷言 PLACEHOLDER 或舊主機名稱的測試，執行受影響的測試檔與 `bats deploy/tests`
+    - _Requirements: 3.1, 3.2, 4.2, 6.1, 6.2, 6.3, 15.9, 16.3, 17.1, 17.4, 17.5_
+
+  - [x] 19.5 更新文件
+    - `ci/jenkins/README.md`：以實際值取代 PLACEHOLDER 一節（保留部署主機相關的待填項目）；設定載入改為把 `casc.yaml`、`local-security.yaml`、`jobs.groovy` 複製到 controller 的 casc 目錄；秘密目錄另含 `JENKINS_ADMIN_PASSWORD`、`RETENTION_BOT_PASSWORD`、`API_READONLY_PASSWORD`、`GITHUB_WEBHOOK_SECRET`，`gitHubApp` 不再需要 `.owner`；GitHub App 權限（Contents、Metadata、Pull requests 唯讀，Commit statuses 讀寫，App 的 webhook 關閉，只安裝在 little-moments）；本機使用者資料庫與管理員 jacklin；`buildRetention` 的 deprecated 警告；單一 Release_Approver 的限制
+    - `ci/jenkins/README.md` 的「Webhook 驗證與拒絕日誌」改為 Nginx Proxy Manager（Proxy Host `jenkins.our-littlemoments.com` → `http://jenkins:8080`、存取清單「LAN only」、Advanced 只公開 `location = /github-webhook/` 且僅允許 POST、存取日誌的位置與內容）；「Untrusted Agent 網路隔離」改為 rootless Docker 與 owner 防火牆的驗證步驟；兩個章節標題保留不變
+    - 新增 `deploy/jenkins/README.md`（controller 與兩個 agent 的安裝、agent secret 的取得與寫入、rootless Docker 設定、防火牆安裝與隔離驗證）與 `deploy/registry/README.md`（DNS A 記錄（DNS only）、名稱限制的內部 CA 與 2 年伺服器憑證、htpasswd 的 3 個帳號、啟動與 verify-registry.sh、兩個 Docker daemon 信任 CA 的路徑、mirror.sh、trivy-db timer）
+    - 根目錄 `README.md`：連結上述文件、工具鏈為 Bun 1.3.14；不加入任何 digest（`tests/readme.test.js` 禁止長十六進位字串）
+    - 執行 `bun test tests/readme.test.js tests/ci-jenkins-config.test.js tests/deploy-jenkins.test.js`
+    - _Requirements: 2.1, 2.2, 2.6, 24.1, 24.9_
+
+  - [x] 19.6 Checkpoint - 部署設定同步後確認所有測試通過
+    - 執行 `bun run build`、`bun test tests/*.test.js`（需要 PostgreSQL 的測試使用臨時 Ephemeral_Database，用完即刪）、`bats deploy/tests` 與 `semgrep --test ci/semgrep`，確認全部通過，且 repository 中沒有任何秘密值。Ensure all tests pass, ask the user if questions arise.
+
 ## Notes
 
 - 標記 `*` 的子任務為選用（property test、整合測試與額外檢查），可為加快 MVP 而略過。
@@ -545,6 +668,8 @@
 - 任務 1–3 期間仍使用 SQLite，使既有測試保持綠燈；任務 5 完成後 runtime 不再載入 `bun:sqlite`（SQLite_Importer 為獨立維運工具）。
 - 需要 PostgreSQL 的測試透過 `CAMPING_TEST_DATABASE_*` 連線至 Ephemeral_Database，本機建立方式見 README。
 - Jenkins、Deploy_Host 與 Registry 任務只產出設定檔、腳本與驗證腳本，實際套用到主機由維運者執行。
+- 任務 19 的值來自 192.168.1.121 上已驗證的部署（Jenkins controller、lm-trusted-1、lm-untrusted-1 與 LAN Registry）；design.md 中 Untrusted Agent 的「隔離 VLAN」在此部署以 rootless Docker 加主機 owner 防火牆實作。
+- 任務 18 合併 security-harden：兩分支沒有共同歷史，以 main 的 `cd06606` 作為合成共同基底進行三方合併；應用程式功能採用 security-harden，部署、設定模型、Setup_Token 與 PostgreSQL 資料層採用 main；收據 AI 改為 OpenAI（`CAMPING_OPENAI_*`）。
 
 ## Task Dependency Graph
 
@@ -572,7 +697,20 @@
     { "id": 18, "tasks": ["13.8"] },
     { "id": 19, "tasks": ["13.9", "13.10"] },
     { "id": 20, "tasks": ["16.1", "16.2"] },
-    { "id": 21, "tasks": ["16.3"] }
+    { "id": 21, "tasks": ["16.3"] },
+    { "id": 22, "tasks": ["18.1", "18.2"] },
+    { "id": 23, "tasks": ["18.3"] },
+    { "id": 24, "tasks": ["18.4"] },
+    { "id": 25, "tasks": ["18.5"] },
+    { "id": 26, "tasks": ["18.6"] },
+    { "id": 27, "tasks": ["18.7"] },
+    { "id": 28, "tasks": ["18.8"] },
+    { "id": 29, "tasks": ["18.9", "18.10"] },
+    { "id": 30, "tasks": ["19.1", "19.4"] },
+    { "id": 31, "tasks": ["19.2"] },
+    { "id": 32, "tasks": ["19.3"] },
+    { "id": 33, "tasks": ["19.5"] },
+    { "id": 34, "tasks": ["19.6"] }
   ]
 }
 ```

@@ -1,0 +1,5 @@
+# 秘密、測試用的假秘密、casc 目錄的複本與主機專屬的 .env 都不提交。
+secrets/
+secrets-dummy/
+casc/
+.env

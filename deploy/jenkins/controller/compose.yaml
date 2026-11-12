@@ -1,0 +1,49 @@
+# Jenkins controller（Requirement 2.1、2.4、2.5；tasks 19.3）。
+#
+# 專案名稱為 lm-jenkins：主機上已有另一個名為 jenkins 的 compose 專案，沿用該名稱會互相覆蓋。
+#
+# 安裝時提供的目錄（皆不在 repository 中，見 .gitignore）：
+#   ./casc     ci/jenkins/casc.yaml、ci/jenkins/local-security.yaml 與 ci/jenkins/jobs.groovy 的複本
+#              （CASC_JENKINS_CONFIG 載入整個目錄；LM_CASC_DIR 供 casc.yaml 找到 jobs.groovy）
+#   ./secrets  SECRETS 目錄（Configuration as Code 秘密來源與 jobs.groovy 讀取的資料夾範圍憑證）：
+#                JENKINS_ADMIN_PASSWORD、RETENTION_BOT_PASSWORD、API_READONLY_PASSWORD、GITHUB_WEBHOOK_SECRET
+#                little-moments/{ci,release,infra}/…（檔名見 ci/jenkins/README.md）
+#              擁有者 1000:1000（容器內的 jenkins 使用者），目錄 0700，檔案 0600。
+# 兩者都以唯讀掛載；更新後執行「Manage Jenkins → Configuration as Code → Reload existing configuration」。
+#
+# 網路曝露：
+#   8080 只綁定 LAN_IP（${LM_JENKINS_LAN_IP}），絕不綁定 0.0.0.0；不發布 50000（兩個 agent 都以 WebSocket 連線）。
+#   路由器只把 80/443 轉送到 Nginx Proxy Manager；NPM 經外部網路 proxy 連到 http://jenkins:8080，
+#   且只對外公開 /github-webhook/，其餘路徑只允許 LAN。8080 本身只在 LAN 上可達。
+#
+# 必要環境變數（.env，格式見 .env.example；未設定時 compose 直接報錯）：
+#   LM_JENKINS_LAN_IP  controller 主機的 LAN 介面 IP
+name: lm-jenkins
+
+services:
+  jenkins:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${LM_JENKINS_LAN_IP:?LM_JENKINS_LAN_IP is required}:8080:8080"
+    environment:
+      CASC_JENKINS_CONFIG: /var/jenkins_home/casc
+      LM_CASC_DIR: /var/jenkins_home/casc
+      SECRETS: /run/secrets
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - ./casc:/var/jenkins_home/casc:ro
+      - ./secrets:/run/secrets:ro
+    # default：compose 專案的預設網路；proxy：Nginx Proxy Manager 所在的外部網路（以服務名稱 jenkins 連線）。
+    networks:
+      - default
+      - proxy
+
+networks:
+  proxy:
+    external: true
+
+volumes:
+  jenkins_home: {}

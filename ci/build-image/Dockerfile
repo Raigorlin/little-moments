@@ -1,22 +1,22 @@
-# syntax=docker/dockerfile:1.10
+# syntax=docker/dockerfile:1.10@sha256:865e5dd094beca432e8c0a1d5e1c465db5f998dca4e439981029b3b81fb39ed5
 # Build_Image：建置與測試用工具鏈映像（Req 3.1、3.2）。
 # 精確版本必須與 ci/toolchain.json 一致；infra/build-image Job 建置後會執行
 # ci/verify-toolchain.mjs 確認，並輸出本映像的 digest 供 Jenkinsfile 以 @sha256: 引用。
 #
-# PLACEHOLDER：下列 `sha256:<digest>` 與 *_SHA256 預設值無法離線驗證，必須在第一次
-# 建置前由維運者填入實際值：
-#   docker buildx imagetools inspect mcr.microsoft.com/playwright:v1.56.1-noble
-#   https://github.com/oven-sh/bun/releases/download/bun-v<BUN_VERSION>/SHASUMS256.txt
-#   https://nodejs.org/dist/v<NODE_VERSION>/SHASUMS256.txt
-# 未填入時 FROM 解析或下方的校驗步驟會使建置失敗（fail closed）。
+# digest 與 SHA-256 的來源（更新版本時以相同方式重新取得）：
+#   syntax 前端      docker buildx imagetools inspect docker/dockerfile:1.10
+#   基底映像         docker buildx imagetools inspect mcr.microsoft.com/playwright:v1.56.1-noble
+#   BUN_SHA256       https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/SHASUMS256.txt 的 bun-linux-x64.zip
+#   NODE_SHA256      https://nodejs.org/dist/v22.20.0/SHASUMS256.txt 的 node-v22.20.0-linux-x64.tar.xz
+# 下載內容與 SHA-256 不符時，下方的校驗步驟會使建置失敗（fail closed）。
 #
 # Playwright 1.56.1 隨附 Chromium 141.0.7390.37（chromium-1194）。
-FROM mcr.microsoft.com/playwright:v1.56.1-noble@sha256:<digest>
+FROM mcr.microsoft.com/playwright:v1.56.1-noble@sha256:f1e7e01021efd65dd1a2c56064be399f3e4de00fd021ac561325f2bfbb2b837a
 
-ARG BUN_VERSION=1.3.0
-ARG BUN_SHA256=<bun-linux-x64-zip-sha256>
+ARG BUN_VERSION=1.3.14
+ARG BUN_SHA256=951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f
 ARG NODE_VERSION=22.20.0
-ARG NODE_SHA256=<node-linux-x64-tar-xz-sha256>
+ARG NODE_SHA256=00bbd05e306ea68b6e13e17360d0e2f680b493ef95f2fea1c4296ff7437530bc
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 

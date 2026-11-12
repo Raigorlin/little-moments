@@ -1,0 +1,58 @@
+#!/bin/sh
+# Untrusted Jenkins agent 的對外連線政策（Requirement 2.6；tasks 19.3）。
+#
+# 以 OUTPUT 的 owner 規則比對 lm-untrusted 及其 subuid 範圍擁有的所有 socket：rootless dockerd、
+# slirp4netns（容器的連線在主機上都由它以 lm-untrusted 的身分發出）與所有建置容器。
+# 未被下列規則拒絕的連線回到 OUTPUT 的預設政策（公開網際網路，例如套件下載）。
+#
+# 安裝（root）：
+#   install -m 0755 -o root -g root lm-untrusted-fw /usr/local/sbin/lm-untrusted-fw
+#   install -m 0644 -o root -g root lm-untrusted-fw.default.example /etc/default/lm-untrusted-fw  # 再填入實際值
+# 開機時由 lm-untrusted-fw.service 在 lm-untrusted 的 user manager（以及 rootless Docker）之前套用。
+# 可重複執行：LM-UNTRUSTED chain 先清空再重建，OUTPUT 的跳轉規則只在不存在時加入。
+set -eu
+
+# Jenkins controller 與 LAN Registry 所在主機的 LAN IP，自 /etc/default/lm-untrusted-fw 讀取。
+# 檔案不存在、未設定或不是 IPv4 位址時，在修改任何規則之前失敗。
+CONF=/etc/default/lm-untrusted-fw
+[ -r "$CONF" ] || { echo "$CONF is missing" >&2; exit 1; }
+. "$CONF"
+HOST=${LM_JENKINS_HOST_IP:-}
+[ -n "$HOST" ] || { echo "LM_JENKINS_HOST_IP is not set in $CONF" >&2; exit 1; }
+case "$HOST" in
+  *[!0-9.]*) echo "LM_JENKINS_HOST_IP is not an IPv4 address: $HOST" >&2; exit 1 ;;
+esac
+
+OWNER=$(id -u lm-untrusted)
+SUB=$(awk -F: '$1=="lm-untrusted"{print $2 "-" $2+$3-1}' /etc/subuid)
+[ -n "$SUB" ] || { echo "lm-untrusted has no subuid range" >&2; exit 1; }
+C=LM-UNTRUSTED
+iptables -N "$C" 2>/dev/null || iptables -F "$C"
+# 丟棄 REPLY 方向的封包：lm-untrusted 監聽的任何連接埠都無法回應外部發起的連線。
+iptables -A "$C" -m conntrack --ctdir REPLY -j DROP
+# 已允許之連線的後續封包。
+iptables -A "$C" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+# DNS。
+iptables -A "$C" -p udp --dport 53 -j RETURN
+iptables -A "$C" -p tcp --dport 53 -j RETURN
+# Jenkins controller :8080（agent 的 WebSocket 連線）。以 --ctorigdst 比對原始目的地：
+# 連到本機發布連接埠的封包在 filter OUTPUT 之前已被 Docker 的 DNAT 改寫為容器位址。
+iptables -A "$C" -p tcp -m conntrack --ctorigdst "$HOST" --ctorigdstport 8080 -j RETURN
+# LAN Registry :8443（拉取 Build_Image 與鏡像映像）。
+iptables -A "$C" -p tcp -m conntrack --ctorigdst "$HOST" --ctorigdstport 8443 -j RETURN
+# 本機的其他連接埠（含 127.0.0.1 與主機的所有位址）。
+iptables -A "$C" -m addrtype --dst-type LOCAL -j REJECT
+# LAN、Docker 網路、CGNAT 與 link-local（含雲端 metadata 169.254.169.254）網段。
+for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16; do
+  iptables -A "$C" -d "$net" -j REJECT
+done
+# lm-untrusted 本身與其 subuid 範圍（容器內的各 uid）都跳到 LM-UNTRUSTED。
+for o in "$OWNER" "$SUB"; do
+  iptables -C OUTPUT -m owner --uid-owner "$o" -j "$C" 2>/dev/null || iptables -I OUTPUT -m owner --uid-owner "$o" -j "$C"
+done
+# IPv6：全部拒絕。
+ip6tables -N "$C" 2>/dev/null || ip6tables -F "$C"
+ip6tables -A "$C" -j REJECT
+for o in "$OWNER" "$SUB"; do
+  ip6tables -C OUTPUT -m owner --uid-owner "$o" -j "$C" 2>/dev/null || ip6tables -I OUTPUT -m owner --uid-owner "$o" -j "$C"
+done

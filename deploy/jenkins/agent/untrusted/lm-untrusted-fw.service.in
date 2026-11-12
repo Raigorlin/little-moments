@@ -1,0 +1,28 @@
+# Little Moments — 開機套用 untrusted agent 的對外連線政策（Requirement 2.6；tasks 19.3）。
+#
+# 範本：安裝時把 @LM_UNTRUSTED_UID@ 換成 lm-untrusted 的 uid（root）：
+#   sed "s/@LM_UNTRUSTED_UID@/$(id -u lm-untrusted)/g" lm-untrusted-fw.service.in > /etc/systemd/system/lm-untrusted-fw.service
+#   systemctl daemon-reload
+#   systemctl enable --now lm-untrusted-fw.service
+# 修改 [Install] 後（例如自只有 WantedBy 的舊版更新）以 reenable 重建 RequiredBy 的連結：
+#   systemctl reenable lm-untrusted-fw.service
+#
+# 在 user@<uid>.service（lm-untrusted 的 user manager，rootless Docker 與 untrusted agent 都在其下）之前執行，
+# 並以 RequiredBy 讓 user manager 依賴本 unit：防火牆套用失敗時 user manager 與 rootless daemon 不會啟動，
+# 建置停止，而不是在沒有過濾的情況下執行。這比 192.168.1.121 目前只設 WantedBy 的做法嚴格。
+# 刻意不使用 Condition*=：條件不成立時 unit 視為成功，依賴它的 user manager 仍會啟動。
+# 注意：Requires 的語意也使 `systemctl restart lm-untrusted-fw` 連帶重新啟動 lm-untrusted 的 user manager；
+# 只需重新套用規則時直接執行 /usr/local/sbin/lm-untrusted-fw。
+
+[Unit]
+Description=Little Moments: egress firewall for the untrusted Jenkins agent (lm-untrusted)
+Before=user@@LM_UNTRUSTED_UID@.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/lm-untrusted-fw
+
+[Install]
+WantedBy=multi-user.target
+RequiredBy=user@@LM_UNTRUSTED_UID@.service

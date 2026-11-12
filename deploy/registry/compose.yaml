@@ -5,9 +5,11 @@
 # 只允許 LAN_CIDR（與 Deploy_Host 相同做法，見 design.md Components 第 12 節）。
 # 不支援公開網際網路曝露。
 #
-# 映像以 digest 固定。`sha256:<digest>` 為佔位符：在離線環境無法確認正確 digest，
-# 安裝前須由維運者以 `crane digest <image>:<tag>` 取得並替換。佔位符不是合法的
-# 映像參考，`docker compose up` 會直接失敗（fail closed），不會退回可變 tag。
+# 映像以上游多平台 index 的 digest 固定（`docker buildx imagetools inspect caddy:2.10.2`、
+# `docker buildx imagetools inspect registry:3.0.0`），不會退回可變 tag。
+#
+# 連接埠：proxy 發布 ${LM_REGISTRY_LAN_IP}:8443 → 容器 8443。主機的 443 由 Nginx Proxy Manager
+# 使用；Jenkinsfile 與 deploy/compose/*.env 的 LM_IMAGE_REPO 皆以 `<主機名稱>:8443` 引用 Registry。
 #
 # 安裝時提供的檔案（皆不在 repository 中，見 .gitignore）：
 #   secrets/htpasswd           0440 root:10003   帳號與 bcrypt 雜湊（格式見 htpasswd.example）
@@ -15,23 +17,24 @@
 #   secrets/tls/registry.key   0440 root:10003   伺服器私鑰
 #   ${LM_REGISTRY_DATA_DIR}    0700 10004:10004  映像資料目錄（不屬於 Docker 卷，便於備份）
 # 用戶端（Deploy_Host、Build_Agent）須將內部 CA 放入
-# /etc/docker/certs.d/<LM_REGISTRY_HOST>/ca.crt。
+# /etc/docker/certs.d/<LM_REGISTRY_HOST>:8443/ca.crt（目錄名稱須含連接埠）。
 #
 # 必要環境變數（未設定時 compose 直接報錯）：
 #   LM_REGISTRY_LAN_IP     Registry 主機的 LAN 介面 IP（例如 <10.0.0.10>）
-#   LM_REGISTRY_HOST       憑證上的主機名稱（例如 <registry.lan.example>）
+#   LM_REGISTRY_HOST       憑證上的主機名稱（例如 registry.our-littlemoments.com）
 #   LM_REGISTRY_DATA_DIR   主機上的資料目錄絕對路徑（例如 </srv/lm-registry/data>）
 name: lm-registry
 
 services:
   proxy:
-    image: caddy:2.10.2@sha256:<digest>
+    image: caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb
     command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
     user: "10003:10003"
     environment:
       LM_REGISTRY_HOST: ${LM_REGISTRY_HOST:?LM_REGISTRY_HOST is required}
+    # 主機 443 由 Nginx Proxy Manager 使用，Registry 只發布 8443（與 Pipeline 引用的連接埠相同）。
     ports:
-      - "${LM_REGISTRY_LAN_IP:?LM_REGISTRY_LAN_IP is required}:443:8443"
+      - "${LM_REGISTRY_LAN_IP:?LM_REGISTRY_LAN_IP is required}:8443:8443"
     volumes:
       - type: bind
         source: ./Caddyfile
@@ -56,13 +59,17 @@ services:
       - /config:uid=10003,gid=10003,mode=0700
     read_only: true
     cap_drop: [ALL]
+    # 官方 Caddy 映像的 /usr/bin/caddy 帶有 cap_net_bind_service 檔案能力；bounding set 不含該能力時
+    # execve 會以 EPERM 失敗（`exec /usr/bin/caddy: operation not permitted`），因此只加回這一項。
+    # 容器內監聽 8443，不需要其他能力。
+    cap_add: [NET_BIND_SERVICE]
     security_opt: ["no-new-privileges:true"]
     networks: [edge, backend]
     depends_on: [registry]
     restart: unless-stopped
 
   registry:
-    image: registry:3.0.0@sha256:<digest>
+    image: registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
     command: ["serve", "/etc/distribution/config.yml"]
     user: "10004:10004"
     volumes:

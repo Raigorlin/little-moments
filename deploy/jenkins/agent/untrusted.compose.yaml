@@ -1,0 +1,50 @@
+# Untrusted Build_Agent lm-untrusted-1（Requirement 2.5、2.6；tasks 19.3）：ci/ 的建置，執行 PR 的程式碼。
+#
+# 絕不掛載主機的 /var/run/docker.sock（等同主機 root）。這個 agent 只連到非特權使用者 lm-untrusted 的
+# rootless Docker（${SOCK}，即 /run/user/<uid>/docker.sock），映像也由該 rootless daemon 建置與執行：
+#   （以 lm-untrusted 身分，於本檔所在目錄）
+#   DOCKER_HOST="unix://$SOCK" docker compose -f untrusted.compose.yaml up -d --build
+# lm-untrusted 及其 subuid 範圍的對外連線由 untrusted/lm-untrusted-fw 限制：只允許 DNS、Jenkins :8080
+# 與 Registry :8443，拒絕本機其他連接埠、LAN、Docker 與 link-local 網段及所有 IPv6。
+#
+# 工作目錄：容器內外同為 /var/lib/jenkins-untrusted（與 casc.yaml 的 remoteFS 一致；rootless daemon
+# 以主機路徑 bind-mount workspace）。工作目錄與 secret 的擁有者是對應到容器內 uid 1000 的 subuid
+# （/etc/subuid 中 lm-untrusted 的起始值 + 999；群組同理以 /etc/subgid 計算）：
+#   u=$(( $(awk -F: '$1=="lm-untrusted"{print $2}' /etc/subuid) + 999 ))
+#   g=$(( $(awk -F: '$1=="lm-untrusted"{print $2}' /etc/subgid) + 999 ))
+#   install -d -o "$u" -g "$g" -m 750 /var/lib/jenkins-untrusted
+#
+# agent secret：自「Manage Jenkins → Nodes → lm-untrusted-1」取得，寫入本目錄的 lm-untrusted-1.secret
+# （agent 只在啟動時讀取，更換後須重新啟動容器）：
+#   umask 077; read -rs s; printf '%s' "$s" > lm-untrusted-1.secret; unset s
+#   chown "$u:$g" lm-untrusted-1.secret
+#
+# 必要環境變數（本目錄的 .env，見 .env.example）：LM_JENKINS_URL、SOCK、SOCK_GID。
+name: lm-untrusted-agent
+
+services:
+  lm-untrusted-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lm-untrusted-agent
+    restart: unless-stopped
+    entrypoint: ["java", "-jar", "/usr/share/jenkins/agent.jar"]
+    command:
+      - "-url"
+      - "${LM_JENKINS_URL:?LM_JENKINS_URL is required}"
+      - "-name"
+      - "lm-untrusted-1"
+      - "-secret"
+      - "@/run/secrets/agent-secret"
+      - "-webSocket"
+      - "-workDir"
+      - "/var/lib/jenkins-untrusted"
+    # 容器內看到的 rootless socket 群組。
+    group_add:
+      - "${SOCK_GID:?}"
+    volumes:
+      # rootless daemon 的 socket；不是主機的 /var/run/docker.sock。
+      - "${SOCK:?}:/var/run/docker.sock"
+      - /var/lib/jenkins-untrusted:/var/lib/jenkins-untrusted
+      - ./lm-untrusted-1.secret:/run/secrets/agent-secret:ro

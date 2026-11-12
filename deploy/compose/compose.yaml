@@ -13,7 +13,7 @@
 #   /srv/lm/<env>/caddy/         deploy/caddy/ 的內容 + lm-deploy 產生的 upstream.caddy
 #
 # 映像一律以 `repo@sha256:<digest>` 引用（Req 17.7、20.1）。APP_IMAGE_* 由 lm-deploy 在每次呼叫時
-# 提供並驗證格式；第三方映像的 digest 為 PLACEHOLDER，見下方註解。
+# 提供並驗證格式；第三方映像（proxy、db）以上游多平台 index 的 digest 固定，見下方註解。
 #
 # 網路：
 #   edge  一般 bridge，只有 proxy；唯一發布連接埠的服務，綁定 ${LAN_IP}。LAN 網段限制由
@@ -84,9 +84,8 @@ x-app: &app
 services:
   proxy:
     <<: *hardening
-    # PLACEHOLDER：digest 須由維運者以 `docker buildx imagetools inspect caddy:2.10.2-alpine` 填入。
-    # 未填入時映像解析失敗，部署不會進行（fail closed）。
-    image: caddy:2.10.2-alpine@sha256:<digest>
+    # digest 為 caddy:2.10.2-alpine 的多平台 index（`docker buildx imagetools inspect caddy:2.10.2-alpine`）。
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
     # 官方 Caddy 映像的 /usr/bin/caddy 帶有 cap_net_bind_service 檔案能力；bounding set 不含該能力時
     # execve 會以 EPERM 失敗，因此只加回這一項。容器內監聽 8080／8443，不需要其他能力。
     cap_add: [NET_BIND_SERVICE]
@@ -138,9 +137,10 @@ services:
 
   db:
     <<: *hardening
-    # PLACEHOLDER：digest 須由維運者以 `docker buildx imagetools inspect postgres:17.6-bookworm` 填入；
+    # digest 為 postgres:17.6-bookworm 的多平台 index（`docker buildx imagetools inspect postgres:17.6-bookworm`）；
+    # 必須與 drill.yaml 的 db 及 Jenkinsfile 的 LM_POSTGRES_IMAGE 相同。
     # 主要版本須與 lm-deploy 使用的 pg_dump／pg_restore 一致（17）。
-    image: postgres:17.6-bookworm@sha256:<digest>
+    image: postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
     # 以映像內 postgres 帳號（999:999）直接執行：entrypoint 不需 chown／gosu，因此可 cap_drop ALL。
     # 新建立的具名卷會複製映像中 /var/lib/postgresql/data 的擁有者（postgres），首次 initdb 可寫入。
     user: "999:999"

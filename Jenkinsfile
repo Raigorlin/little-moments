@@ -35,39 +35,39 @@ pipeline {
     // Build_Image 只以 digest 引用（Req 3.1）。
     // PLACEHOLDER：`sha256:<digest>` 必須由維運者以 infra/build-image Job 輸出的實際 digest 取代；
     // 未取代時 Init 階段的格式檢查會使建置失敗（fail closed），不會退回任何可變 tag。
-    BUILD_IMAGE = 'registry.lan.example:8443/little-moments/build-image@sha256:<digest>'
+    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:<digest>'
     // Build_Record 路徑（封存前由 post 階段經 ci/scrub.mjs 處理）。
     LM_RECORD = 'reports/build-record.json'
     // 憑證 ID（值只存在 Credential_Store；ci/ 與 release/ 資料夾各自定義）。
     LM_REGISTRY_PULL_CREDENTIALS = 'lm-registry-pull'
     LM_GIT_CREDENTIALS = 'lm-github-app'
     // Ephemeral_Database 映像只以 digest 引用，與 deploy/compose/compose.yaml 的 db 相同版本（Req 4.2）。
-    // PLACEHOLDER：`sha256:<digest>` 必須由維運者以 `docker buildx imagetools inspect postgres:17.6-bookworm`
-    // 的實際 digest 取代；未取代時 Unit Tests 階段在建立資料庫前失敗（fail closed）。
-    LM_POSTGRES_IMAGE = 'postgres:17.6-bookworm@sha256:<digest>'
+    // digest 為 postgres:17.6-bookworm 的多平台 index（`docker buildx imagetools inspect postgres:17.6-bookworm`）；
+    // 更新版本時須同時修改 deploy/compose/compose.yaml 與 drill.yaml 的 db。
+    LM_POSTGRES_IMAGE = 'postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3'
     // Ephemeral_Database 的資料庫與管理帳號名稱（非秘密；密碼每階段隨機產生）。
     LM_EDB_NAME = 'lm_test'
     LM_EDB_USER = 'lm_test'
     // 靜態安全掃描器（Req 6；Design「工具選型」）：鏡像至 LAN Registry（與 Build_Image 同一 Registry）並只以 digest 引用。
-    // PLACEHOLDER：`sha256:<digest>` 必須由維運者以鏡像後的實際 digest 取代（上游：ghcr.io/gitleaks/gitleaks v8.x、
-    // ghcr.io/google/osv-scanner v2.x、aquasec/trivy、semgrep/semgrep 固定版本；映像須可以非 root 使用者執行）。
-    // 未取代時 Security Scan 階段在掃描前失敗，「安全」關卡記錄為未通過（fail closed）。
-    LM_GITLEAKS_IMAGE = 'registry.lan.example:8443/little-moments/mirror/gitleaks@sha256:<digest>'
-    LM_OSV_SCANNER_IMAGE = 'registry.lan.example:8443/little-moments/mirror/osv-scanner@sha256:<digest>'
-    LM_TRIVY_IMAGE = 'registry.lan.example:8443/little-moments/mirror/trivy@sha256:<digest>'
-    LM_SEMGREP_IMAGE = 'registry.lan.example:8443/little-moments/mirror/semgrep@sha256:<digest>'
+    // 上游（linux/amd64 單一平台鏡像）：ghcr.io/gitleaks/gitleaks:v8.30.1、ghcr.io/google/osv-scanner:v2.7.1、
+    // docker.io/aquasec/trivy:0.76.2、docker.io/semgrep/semgrep:1.185.0。
+    // 更新版本：修改 deploy/registry/mirror.list 後執行 deploy/registry/mirror.sh，再以其輸出的 digest 取代下列值。
+    LM_GITLEAKS_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/gitleaks@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb'
+    LM_OSV_SCANNER_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/osv-scanner@sha256:bc10cae80da100d32572aea48cfc48e592be9adc4a8b0820fd5d2c2db71f9446'
+    LM_TRIVY_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/trivy@sha256:6fa071ef8daa2e58b90cbf1710bedca91adbb3bf98693533226f442035b836a6'
+    LM_SEMGREP_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/semgrep@sha256:f83a64e8a7d985eaa51ee3978c9c882be946964c68633fba5d2817cf297a3912'
     // Trivy 漏洞資料庫的 LAN 鏡像（OCI artifact，每日更新故以 tag 引用）；以唯讀拉取帳號存取。
-    LM_TRIVY_DB_REPOSITORY = 'registry.lan.example:8443/little-moments/mirror/trivy-db:2'
+    // Registry 主機的 lm-mirror-trivy-db.timer 每日 04:30 自 mirror.gcr.io/aquasec/trivy-db:2 複製（deploy/registry/）。
+    LM_TRIVY_DB_REPOSITORY = 'registry.our-littlemoments.com:8443/little-moments/mirror/trivy-db:2'
     // Agent 的系統 CA bundle（須含 LAN Registry 的內部 CA），以唯讀方式提供給 Trivy 下載資料庫。
     LM_SCAN_CA_BUNDLE = '/etc/ssl/certs/ca-certificates.crt'
     // App_Image repository（與 deploy/compose/*.env 的 LM_IMAGE_REPO 相同，位於 Build_Image 的 LAN Registry）。
     // Migration Compatibility 以 `<repo>:<Release_Tag>`（版本標籤不覆寫，Req 16.10）拉取最近 Release_Tag 的映像後
     // 立即解析為 `<repo>@sha256:<digest>`，之後只以 digest 執行。
-    LM_IMAGE_REPO = 'registry.lan.example:8443/little-moments'
+    LM_IMAGE_REPO = 'registry.our-littlemoments.com:8443/little-moments'
     // DAST_Scanner（Design「工具選型」：OWASP ZAP stable，automation framework）：鏡像至 LAN Registry 並只以 digest 引用。
-    // PLACEHOLDER：`sha256:<digest>` 必須由維運者以鏡像後的實際 digest 取代（上游 ghcr.io/zaproxy/zaproxy:stable 的固定版本）；
-    // 未取代時 DAST 階段在建立 Test_Environment 前失敗，含 DAST 的「安全」關卡記錄為未通過（fail closed）。
-    LM_ZAP_IMAGE = 'registry.lan.example:8443/little-moments/mirror/zap@sha256:<digest>'
+    // 上游 ghcr.io/zaproxy/zaproxy:2.17.0（linux/amd64）；更新方式同上（deploy/registry/mirror.list、mirror.sh）。
+    LM_ZAP_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/zap@sha256:c2d63bbb2d907a5c5257914fb20e26e969c92b25f265def7f89f08203f912882'
     // 隔離探測（ci/dast/isolation-probe.sh，Req 7.7、7.9）必須「無法連線」的位址：Deploy_Host 的 SSH 與 App／代理連接埠、
     // Staging／Production 連接埠、Registry、Jenkins 與其他 LAN 主機（另含探測腳本預設的網際網路位址與預設閘道）。
     // PLACEHOLDER：以 IP 位址字面值取代 <...>（`a.b.c.d:port` 或 `[IPv6]:port`，以空白分隔；不接受主機名稱，
@@ -75,12 +75,12 @@ pipeline {
     LM_DAST_PROBE_TARGETS = '<deploy-host-ip>:22 <deploy-host-ip>:80 <deploy-host-ip>:443 <deploy-host-ip>:8081 <registry-ip>:8443 <jenkins-ip>:443'
     // App_Image 掃描、SBOM、Registry 操作與簽章工具（Design「工具選型」：Trivy、Syft、crane、cosign v2）。
     // Build_Image 不含這些工具；與掃描器相同，鏡像至 LAN Registry 並只以 digest 引用。
-    // PLACEHOLDER：`sha256:<digest>` 必須由維運者以鏡像後的實際 digest 取代（上游 anchore/syft、
-    // gcr.io/go-containerregistry/crane、ghcr.io/sigstore/cosign/cosign v2.x 的固定版本；映像須可以非 root 使用者執行）。
-    // 未取代時 Image Build 階段在建置映像前失敗，「映像」關卡記錄為未通過（fail closed）。Trivy 沿用 LM_TRIVY_IMAGE。
-    LM_SYFT_IMAGE = 'registry.lan.example:8443/little-moments/mirror/syft@sha256:<digest>'
-    LM_CRANE_IMAGE = 'registry.lan.example:8443/little-moments/mirror/crane@sha256:<digest>'
-    LM_COSIGN_IMAGE = 'registry.lan.example:8443/little-moments/mirror/cosign@sha256:<digest>'
+    // 上游（linux/amd64）：docker.io/anchore/syft:v1.57.1、gcr.io/go-containerregistry/crane:v0.22.1、
+    // ghcr.io/sigstore/cosign/cosign:v2.6.5（2.x 最新版）。更新方式同上（deploy/registry/mirror.list、mirror.sh）；
+    // crane 另須同步 ci/jenkins/pipelines/build-image.Jenkinsfile 的 LM_CRANE_IMAGE。Trivy 沿用 LM_TRIVY_IMAGE。
+    LM_SYFT_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/syft@sha256:c31c09c21a75c7c0b1f4082358614115536fa4f1d2e0bdab2d11f5257360338a'
+    LM_CRANE_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/crane@sha256:18efc5092649b2a674d384663044e04edf76705c4faa2875e8a322b4e80f070a'
+    LM_COSIGN_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/cosign@sha256:404b8081d833085d12c21cda889c6f2f3731328768257c760e32fcf070be2cf9'
     // 推送與簽章憑證（只定義於 release/ 資料夾範圍，只在 Image Push／Image Sign 的 withCredentials 內提供；Req 15.1、15.2）：
     //   lm-registry-push      Username with password：Registry 唯一可寫入的帳號 lm-push（deploy/registry/Caddyfile）
     //   lm-cosign-key         Secret file：cosign 加密私鑰 cosign.key

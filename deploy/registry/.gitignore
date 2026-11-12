@@ -4,3 +4,7 @@ htpasswd
 *.key
 *.crt
 *.pem
+# 主機上 compose.yaml 旁的內部 CA 目錄（CA 私鑰與憑證）
+ca/
+# compose 變數檔（LM_REGISTRY_LAN_IP 等，只存在主機上）
+.env

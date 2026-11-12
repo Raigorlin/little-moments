@@ -26,8 +26,8 @@
 //   * 所有容器都不發布連接埠、不使用 host 網路、不以 privileged 執行。建置期間 RUN 指令需要網路下載 Node.js／Bun，
 //     下載內容由 Dockerfile 以 SHA-256 校驗；工具鏈驗證容器沒有任何網路。
 //
-// 已知限制：Dockerfile 的 `# syntax=docker/dockerfile:1.10` 前端以 tag 引用（BuildKit 從 Docker Hub 解析）。
-// 本 Job 未改寫該行；若要完全固定，應改為 `docker/dockerfile:1.10@sha256:<digest>` 並鏡像至 LAN Registry。
+// Dockerfile 前端：`# syntax=docker/dockerfile:1.10@sha256:<64 hex>` 以 digest 固定，BuildKit 依 digest 自 Docker Hub
+// 拉取（未鏡像至 LAN Registry，與 RUN 下載 Node.js／Bun 相同需要對外網路）；Docker Hub 上的 tag 被改寫也不影響結果。
 //
 // 需要的 plugin：Pipeline、Credentials Binding、Timestamper、Workspace Cleanup。Agent 需有 docker CLI、git、coreutils。
 //
@@ -49,12 +49,12 @@ pipeline {
 
   environment {
     // Build_Image repository（與 BUILD_IMAGE 引用的 repository 相同，位於 LAN Registry）。
-    LM_BI_REPO = 'registry.lan.example:8443/little-moments/build-image'
+    LM_BI_REPO = 'registry.our-littlemoments.com:8443/little-moments/build-image'
     LM_BI_DOCKERFILE = 'ci/build-image/Dockerfile'
     LM_TOOLCHAIN = 'ci/toolchain.json'
-    // Registry 操作工具（與根目錄 Jenkinsfile 相同）：鏡像至 LAN Registry 並只以 digest 引用。
-    // PLACEHOLDER：`sha256:<digest>` 必須由維運者以鏡像後的實際 digest 取代；未取代時 Init 失敗（fail closed）。
-    LM_CRANE_IMAGE = 'registry.lan.example:8443/little-moments/mirror/crane@sha256:<digest>'
+    // Registry 操作工具（與根目錄 Jenkinsfile 的 LM_CRANE_IMAGE 相同）：鏡像至 LAN Registry 並只以 digest 引用。
+    // 上游 gcr.io/go-containerregistry/crane:v0.22.1（linux/amd64）；更新方式見 deploy/registry/mirror.list 與 mirror.sh。
+    LM_CRANE_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/crane@sha256:18efc5092649b2a674d384663044e04edf76705c4faa2875e8a322b4e80f070a'
     // Agent 的系統 CA bundle（須含 LAN Registry 的內部 CA），以唯讀方式提供給 crane。
     LM_SCAN_CA_BUNDLE = '/etc/ssl/certs/ca-certificates.crt'
     // 憑證 ID（值只存在 infra/ 資料夾範圍的 Credential_Store）。

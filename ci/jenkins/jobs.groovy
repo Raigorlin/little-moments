@@ -24,17 +24,15 @@
 // lm-retention-bot（lm-jenkins-api-retention 憑證所屬的 Jenkins 帳號）在 release/little-moments 的 Run/Update，
 // 只用於 ci/keep-log.mjs 設定 keepLog=true（Req 21.6）；它沒有 Run/Delete，因此無法刪除建置或解除保留。
 //
-// PLACEHOLDER：GITHUB_OWNER、GITHUB_REPO 須由維運者以實際 GitHub organization／repository 取代。
-//
-// 注意：本檔無法在本機執行；Job DSL 動態 DSL 的方法名稱（plugin @Symbol）與參數未經 Jenkins 實際驗證。
-// 部署前請以「Manage Jenkins → Job DSL → API Viewer」（/plugin/job-dsl/api-viewer/index.html）對照安裝的 plugin 版本。
+// 注意：本檔無法在本機執行；Job DSL 動態 DSL 的方法名稱與參數已在實際的 Jenkins LTS controller 上載入本檔驗證。
+// 升級 plugin 後請以「Manage Jenkins → Job DSL → API Viewer」（/plugin/job-dsl/api-viewer/index.html）重新對照。
 
 import groovy.transform.Field
 
 // ---------------------------------------------------------------- 設定（非秘密）
 
-@Field final String GITHUB_OWNER = 'example-org'          // PLACEHOLDER
-@Field final String GITHUB_REPO = 'little-moments'        // PLACEHOLDER
+@Field final String GITHUB_OWNER = 'Raigorlin'
+@Field final String GITHUB_REPO = 'little-moments'
 @Field final String REPO_URL = "https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}.git".toString()
 @Field final String MAIN_BRANCH = 'main'
 // Release_Tag 的預篩（Req 1.5 的最終驗證在 Jenkinsfile 的 Tag Verify：ci/policy/tag.mjs）。
@@ -62,7 +60,8 @@ import groovy.transform.Field
 //   string            <id>
 //   file              <id>（原始位元組；fileName 為綁定時的檔名）
 //   sshKey            <id>.username、<id>.key（OpenSSH 私鑰）
-//   gitHubApp         <id>.app-id、<id>.key（PKCS#8 私鑰）、<id>.owner
+//   gitHubApp         <id>.app-id、<id>.key（PKCS#8 私鑰）
+// （type 是本檔的分類名稱，不是 DSL 方法名稱；對應的 Job DSL 方法見 folderCredentials。）
 // 每個資料夾各自讀取自己的秘密目錄，因此 ci/ 的 lm-registry-pull 與 release/ 的同名憑證可以是不同的唯讀帳號，
 // ci/ 的 lm-github-app 也可以是權限較小的另一個 GitHub App 安裝（只需 Contents: read、Commit statuses: write）。
 
@@ -113,7 +112,7 @@ List<String> secretParts(Map c) {
     case 'string': return [c.id.toString()]
     case 'file': return [c.id.toString()]
     case 'sshKey': return ["${c.id}.username", "${c.id}.key"]*.toString()
-    case 'gitHubApp': return ["${c.id}.app-id", "${c.id}.key", "${c.id}.owner"]*.toString()
+    case 'gitHubApp': return ["${c.id}.app-id", "${c.id}.key"]*.toString()
     default: throw new IllegalArgumentException("未知的憑證類型：${c.type}（${c.id}）")
   }
 }
@@ -181,7 +180,6 @@ List<Map> resolveCredentials(String folderName) {
       case 'gitHubApp':
         r.appId = secretLine(folderName, "${cid}.app-id".toString())
         r.key = secretBlock(folderName, "${cid}.key".toString())
-        r.owner = secretLine(folderName, "${cid}.owner".toString())
         break
       default:
         throw new IllegalArgumentException("未知的憑證類型：${c.type}（${cid}）".toString())
@@ -190,69 +188,96 @@ List<Map> resolveCredentials(String folderName) {
   }
 }
 
-/** 資料夾的 folderCredentialsProperty（作為 folder { properties(…) } 的內容）。 */
+/**
+ * 資料夾的 folderCredentialsProperty（作為 folder { properties(…) } 的內容）。
+ *
+ * Job DSL 以 plugin 的 @Symbol 解析 Describable，沒有 @Symbol 時用類別名稱首字小寫；CasC 的別名（gitHubApp、string、
+ * file、directEntry）在 Job DSL 中不存在。因此憑證使用 stringCredentialsImpl、fileCredentialsImpl、
+ * directEntryPrivateKeySource 與 gitHubAppCredentials；usernamePassword 與 basicSSHUserPrivateKey 兩種名稱相同。
+ *
+ * Job DSL 的例外訊息（例如 MissingMethodException）會列出參數值，曾把 GitHub App 私鑰印到 Jenkins 日誌。
+ * 因此建立憑證時的任何例外都改丟出只含「資料夾/憑證 ID（類型）」與例外類別名稱的 IllegalStateException，
+ * 不附原例外訊息與 cause。外層的 catch 遇到已改寫的例外（sanitized）時原樣拋出，其他例外只列出資料夾。
+ */
 Closure folderCredentials(String folderName) {
   List<Map> resolved = resolveCredentials(folderName)
+  IllegalStateException sanitized = null
   return {
-    folderCredentialsProperty {
-      domainCredentials {
+    try {
+      folderCredentialsProperty {
         domainCredentials {
-          domain {
-            name('')
-            description('')
-          }
-          credentials {
-            for (Map r in resolved) {
-              if (r.type == 'usernamePassword') {
-                usernamePassword {
-                  scope('GLOBAL')
-                  id(r.id)
-                  description(r.description)
-                  username(r.username)
-                  password(r.password)
-                }
-              } else if (r.type == 'string') {
-                string {
-                  scope('GLOBAL')
-                  id(r.id)
-                  description(r.description)
-                  secret(r.secret)
-                }
-              } else if (r.type == 'file') {
-                file {
-                  scope('GLOBAL')
-                  id(r.id)
-                  description(r.description)
-                  fileName(r.fileName)
-                  secretBytes(r.bytes)
-                }
-              } else if (r.type == 'sshKey') {
-                basicSSHUserPrivateKey {
-                  scope('GLOBAL')
-                  id(r.id)
-                  description(r.description)
-                  username(r.username)
-                  passphrase('')
-                  privateKeySource {
-                    directEntry {
-                      privateKey(r.key)
+          domainCredentials {
+            domain {
+              name('')
+              description('')
+            }
+            credentials {
+              for (Map r in resolved) {
+                try {
+                  if (r.type == 'usernamePassword') {
+                    usernamePassword {
+                      scope('GLOBAL')
+                      id(r.id)
+                      description(r.description)
+                      username(r.username)
+                      password(r.password)
+                    }
+                  } else if (r.type == 'string') {
+                    stringCredentialsImpl {
+                      scope('GLOBAL')
+                      id(r.id)
+                      description(r.description)
+                      secret(hudson.util.Secret.fromString(r.secret))
+                    }
+                  } else if (r.type == 'file') {
+                    // FileCredentialsImpl(scope, id, description, FileItem file, String fileName, SecretBytes secretBytes)：
+                    // file 為必要參數；以 secretBytes 提供內容時傳入 null。
+                    fileCredentialsImpl {
+                      scope('GLOBAL')
+                      id(r.id)
+                      description(r.description)
+                      file(null)
+                      fileName(r.fileName)
+                      secretBytes(r.bytes)
+                    }
+                  } else if (r.type == 'sshKey') {
+                    basicSSHUserPrivateKey {
+                      scope('GLOBAL')
+                      id(r.id)
+                      description(r.description)
+                      username(r.username)
+                      passphrase('')
+                      privateKeySource {
+                        directEntryPrivateKeySource {
+                          privateKey(hudson.util.Secret.fromString(r.key))
+                        }
+                      }
+                    }
+                  } else if (r.type == 'gitHubApp') {
+                    // Job DSL 的方法名稱為類別名稱首字小寫（GitHubAppCredentials）；CasC 的 gitHubApp 在此不存在。
+                    // 不設定 owner：github-branch-source 以 repositoryAccessStrategy（預設）由存取的 repository 推定 owner。
+                    gitHubAppCredentials {
+                      scope('GLOBAL')
+                      id(r.id)
+                      description(r.description)
+                      appID(r.appId)
+                      privateKey(hudson.util.Secret.fromString(r.key))
                     }
                   }
-                }
-              } else if (r.type == 'gitHubApp') {
-                gitHubApp {
-                  scope('GLOBAL')
-                  id(r.id)
-                  description(r.description)
-                  appID(r.appId)
-                  privateKey(r.key)
-                  owner(r.owner)
+                } catch (Throwable e) {
+                  sanitized = new IllegalStateException("無法建立資料夾憑證：${folderName}/${r.id}（${r.type}，${e.getClass().getName()}）".toString())
+                  throw sanitized
                 }
               }
             }
           }
         }
       }
+    } catch (Throwable e) {
+      if (sanitized != null && e.is(sanitized)) {
+        throw e
+      }
+      throw new IllegalStateException("無法建立資料夾憑證：${folderName}（folderCredentialsProperty，${e.getClass().getName()}）".toString())
     }
   }
 }

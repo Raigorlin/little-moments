@@ -177,6 +177,87 @@ describe('Build_Image 以 digest 引用（Req 3.1）', () => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// LAN Registry 與映像的實際值（tasks 19.4）
+// ---------------------------------------------------------------------------
+
+const REGISTRY = 'registry.our-littlemoments.com:8443';
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// Jenkinsfile 的鏡像映像變數 → deploy/registry/mirror.list 的名稱。
+const MIRROR_VARS = {
+  LM_GITLEAKS_IMAGE: 'gitleaks', LM_OSV_SCANNER_IMAGE: 'osv-scanner', LM_TRIVY_IMAGE: 'trivy', LM_SEMGREP_IMAGE: 'semgrep',
+  LM_SYFT_IMAGE: 'syft', LM_CRANE_IMAGE: 'crane', LM_COSIGN_IMAGE: 'cosign', LM_ZAP_IMAGE: 'zap',
+};
+/** environment 區塊中整行 `NAME = '...'` 的值。 */
+const envValues = (code, name) => [...code.matchAll(new RegExp(`^\\s*${name}\\s*=\\s*'([^']*)'\\s*$`, 'gm'))].map((m) => m[1]);
+
+describe('LAN Registry 與映像的實際值（tasks 19.4）', () => {
+  const rootCode = stripComments(read('Jenkinsfile'));
+
+  test('Jenkinsfile 的鏡像映像皆位於 LAN Registry，並以 64 位十六進位 digest 固定', () => {
+    for (const [v, name] of Object.entries(MIRROR_VARS)) {
+      const refs = envValues(rootCode, v);
+      expect({ v, n: refs.length }).toEqual({ v, n: 1 });
+      expect(refs[0]).toMatch(new RegExp(`^${escapeRe(REGISTRY)}/little-moments/mirror/${escapeRe(name)}@sha256:[0-9a-f]{64}$`));
+    }
+    // 沒有其他未列入的鏡像映像變數，也沒有殘留的 digest PLACEHOLDER（BUILD_IMAGE 除外）。
+    const mirrorVars = [...rootCode.matchAll(/^\s*([A-Z_]+)\s*=\s*'[^']*\/mirror\/[^']*@sha256:/gm)].map((m) => m[1]);
+    expect(mirrorVars.sort()).toEqual(Object.keys(MIRROR_VARS).sort());
+    const placeholders = [...rootCode.matchAll(/^\s*([A-Z_]+)\s*=\s*'[^']*@sha256:<digest>'/gm)].map((m) => m[1]);
+    expect(placeholders).toEqual(['BUILD_IMAGE']);
+    expect(envValues(rootCode, 'LM_TRIVY_DB_REPOSITORY')).toEqual([`${REGISTRY}/little-moments/mirror/trivy-db:2`]);
+    expect(envValues(rootCode, 'LM_IMAGE_REPO')).toEqual([`${REGISTRY}/little-moments`]);
+    expect(envValues(rootCode, 'LM_POSTGRES_IMAGE')).toEqual(['postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3']);
+  });
+
+  test('BUILD_IMAGE 仍為 LAN Registry 上的 PLACEHOLDER（待 infra/build-image 首次推送後填入）', () => {
+    for (const file of pipelineFiles.filter((f) => !f.endsWith('build-image.Jenkinsfile'))) {
+      expect({ file, refs: envValues(stripComments(read(file)), 'BUILD_IMAGE') })
+        .toEqual({ file, refs: [`${REGISTRY}/little-moments/build-image@sha256:<digest>`] });
+    }
+    const bi = stripComments(read(`${PIPELINE_DIR}/build-image.Jenkinsfile`));
+    expect(envValues(bi, 'LM_BI_REPO')).toEqual([`${REGISTRY}/little-moments/build-image`]);
+  });
+
+  test('定義 LM_CRANE_IMAGE 的 Pipeline 都使用與根目錄 Jenkinsfile 相同的 crane', () => {
+    const crane = envValues(rootCode, 'LM_CRANE_IMAGE')[0];
+    const files = pipelineFiles.filter((f) => envValues(stripComments(read(f)), 'LM_CRANE_IMAGE').length > 0);
+    expect(files).toContain(`${PIPELINE_DIR}/build-image.Jenkinsfile`);
+    for (const file of files) expect({ file, refs: envValues(stripComments(read(file)), 'LM_CRANE_IMAGE') }).toEqual({ file, refs: [crane] });
+  });
+
+  test('Pipeline、Compose 變數範本與 Registry 設定不再引用舊的 Registry 佔位主機', () => {
+    const files = [...pipelineFiles, 'deploy/compose/staging.env.example', 'deploy/compose/prod.env.example',
+      'deploy/registry/compose.yaml', 'deploy/registry/verify-registry.sh'];
+    for (const file of files) {
+      expect({ file, old: /registry\.lan\.example|<registry-host>/.test(read(file)) }).toEqual({ file, old: false });
+    }
+    for (const env of ['staging', 'prod']) {
+      expect(read(`deploy/compose/${env}.env.example`)).toMatch(new RegExp(`^LM_IMAGE_REPO=${escapeRe(REGISTRY)}/little-moments$`, 'm'));
+    }
+  });
+
+  test('Compose 的第三方映像以 64 位十六進位 digest 固定', () => {
+    const compose = parseCompose('deploy/compose/compose.yaml');
+    expect(compose.services.proxy.image).toBe('caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d');
+    for (const file of COMPOSE_FILES) {
+      expect(parseCompose(file).services.db.image).toBe('postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3');
+    }
+  });
+
+  test('Bun 版本：ci/toolchain.json、Build_Image 的 ARG BUN_VERSION 與 App_Image 的 oven/bun 標籤一致', () => {
+    const bun = JSON.parse(read('ci/toolchain.json')).bun;
+    expect(bun).toMatch(/^1\.3\.\d+$/);
+    const bi = read('ci/build-image/Dockerfile');
+    expect([...bi.matchAll(/^ARG BUN_VERSION=(\S*)\s*$/gm)].map((m) => m[1])).toEqual([bun]);
+    const app = read('Dockerfile');
+    const tags = fromLines(app).map((f) => /^oven\/bun:([^@]+)@/.exec(f.from.image)?.[1]).filter(Boolean);
+    expect(tags).toEqual([bun, bun, `${bun}-distroless`]);
+    // 兩個 Dockerfile 的 syntax 前端也以 digest 固定。
+    for (const text of [bi, app]) expect(text.split('\n')[0]).toMatch(/^# syntax=docker\/dockerfile:1\.10@sha256:[0-9a-f]{64}$/);
+  });
+});
+
 // 會略過、強制通過或放寬關卡的名稱片段（以 `_`／`-` 或駝峰分隔的單字比對）。
 const BYPASS_WORDS = ['SKIP', 'BYPASS', 'OVERRIDE', 'FORCE', 'IGNORE', 'WAIVE', 'NOGATE', 'NOGATES', 'ALLOWFAIL', 'ALLOWFAILURE', 'UNSAFE', 'DISABLE'];
 // Jenkins 內建的選項名稱（與 Release_Gate 無關）。

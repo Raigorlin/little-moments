@@ -5,3 +5,9 @@ deploy/bin/* text eol=lf
 deploy/tests/** text eol=lf
 # 主機設定（sudoers、iptables 規則、systemd unit、authorized_keys 樣板）含 CR 會被拒絕或誤判。
 deploy/host/** text eol=lf
+# Registry 主機的 trivy-db 鏡像腳本、設定與 systemd unit，以及 mirror.sh 讀取的 mirror.list。
+deploy/registry/lm-mirror-trivy-db* text eol=lf
+deploy/registry/mirror.list text eol=lf
+# Jenkins controller 與 agent 的容器設定、防火牆腳本、systemd unit 範本與 .conf／.in／.example 檔：
+# Windows 檢出時不得加入 CR（腳本與 unit 在主機上會失敗；tests/deploy-jenkins.test.js 檢查 LF）。
+deploy/jenkins/** text eol=lf

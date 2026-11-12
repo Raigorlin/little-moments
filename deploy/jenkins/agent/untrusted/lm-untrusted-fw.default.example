@@ -1,0 +1,3 @@
+# 安裝為 /etc/default/lm-untrusted-fw（0644 root:root），由 /usr/local/sbin/lm-untrusted-fw 讀取。
+# LM_JENKINS_HOST_IP：Jenkins controller（:8080）與 LAN Registry（:8443）所在主機的 LAN IP。
+LM_JENKINS_HOST_IP=<lan-ip>

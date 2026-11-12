@@ -1,0 +1,3 @@
+# agent secret（Manage Jenkins → Nodes 取得）與主機專屬的 .env 不提交。
+*.secret
+.env

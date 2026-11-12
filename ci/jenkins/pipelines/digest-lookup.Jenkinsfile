@@ -33,7 +33,7 @@ pipeline {
     // Build_Image 只以 digest 引用（Req 3.1）。
     // PLACEHOLDER：`sha256:<digest>` 必須由維運者以 infra/build-image Job 輸出的實際 digest 取代；
     // 未取代時格式檢查會使建置失敗（fail closed），不會退回任何可變 tag。
-    BUILD_IMAGE = 'registry.lan.example:8443/little-moments/build-image@sha256:<digest>'
+    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:<digest>'
     LM_REGISTRY_PULL_CREDENTIALS = 'lm-registry-pull'
     LM_JENKINS_API_CREDENTIALS = 'lm-jenkins-api-readonly'
     LM_LOOKUP_OUT = 'reports/digest-lookup.json'

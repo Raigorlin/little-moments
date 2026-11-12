@@ -1,0 +1,15 @@
+# 將 mirror.gcr.io/aquasec/trivy-db:2 複製到 LAN Registry 的 little-moments/mirror/trivy-db:2。
+# 由 lm-mirror-trivy-db.timer 每日觸發；安裝步驟見 lm-mirror-trivy-db 的檔頭註解。
+# 手動執行：systemctl start lm-mirror-trivy-db.service；結果見 journalctl -u lm-mirror-trivy-db.service。
+#
+# 不設 PrivateTmp：mktemp 建立的登入資訊目錄須由 Docker daemon bind mount 進 crane 容器，
+# daemon 看不到本 unit 的私有 /tmp。
+
+[Unit]
+Description=Little Moments: mirror the Trivy vulnerability DB to the LAN Registry
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/lm-mirror-trivy-db

@@ -45,7 +45,7 @@ pipeline {
 
   environment {
     // PLACEHOLDER：`sha256:<digest>` 必須由維運者以 infra/build-image 輸出的實際 digest 取代；未取代時 Init 失敗（fail closed）。
-    BUILD_IMAGE = 'registry.lan.example:8443/little-moments/build-image@sha256:<digest>'
+    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:<digest>'
     // PLACEHOLDER：Deploy_Host 的 LAN 主機名稱與 SSH 連接埠（非秘密）；known_hosts 憑證須含對應的主機金鑰。
     LM_DEPLOY_HOST = 'deploy-host.lan.example'
     LM_DEPLOY_PORT = '22'

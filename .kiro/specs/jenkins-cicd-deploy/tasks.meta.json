@@ -2332,6 +2332,292 @@
         "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
         "timestamp": 1794301887624
       }
+    ],
+    "18.1 移除 mobile-ux-enhance 分支的 Jenkinsfile": [
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411235149
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411254134
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411323412
+      }
+    ],
+    "18.2 建立合併分支並開始三方合併": [
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411235288
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411323906
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411820167
+      }
+    ],
+    "18.3 設定與 HTTP：以 main 的 `server/config.js` 為準整合 security-harden 的設定": [
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411235365
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411827832
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794412907220
+      }
+    ],
+    "18.4 資料層：把 security-harden 的 SQLite 程式碼改寫為 PostgreSQL": [
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411235446
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794412915074
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794416550437
+      }
+    ],
+    "18.5 收據 AI：以 security-harden 的 OpenAI 實作取代 Bedrock": [
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411235522
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794416558306
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794418354265
+      }
+    ],
+    "18.6 前端與維運腳本": [
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411235595
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794418362229
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794420599910
+      }
+    ],
+    "18.7 測試與 QA_Inventory": [
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411235718
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794420607978
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794426574331
+      }
+    ],
+    "18.8 README 與文件": [
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411235789
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794426581684
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794429991584
+      }
+    ],
+    "18.9 Checkpoint - 合併完成，提交前確認": [
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411235860
+      },
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794429999272
+      }
+    ],
+    "19.1 修正 `ci/jenkins/jobs.groovy` 的 Job DSL 憑證名稱與秘密處理": [
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411235936
+      },
+      {
+        "executionId": "0993fb53-37a1-4f99-b09a-d5adced8d5e7",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794451438271
+      },
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794453376756
+      },
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794454355859
+      }
+    ],
+    "19.2 更新 `ci/jenkins/casc.yaml`，新增 `ci/jenkins/local-security.yaml`，更新 `ci/release-approvers.json`": [
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411236015
+      },
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794454364477
+      },
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794454693322
+      }
+    ],
+    "19.3 新增 Jenkins controller 與兩個 agent 的容器設定（`deploy/jenkins/`）": [
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411236102
+      },
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794454700830
+      },
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794455222088
+      }
+    ],
+    "19.4 LAN Registry 修正與所有映像的實際 digest": [
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411236185
+      },
+      {
+        "executionId": "0993fb53-37a1-4f99-b09a-d5adced8d5e7",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794451438686
+      },
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794453377299
+      },
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794454356209
+      }
+    ],
+    "19.5 更新文件": [
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411236264
+      },
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794455222407
+      },
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794456198389
+      }
+    ],
+    "19.6 Checkpoint - 部署設定同步後確認所有測試通過": [
+      {
+        "executionId": "2df1adf2-8900-49fe-b9f6-fb833af2f371",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794411236340
+      },
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794456207245
+      },
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794458184570
+      }
+    ],
+    "18.10 移除 0002 的破壞性變更並提交合併 commit（使用者已同意）": [
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794451783202
+      },
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794453368750
+      }
+    ],
+    "18. 合併 security-harden 分支至 main（以 PostgreSQL 資料層與 main 的部署方式為準）": [
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794453368930
+      }
+    ],
+    "19. 依 192.168.1.121 的實際部署同步設定（上線時發現的修正與實際值）": [
+      {
+        "executionId": "e5b37454-c57e-46b9-a06b-42edb7871782",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794458184712
+      }
     ]
   }
 }

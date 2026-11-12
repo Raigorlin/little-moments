@@ -1,0 +1,26 @@
+# 日子拾光 · LITTLE MOMENTS — Jenkins 本機使用者資料庫（Configuration as Code；Requirement 2.1、19.3、21.12）。
+#
+# 載入方式：CASC_JENKINS_CONFIG 指向 controller 的 casc 目錄，Configuration as Code 會載入該目錄下的
+# casc.yaml、local-security.yaml 與 jobs.groovy（jobs.groovy 由 casc.yaml 的 jobs 載入）。
+#
+# 秘密：本檔不含任何秘密值，也不得加入任何秘密值。每個 `${NAME}` 由 Configuration as Code 的秘密來源於載入時解析
+# （SECRETS 目錄，預設 /run/secrets，下的同名檔案）。未提供時載入失敗。
+#
+# 帳號：
+#   jacklin           唯一的管理員（casc.yaml 的 Matrix Authorization 授與 Overall/Administer）
+#   lm-retention-bot  API token 帳號（憑證 lm-jenkins-api-retention；ci/keep-log.mjs 設定 keepLog）；不用於互動式登入
+#   lm-api-readonly   API token 帳號（憑證 lm-jenkins-api-readonly；fingerprint 查詢與 release/digest-lookup）；不用於互動式登入
+#
+# 不開放自行註冊（allowsSignup: false）。
+
+jenkins:
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "jacklin"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+        - id: "lm-retention-bot"
+          password: "${RETENTION_BOT_PASSWORD}"
+        - id: "lm-api-readonly"
+          password: "${API_READONLY_PASSWORD}"

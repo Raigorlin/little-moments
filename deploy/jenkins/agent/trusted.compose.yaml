@@ -1,0 +1,44 @@
+# Trusted Build_Agent lm-trusted-1（Requirement 2.4、2.6；tasks 19.3）：release/ 與 infra/ 的建置。
+#
+# 掛載主機的 /var/run/docker.sock 等同主機 root 權限。只因 casc.yaml 的 Job Restriction `^(release|infra)/.*`
+# 把這個 agent 限定給已推送到 repository 的程式碼（main、Tag 與固定的 infra／release Pipeline），才接受這個風險；
+# PR 的程式碼只在 lm-untrusted-1 執行。
+#
+# 工作目錄：容器內外同為 /var/lib/jenkins-agent（與 casc.yaml 的 remoteFS 一致）。建置經主機 daemon
+# bind-mount workspace 路徑，路徑不同時 daemon 會掛載到主機上不存在或錯誤的目錄。
+# 首次啟動前建立（擁有者為容器內的 jenkins 使用者 1000:1000）：
+#   install -d -o 1000 -g 1000 -m 750 /var/lib/jenkins-agent
+#
+# agent secret：自「Manage Jenkins → Nodes → lm-trusted-1」取得，寫入本目錄的 lm-trusted-1.secret
+# （不顯示於終端機、不留在 shell 歷史；agent 只在啟動時讀取，更換後須重新啟動容器）：
+#   umask 077; read -rs s; printf '%s' "$s" > lm-trusted-1.secret; unset s
+#   chown 1000:1000 lm-trusted-1.secret
+#
+# 必要環境變數（本目錄的 .env，見 .env.example）：LM_JENKINS_URL、DOCKER_GID。
+name: lm-jenkins-agent
+
+services:
+  lm-trusted-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # 直接執行 agent.jar，參數全部明確列出（不依賴映像 entrypoint 腳本讀取的環境變數）。
+    entrypoint: ["java", "-jar", "/usr/share/jenkins/agent.jar"]
+    command:
+      - "-url"
+      - "${LM_JENKINS_URL:?LM_JENKINS_URL is required}"
+      - "-name"
+      - "lm-trusted-1"
+      - "-secret"
+      - "@/run/secrets/agent-secret"
+      - "-webSocket"
+      - "-workDir"
+      - "/var/lib/jenkins-agent"
+    # 主機 docker 群組，使容器內的 jenkins 使用者可使用 docker.sock。
+    group_add:
+      - "${DOCKER_GID:?DOCKER_GID is required}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/jenkins-agent:/var/lib/jenkins-agent
+      - ./lm-trusted-1.secret:/run/secrets/agent-secret:ro

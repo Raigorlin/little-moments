@@ -1,0 +1,13 @@
+# 每日 04:30（最多延後 30 分鐘）執行 lm-mirror-trivy-db.service；主機關機錯過的執行於開機後補做。
+# 啟用：systemctl enable --now lm-mirror-trivy-db.timer
+
+[Unit]
+Description=Little Moments: daily Trivy vulnerability DB mirror
+
+[Timer]
+OnCalendar=*-*-* 04:30
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

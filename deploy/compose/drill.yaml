@@ -14,7 +14,7 @@
 #
 # 映像：
 #   APP_IMAGE_DRILL  由 lm-deploy 提供，為目前 Production 作用中槽位的 repo@sha256:<digest>（App 與 tool 共用）。
-#   db               PLACEHOLDER 與 compose.yaml 的 db 相同；兩者必須是同一個 postgres 映像與 digest
+#   db               與 compose.yaml 的 db 相同；兩者必須是同一個 postgres 映像與 digest
 #                    （tests/ci-restore-drill.test.js 檢查），主要版本與 pg_dump 一致（17）。
 #
 # 服務：
@@ -66,9 +66,8 @@ x-app-env: &app-env
 services:
   db:
     <<: *hardening
-    # PLACEHOLDER：與 compose.yaml 的 db 映像相同；由維運者以 `docker buildx imagetools inspect postgres:17.6-bookworm`
-    # 填入 digest。未填入時映像解析失敗，演練不會進行（fail closed）。
-    image: postgres:17.6-bookworm@sha256:<digest>
+    # 與 compose.yaml 的 db 映像相同（postgres:17.6-bookworm 的多平台 index digest）；更新時兩處一起修改。
+    image: postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
     user: "999:999"
     env_file: [drill-db.env]
     environment:

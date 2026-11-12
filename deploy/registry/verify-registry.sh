@@ -16,7 +16,7 @@
 # 由 config.yml 的 uploadpurging 於 168 小時後清除。
 #
 # 必要環境變數（值只從環境讀取；腳本不輸出任何密碼）：
-#   LM_REGISTRY_URL            Registry 基底 URL，限 https，例如 https://<registry.lan.example>
+#   LM_REGISTRY_URL            Registry 基底 URL，限 https，例如 https://registry.our-littlemoments.com:8443
 #   LM_REGISTRY_CA_CERT        內部 CA 憑證檔路徑（PEM），用於驗證 Registry 伺服器憑證
 #   LM_REGISTRY_PULL_USER      拉取帳號（例如 lm-pull-prod）
 #   LM_REGISTRY_PULL_PASSWORD  拉取帳號密碼

@@ -1,0 +1,24 @@
+#!/bin/sh
+# 每日將 Trivy 漏洞資料庫（OCI artifact）複製到 LAN Registry（Requirement 6；Jenkinsfile 的 LM_TRIVY_DB_REPOSITORY）。
+#
+# 安裝（Registry 主機，root）：
+#   install -m 0755 -o root -g root lm-mirror-trivy-db /usr/local/sbin/lm-mirror-trivy-db
+#   install -m 0600 -o root -g root lm-mirror-trivy-db.env.example /etc/lm-mirror-trivy-db.env  # 再填入實際值
+#   install -m 0644 lm-mirror-trivy-db.service lm-mirror-trivy-db.timer /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now lm-mirror-trivy-db.timer
+#
+# /etc/lm-mirror-trivy-db.env（格式見 lm-mirror-trivy-db.env.example）：
+#   REG    LAN Registry 的 <主機名稱>:<連接埠>
+#   PASS   lm-push 密碼檔路徑（只含密碼，0600 root）；密碼經 stdin 交給 docker login，不出現在命令列或日誌
+#   CRANE  鏡像後的 crane 映像，以 digest 引用（mirror.sh 的輸出）
+#
+# 登入資訊只寫入本次執行的 mktemp 暫存目錄，結束時由 trap 刪除。crane 容器唯讀、無任何 capability，
+# 唯讀掛載該目錄與系統 CA bundle（須含 LAN Registry 的內部 CA）。
+set -eu
+. /etc/lm-mirror-trivy-db.env
+d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
+export DOCKER_CONFIG="$d"
+docker login -u lm-push --password-stdin "$REG" < "$PASS" > /dev/null
+docker run --rm --user 0:0 --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+  -e DOCKER_CONFIG=/cfg -v "$d:/cfg:ro" -v /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro \
+  "$CRANE" copy mirror.gcr.io/aquasec/trivy-db:2 "$REG/little-moments/mirror/trivy-db:2"

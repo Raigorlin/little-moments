@@ -1,14 +1,15 @@
 # Jenkins 設定即程式碼（`ci/jenkins/`）
 
-本目錄定義「日子拾光 · LITTLE MOMENTS」的 Jenkins controller 設定、Job 拓撲、憑證範圍與授權（Requirement 1.1、1.9、2.1–2.8、15.1、15.7、15.8、19.3、21.3–21.5、21.12）。
+本目錄定義「日子拾光 · LITTLE MOMENTS」的 Jenkins controller 設定、Job 拓撲、憑證範圍與授權（Requirement 1.1、1.9、2.1–2.8、15.1、15.7、15.8、19.3、21.3–21.5、21.12）。controller 與兩個 agent 的容器與安裝步驟見 [`deploy/jenkins/README.md`](../../deploy/jenkins/README.md)，LAN Registry 見 [`deploy/registry/README.md`](../../deploy/registry/README.md)。
 
 | 檔案 | 內容 |
 |---|---|
 | `casc.yaml` | Configuration as Code：Matrix Authorization、agent 標籤與 Job Restrictions、SYSTEM 範圍的 GitHub webhook secret、Lockable Resources `lm-staging`／`lm-prod`、載入 `jobs.groovy` |
+| `local-security.yaml` | 本機使用者資料庫：管理員 `jacklin` 與兩個 API token 帳號（`lm-retention-bot`、`lm-api-readonly`），不開放註冊 |
 | `jobs.groovy` | Job DSL：`ci/`、`release/`、`infra/` 資料夾、資料夾範圍憑證、各 Job 的授權與保留 |
 | `pipelines/*.Jenkinsfile` | `release/rollback`、`release/restore-drill`、`release/digest-lookup`、`infra/build-image` 的 Pipeline |
 
-本機沒有 Jenkins：這些檔案只經過 `tests/ci-jenkins-config.test.js` 的靜態檢查（YAML 結構、憑證 ID 對應、權限、保留天數、cron、信任策略、無秘密字面值）。plugin 的 CasC／Job DSL 屬性名稱未經實際 Jenkins 驗證，首次套用前請對照「Configuration as Code → Reference」與 Job DSL API Viewer（`/plugin/job-dsl/api-viewer/index.html`）。
+`casc.yaml`、`local-security.yaml` 與 `jobs.groovy` 已在實際部署的 Jenkins LTS（jdk21）controller 上載入驗證。repository 內另有 `tests/ci-jenkins-config.test.js` 的靜態檢查（YAML 結構、憑證 ID 對應、權限、保留天數、cron、信任策略、無秘密字面值）。升級 plugin 後請對照「Manage Jenkins → Configuration as Code → Reference」與 Job DSL API Viewer（`/plugin/job-dsl/api-viewer/index.html`）。
 
 ## Job 拓撲
 
@@ -24,6 +25,8 @@
 `ci/` 與 `release/` 的 Multibranch 共用根目錄的 `Jenkinsfile`（Req 1.1）。`release/little-moments` 不探索任何 PR；分支只自動建置 `main`，名稱看起來像 Tag 的分支雖會被索引但不會自動建置（且非管理員沒有該 Job 的 Job/Build）。`ci/little-moments` 會索引 `main` 但不自動建置它；即使手動建置，`ci/` 也沒有任何部署憑證。
 
 ## 必要 plugins
+
+`deploy/jenkins/controller/plugins.txt` 與下表相同（`tests/deploy-jenkins.test.js` 檢查兩者一致）。
 
 | Plugin（short name） | 用途 |
 |---|---|
@@ -48,24 +51,83 @@
 | `mask-passwords` | 主控台遮罩（Design 工具表） |
 | `antisamy-markup-formatter` | 建置摘要的安全 HTML（`<br>`） |
 
+## 設定載入與更新
+
+controller 的 `CASC_JENKINS_CONFIG` 指向容器內的 `/var/jenkins_home/casc`，即主機上 `deploy/jenkins/controller/casc/`（唯讀掛載，不提交）。Configuration as Code 載入該目錄下的 `casc.yaml` 與 `local-security.yaml`；`casc.yaml` 的 `jobs:` 再以 `LM_CASC_DIR` 載入同目錄的 `jobs.groovy`。以下 `<controller-dir>` 是主機上 repository checkout 內的 `deploy/jenkins/controller`。
+
+1. 更新 repository checkout 後，把三個檔案複製到 casc 目錄：
+
+   ```sh
+   cd <controller-dir>
+   install -m 644 ../../../ci/jenkins/casc.yaml ../../../ci/jenkins/local-security.yaml ../../../ci/jenkins/jobs.groovy casc/
+   ```
+
+2. 設定或秘密有變更時，先依下方「以假秘密測試設定變更」測試。
+3. 「Manage Jenkins → Configuration as Code → Reload existing configuration」。
+4. 確認頁面沒有錯誤，且 controller 日誌沒有 `SEVERE`（只列出符合的行，不印出任何值）：
+
+   ```sh
+   docker compose logs --since 5m jenkins 2>&1 | grep -E 'Processing provided DSL|SEVERE'
+   ```
+
+Job DSL 的輸出會出現 `buildRetention is deprecated` 警告。這是預期的：`jobs.groovy` 以 branch-api 的 `buildRetention`（BuildRetentionBranchProperty）設定 Multibranch 各分支的保留天數，這個屬性已標示 deprecated，但 branch-api 仍會套用保留天數（PR 14 天、`main` 90 天、Tag 365 天）。branch-api 提供替代屬性之前不要移除它。
+
 ## 秘密來源與憑證 ID
 
 本目錄任何檔案都不含秘密值。
 
-`casc.yaml` 以 `${NAME}` 引用 Configuration as Code 的秘密來源（環境變數，或 `SECRETS` 目錄，預設 `/run/secrets`，下的同名檔案）：
+### 秘密目錄
 
-| CasC 變數 | 憑證 ID | 範圍 | 類型 |
+controller 的 `SECRETS` 是容器內的 `/run/secrets`，即主機上 `<controller-dir>/secrets/`（唯讀掛載，不提交）。擁有者為 `1000:1000`（容器內的 jenkins 使用者），目錄 `700`、檔案 `600`：
+
+```text
+secrets/
+  JENKINS_ADMIN_PASSWORD      jacklin 的密碼（local-security.yaml）
+  RETENTION_BOT_PASSWORD      lm-retention-bot 的密碼（local-security.yaml）
+  API_READONLY_PASSWORD       lm-api-readonly 的密碼（local-security.yaml）
+  GITHUB_WEBHOOK_SECRET       GitHub repository webhook 的 secret（casc.yaml）
+  little-moments/
+    ci/        下表 ci/ 各憑證的秘密檔
+    release/   下表 release/ 各憑證的秘密檔
+    infra/     下表 infra/ 各憑證的秘密檔
+```
+
+- 建立目錄：`sudo install -d -o 1000 -g 1000 -m 700 secrets secrets/little-moments secrets/little-moments/ci secrets/little-moments/release secrets/little-moments/infra`。
+- 單行秘密以隱藏輸入寫入，不出現在終端機、shell 歷史或程序列表：
+
+  ```sh
+  put() { read -rsp "$1: " S; echo; printf '%s\n' "$S" | sudo install -o 1000 -g 1000 -m 600 /dev/stdin "secrets/$1"; unset S; }
+  put JENKINS_ADMIN_PASSWORD
+  put little-moments/ci/lm-registry-pull.password
+  ```
+
+- 多行秘密（私鑰、`known_hosts`、cosign 檔案）以 `sudo install -o 1000 -g 1000 -m 600 <檔案> secrets/little-moments/<資料夾>/<檔名>` 放入，之後刪除暫存複本。
+- GitHub App 的私鑰：GitHub 下載的是 PKCS#1 的 `.pem`，`gitHubApp` 憑證需要 PKCS#8。在 controller 主機上轉換，`<id>` 為憑證 ID（`lm-github-app`）：
+
+  ```sh
+  ( umask 077; openssl pkcs8 -topk8 -nocrypt -in <downloaded.pem> -out <id>.key )
+  ```
+
+  再以上一項的方式安裝到 `ci/`、`release/`、`infra/` 三個資料夾，最後以 `shred -u <downloaded.pem> <id>.key` 刪除。`.pem` 與 `.key` 絕不放進 repository 目錄或提交（需要時可在 GitHub App 頁面產生新的私鑰）。
+- `gitHubApp` 類型只需要 `<id>.app-id`（App ID）與 `<id>.key` 兩個檔案。github-branch-source 由存取的 repository 推定 owner，不需要另外提供 owner 的秘密檔。
+
+`casc.yaml` 與 `local-security.yaml` 以 `${NAME}` 引用 Configuration as Code 的秘密來源（`SECRETS` 目錄下的同名檔案）。任何一個缺少時載入失敗：
+
+| CasC 變數 | 使用者 | 範圍 | 類型 |
 |---|---|---|---|
-| `GITHUB_WEBHOOK_SECRET` | `lm-github-webhook-secret` | SYSTEM（只供 Jenkins 本身驗證 webhook，Job 無法取得） | Secret text |
+| `GITHUB_WEBHOOK_SECRET` | 憑證 `lm-github-webhook-secret` | SYSTEM（只供 Jenkins 本身驗證 webhook，Job 無法取得） | Secret text |
+| `JENKINS_ADMIN_PASSWORD` | 本機使用者 `jacklin` | 本機使用者資料庫 | 密碼 |
+| `RETENTION_BOT_PASSWORD` | 本機使用者 `lm-retention-bot` | 本機使用者資料庫 | 密碼（只用於產生 API token） |
+| `API_READONLY_PASSWORD` | 本機使用者 `lm-api-readonly` | 本機使用者資料庫 | 密碼（只用於產生 API token） |
 
-資料夾範圍憑證由 `jobs.groovy` 於 seed 時自 `${SECRETS:-/run/secrets}/little-moments/<資料夾>/` 讀取。任何檔案缺少或為空時，Job DSL 以「資料夾/檔名」清單失敗，不以預設值或空值建立憑證（Req 15.3）。更換秘密：更新檔案後執行「Reload existing configuration」。
+資料夾範圍憑證由 `jobs.groovy` 於 seed 時自 `${SECRETS:-/run/secrets}/little-moments/<資料夾>/` 讀取。任何檔案缺少或為空時，Job DSL 以「資料夾/檔名」清單失敗，不以預設值或空值建立憑證（Req 15.3）。建立憑證失敗時，錯誤只含「資料夾/憑證 ID（類型）」與例外類別名稱，不含參數值。更換秘密：更新檔案後執行「Reload existing configuration」。
 
 | 資料夾 | 憑證 ID | 類型 | 秘密檔 | 使用者 |
 |---|---|---|---|---|
-| `ci/` | `lm-github-app` | GitHub App | `.app-id`、`.key`（PKCS#8）、`.owner` | checkout、commit status（建議另一個只有 Contents: read、Commit statuses: write 的 App 安裝） |
+| `ci/` | `lm-github-app` | GitHub App | `.app-id`、`.key`（PKCS#8） | checkout、commit status |
 | `ci/` | `lm-registry-pull` | Username with password | `.username`、`.password` | Build_Image 與掃描器拉取（`lm-pull-ci`，Registry 只允許 GET/HEAD） |
 | `release/` | `lm-github-app` | GitHub App | 同上 | checkout、Tag Verify 的 `git fetch`、commit status |
-| `release/` | `lm-registry-pull` | Username with password | `.username`、`.password` | 拉取、簽章與 attestation 驗證 |
+| `release/` | `lm-registry-pull` | Username with password | `.username`、`.password` | `lm-pull-release`：拉取、簽章與 attestation 驗證 |
 | `release/` | `lm-registry-push` | Username with password | `.username`、`.password` | `lm-push`：推送、cosign 簽章、attestation、版本標籤 |
 | `release/` | `lm-cosign-key` | Secret file（`cosign.key`） | `lm-cosign-key` | 簽章私鑰 |
 | `release/` | `lm-cosign-passphrase` | Secret text | `lm-cosign-passphrase` | 私鑰密碼 |
@@ -79,27 +141,84 @@
 | `release/` | `lm-prod-db` | Username with password | `.username`、`.password` | Production Database |
 | `release/` | `lm-prod-setup-token` | Secret text | `lm-prod-setup-token` | Production Setup_Token |
 | `release/` | `lm-prod-smoke` | Secret file | `lm-prod-smoke` | Production smoke-bot 密碼 |
-| `release/` | `lm-jenkins-api-readonly` | Username with password | `.username`、`.password`（API token） | fingerprint 查詢 main 的 Build_Record、`release/digest-lookup` |
+| `release/` | `lm-jenkins-api-readonly` | Username with password | `.username`（`lm-api-readonly`）、`.password`（API token） | fingerprint 查詢 main 的 Build_Record、`release/digest-lookup` |
 | `release/` | `lm-jenkins-api-retention` | Username with password | `.username`（`lm-retention-bot`）、`.password`（API token） | `ci/keep-log.mjs` 設定 keepLog（Req 21.6） |
 | `infra/` | `lm-github-app` | GitHub App | 同上 | checkout |
-| `infra/` | `lm-registry-push` | Username with password | `.username`、`.password` | 推送 Build_Image |
+| `infra/` | `lm-registry-push` | Username with password | `.username`、`.password` | 推送 Build_Image（與 `release/` 同一個 `lm-push` 帳號與密碼） |
 
 規則（Req 2.4、2.5、15.1）：
 
 - 沒有任何 GLOBAL 範圍的系統憑證。PR 建置位於 `ci/`，請求表中任何 `release/` 專屬憑證時 `withCredentials` 直接失敗。
 - `CAMPING_OPENAI_*` 預設不定義任何憑證（Req 15.6、15.8）。若 Release_Approver 決定為某一環境啟用（Req 15.7），只能在 `release/` 新增憑證（例如 Secret file `lm-prod-openai-api-key`，部署時以金鑰檔提供並設定 `CAMPING_OPENAI_API_KEY_FILE`），並同時修改 Pipeline 與本表；`ci/` 永遠不得定義。
 - `lm-jenkins-api-readonly` 的帳號只有 Overall/Read 與 Job/Read（全域 `authenticated`）。
+- `release/` 與 `infra/` 的 `lm-registry-push.password` 必須相同（Registry 只有一個 `lm-push`）：`sudo cmp secrets/little-moments/release/lm-registry-push.password secrets/little-moments/infra/lm-registry-push.password` 沒有輸出即相同。
+
+### 以假秘密測試設定變更
+
+設定錯誤時，Configuration as Code 或 Job DSL 的錯誤訊息可能帶出值。修改 `casc.yaml`、`local-security.yaml`、`jobs.groovy` 或秘密目錄的結構後，先以假秘密在另一個暫時的 controller 載入，確認沒有錯誤後才對正式 controller 執行 Reload，錯誤輸出中就只會出現假值。
+
+1. 依上方「設定載入與更新」步驟 1 把新檔案複製到 `casc/`，測試通過前不要按 Reload，也不要重新啟動正式 controller。
+2. 以 root 在 `<controller-dir>` 依正式秘密目錄的檔名建立假秘密目錄（只讀檔名，不讀內容；`.key` 改為新產生、未用於任何系統的私鑰）：
+
+   ```sh
+   rm -rf secrets-dummy
+   (
+     umask 077
+     cd secrets
+     find . -type d -exec mkdir -p ../secrets-dummy/{} \;
+     find . -type f ! -name '*.key' -exec sh -c 'printf "dummy-value\n" > "../secrets-dummy/$1"' sh {} \;
+     find . -type f -name '*.key' -exec sh -c 'openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "../secrets-dummy/$1" 2>/dev/null' sh {} \;
+   )
+   chown -R 1000:1000 secrets-dummy
+   ```
+
+3. 以另一個專案名稱啟動暫時的 controller：只綁定 `127.0.0.1:18080`、不接上 `proxy` 網路、使用自己的 jenkins_home 卷（Compose 2.24 以上支援 `!override`）：
+
+   ```sh
+   docker compose -p lm-jenkins-dummy -f compose.yaml -f - up -d --build <<'EOF'
+   services:
+     jenkins:
+       ports: !override
+         - "127.0.0.1:18080:8080"
+       networks: !override
+         - default
+       volumes: !override
+         - jenkins_home:/var/jenkins_home
+         - ./casc:/var/jenkins_home/casc:ro
+         - ./secrets-dummy:/run/secrets:ro
+   EOF
+   docker compose -p lm-jenkins-dummy logs -f jenkins 2>&1 | grep --line-buffered -E 'Processing provided DSL|SEVERE|fully up and running'
+   ```
+
+   看到 `Jenkins is fully up and running` 且沒有 `SEVERE` 即通過。
+4. 移除暫時的 controller 與它的卷，再刪除假秘密目錄。不要對正式專案執行 `docker compose down -v`，那會刪除正式的 jenkins_home：
+
+   ```sh
+   docker compose -p lm-jenkins-dummy down
+   docker volume rm lm-jenkins-dummy_jenkins_home
+   rm -rf secrets-dummy
+   ```
+
+5. 對正式 controller 執行「Reload existing configuration」。
 
 ## 授權（Req 21.12）
 
-全域（`casc.yaml`）只有 `lm-jenkins-admins` 擁有 Overall/Administer；其他群組只有 Overall/Read、Job/Read、View/Read。資料夾與 Job 層級（`jobs.groovy`）只另外授與：
+security realm 是本機使用者資料庫（`local-security.yaml`，`allowsSignup: false`），只有三個帳號：
+
+| 帳號 | 用途 |
+|---|---|
+| `jacklin` | 唯一的管理員（`casc.yaml` 授與 Overall/Administer），也是唯一的 Release_Approver |
+| `lm-retention-bot` | 只以 API token 使用（`lm-jenkins-api-retention`），不用於互動式登入 |
+| `lm-api-readonly` | 只以 API token 使用（`lm-jenkins-api-readonly`），不用於互動式登入 |
+
+全域（`casc.yaml`）只有使用者 `jacklin` 擁有 Overall/Administer；`authenticated` 只有 Overall/Read、Job/Read、View/Read。`casc.yaml` 與 `jobs.groovy` 另有 `lm-developers`、`lm-release-approvers`、`lm-auditors` 群組項目，保留供日後改用外部 security realm（LDAP、OIDC 等）時使用。本機使用者資料庫沒有群組，這些項目目前不生效；目前只有 `jacklin`（管理員）能建置 `ci/` 與 `release/` 下的 Job。資料夾與 Job 層級（`jobs.groovy`）只另外授與：
 
 | 範圍 | 主體 | 權限 |
 |---|---|---|
-| `ci/` | `lm-developers` | Job/Build、Job/Cancel |
-| `release/rollback` | `lm-release-approvers` | Job/Build、Job/Cancel |
-| `release/restore-drill` | `lm-release-approvers` | Job/Build |
-| `release/digest-lookup` | `lm-release-approvers`、`lm-auditors` | Job/Build |
+| `ci/` | `lm-developers`（群組，目前不生效） | Job/Build、Job/Cancel |
+| `release/rollback` | `lm-release-approvers`（群組，目前不生效） | Job/Build、Job/Cancel |
+| `release/restore-drill` | `lm-release-approvers`（群組，目前不生效） | Job/Build |
+| `release/digest-lookup` | `lm-release-approvers`、`lm-auditors`（群組，目前不生效） | Job/Build |
 | `release/little-moments` | `lm-retention-bot`（使用者） | Job/Read、Run/Update |
 
 非管理員沒有 Run/Delete、Run/Update、Job/Configure、Run/Replay（也沒有 Credentials/*、Lockable Resources/*）。唯一的例外是 `lm-retention-bot` 在 `release/little-moments` 的 Run/Update：Jenkins 的「Keep this build forever」需要 Run/Update，`ci/keep-log.mjs` 只用它把正在 Production 執行之 Image_Digest 的建置設為 keepLog=true。這個帳號：
@@ -107,6 +226,8 @@
 - 只能以 API token 使用（不要給互動登入），token 只存在 `release/` 的 `lm-jenkins-api-retention`；
 - 沒有 Run/Delete，因此無法刪除建置，也無法解除 keepLog；
 - Run/Update 也允許修改建置的顯示名稱與描述。這是 Req 21.12 的已知、受限例外；Build_Record 本體（封存的 JSON 與報告）不受影響。稽核時可在 Jenkins 稽核日誌確認此帳號只呼叫 `toggleLogKeep`。
+
+兩個 API token 帳號的密碼（`RETENTION_BOT_PASSWORD`、`API_READONLY_PASSWORD`）只用於登入一次以產生 API token（見「仍待填入」）。
 
 ### 解除 keepLog（管理員程序）
 
@@ -119,19 +240,52 @@ Jenkins 解除 keepLog 需要 Run/Delete，與 Req 21.12「非管理員不可刪
 
 ## Release_Approver
 
-- 核准清單的權威來源是 `ci/release-approvers.json`（`jenkinsId` 與 git email 對照）。正式核准與破壞性遷移核准的 `input` 以清單中的 `jenkinsId` 限定 submitter，送出後再以 `ci/approval.mjs` 驗證；不在清單的帳號送出時不生效並記錄帳號與時間（Req 19.3）。
-- `lm-release-approvers` 群組只決定 `release/rollback`、`release/restore-drill`、`release/digest-lookup` 的 Job/Build。群組成員必須與 `ci/release-approvers.json` 一致；任一邊變更時兩邊一起更新（json 以 PR 審查，群組由 security realm 管理）。
+- 核准清單的權威來源是 `ci/release-approvers.json`（`jenkinsId` 與 git email 對照）。正式核准與破壞性遷移核准的 `input` 以清單中的 `jenkinsId` 限定 submitter，送出後再以 `ci/approval.mjs` 驗證；不在清單的帳號送出時不生效並記錄帳號與時間（Req 19.3）。清單中的每個 `jenkinsId` 都必須是本機使用者資料庫的帳號。
+- 目前只有一位 Release_Approver：`jacklin`。他同時是主要作者，而破壞性遷移的核准人不得是該遷移的作者（Req 12.6、Property 32），所以 `jacklin` 撰寫的破壞性遷移無法被核准，Release_Tag 建置會停在該關卡。需要發布這類遷移之前，先在 `local-security.yaml` 新增第二位使用者，並把他加入 `ci/release-approvers.json`（以 PR 審查）。
+- `lm-release-approvers` 群組只決定 `release/rollback`、`release/restore-drill`、`release/digest-lookup` 的 Job/Build，在本機使用者資料庫下不生效；`jacklin` 以管理員身分執行這些 Job。日後改用外部 security realm 時，群組成員必須與 `ci/release-approvers.json` 一致；任一邊變更時兩邊一起更新（json 以 PR 審查，群組由 security realm 管理）。
 - Jenkins 管理員可以送出任何 `input`；Pipeline 仍以 `ci/approval.mjs` 拒絕不在清單的管理員。
 - 等待核准時 `release/little-moments` 的 Tag 建置會佔用一個 Trusted Agent executor 最長 24 小時。`lm-trusted` 的 executor 數至少為 2（一個留給 `main`／回滾），同時進行多個 Release_Tag 時需再增加。
 
-## 部署前必須取代的 PLACEHOLDER
+## 已填入的實際值
 
-- `ci/jenkins/jobs.groovy`：`GITHUB_OWNER`、`GITHUB_REPO`。
-- `ci/jenkins/casc.yaml`：`jenkins.lan.example`（`location.url`、`hookUrl`）、agent 名稱、數量與 `remoteFS`、群組名稱（若 security realm 使用不同名稱，`jobs.groovy` 的 `GROUP_*` 一併修改）。
-- `Jenkinsfile` 與 `ci/jenkins/pipelines/*.Jenkinsfile`：所有 `sha256:<digest>` 映像引用（`BUILD_IMAGE`、`LM_POSTGRES_IMAGE`、掃描器、Syft、crane、cosign、ZAP）、`registry.lan.example:8443`、`LM_DEPLOY_HOST`／`LM_DEPLOY_PORT`、`LM_STAGING_URL`、`LM_PROD_URL`、`LM_DAST_PROBE_TARGETS`（IP 位址字面值）、Staging／Production Database 名稱。未取代時 Pipeline 會 fail closed。
-- `Dockerfile` 與 `ci/build-image/Dockerfile`：`FROM … @sha256:<digest>`、`BUN_SHA256`、`NODE_SHA256`。
-- `deploy/compose/*`、`deploy/registry/*`：映像 digest、`registry.lan.example`、htpasswd bcrypt hash（`deploy/registry/htpasswd.example`）。
-- `ci/release-approvers.json`：`jenkins-id-placeholder-*` 與 `@example.invalid` email。
+以下值來自已驗證的部署，已寫入 repository（都不是秘密）：
+
+- `ci/jenkins/jobs.groovy`：`GITHUB_OWNER` 為 `Raigorlin`、`GITHUB_REPO` 為 `little-moments`。
+- `ci/jenkins/casc.yaml`：`location.url` 為 `https://jenkins.our-littlemoments.com/`、`hookUrl` 為 `https://jenkins.our-littlemoments.com/github-webhook/`；agent `lm-trusted-1`（`remoteFS` `/var/lib/jenkins-agent`）與 `lm-untrusted-1`（`remoteFS` `/var/lib/jenkins-untrusted`），各 2 個 executor，皆以 WebSocket 連線；管理員為使用者 `jacklin`。
+- `ci/jenkins/local-security.yaml`：`jacklin`、`lm-retention-bot`、`lm-api-readonly`（密碼只引用 `${VAR}`）。
+- `ci/release-approvers.json`：唯一的 Release_Approver `jacklin` 與其 git email。
+- LAN Registry 一律為 `registry.our-littlemoments.com:8443`：`Jenkinsfile`、`ci/jenkins/pipelines/*.Jenkinsfile` 與 `deploy/compose/*.env.example` 的 `LM_IMAGE_REPO`。
+- 映像 digest：`Jenkinsfile` 與 `build-image.Jenkinsfile` 的鏡像工具映像（gitleaks、osv-scanner、Trivy、Semgrep、Syft、crane、cosign、ZAP）、`LM_POSTGRES_IMAGE`、`deploy/compose/` 的 db 與 proxy、`deploy/registry/compose.yaml` 的 Caddy 與 registry、`Dockerfile` 與 `ci/build-image/Dockerfile` 的 `FROM`、`BUN_SHA256`、`NODE_SHA256`（Bun 1.3.14，見 `ci/toolchain.json`）。
+- `deploy/registry/htpasswd.example` 刻意只含佔位符；實際的 `secrets/htpasswd` 只存在 Registry 主機上（見 [`deploy/registry/README.md`](../../deploy/registry/README.md)）。
+
+## 仍待填入
+
+以下項目與 Deploy_Host 或首次建置有關，尚未填入。未填入時對應的 Pipeline 階段會 fail closed。
+
+- `Jenkinsfile`、`ci/jenkins/pipelines/rollback.Jenkinsfile`、`restore-drill.Jenkinsfile`：`LM_DEPLOY_HOST`／`LM_DEPLOY_PORT`（目前為 `deploy-host.lan.example`、`22`）。
+- `Jenkinsfile`：`LM_STAGING_URL`、`LM_PROD_URL`、`LM_DAST_PROBE_TARGETS`（IP 位址字面值，以空白分隔的 `<IP>:<port>`）、Staging／Production Database 名稱（`LM_STAGING_DB_NAME`、`LM_PROD_DB_NAME`，須與 Deploy_Host 上 `db.env` 的 `POSTGRES_DB` 相同）。
+- `BUILD_IMAGE`（`Jenkinsfile`、`rollback.Jenkinsfile`、`restore-drill.Jenkinsfile`、`digest-lookup.Jenkinsfile`）：仍為 `@sha256:<digest>`。首次執行 `infra/build-image` 後，以建置描述與 `reports/build-image-digest.txt` 的 digest 取代。
+- Registry 的 Deploy_Host 拉取帳號（例如 `lm-pull-staging`、`lm-pull-prod`）：Deploy_Host 安裝時再加入 `secrets/htpasswd`。
+- 以下秘密檔目前的內容是字面值 `placeholder`（非空，所以 Job DSL 會建立憑證，但用到它的步驟會失敗）。填入後執行「Reload existing configuration」：
+
+| 秘密檔（`secrets/little-moments/` 之下） | 填入方式 |
+|---|---|
+| `release/lm-deploy-known-hosts` | Deploy_Host 安裝後，在 controller 主機執行 `ssh-keyscan -p <port> <deploy-host>`，並與 Deploy_Host 主控台上 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` 顯示的指紋比對後寫入（連接埠非 22 時為 `[host]:port` 形式） |
+| `release/lm-cosign-key`、`release/lm-cosign-pub` | 以 cosign 2.x 的 `generate-key-pair` 產生，密碼使用 `release/lm-cosign-passphrase` 的值（見下方指令）；離線另存一份 `cosign.key` |
+| `release/lm-jenkins-api-readonly.password` | 以 `lm-api-readonly` 登入一次（密碼為 `API_READONLY_PASSWORD`），在「使用者 → Security → API Token」產生 token、以 `put` 寫入後登出 |
+| `release/lm-jenkins-api-retention.password` | 同上，帳號 `lm-retention-bot`（密碼為 `RETENTION_BOT_PASSWORD`） |
+
+cosign 金鑰（以 root 在 `<controller-dir>` 執行；密碼只經環境變數名稱傳入容器，不出現在命令列）：
+
+```sh
+d=$(mktemp -d)
+export COSIGN_PASSWORD="$(cat secrets/little-moments/release/lm-cosign-passphrase)"
+docker run --rm -e COSIGN_PASSWORD -v "$d:/out" -w /out ghcr.io/sigstore/cosign/cosign:v2.6.5 generate-key-pair
+unset COSIGN_PASSWORD
+install -o 1000 -g 1000 -m 600 "$d/cosign.key" secrets/little-moments/release/lm-cosign-key
+install -o 1000 -g 1000 -m 600 "$d/cosign.pub" secrets/little-moments/release/lm-cosign-pub
+rm -rf "$d"
+```
 
 ## Script Security（In-process Script Approval）
 
@@ -143,11 +297,24 @@ Pipeline 在 Groovy sandbox 中執行。首次執行時以下呼叫可能出現�
 - `staticMethod java.lang.System currentTimeMillis`（逾時與觀察期計時）
 - `@NonCPS` 輔助函式內的集合與字串操作（依實際提示核准）
 
-`jobs.groovy` 由 Configuration as Code 以系統身分執行。若啟用「Enable script security for Job DSL scripts」，請確認 CasC 載入的 Job DSL 不需要額外核准（`SecretBytes.fromBytes`、`java.io.File` 讀取）。
+`jobs.groovy` 由 Configuration as Code 以系統身分執行。若啟用「Enable script security for Job DSL scripts」，請確認 CasC 載入的 Job DSL 不需要額外核准（`SecretBytes.fromBytes`、`hudson.util.Secret.fromString`、`java.io.File` 讀取）。
 
 ## GitHub 端設定
 
-1. Repository webhook：Payload URL `https://jenkins.lan.example/github-webhook/`、Content type `application/json`、Secret 與 `GITHUB_WEBHOOK_SECRET` 相同、事件只勾選 Pushes 與 Pull requests（Req 2.3；其他事件不會觸發建置）。
+### GitHub App
+
+憑證 `lm-github-app`（三個資料夾共用同一個 App）：
+
+1. 權限（Repository permissions）：Contents、Metadata、Pull requests 為 Read-only，Commit statuses 為 Read and write；其他全部 No access。
+2. App 本身的 Webhook 關閉（取消勾選 Active）。建置由下方的 repository webhook 觸發。
+3. 只安裝在 `Raigorlin/little-moments`（Only select repositories）。
+4. 記下 App ID 寫入 `<id>.app-id`，產生私鑰後依「秘密目錄」轉換為 PKCS#8 的 `<id>.key`。
+
+Multibranch 掃描或 checkout 出現 `Couldn't authenticate with GitHub app ID …` 時，表示 App 尚未安裝在 repository 上（或安裝時沒有選取 little-moments），不是私鑰格式問題。
+
+### Repository 設定
+
+1. Repository webhook：Payload URL `https://jenkins.our-littlemoments.com/github-webhook/`、Content type `application/json`、Secret 與 `GITHUB_WEBHOOK_SECRET` 相同、事件只勾選 Pushes 與 Pull requests（Req 2.3；其他事件不會觸發建置）。
 2. Ruleset：禁止非管理員建立名稱符合 `v*` 的分支；`v*` Tag 只允許 Release_Approver 建立且不可移動或刪除（Release_Tag 的最終驗證在 `ci/policy/tag.mjs`）。
 3. Release_Tag 使用 annotated tag（`git tag -a vX.Y.Z`）：Tag build strategy 以 Tag 時間判斷「7 天內」，lightweight tag 以 commit 時間計算，指向較舊 commit 時不會自動建置（需管理員手動觸發該 Tag）。
 4. Branch protection：`main` 需要 PR 與審查；`ci/little-moments` 的 commit status context 為 `little-moments/ci`。
@@ -158,10 +325,11 @@ Pipeline 在 Groovy sandbox 中執行。首次執行時以下呼叫可能出現�
 
 ### 設定載入
 
-1. 「Manage Jenkins → Configuration as Code」顯示無錯誤；`ci/`、`release/`、`infra/` 與 6 個 Job 皆已建立。
+1. 「Manage Jenkins → Configuration as Code」顯示無錯誤；`ci/`、`release/`、`infra/` 與 6 個 Job 皆已建立（Job DSL 的 `buildRetention is deprecated` 警告是預期的）。
 2. `ci/` 資料夾的 Credentials 只顯示 `lm-github-app` 與 `lm-registry-pull`；`release/` 顯示上表 17 個；`infra/` 顯示 2 個；「System」只有 `lm-github-webhook-secret`（SYSTEM 範圍）。
-3. 以 `lm-developers` 成員登入：`ci/little-moments` 的建置頁沒有 Replay、Delete build、Edit Build Information、Configure；`release/little-moments` 沒有 Build Now。
+3. 非管理員沒有建置權限：以 `lm-api-readonly` 的 API token（放在 0600 的 curl 設定檔，內容 `user = "lm-api-readonly:<api-token>"`）執行 `curl -s -o /dev/null -w '%{http_code}\n' -K <curl-config> -X POST https://jenkins.our-littlemoments.com/job/release/job/rollback/build` → 403。日後改用外部 security realm 時，再以 `lm-developers` 成員登入確認：`ci/little-moments` 的建置頁沒有 Replay、Delete build、Edit Build Information、Configure；`release/little-moments` 沒有 Build Now。
 4. Lockable Resources 頁面顯示 `lm-staging` 與 `lm-prod`。
+5. 「Manage Jenkins → Nodes」中 `lm-trusted-1` 與 `lm-untrusted-1` 皆為上線狀態。
 
 ### 憑證隔離（Req 2.4、2.5）
 
@@ -169,45 +337,64 @@ Pipeline 在 Groovy sandbox 中執行。首次執行時以下呼叫可能出現�
 
 ### Untrusted Agent 網路隔離（Req 2.6）
 
-在 `lm-untrusted-1` 上（或 `ci/` 的測試建置中）執行，全部必須連線失敗或逾時：
+`lm-untrusted-1` 執行 PR 的程式碼。它在非特權使用者 `lm-untrusted` 的 rootless Docker 上執行，只掛載該 rootless daemon 的 socket，絕不使用主機的 `/var/run/docker.sock`（安裝步驟見 [`deploy/jenkins/README.md`](../../deploy/jenkins/README.md)）。`lm-untrusted` 與其 subuid 範圍（所有容器內的 uid）的對外連線由 `deploy/jenkins/agent/untrusted/lm-untrusted-fw` 以主機 OUTPUT 的 owner 規則限制：只允許 DNS、Jenkins `<lan-ip>:8080` 與 Registry `<lan-ip>:8443`，拒絕本機其他連接埠、私有網段（10/8、172.16/12、192.168/16、100.64/10、169.254/16）與所有 IPv6，其餘（公開網際網路）放行。rootless daemon 關閉 detach-netns 並使用 slirp4netns，`--net=host` 也只會進入 slirp4netns 的網路命名空間。
+
+以 root 在主機上執行（`<lan-ip>` 為 controller 主機的 LAN IP，`<router-ip>` 為路由器的 LAN IP）：
 
 ```sh
-for target in <deploy-host-ip>:22 <deploy-host-ip>:80 <deploy-host-ip>:443 <deploy-host-ip>:8081; do
-  timeout 5 bash -c "</dev/tcp/${target%:*}/${target##*:}" && echo "REACHABLE ${target}" || echo "blocked ${target}"
-done
+uid=$(id -u lm-untrusted)
+ru() { sudo -u lm-untrusted -H env XDG_RUNTIME_DIR=/run/user/$uid DOCKER_HOST=unix:///run/user/$uid/docker.sock "$@"; }
+
+# 1. 只有 Jenkins :8080 可連線；SSH、NPM（80／81）與路由器都必須 blocked
+ru docker run --rm --entrypoint bash lm-untrusted-agent -c '
+for t in <lan-ip>:8080 <lan-ip>:22 <lan-ip>:80 <lan-ip>:81 <router-ip>:80; do
+  if timeout 5 bash -c "</dev/tcp/${t%:*}/${t##*:}" 2>/dev/null; then echo "OPEN    $t"; else echo "blocked $t"; fi
+done'
+
+# 2. 公開網際網路可連線 → 200
+ru docker run --rm --entrypoint curl lm-untrusted-agent -s -o /dev/null -w '%{http_code}\n' https://github.com
+
+# 3. --net=host 仍在 slirp4netns 內 → 10.0.2.x（不得出現 <lan-ip>）
+ru docker run --rm --net=host --entrypoint hostname lm-untrusted-agent -I
 ```
 
-另確認：Staging／Production Database 連接埠無法連線（Database 不發布連接埠，Req 11.10）；Registry 只能以 `lm-pull-ci` 讀取（`PUT` 回應 403）；建置結束後 `docker ps -a --filter label=lm.ci.build` 與工作目錄為空（`cleanWs()`）。在 `ci/` 的 PR 中把 `agent { label 'lm-trusted' }` 改寫後建置，預期一直排隊或被 Job Restrictions 拒絕，不會在 `lm-trusted-1` 執行。
+預期第 1 項只有 `OPEN    <lan-ip>:8080`，其餘皆為 `blocked`；第 2 項為 `200`；第 3 項只有 `10.0.2.x` 位址。任一項不符時停止 `lm-untrusted-1`，先檢查 `iptables -S LM-UNTRUSTED` 與 rootless Docker 的 override。
+
+另確認：Staging／Production Database 連接埠無法連線（Database 不發布連接埠，Req 11.10）；Registry 只能以 `lm-pull-ci` 讀取（`PUT` 回應 403）；建置結束後 `docker ps -a --filter label=lm.ci.build`（經 rootless daemon）與工作目錄為空（`cleanWs()`）。在 `ci/` 的 PR 中把 `agent { label 'lm-trusted' }` 改寫後建置，預期一直排隊或被 Job Restrictions 拒絕，不會在 `lm-trusted-1` 執行。
 
 ### Webhook 驗證與拒絕日誌（Req 2.1、2.2）
 
-Jenkins 前置的 Caddy（Design「信任邊界」）以 JSON 存取日誌記錄 webhook 請求，不記錄 body，並刪除簽章與認證標頭：
+Jenkins 前面是主機上的 Nginx Proxy Manager（NPM）。對外只公開 `/github-webhook/`，其餘路徑只允許 LAN。NPM 的 Proxy Host 設定：
 
-```caddyfile
-jenkins.lan.example {
-  log webhook {
-    output file /var/log/caddy/jenkins-webhook.log
-    format filter {
-      wrap json
-      fields {
-        request>headers>X-Hub-Signature delete
-        request>headers>X-Hub-Signature-256 delete
-        request>headers>Authorization delete
-        request>headers>Cookie delete
-      }
-    }
+- Details：Domain Names `jenkins.our-littlemoments.com`，Scheme `http`、Forward Hostname `jenkins`、Forward Port `8080`（controller 與 NPM 都接在 `proxy` Docker 網路上，以服務名稱連線），開啟 Websockets Support。
+- Access List：「LAN only」，Access 規則為 `allow <lan-cidr>`（其餘由 NPM 拒絕），不設帳密。
+- SSL：Let's Encrypt 憑證，開啟 Force SSL、HTTP/2 Support、HSTS Enabled。
+- Advanced：只有 webhook 路徑例外，且只接受 POST：
+
+  ```nginx
+  location = /github-webhook/ {
+    allow all;
+    limit_except POST { deny all; }
+    include conf.d/include/proxy.conf;
   }
-  reverse_proxy 127.0.0.1:8080
-}
-```
+  ```
 
-在 Jenkins 新增 Log Recorder「github-webhook」：`com.cloudbees.jenkins.GitHubWebHook`、`org.jenkinsci.plugins.github.webhook`、`org.jenkinsci.plugins.github_branch_source`（等級 FINE 以上）。驗證：
+網路曝露：
 
-1. 無簽章：`curl -sS -o /dev/null -w '%{http_code}\n' -X POST -H 'X-GitHub-Event: push' -H 'Content-Type: application/json' --data '{}' https://jenkins.lan.example/github-webhook/` → 4xx，沒有建置排入佇列。
+- 路由器只把 80／443 轉送到 NPM，絕不轉送 81、8080 或 SSH。
+- NPM 的管理介面（81）只綁定 LAN IP（例如 `<lan-ip>:81:81`）。
+- controller 的 8080 只綁定 LAN IP；兩個 agent 直接連到 `http://<lan-ip>:8080/`，不經 NPM。
+- LAN 的 DNS（路由器或本機 DNS）把 `jenkins.our-littlemoments.com` 解析為 `<lan-ip>`。LAN 內的請求因此直接到達 NPM，來源 IP 位於 `<lan-cidr>`，Access List 才會放行；公開 DNS 指向路由器的對外 IP，供 GitHub 與 Let's Encrypt 使用。
+
+日誌：NPM 每個 Proxy Host 有自己的存取日誌（NPM 資料目錄下的 `logs/proxy-host-<n>_access.log`，`<n>` 為 Proxy Host 的編號），每筆記錄時間、方法、路徑、狀態碼與來源 IP（`[Client <ip>]`）。NPM 的預設格式不記錄 request body，標頭只記錄 User-Agent 與 Referer，不含 `X-Hub-Signature-256`、`Authorization` 或 Cookie，因此不需要另外刪除標頭。簽章檢查的結果記錄在 Jenkins：新增 Log Recorder「github-webhook」：`com.cloudbees.jenkins.GitHubWebHook`、`org.jenkinsci.plugins.github.webhook`、`org.jenkinsci.plugins.github_branch_source`（等級 FINE 以上）。驗證：
+
+1. 無簽章：`curl -sS -o /dev/null -w '%{http_code}\n' -X POST -H 'X-GitHub-Event: push' -H 'Content-Type: application/json' --data '{}' https://jenkins.our-littlemoments.com/github-webhook/` → 4xx，沒有建置排入佇列。
 2. 錯誤簽章：同上加 `-H 'X-Hub-Signature-256: sha256:0000000000000000000000000000000000000000000000000000000000000000'` → 4xx，沒有建置。
 3. 其他 repository：以正確 secret 簽一個 `repository.full_name` 為其他 repo 的 push payload → 沒有任何 Job 被觸發（Log Recorder 顯示無相符 Job）。
 4. 非支援事件：以正確 secret 送出 `X-GitHub-Event: issues` → 沒有建置（Req 2.3）。
 5. 正確簽章的 push 至測試分支 → 60 秒內 `ci/little-moments` 排入建置（Req 1.9）。
-6. 確認 `/var/log/caddy/jenkins-webhook.log` 對 1–4 每筆都有 `ts`（接收時間）、`request.remote_ip`（來源 IP）、`status`，Log Recorder 有對應的拒絕原因；兩者皆不含 request body、`X-Hub-Signature-256` 或 webhook secret。以 `grep -c '<secret 值>'` 對兩份日誌確認為 0（在 controller 上執行，不要把 secret 貼到 shell 歷史；可用 `grep -c -f <secret 檔>`）。
+6. 確認 NPM 的 `proxy-host-<n>_access.log` 對 1–4 每筆都有接收時間、來源 IP（`[Client <ip>]`）與狀態碼，Log Recorder 有對應的拒絕原因；兩者皆不含 request body、`X-Hub-Signature-256` 或 webhook secret。在 controller 主機上以 `grep -c -F -f <controller-dir>/secrets/GITHUB_WEBHOOK_SECRET <log>` 對兩份日誌確認為 0（不要把 secret 貼到 shell 歷史）。
 
-Caddy 的存取日誌與 Jenkins 的拒絕原因以時間戳對應；若需要單一事件同時含三項資訊，可在 Caddy 以 `handle_response` 依 `{rp.status_code} >= 400` 另寫一份拒絕日誌。
+另從 LAN 以外的網路（例如手機行動網路）確認：`https://jenkins.our-littlemoments.com/` 與 `GET /github-webhook/` 皆為 403；`http://` 轉址到 `https://`；`<public-ip>:81` 與 `<public-ip>:8080` 無法連線。
+
+NPM 的存取日誌與 Jenkins 的拒絕原因以時間戳對應。

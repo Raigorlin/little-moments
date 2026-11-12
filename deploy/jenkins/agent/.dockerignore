@@ -1,0 +1,2 @@
+# 映像不需要任何本機檔案；agent secret 與 .env 絕不能進入 build context。
+*

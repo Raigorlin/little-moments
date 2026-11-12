@@ -1,4 +1,4 @@
-// ci/jenkins/casc.yaml 與 ci/jenkins/jobs.groovy 的靜態檢查（Requirement 1.1、2.4–2.8、15.1、18.9、19.3、20.12、21.3–21.5、21.12；tasks 13.9）。
+// ci/jenkins/casc.yaml、local-security.yaml 與 jobs.groovy 的靜態檢查（Requirement 1.1、2.1、2.4–2.8、15.1、18.9、19.3、20.12、21.3–21.5、21.12；tasks 13.9、19.1、19.2）。
 //
 // 本機沒有 Jenkins：這裡只驗證設定的結構與一致性（YAML 可解析、權限、憑證 ID 與資料夾範圍、保留天數、cron、
 // 信任策略、Tag build strategy、無秘密字面值），不能取代在 controller 上實際套用 Configuration as Code 與 Job DSL。
@@ -12,12 +12,15 @@ const read = (p) => readFileSync(resolve(root, p), 'utf8');
 
 const cascText = read('ci/jenkins/casc.yaml');
 const casc = YAML.parse(cascText);
+const localSecText = read('ci/jenkins/local-security.yaml');
+const localSec = YAML.parse(localSecText);
 const jobsText = read('ci/jenkins/jobs.groovy');
 const readme = read('ci/jenkins/README.md');
 
 const FORBIDDEN = ['Run/Delete', 'Run/Update', 'Job/Configure', 'Run/Replay'];
-const ADMIN_GROUP = 'lm-jenkins-admins';
+const ADMIN_USER = 'jacklin';
 const RETENTION_USER = 'lm-retention-bot';
+const JENKINS_URL = 'https://jenkins.our-littlemoments.com/';
 
 // 部署、簽章、資料庫、Setup_Token、smoke 與 Jenkins API 憑證：只能在 release/（Req 2.4）。
 const RELEASE_ONLY = [
@@ -96,7 +99,7 @@ function block(text, kind, name) {
 }
 
 describe('檔案格式', () => {
-  for (const p of ['ci/jenkins/casc.yaml', 'ci/jenkins/jobs.groovy', 'ci/jenkins/README.md']) {
+  for (const p of ['ci/jenkins/casc.yaml', 'ci/jenkins/local-security.yaml', 'ci/jenkins/jobs.groovy', 'ci/jenkins/README.md']) {
     test(`${p}：UTF-8 無 BOM、LF 換行`, () => {
       const bytes = readFileSync(resolve(root, p));
       expect(bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf).toBe(false);
@@ -125,13 +128,18 @@ describe('casc.yaml：Matrix Authorization（Req 21.12）', () => {
     return { kind, name: e[kind].name, permissions: e[kind].permissions ?? [] };
   });
 
-  test('只有管理員群組有 Overall/Administer', () => {
+  const isAdmin = (e) => e.kind === 'user' && e.name === ADMIN_USER;
+
+  test('只有使用者 jacklin 有 Overall/Administer', () => {
     const admins = flat.filter((e) => e.permissions.includes('Overall/Administer'));
-    expect(admins).toEqual([{ kind: 'group', name: ADMIN_GROUP, permissions: ['Overall/Administer'] }]);
+    expect(admins).toEqual([{ kind: 'user', name: ADMIN_USER, permissions: ['Overall/Administer'] }]);
+    expect(flat.some((e) => e.name === 'lm-jenkins-admins')).toBe(false);
   });
 
   test('非管理員沒有 Run/Delete、Run/Update、Job/Configure、Run/Replay，也沒有憑證與 Lockable Resources 權限', () => {
-    for (const e of flat.filter((x) => x.name !== ADMIN_GROUP)) {
+    const others = flat.filter((x) => !isAdmin(x));
+    expect(others.length).toBe(flat.length - 1);
+    for (const e of others) {
       for (const p of e.permissions) {
         expect(FORBIDDEN).not.toContain(p);
         expect(p.startsWith('Credentials/')).toBe(false);
@@ -149,6 +157,51 @@ describe('casc.yaml：Matrix Authorization（Req 21.12）', () => {
       expect(names).toContain(groovyConst(jobsText, g));
     }
     expect(groovyConst(jobsText, 'GROUP_RELEASE_APPROVERS')).toBe('lm-release-approvers');
+  });
+
+  test('保留供外部 security realm 使用的群組項目；管理員是本機使用者資料庫的帳號', () => {
+    const groups = flat.filter((e) => e.kind === 'group').map((e) => e.name).sort();
+    expect(groups).toEqual(['authenticated', 'lm-auditors', 'lm-developers', 'lm-release-approvers']);
+    expect(localSec.jenkins.securityRealm.local.users.map((u) => u.id)).toContain(ADMIN_USER);
+  });
+});
+
+describe('casc.yaml：實際部署值與移除的設定（tasks 19.2）', () => {
+  test('沒有 crumbIssuer（使用 core 預設的 CSRF issuer）與 remotingSecurity', () => {
+    expect('crumbIssuer' in casc.jenkins).toBe(false);
+    expect('remotingSecurity' in casc.jenkins).toBe(false);
+    expect(cascText).not.toMatch(/^\s*(crumbIssuer|remotingSecurity|excludeClientIPFromCrumb):/m);
+  });
+
+  test('location.url 與 hookUrl 為實際主機名稱，沒有 PLACEHOLDER', () => {
+    expect(casc.unclassified.location.url).toBe(JENKINS_URL);
+    expect(casc.unclassified.gitHubPluginConfig.hookUrl).toBe(`${JENKINS_URL}github-webhook/`);
+    expect(cascText).not.toContain('PLACEHOLDER');
+    expect(cascText).not.toContain('lan.example');
+  });
+});
+
+describe('local-security.yaml：本機使用者資料庫（Req 2.1、21.12）', () => {
+  const realm = localSec?.jenkins?.securityRealm?.local;
+
+  test('是有效的 YAML，只定義 jenkins.securityRealm.local，且不開放自行註冊', () => {
+    expect(Object.keys(localSec)).toEqual(['jenkins']);
+    expect(Object.keys(localSec.jenkins)).toEqual(['securityRealm']);
+    expect(realm.allowsSignup).toBe(false);
+  });
+
+  test('使用者為 jacklin、lm-retention-bot、lm-api-readonly；每個密碼都只是 ${VAR}', () => {
+    expect(realm.users.map((u) => u.id)).toEqual([ADMIN_USER, RETENTION_USER, 'lm-api-readonly']);
+    const vars = realm.users.map((u) => u.password);
+    expect(vars).toEqual(['${JENKINS_ADMIN_PASSWORD}', '${RETENTION_BOT_PASSWORD}', '${API_READONLY_PASSWORD}']);
+    for (const u of realm.users) {
+      expect(Object.keys(u).sort()).toEqual(['id', 'password']);
+      expect(u.password).toMatch(/^\$\{[A-Z][A-Z0-9_]*\}$/);
+    }
+  });
+
+  test('jobs.groovy 授權的使用者存在於本機使用者資料庫', () => {
+    expect(realm.users.map((u) => u.id)).toContain(groovyConst(jobsText, 'USER_RETENTION_BOT'));
   });
 });
 
@@ -226,6 +279,12 @@ describe('casc.yaml：agent 標籤與 Job Restrictions（Req 2.6）', () => {
       expect(re.test('ci/little-moments/feature-x')).toBe(false);
     }
   });
+
+  test('兩個 agent 在同一主機上使用不同的工作目錄（remoteFS）', () => {
+    const fs = Object.fromEntries(nodes.map((n) => [n.name, n.remoteFS]));
+    expect(fs).toEqual({ 'lm-trusted-1': '/var/lib/jenkins-agent', 'lm-untrusted-1': '/var/lib/jenkins-untrusted' });
+    expect(new Set(Object.values(fs)).size).toBe(nodes.length);
+  });
 });
 
 describe('jobs.groovy：資料夾範圍憑證（Req 2.4、2.5、15.1）', () => {
@@ -302,6 +361,58 @@ describe('jobs.groovy：資料夾範圍憑證（Req 2.4、2.5、15.1）', () => 
     const credBlock = jobsText.slice(jobsText.indexOf('Closure folderCredentials('), jobsText.indexOf('Closure retention('));
     expect(credBlock).not.toMatch(/secretLine\(|secretBlock\(|secretBytes\(folderName/);
     expect(credBlock.match(/scope\('GLOBAL'\)/g)).toHaveLength(5);
+  });
+
+  // tasks 19.1：在實際的 Jenkins LTS controller 上載入 jobs.groovy 驗證過的 Job DSL 名稱與秘密處理。
+  const credCode = codeOnly(jobsText.slice(jobsText.indexOf('Closure folderCredentials('), jobsText.indexOf('/** Multibranch 的分支保留屬性')));
+
+  test('憑證使用 Job DSL 接受的方法名稱，不使用 CasC 的 symbol', () => {
+    for (const name of ['usernamePassword', 'stringCredentialsImpl', 'fileCredentialsImpl', 'basicSSHUserPrivateKey', 'directEntryPrivateKeySource', 'gitHubAppCredentials']) {
+      expect(credCode).toMatch(new RegExp(`^\\s*${name} \\{$`, 'm'));
+    }
+    for (const symbol of ['gitHubApp', 'string', 'file', 'directEntry']) {
+      expect(codeOnly(jobsText)).not.toMatch(new RegExp(`(^|[^\\w.])${symbol} \\{`, 'm'));
+    }
+    // FileCredentialsImpl 的 file（FileItem）為必要參數；內容由 secretBytes 提供。
+    expect(credCode).toMatch(/fileCredentialsImpl \{\s*scope\('GLOBAL'\)\s*id\(r\.id\)\s*description\(r\.description\)\s*file\(null\)\s*fileName\(r\.fileName\)\s*secretBytes\(r\.bytes\)\s*\}/);
+    // Secret 型別的參數以 hudson.util.Secret.fromString 傳入。
+    expect(credCode).toContain('secret(hudson.util.Secret.fromString(r.secret))');
+    expect(credCode.match(/privateKey\(hudson\.util\.Secret\.fromString\(r\.key\)\)/g)).toHaveLength(2);
+    expect(credCode).not.toMatch(/privateKey\(r\.key\)|secret\(r\.secret\)/);
+    expect(credCode).toMatch(/usernamePassword \{[^}]*password\(r\.password\)\s*\}/);
+    expect(credCode).toMatch(/basicSSHUserPrivateKey \{[^}]*passphrase\(''\)/);
+  });
+
+  test('GitHub App 憑證不設定 owner，也不需要 <id>.owner 秘密檔', () => {
+    expect(codeOnly(jobsText)).not.toMatch(/\bowner\(/);
+    expect(jobsText).not.toContain('.owner');
+    expect(jobsText).toContain(`case 'gitHubApp': return ["\${c.id}.app-id", "\${c.id}.key"]*.toString()`);
+    expect(credCode).toMatch(/gitHubAppCredentials \{\s*scope\('GLOBAL'\)\s*id\(r\.id\)\s*description\(r\.description\)\s*appID\(r\.appId\)\s*privateKey\(hudson\.util\.Secret\.fromString\(r\.key\)\)\s*\}/);
+  });
+
+  test('建立憑證的例外只含「資料夾/憑證 ID（類型）」與例外類別名稱，不附原訊息或 cause', () => {
+    // 每個憑證各自包裝。
+    expect(credCode).toMatch(/for \(Map r in resolved\) \{\s*try \{\s*if \(r\.type == 'usernamePassword'\)/);
+    expect(credCode).toMatch(/\} catch \(Throwable e\) \{\s*sanitized = new IllegalStateException\("無法建立資料夾憑證：\$\{folderName\}\/\$\{r\.id\}（\$\{r\.type\}，\$\{e\.getClass\(\)\.getName\(\)\}）"\.toString\(\)\)\s*throw sanitized\s*\}/);
+    // 整個 folderCredentialsProperty 也包裝；已改寫的例外原樣拋出，其他例外只列出資料夾。
+    expect(credCode).toMatch(/return \{\s*try \{\s*folderCredentialsProperty \{/);
+    expect(credCode).toMatch(/\} catch \(Throwable e\) \{\s*if \(sanitized != null && e\.is\(sanitized\)\) \{\s*throw e\s*\}\s*throw new IllegalStateException\("無法建立資料夾憑證：\$\{folderName\}（folderCredentialsProperty，\$\{e\.getClass\(\)\.getName\(\)\}）"\.toString\(\)\)\s*\}\s*\}\s*\}$/m);
+    expect(credCode.match(/catch \(Throwable e\)/g)).toHaveLength(2);
+    // 所有 IllegalStateException 只有一個字串參數（沒有 cause）；不讀取原例外的訊息或堆疊。
+    const isEs = [...credCode.matchAll(/new IllegalStateException\((.*)\)$/gm)].map((m) => m[1]);
+    expect(isEs).toHaveLength(2);
+    for (const arg of isEs) expect(arg).toMatch(/^"[^"]*"\.toString\(\)$/);
+    expect(jobsText).not.toMatch(/getMessage|getLocalizedMessage|\be\.message\b|initCause|addSuppressed|printStackTrace|getStackTrace|getCause/);
+    expect(credCode).not.toMatch(/\$\{e\}|\be\.toString\(\)|\+\s*e\b/);
+  });
+
+  test('GITHUB_OWNER 與 GITHUB_REPO 為實際值，不再有 PLACEHOLDER', () => {
+    expect(groovyConst(jobsText, 'GITHUB_OWNER')).toBe('Raigorlin');
+    expect(groovyConst(jobsText, 'GITHUB_REPO')).toBe('little-moments');
+    expect(jobsText).toMatch(/^@Field final String GITHUB_OWNER = 'Raigorlin'$/m);
+    expect(jobsText).toMatch(/^@Field final String GITHUB_REPO = 'little-moments'$/m);
+    expect(jobsText).not.toContain('PLACEHOLDER');
+    expect(jobsText).not.toContain('example-org');
   });
 });
 
@@ -432,10 +543,22 @@ describe('jobs.groovy：資料夾與 Job 層級授權（Req 21.12、19.3）', ()
     expect(readme).toContain('ci/release-approvers.json');
     expect(readme).toContain('lm-release-approvers');
   });
+
+  test('ci/release-approvers.json 的每個 jenkinsId 都是本機使用者資料庫的帳號（Req 19.3）', () => {
+    const doc = JSON.parse(read('ci/release-approvers.json'));
+    const users = localSec.jenkins.securityRealm.local.users.map((u) => u.id);
+    expect(doc.approvers.length).toBeGreaterThan(0);
+    for (const a of doc.approvers) expect(users).toContain(a.jenkinsId);
+  });
 });
 
 describe('沒有秘密字面值（Req 15.1）', () => {
-  const files = { 'ci/jenkins/casc.yaml': cascText, 'ci/jenkins/jobs.groovy': jobsText, 'ci/jenkins/README.md': readme };
+  const files = {
+    'ci/jenkins/casc.yaml': cascText,
+    'ci/jenkins/local-security.yaml': localSecText,
+    'ci/jenkins/jobs.groovy': jobsText,
+    'ci/jenkins/README.md': readme,
+  };
 
   for (const [name, text] of Object.entries(files)) {
     test(name, () => {
@@ -449,11 +572,13 @@ describe('沒有秘密字面值（Req 15.1）', () => {
     });
   }
 
-  test('casc.yaml 的 secret／password 欄位只引用 ${VAR}', () => {
-    for (const m of cascText.matchAll(/^\s*(secret|password|privateKey|passphrase|token|apiToken):\s*(.*)$/gm)) {
-      expect(m[2]).toMatch(/^"\$\{[A-Z][A-Z0-9_]*\}"$/);
-    }
-  });
+  for (const [name, text] of [['casc.yaml', cascText], ['local-security.yaml', localSecText]]) {
+    test(`${name} 的 secret／password 欄位只引用 \${VAR}`, () => {
+      const fields = [...text.matchAll(/^\s*(secret|password|privateKey|passphrase|token|apiToken):\s*(.*)$/gm)];
+      expect(fields.length).toBeGreaterThan(0);
+      for (const m of fields) expect(m[2]).toMatch(/^"\$\{[A-Z][A-Z0-9_]*\}"$/);
+    });
+  }
 
   test('README 列出每個資料夾憑證 ID、必要 plugins 與驗證步驟', () => {
     for (const folder of Object.keys(FOLDERS)) {
