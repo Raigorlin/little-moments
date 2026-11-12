@@ -54,11 +54,15 @@ x-app: &app
     CAMPING_DATABASE_SSLMODE: disable
     CAMPING_DIST: /app/dist
     CAMPING_MIGRATIONS_DIR: /app/migrations
-    # 雲端 AI 收據辨識預設停用（Req 15.6）：未設定時為空字串。只有 Release_Approver 針對特定環境
-    # 明確啟用時，lm-deploy 才會由 Credential_Store 提供的值設定這三個變數（Req 15.7）。
-    CAMPING_BEDROCK_REGION: ${CAMPING_BEDROCK_REGION:-}
-    CAMPING_BEDROCK_MODEL_ID: ${CAMPING_BEDROCK_MODEL_ID:-}
-    CAMPING_BEDROCK_API_KEY: ${CAMPING_BEDROCK_API_KEY:-}
+    # 雲端 AI 收據辨識（OpenAI）預設停用（Req 15.6）：未設定時為空字串，App 沒有可用的金鑰即停用。
+    # 金鑰只以金鑰檔提供（CAMPING_OPENAI_API_KEY_FILE），CAMPING_OPENAI_API_KEY 固定為空字串，
+    # 不經 <env>.env、app.env 或呼叫端環境傳入。只有 Release_Approver 針對特定環境明確啟用時，
+    # 才由 release/ 的 Credential_Store 提供金鑰檔並設定 CAMPING_OPENAI_API_KEY_FILE（Req 15.7）。
+    CAMPING_OPENAI_API_KEY: ""
+    CAMPING_OPENAI_API_KEY_FILE: ${CAMPING_OPENAI_API_KEY_FILE:-}
+    CAMPING_OPENAI_MODEL_ID: ${CAMPING_OPENAI_MODEL_ID:-}
+    CAMPING_OPENAI_IMAGE_DETAIL: ${CAMPING_OPENAI_IMAGE_DETAIL:-}
+    CAMPING_OPENAI_MAX_COMPLETION_TOKENS: ${CAMPING_OPENAI_MAX_COMPLETION_TOKENS:-}
   tmpfs:
     - /tmp:rw,noexec,nosuid,nodev,size=16m
   networks: [app, data]

@@ -21,7 +21,8 @@ RUN bun install --frozen-lockfile
 FROM deps AS build
 COPY . .
 # 打包後目錄 0555、檔案 0444：UID 10001 可讀可進入，但無寫入權（Req 16.4）。COPY --from 會保留這些權限位元。
-# scripts/build-server.mjs 產出 /out/server/serve.js、/out/server/migrate.js、/out/tools/import-sqlite.js、/out/tools/drill.js
+# scripts/build-server.mjs 產出 /out/server/serve.js、/out/server/migrate.js、/out/tools/import-sqlite.js、/out/tools/drill.js、
+# /out/tools/create-admin.js、/out/tools/reset-password.js
 # 與 /out/migrations/（server/ 與其匯入的 src/ 模組已打包進單一檔案；dependencies 維持 external）。
 RUN bun run build \
  && bun scripts/build-server.mjs --out /out \

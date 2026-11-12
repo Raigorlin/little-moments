@@ -14,6 +14,9 @@
 //      只開啟複本：`PRAGMA wal_checkpoint(TRUNCATE)` 合併 WAL、改為 DELETE journal 後以唯讀重新開啟。
 //      原始檔案從不被 SQLite 開啟，來源目錄不會產生任何檔案（Req 13.2）。
 //   3. 驗證 SQLite 標頭與所有必要資料表及欄位；不符即在連線目標前結束（Req 13.9）。
+//      來源可以是舊版或 security-harden 版：0002 新增的資料表（settings、receipt_ai_usage、
+//      security_events、security_alerts）不存在時筆數為 0，0002 新增的 invites 欄位
+//      （used_at、used_by、id）不存在時以 NULL 匯入。
 //   4. 連線目標 → runMigrations 確保 Schema。
 //   5. 單一寫入交易（withWriteTx，與 App_Server 寫入者互斥）：任一資料表非空即中止（Req 13.3）；
 //      依外鍵順序每批 500 列以 Bun.SQL 參數化批次 INSERT 寫入，password_hash 原字串（Req 10.9、13.8）；
@@ -33,7 +36,7 @@ import { parseConfig } from '../server/config.js';
 import { createDatabase } from '../server/db/connect.js';
 import { loadMigrations, runMigrations, MigrationValidationError } from '../server/db/migrations.js';
 import { withWriteTx } from '../server/db/tx.js';
-import { tableOrder, columnNames, convertRow, compareCounts, ImportPlanError } from '../server/db/import-plan.js';
+import { tableOrder, columnNames, requiredColumnNames, requiredTables, convertRow, compareCounts, IDENTITY_COLUMNS, ImportPlanError } from '../server/db/import-plan.js';
 import { readMigrationFiles } from './migrate.mjs';
 
 export const EXIT_OK = 0;
@@ -130,7 +133,13 @@ function openCopy(copy) {
   }
 }
 
-/** 驗證必要資料表與欄位（Req 13.9）；回傳每表來源筆數。 */
+/**
+ * 驗證必要資料表與欄位（Req 13.9）；回傳每表來源筆數與實際存在的欄位。
+ * 來源可以是舊版（security-harden 之前）或 security-harden 版的 accounts.sqlite：
+ * 0002 新增的資料表不存在時筆數為 0；0002 新增的欄位不存在時以 NULL 匯入。
+ * @returns {{counts: Record<string, number>, present: Record<string, string[]|null>}}
+ *   present[table]：要從來源讀取的欄位（依 columnNames 順序）；資料表不存在時為 null。
+ */
 function validateSource(db) {
   let tables;
   try {
@@ -138,20 +147,28 @@ function validateSource(db) {
   } catch {
     throw new ImportError(EXIT_SOURCE_INVALID, '不是有效的 SQLite 檔案或檔案已損壞');
   }
-  const missing = tableOrder().filter(t => !tables.has(t));
+  const missing = requiredTables().filter(t => !tables.has(t));
   if (missing.length) throw new ImportError(EXIT_SOURCE_INVALID, `來源缺少資料表：${missing.join(', ')}`);
   const counts = {};
+  const present = {};
   for (const table of tableOrder()) {
+    if (!tables.has(table)) {
+      // 只有 optional 資料表會走到這裡（必要資料表已在上方檢查）。
+      counts[table] = 0;
+      present[table] = null;
+      continue;
+    }
     // 資料表名稱來自固定清單（import-plan.js），不含外部輸入。
     const actual = new Set(db.query(`PRAGMA table_info("${table}")`).all().map(r => r.name));
     const expected = columnNames(table);
-    const lacking = expected.filter(c => !actual.has(c));
+    const lacking = requiredColumnNames(table).filter(c => !actual.has(c));
     if (lacking.length) throw new ImportError(EXIT_SOURCE_INVALID, `來源缺少欄位：${lacking.join(', ')}`, { table });
     const extra = [...actual].filter(c => !expected.includes(c));
     if (extra.length) throw new ImportError(EXIT_SOURCE_INVALID, `來源含未定義的欄位：${extra.join(', ')}`, { table });
+    present[table] = expected.filter(c => actual.has(c));
     counts[table] = Number(db.query(`SELECT count(*) AS n FROM "${table}"`).get().n);
   }
-  return counts;
+  return { counts, present };
 }
 
 /** PostgreSQL 錯誤只保留 SQLSTATE／錯誤代碼，不帶訊息（訊息細節可能含資料值）。 */
@@ -170,7 +187,7 @@ const toCount = value => {
  * 在單一寫入交易內完成匯入；任何 throw 都會使整筆交易回復。
  * @returns {Promise<Record<string, number>>} 目標筆數
  */
-async function importInto(sql, source, sourceCounts, { checkSource }) {
+async function importInto(sql, source, { counts: sourceCounts, present }, { checkSource }) {
   return withWriteTx(sql, async t => {
     // Req 13.3：寫入任何資料前確認所有資料表為空。
     const nonEmpty = [];
@@ -182,10 +199,13 @@ async function importInto(sql, source, sourceCounts, { checkSource }) {
 
     for (const table of tableOrder()) {
       const columns = columnNames(table);
+      const sourceColumns = present[table];
+      // 舊版來源沒有的 0002 資料表：沒有資料列可讀，筆數比對以 0 為準。
+      if (!sourceColumns) continue;
       let iterator;
       try {
-        // 依 rowid 讀取；資料表名稱與欄位清單皆為固定常數。
-        iterator = source.query(`SELECT ${columns.map(c => `"${c}"`).join(', ')} FROM "${table}" ORDER BY rowid`).iterate();
+        // 依 rowid 讀取；資料表名稱與欄位清單皆為固定常數（只讀來源實際存在的欄位，其餘由 convertRow 補 NULL）。
+        iterator = source.query(`SELECT ${sourceColumns.map(c => `"${c}"`).join(', ')} FROM "${table}" ORDER BY rowid`).iterate();
       } catch {
         throw new ImportError(EXIT_IMPORT_FAILED, '讀取來源失敗', { table });
       }
@@ -235,8 +255,11 @@ async function importInto(sql, source, sourceCounts, { checkSource }) {
     // Req 13.2：提交前再次確認來源未被改變。
     await checkSource();
 
-    // Req 13.10：audit identity 從已匯入最大值之後開始；空表時下一個 id 為 1。
-    await t`SELECT setval(pg_get_serial_sequence('audit', 'id'), GREATEST(COALESCE(max(id), 0), 1), max(id) IS NOT NULL) FROM audit`;
+    // Req 13.10：identity 從已匯入最大值之後開始；空表時下一個 id 為 1（audit、security_events）。
+    // 資料表與欄位名稱來自固定清單（IDENTITY_COLUMNS），以 identifier 參數傳入。
+    for (const { table, column } of IDENTITY_COLUMNS) {
+      await t`SELECT setval(pg_get_serial_sequence(${table}, ${column}), GREATEST(COALESCE(max(${t(column)}), 0), 1), max(${t(column)}) IS NOT NULL) FROM ${t(table)}`;
+    }
     return targetCounts;
   });
 }
@@ -285,7 +308,8 @@ export async function importSqlite({
     sourceDb = openCopy(tmp.copy);
 
     // 3. 必要資料表與欄位（連線目標前）。
-    const sourceCounts = validateSource(sourceDb);
+    const sourcePlan = validateSource(sourceDb);
+    const sourceCounts = sourcePlan.counts;
 
     // 4. 連線目標並套用遷移。
     let target = sql;
@@ -308,7 +332,7 @@ export async function importSqlite({
       const now = await sourceFingerprint(source);
       if (!sameFingerprint(before, now)) throw new ImportError(EXIT_SOURCE_CHANGED, '匯入期間來源檔案或來源目錄已被改變');
     };
-    const targetCounts = await importInto(target, sourceDb, sourceCounts, { checkSource });
+    const targetCounts = await importInto(target, sourceDb, sourcePlan, { checkSource });
 
     // 6. 輸出每表筆數。
     log('table source target');

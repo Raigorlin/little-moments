@@ -1,5 +1,6 @@
 // 伺服器打包（Requirement 16.2；design.md Components §11）。
-// 將 scripts/serve.mjs、scripts/migrate.mjs、scripts/import-sqlite.mjs 及其匯入的 server/ 與 src/ 模組
+// 將 scripts/serve.mjs、scripts/migrate.mjs、scripts/import-sqlite.mjs、scripts/drill.mjs、
+// scripts/create-admin.mjs、scripts/reset-password.mjs 及其匯入的 server/ 與 src/ 模組
 // 各自打包成單一檔案，使 App_Image 的最終階段不需要 src/ 原始檔：
 //
 //   bun scripts/build-server.mjs [--out <目錄>]     # 預設 build-server/
@@ -9,6 +10,8 @@
 //   <out>/server/migrate.js       Migration_Runner（以 ../migrations/ 為預設遷移目錄）
 //   <out>/tools/import-sqlite.js  SQLite_Importer（維運工具；App_Server 程序不載入 bun:sqlite）
 //   <out>/tools/drill.js          還原演練工具（lm-deploy drill 在 drill 專用網路內執行；只接受 lm_drill DB）
+//   <out>/tools/create-admin.js   建立第一個管理員（維運工具；CAMPING_DATABASE_*；密碼只由 stdin 或 --password-file 讀取）
+//   <out>/tools/reset-password.js 重設帳號密碼並登出其所有 session（同上）
 //   <out>/migrations/*.sql        遷移檔
 //
 // 打包後檔案的 import.meta.url 指向輸出檔，所以 `../migrations/` 在映像中解析為 /app/migrations/；
@@ -23,6 +26,8 @@ const ENTRIES = [
   { entry: 'scripts/migrate.mjs', dir: 'server', name: 'migrate.js' },
   { entry: 'scripts/import-sqlite.mjs', dir: 'tools', name: 'import-sqlite.js' },
   { entry: 'scripts/drill.mjs', dir: 'tools', name: 'drill.js' },
+  { entry: 'scripts/create-admin.mjs', dir: 'tools', name: 'create-admin.js' },
+  { entry: 'scripts/reset-password.mjs', dir: 'tools', name: 'reset-password.js' },
 ];
 
 function arg(argv, name, fallback) {

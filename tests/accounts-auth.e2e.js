@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 const password='UI-Only-Test-Pass-2026';
 test('[TC-AUTH-001] registration and login forms create account-specific URL and reject mismatched passwords @critical',async({page,baseURL})=>{
  test.skip(new URL(baseURL).port!=='5181','Use isolated account test server.');
@@ -18,7 +18,7 @@ test.describe('first admin setup token',()=>{
   test.skip(new URL(baseURL).port!=='5181','Use isolated account test server.');
   const token='placeholder-setup-token-value';
   const setupBodies=[];
-  await page.route('**/api/session',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({user:null,needsSetup:true,setupTokenRequired:true})}));
+  await page.route('**/api/session',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({user:null,needsSetup:true,setupTokenRequired:true,webSetup:true,registrationOpen:true,inviteRegistration:false})}));
   await page.route('**/api/setup',route=>{setupBodies.push(route.request().postDataJSON());return route.fulfill({status:403,contentType:'application/json',body:JSON.stringify({error:'設定碼不正確，請確認後再試。'})});});
   await page.goto('/setup');
   const tokenInput=page.getByLabel('設定碼',{exact:true});

@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
 import { importSqlite, EXIT_OK, EXIT_SOURCE_INVALID, EXIT_TARGET_NOT_EMPTY, EXIT_IMPORT_FAILED } from '../scripts/import-sqlite.mjs';
-import { tableOrder } from '../server/db/import-plan.js';
+import { tableOrder, isOptionalTable } from '../server/db/import-plan.js';
 import { useTestDatabase, resetTables } from './support/pg.js';
 import { buildSqliteFixture } from './support/sqlite-fixture.js';
 
@@ -86,6 +86,8 @@ const scenarioArb = fc.record({
   garbage: fc.uint8Array({ minLength: 0, maxLength: 2048 }),
   dropTable: fc.constantFrom(...tableOrder()),
   targetNonEmpty: fc.boolean(),
+  // 來源版本：security-harden 之前（old）或 security-harden 版（harden，含 0002 的資料表與欄位）。
+  schema: fc.constantFrom('old', 'harden'),
 });
 
 /** 依情境建立來源；回傳來源路徑與需要在結束時關閉的連線（WAL 未 checkpoint）。 */
@@ -93,24 +95,24 @@ async function buildSource(dir, s) {
   const source = join(dir, 'accounts.sqlite');
   switch (s.kind) {
     case 'valid':
-      buildSqliteFixture(source, s.dataset.data);
+      buildSqliteFixture(source, s.dataset.data, { schema: s.schema });
       return { source, live: null };
     case 'valid-wal-open':
-      return { source, live: buildSqliteFixture(source, s.dataset.data, { wal: true, keepOpen: true }) };
+      return { source, live: buildSqliteFixture(source, s.dataset.data, { wal: true, keepOpen: true, schema: s.schema }) };
     case 'garbage':
       await writeFile(source, s.garbage);
       return { source, live: null };
     case 'wrong-header': {
-      buildSqliteFixture(source, s.dataset.data);
+      buildSqliteFixture(source, s.dataset.data, { schema: s.schema });
       const bytes = await readFile(source);
       bytes.write('SQLite format 4', 0, 'latin1');
       await writeFile(source, bytes);
       return { source, live: null };
     }
     case 'missing-table': {
-      buildSqliteFixture(source, s.dataset.data);
+      buildSqliteFixture(source, s.dataset.data, { schema: s.schema });
       const d = new Database(source); // foreign_keys 預設關閉，DROP 父表不會連帶刪除
-      d.exec(`DROP TABLE "${s.dropTable}"`); // 名稱來自固定清單
+      d.exec(`DROP TABLE IF EXISTS "${s.dropTable}"`); // 名稱來自固定清單；舊版來源沒有 0002 的資料表
       d.close();
       return { source, live: null };
     }
@@ -120,7 +122,9 @@ async function buildSource(dir, s) {
 }
 
 function expectedExit(s) {
-  if (s.kind === 'garbage' || s.kind === 'wrong-header' || s.kind === 'missing-table') return EXIT_SOURCE_INVALID;
+  if (s.kind === 'garbage' || s.kind === 'wrong-header') return EXIT_SOURCE_INVALID;
+  // 0002 新增的資料表可以不存在（舊版來源），只有缺少必要資料表才拒絕（Req 13.9）。
+  if (s.kind === 'missing-table' && !isOptionalTable(s.dropTable)) return EXIT_SOURCE_INVALID;
   if (s.targetNonEmpty) return EXIT_TARGET_NOT_EMPTY;
   if (s.dataset.badRow) return EXIT_IMPORT_FAILED;
   return EXIT_OK;

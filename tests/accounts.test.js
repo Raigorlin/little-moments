@@ -70,7 +70,7 @@ describe('routing and transport', () => {
     const res = ok(await call('GET', '/api/session'));
     expect(res.headers.get('content-type')).toContain('application/json');
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(res.body).toEqual({ user: null, needsSetup: true, setupTokenRequired: false });
+    expect(res.body).toEqual({ user: null, needsSetup: true, setupTokenRequired: false, webSetup: true, registrationOpen: true, inviteRegistration: false });
   });
   test('mutations need the exact request origin (CSRF)', async () => {
     const body = { username: 'admin-one', displayName: '管理員', password: PASS };
@@ -107,7 +107,7 @@ describe('first-admin setup', () => {
     const res = ok(await call('POST', '/api/setup', { body: { username: 'admin-one', displayName: ' 管理員  小安 ', password: PASS } }));
     expect(res.body).toEqual({ user: { id: expect.any(String), username: 'admin-one', displayName: '管理員 小安', role: 'admin' }, needsSetup: false });
     expect(res.setCookie).toMatch(/^ggc_session=[a-f0-9]{64}; HttpOnly; SameSite=Strict; Path=\/; Max-Age=604800$/);
-    expect(ok(await call('GET', '/api/session', { cookie: res.cookie })).body).toEqual({ user: res.body.user, needsSetup: false, setupTokenRequired: false });
+    expect(ok(await call('GET', '/api/session', { cookie: res.cookie })).body).toEqual({ user: res.body.user, needsSetup: false, setupTokenRequired: false, webSetup: true, registrationOpen: true, inviteRegistration: true });
     failed(await call('POST', '/api/setup', { body: { username: 'admin-two', displayName: 'x', password: PASS } }), 409);
   });
   test('setup via a trusted proxy is never treated as loopback', async () => {
@@ -230,10 +230,16 @@ describe('trips and isolation', () => {
     expect(env.state.revision).toBe(1);
     expect([env.state.activities, env.state.meals, env.state.shopping, env.state.gear, env.state.vehicles]).toEqual([[], [], [], [], []]);
   });
+  test('accepts and persists every cover illustration option', async () => {
+    const { cookie } = await setupAdmin();
+    for (const coverKind of ['camp', 'mountain', 'lake', 'night', 'forest', 'beach', 'sunrise']) {
+      expect((await createTrip(cookie, { coverKind })).coverKind).toBe(coverKind);
+    }
+  });
   test('validates card fields', async () => {
     const { cookie } = await setupAdmin();
     const bad = async extra => failed(await call('POST', '/api/trips', { cookie, body: card(extra) }), 400);
-    await bad({ coverKind: 'beach' });
+    await bad({ coverKind: 'ocean' });
     await bad({ status: 'archived' });
     await bad({ title: '   ' });
     await bad({ title: 42 });
@@ -351,14 +357,14 @@ describe('editing, revisions and tampering', () => {
     ok(await call('PUT', `/api/trips/${trip.id}`, { cookie: owner.cookie, body: { expectedUserId: owner.user.id, revision: env.trip.revision, state: env.state } }));
     expect((await getTrip(owner.cookie, trip.id)).trip.title).toBe('不能由另一個帳號儲存');
   });
-  test('members can edit and patch but not invite', async () => {
+  test('members can edit, patch and invite', async () => {
     const { member, trip } = await tripWithMember();
     const env = await getTrip(member.cookie, trip.id);
-    expect(env.permissions).toEqual({ canEdit: true, canDelete: false, canInvite: false, canManage: false, personId: env.permissions.personId });
-    expect(env.trip).toMatchObject({ canEdit: true, canDelete: false, canInvite: false, canManage: false, isMember: true });
+    expect(env.permissions).toEqual({ canEdit: true, canDelete: false, canInvite: true, canManage: false, personId: env.permissions.personId });
+    expect(env.trip).toMatchObject({ canEdit: true, canDelete: false, canInvite: true, canManage: false, isMember: true });
     const put = ok(await call('PUT', `/api/trips/${trip.id}`, { cookie: member.cookie, body: { revision: env.trip.revision, state: env.state } }));
     ok(await call('PATCH', `/api/trips/${trip.id}`, { cookie: member.cookie, body: { revision: put.body.trip.revision, title: 'mine' } }));
-    failed(await call('POST', `/api/trips/${trip.id}/invites`, { cookie: member.cookie, body: {} }), 403);
+    ok(await call('POST', `/api/trips/${trip.id}/invites`, { cookie: member.cookie, body: {} }), 201);
   });
   test('bound participants cannot be removed or swapped, but can be renamed', async () => {
     const { owner, trip, memberPid, ownerPid } = await tripWithMember();
@@ -659,7 +665,8 @@ describe('admin user management', () => {
     ok(await join(last.cookie, token, '第一百位'));
     expect((await getTrip(owner.cookie, trip.id)).state.people).toHaveLength(100);
     const late = await register('member-y', 'Y');
-    failed(await join(late.cookie, token, '一百零一'), 409);
+    const fresh = await invite(owner.cookie, trip.id);
+    failed(await join(late.cookie, fresh.token, '一百零一'), 409);
     ok(await call('POST', `/api/admin/users/${owner.user.id}/delete`, { cookie: admin.cookie, body: { confirmUsername: 'owner-a' } }));
     const env = await getTrip(admin.cookie, trip.id);
     expect(env.state.people).toHaveLength(100);
@@ -688,6 +695,66 @@ test('service requires a Database pool, never a file path, and closes cleanly', 
   extra.close();
   // service.close() 不關閉注入的連線池
   expect(Number((await db.sql`SELECT 1 AS ok`)[0].ok)).toBe(1);
+});
+
+describe('service options and local CLI hooks (security-harden, task 18.4)', () => {
+  test('invalid registrationPolicy or receiptAiPolicySeed is refused at construction', async () => {
+    await expect(createAccountService({ db: serviceDb(db.sql), registrationPolicy: 'invite-only' })).rejects.toThrow(TypeError);
+    await expect(createAccountService({ db: serviceDb(db.sql), receiptAiPolicySeed: 'everyone' })).rejects.toThrow(TypeError);
+  });
+
+  test('receiptAiPolicy() reports default, seed and stored sources; the seed is never written', async () => {
+    expect(await svc.receiptAiPolicy()).toEqual({ value: 'all', source: 'default', updatedAt: null, updatedBy: null });
+    const seeded = await createAccountService({ db: serviceDb(db.sql), receiptAiPolicySeed: 'admins', now: () => clockMs });
+    try {
+      expect(await seeded.receiptAiPolicy()).toMatchObject({ value: 'admins', source: 'seed' });
+      expect(Number((await db.sql`SELECT COUNT(*) AS n FROM settings`)[0].n)).toBe(0);
+      const { cookie } = await setupAdmin();
+      ok(await call('PATCH', '/api/admin/settings', { cookie, body: { receiptAiPolicy: 'off' } }));
+      expect(await seeded.receiptAiPolicy()).toEqual({ value: 'off', source: 'stored', updatedAt: new Date(clockMs).toISOString(), updatedBy: 'admin-one' });
+    } finally { seeded.close(); }
+  });
+
+  test('createFirstAdmin creates one admin with the given audit action and then answers 409', async () => {
+    const user = await svc.createFirstAdmin({ username: 'cli-admin', displayName: 'CLI 管理員', password: PASS }, { auditAction: 'setup.cli' });
+    expect(user).toMatchObject({ username: 'cli-admin', role: 'admin' });
+    expect(await svc.needsSetup()).toBe(false);
+    await expect(svc.createFirstAdmin({ username: 'cli-two', displayName: 'x', password: PASS })).rejects.toMatchObject({ status: 409 });
+    await expect(svc.createFirstAdmin({ username: 'Bad Name', displayName: 'x', password: PASS })).rejects.toMatchObject({ status: 400 });
+    const audit = await db.sql`SELECT actor, action, target FROM audit ORDER BY id`;
+    expect(audit.map(r => ({ ...r }))).toEqual([{ actor: 'cli-admin', action: 'setup.cli', target: 'user:cli-admin' }]);
+    expect(JSON.stringify(audit)).not.toContain(PASS);
+  });
+
+  test('resetPassword replaces the hash, ends every session of the account, and audits without the password', async () => {
+    const NEW = 'replacement test password';
+    await setupAdmin();
+    const member = await register('member-a');
+    await login('member-a');
+    expect(Number((await db.sql`SELECT COUNT(*) AS n FROM sessions WHERE user_id = ${member.user.id}`)[0].n)).toBe(2);
+    expect(await svc.resetPassword('member-a', NEW)).toBe('member-a');
+    expect(Number((await db.sql`SELECT COUNT(*) AS n FROM sessions WHERE user_id = ${member.user.id}`)[0].n)).toBe(0);
+    expect(ok(await call('GET', '/api/session', { cookie: member.cookie })).body.user).toBeNull();
+    failed(await call('POST', '/api/login', { body: { username: 'member-a', password: PASS } }), 401);
+    ok(await call('POST', '/api/login', { body: { username: 'member-a', password: NEW } }));
+    const audit = await db.sql`SELECT actor, action, target FROM audit WHERE action = 'password.reset.cli'`;
+    expect(audit.map(r => ({ ...r }))).toEqual([{ actor: 'local-cli', action: 'password.reset.cli', target: 'user:member-a' }]);
+    expect(JSON.stringify(await db.sql`SELECT * FROM audit`)).not.toContain(NEW);
+    await expect(svc.resetPassword('nobody-here', NEW)).rejects.toMatchObject({ status: 404 });
+    await expect(svc.resetPassword('member-a', 'short')).rejects.toMatchObject({ status: 400 });
+    const admin = await login('admin-one');
+    ok(await call('POST', `/api/admin/users/${member.user.id}/delete`, { cookie: admin, body: { confirmUsername: 'member-a' } }));
+    await expect(svc.resetPassword('member-a', NEW)).rejects.toMatchObject({ status: 404 });
+  });
+
+  test('OPTIONS is 405 and a cross-site Sec-Fetch-Site mutation is 403 even with the right Origin', async () => {
+    const res = await svc.handle(new Request(`${BASE}/api/trips`, { method: 'OPTIONS', headers: { origin: BASE } }));
+    expect(res.status).toBe(405);
+    expect(res.headers.get('set-cookie')).toBeNull();
+    const cross = await svc.handle(new Request(`${BASE}/api/logout`, { method: 'POST', headers: { origin: BASE, 'sec-fetch-site': 'cross-site' } }));
+    expect(cross.status).toBe(403);
+    expect(await cross.json()).toEqual({ error: '不接受跨站請求。' });
+  });
 });
 
 test('requests after close fail closed', async () => {
@@ -860,7 +927,7 @@ describe('collaborator edit and owner-only delete rights', () => {
   const confirm = (who, trip, extra = {}) => ({ expectedUserId: who.user.id, confirmTitle: trip.title, revision: trip.revision, ...extra });
   const listTrips = async cookie => ok(await call('GET', '/api/trips', { cookie })).body.trips;
   const caps = t => ({ canEdit: t.canEdit, canDelete: t.canDelete, canInvite: t.canInvite, canManage: t.canManage });
-  const MEMBER = { canEdit: true, canDelete: false, canInvite: false, canManage: false };
+  const MEMBER = { canEdit: true, canDelete: false, canInvite: true, canManage: false };
   const HOST = { canEdit: true, canDelete: true, canInvite: true, canManage: true };
 
   async function world() {
@@ -904,7 +971,8 @@ describe('collaborator edit and owner-only delete rights', () => {
     expect(forged.body.permissions).toEqual({ ...MEMBER, personId: env.permissions.personId });
     expect(forged.body.trip.ownerId).toBe(owner.user.id);
     failed(await del(member.cookie, trip.id, confirm(member, forged.body.trip, { canDelete: true, role: 'admin', permissions: HOST })), 403);
-    failed(await call('POST', `/api/trips/${trip.id}/invites`, { cookie: member.cookie, body: { canInvite: true } }), 403);
+    ok(await call('POST', `/api/trips/${trip.id}/invites`, { cookie: member.cookie, body: { canInvite: true, canDelete: true, permissions: HOST } }), 201);
+    expect((await getTrip(member.cookie, trip.id)).permissions).toEqual({ ...MEMBER, personId: env.permissions.personId });
     failed(await call('GET', '/api/admin/users', { cookie: member.cookie }), 403);
   });
 

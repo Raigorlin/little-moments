@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 import {seed,STORAGE_KEY} from '../src/model.js';
 const base=process.env.CAMPING_BASE_URL;
 const nav=(p,t)=>p.locator(`.section-tabs [data-tab="${t}"]`).click();
@@ -61,5 +61,16 @@ test('opened pickers fit phone and desktop in both themes with matching person d
    await p.keyboard.press('Escape');await closed(s);expect(await s.evaluate(e=>e.getBoundingClientRect().width)).toBe(156);expect(await s.evaluate(e=>e.getBoundingClientRect().height)).toBe(44);
    expect(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   }
+ }
+});
+test('[TC-UI-001] all form dropdowns share the same picker appearance',async({page:p})=>{
+ await p.goto('/demo/#/trip');await nav(p,'gear');await p.getByRole('button',{name:'新增裝備',exact:true}).click();
+ const selects=[p.locator('#edit-form .gear-scope-select'),p.locator('#edit-form #gear-preset')];
+ for(const select of selects){
+  expect(await select.evaluate(e=>getComputedStyle(e).appearance)).toBe('base-select');
+  await select.click();await opened(select);
+  expect(await select.evaluate(e=>getComputedStyle(e,'::picker(select)').borderRadius)).toBe('12px');
+  expect(await select.evaluate(e=>getComputedStyle(e,'::picker(select)').padding)).toBe('6px');
+  await p.keyboard.press('Escape');await closed(select);
  }
 });

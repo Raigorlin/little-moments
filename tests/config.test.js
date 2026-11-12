@@ -2,7 +2,7 @@
 // Organized by section so later tasks (e.g. 5.13 "reject public DB path") can add example cases.
 import { describe, test, expect } from 'bun:test';
 import fc from 'fast-check';
-import { parseConfig, DEFAULT_ALLOWED_HOSTS } from '../server/config.js';
+import { parseConfig, DEFAULT_ALLOWED_HOSTS, AI_ENV, AI_COST_DEFAULTS, policySummary, redactedSummary } from '../server/config.js';
 
 const DB_VARS = ['CAMPING_DATABASE_HOST', 'CAMPING_DATABASE_NAME', 'CAMPING_DATABASE_USER', 'CAMPING_DATABASE_PASSWORD'];
 
@@ -161,5 +161,108 @@ describe('parseConfig examples', () => {
     const result = parseConfig({ CAMPING_DATABASE_HOST: 'db' });
     expect(result.ok).toBe(false);
     expect(result.errors.map(e => e.name).sort()).toEqual(['CAMPING_DATABASE_NAME', 'CAMPING_DATABASE_PASSWORD', 'CAMPING_DATABASE_USER']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 應用層設定（自 security-harden 的 deploy-config.js／ai-cost.js 移入，預設值與驗證規則相同）。
+// 錯誤只指出變數名稱與原因，不含設定值。
+
+describe('parseConfig app-level settings', () => {
+  const errorsOf = env => {
+    const result = parseConfig({ ...DB_ENV, ...env });
+    expect(result.ok).toBe(false);
+    return result.errors;
+  };
+  const expectOnlyError = (env, name, { ordering = false } = {}) => {
+    const errors = errorsOf(env);
+    expect(errors.map(e => e.name)).toEqual([name]);
+    if (ordering) return errors[0];
+    // 原因不含提交的值：同一變數的任何無效值都得到與獨特值 Zq9-… 相同的原因，且該原因不含 Zq9
+    const reference = errorsOf({ ...env, [name]: 'Zq9-unique-value' });
+    expect(reference.map(e => e.name)).toEqual([name]);
+    expect(reference[0].reason).not.toContain('Zq9');
+    expect(errors[0].reason).toBe(reference[0].reason);
+    return errors[0];
+  };
+
+  test('defaults: registration open, no receipt AI policy seed, Requirement 18.1 AI limits', () => {
+    const { config } = parseConfig({ ...DB_ENV });
+    expect(config.registrationPolicy).toBe('open');
+    expect(config.receiptAiPolicySeed).toBeNull();
+    expect(config.aiCost).toEqual({ ...AI_COST_DEFAULTS });
+    expect(Object.isFrozen(config.aiCost)).toBe(true);
+    // 空字串等同未設定
+    const empty = parseConfig({ ...DB_ENV, CAMPING_REGISTRATION: '', CAMPING_RECEIPT_AI_POLICY: '', ...Object.fromEntries(Object.values(AI_ENV).map(n => [n, ''])) });
+    expect(empty.config).toMatchObject({ registrationPolicy: 'open', receiptAiPolicySeed: null, aiCost: { ...AI_COST_DEFAULTS } });
+  });
+
+  test('accepted values are kept as given', () => {
+    for (const registration of ['open', 'closed']) expect(parseConfig({ ...DB_ENV, CAMPING_REGISTRATION: registration }).config.registrationPolicy).toBe(registration);
+    for (const seed of ['all', 'admins', 'off']) expect(parseConfig({ ...DB_ENV, CAMPING_RECEIPT_AI_POLICY: seed }).config.receiptAiPolicySeed).toBe(seed);
+    const { config } = parseConfig({ ...DB_ENV, CAMPING_RECEIPT_AI_USER_LIMIT: '3', CAMPING_RECEIPT_AI_DAILY_LIMIT: '5', CAMPING_RECEIPT_AI_MONTHLY_LIMIT: '8' });
+    expect(config.aiCost).toMatchObject({ perUser: 3, daily: 5, monthly: 8 });
+  });
+
+  test('invalid registration and receipt AI policy values refuse startup naming only the variable', () => {
+    for (const value of ['Open', 'CLOSED', 'invite', 'invites', 'none', ' open', 'closed ']) {
+      expect(expectOnlyError({ CAMPING_REGISTRATION: value }, 'CAMPING_REGISTRATION').reason).toContain('open、closed');
+    }
+    for (const value of ['members', 'All', 'ADMINS', 'none', 'on', ' off', 'admin']) {
+      expect(expectOnlyError({ CAMPING_RECEIPT_AI_POLICY: value }, 'CAMPING_RECEIPT_AI_POLICY').reason).toContain('all、admins、off');
+    }
+  });
+
+  test('invalid AI limits refuse startup naming only the variable', () => {
+    for (const [name, value] of [
+      ['CAMPING_RECEIPT_AI_USER_LIMIT', '0'], ['CAMPING_RECEIPT_AI_USER_LIMIT', '101'], ['CAMPING_RECEIPT_AI_USER_LIMIT', 'ten'],
+      ['CAMPING_RECEIPT_AI_DAILY_LIMIT', '10001'], ['CAMPING_RECEIPT_AI_DAILY_LIMIT', '1.5'],
+      ['CAMPING_RECEIPT_AI_MONTHLY_LIMIT', '100001'], ['CAMPING_RECEIPT_AI_MONTHLY_LIMIT', '-1'],
+    ]) expectOnlyError({ [name]: value }, name);
+    // 順序：USER_LIMIT ≤ DAILY_LIMIT ≤ MONTHLY_LIMIT；違反時指出較後者，原因只提到另一個變數名稱
+    const daily = expectOnlyError({ CAMPING_RECEIPT_AI_USER_LIMIT: '20', CAMPING_RECEIPT_AI_DAILY_LIMIT: '15' }, 'CAMPING_RECEIPT_AI_DAILY_LIMIT', { ordering: true });
+    expect(daily.reason).toContain('CAMPING_RECEIPT_AI_USER_LIMIT');
+    expect(daily.reason).not.toMatch(/\b(15|20)\b/);
+    const monthly = expectOnlyError({ CAMPING_RECEIPT_AI_DAILY_LIMIT: '2000' }, 'CAMPING_RECEIPT_AI_MONTHLY_LIMIT', { ordering: true });
+    expect(monthly.reason).toContain('CAMPING_RECEIPT_AI_DAILY_LIMIT');
+    expect(monthly.reason).not.toMatch(/\b(1000|2000)\b/);
+  });
+
+  test('several invalid app-level settings are all reported together with deployment errors', () => {
+    const errors = errorsOf({ CAMPING_REGISTRATION: 'invite', CAMPING_RECEIPT_AI_POLICY: 'members', CAMPING_RECEIPT_AI_USER_LIMIT: '0', PORT: '0' });
+    expect(errors.map(e => e.name).sort()).toEqual(['CAMPING_RECEIPT_AI_POLICY', 'CAMPING_RECEIPT_AI_USER_LIMIT', 'CAMPING_REGISTRATION', 'PORT']);
+  });
+
+  // security-harden 的部署模式變數不是 main 的設定欄位：設定與否都不影響結果（Req 8、9、10 維持 main 的行為）。
+  test('security-harden deployment-mode variables are not read', () => {
+    const base = parseConfig({ ...DB_ENV }).config;
+    const ignored = {
+      CAMPING_PUBLISHED: '1', CAMPING_PUBLIC_ORIGIN: 'https://www.our-littlemoments.com', CAMPING_LOCAL_EXTRA_HOSTS: 'camp.lan',
+      CAMPING_ALLOW_NON_LOOPBACK_BIND: '1', CAMPING_DOCKER_LOCAL_ONLY: '1', HOST: '0.0.0.0', CAMPING_DB: 'data/accounts.sqlite',
+    };
+    const result = parseConfig({ ...DB_ENV, ...ignored });
+    expect(result.ok).toBe(true);
+    expect(result.config).toEqual(base);
+    // 非法值也不會被檢查
+    expect(parseConfig({ ...DB_ENV, CAMPING_PUBLISHED: 'true', HOST: 'not a host', CAMPING_PUBLIC_ORIGIN: 'ftp://x' }).ok).toBe(true);
+  });
+});
+
+describe('policySummary', () => {
+  test('names registration and the effective receipt AI policy with its source, nothing else', () => {
+    const { config } = parseConfig({ ...DB_ENV, CAMPING_REGISTRATION: 'closed', CAMPING_RECEIPT_AI_POLICY: 'admins' });
+    expect(policySummary(config)).toBe('registration=closed receiptAiPolicy=admins (CAMPING_RECEIPT_AI_POLICY)');
+    expect(policySummary(config, { value: 'off', source: 'stored' })).toBe('registration=closed receiptAiPolicy=off (admin setting)');
+    expect(policySummary(parseConfig({ ...DB_ENV }).config)).toBe('registration=open receiptAiPolicy=all (default)');
+    // 不在允許值內的政策顯示為 off（與 settings.js 的 fail-closed 一致）
+    expect(policySummary(config, { value: 'everyone', source: 'stored' })).toBe('registration=closed receiptAiPolicy=off (admin setting)');
+  });
+
+  test('never contains secret values from the environment', () => {
+    const secrets = { CAMPING_DATABASE_PASSWORD: 'Zq9-db-password-value', CAMPING_SETUP_TOKEN: 'Zq9'.padEnd(40, 'x'), CAMPING_OPENAI_API_KEY: 'sk-test-SECRET-1234567890abcdef' };
+    const { config } = parseConfig({ ...DB_ENV, ...secrets, CAMPING_BIND_ADDRESS: '0.0.0.0', CAMPING_ALLOWED_HOSTS: 'camp.lan' });
+    const line = `${redactedSummary(config)} ${policySummary(config)}`;
+    for (const value of Object.values(secrets)) expect(line).not.toContain(value);
+    expect(line).not.toContain('sk-');
   });
 });

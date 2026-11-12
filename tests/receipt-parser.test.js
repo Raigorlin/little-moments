@@ -1,6 +1,5 @@
 import {describe, test, expect} from 'bun:test';
 import {parseReceiptText, formatAmount} from '../src/receipt-parser.js';
-import {sniffImageType, readImageSize, validateReceiptBytes, planOcrSize, recognizeReceipt, MAX_RECEIPT_BYTES} from '../src/receipt-ocr.js';
 import {parseAmount} from '../src/expense-model.js';
 
 const receipt = `山野生活超市 中山門市
@@ -141,45 +140,5 @@ describe('receipt parser', () => {
     expect(formatAmount(1)).toBe('0.01');
     expect(formatAmount(1050)).toBe('10.50');
     expect(formatAmount(100000000)).toBe('1000000');
-  });
-});
-
-const png = (w, h) => { const b = new Uint8Array(33); b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); const v = new DataView(b.buffer); v.setUint32(16, w); v.setUint32(20, h); return b; };
-const jpeg = (w, h) => new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xc0, 0, 11, 8, h >> 8, h & 255, w >> 8, w & 255, 3, 0, 0, 0]);
-const webp = (w, h) => { const b = new Uint8Array(32); b.set([...'RIFF'].map(c => c.charCodeAt(0)), 0); b.set([...'WEBPVP8X'].map(c => c.charCodeAt(0)), 8); const v = new DataView(b.buffer); v.setUint32(24, (w - 1) & 0xffffff, true); v.setUint32(27, (h - 1) & 0xffffff, true); return b; };
-
-describe('receipt OCR input checks', () => {
-  test('sniffs only JPEG, PNG and WebP bytes', () => {
-    expect(sniffImageType(png(1, 1))).toBe('image/png');
-    expect(sniffImageType(jpeg(1, 1))).toBe('image/jpeg');
-    expect(sniffImageType(webp(1, 1))).toBe('image/webp');
-    expect(sniffImageType(new TextEncoder().encode('GIF89a......'))).toBeNull();
-  });
-
-  test('reads header dimensions before decoding', () => {
-    expect(readImageSize(png(1200, 3400), 'image/png')).toEqual({width: 1200, height: 3400});
-    expect(readImageSize(jpeg(4032, 3024), 'image/jpeg')).toEqual({width: 4032, height: 3024});
-    expect(readImageSize(webp(800, 2000), 'image/webp')).toEqual({width: 800, height: 2000});
-  });
-
-  test('enforces size, type and 20-million pixel limits with Chinese messages', () => {
-    expect(() => validateReceiptBytes(new Uint8Array(0))).toThrow('空檔案');
-    expect(() => validateReceiptBytes(new TextEncoder().encode('not an image'))).toThrow('JPEG、PNG 或 WebP');
-    expect(() => validateReceiptBytes(png(10, 10), 'image/gif')).toThrow('JPEG、PNG 或 WebP');
-    expect(() => validateReceiptBytes(png(5000, 4001))).toThrow('2,000 萬像素');
-    expect(() => validateReceiptBytes(new Uint8Array(MAX_RECEIPT_BYTES + 1).fill(0xff))).toThrow('10 MB');
-    expect(validateReceiptBytes(jpeg(5000, 4000), 'image/jpeg').type).toBe('image/jpeg');
-  });
-
-  test('plans modest resizing that keeps aspect ratio', () => {
-    expect(planOcrSize(4000, 5000)).toEqual({width: 2530, height: 3162});
-    expect(planOcrSize(600, 1000)).toEqual({width: 960, height: 1600});
-    expect(planOcrSize(2000, 3000)).toEqual({width: 2000, height: 3000});
-  });
-
-  test('rejects already-aborted requests and non-files without loading OCR', async () => {
-    const controller = new AbortController(); controller.abort();
-    await expect(recognizeReceipt(new Blob([png(1, 1)]), {signal: controller.signal})).rejects.toMatchObject({name: 'AbortError', message: '已取消辨識。'});
-    await expect(recognizeReceipt('x')).rejects.toThrow('請選擇一張收據照片');
   });
 });

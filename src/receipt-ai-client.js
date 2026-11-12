@@ -1,8 +1,8 @@
-import { validateReceiptBytes, sniffImageType, readImageSize, MAX_RECEIPT_PIXELS } from './receipt-ocr.js';
+import { validateReceiptBytes, sniffImageType, readImageSize, MAX_RECEIPT_PIXELS } from './receipt-image.js';
 import { EXPENSE_CATEGORIES, suggestExpenseCategory } from './expense-categories.js';
 
-export const AI_CONSENT = 'bedrock-v1';
-export const AI_PROVIDER = 'Amazon Bedrock';
+export const AI_CONSENT = 'openai-v1';
+export const AI_PROVIDER = 'OpenAI';
 export const AI_MAX_BYTES = 3.5 * 1024 * 1024;
 export const AI_MAX_SIDE = 8000;
 export const AI_TARGET_EDGE = 2400;
@@ -24,14 +24,20 @@ export class ReceiptAiError extends Error {
 }
 const fail = (code, message, extra) => new ReceiptAiError(code, message, extra);
 
+export const AI_DISABLED_REASONS = ['policy', 'unconfigured'];
+export const AI_POLICY_DISABLED_MESSAGE = '管理員已限制 AI 收據辨識，請手動輸入。';
+// Admin policy refusals from the server are complete sentences, so they replace the generic status text.
+const POLICY_ERROR_MESSAGES = new Set(['目前只有管理員可以使用 AI 辨識。', 'AI 辨識已由管理員關閉。']);
+
 export const receiptAiPath = tripId => `/api/trips/${encodeURIComponent(String(tripId ?? ''))}/receipt-ai`;
 
 export function normalizeAiStatus(data) {
   const limit = Number.isSafeInteger(data?.maxImageBytes) && data.maxImageBytes > 0 ? Math.min(data.maxImageBytes, AI_MAX_BYTES) : 0;
-  const region = typeof data?.region === 'string' && /^[a-z0-9-]{1,40}$/.test(data.region) ? data.region : '';
   const modelId = typeof data?.modelId === 'string' && /^[A-Za-z0-9][A-Za-z0-9.:-]{0,199}$/.test(data.modelId) ? data.modelId : '';
-  const enabled = data?.enabled === true && data?.provider === AI_PROVIDER && Boolean(region && modelId && limit);
-  return { enabled, provider: AI_PROVIDER, region: enabled ? region : '', modelId: enabled ? modelId : '', maxImageBytes: enabled ? limit : 0 };
+  const enabled = data?.enabled === true && data?.provider === AI_PROVIDER && Boolean(modelId && limit);
+  const status = { enabled, provider: AI_PROVIDER, modelId: enabled ? modelId : '', maxImageBytes: enabled ? limit : 0 };
+  if (!enabled && AI_DISABLED_REASONS.includes(data?.disabledReason)) status.disabledReason = data.disabledReason;
+  return status;
 }
 
 const clean = (value, max) => String(value ?? '').replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -40,7 +46,7 @@ const isIso = value => {
   const d = new Date(`${value}T00:00:00Z`);
   return Number.isFinite(+d) && d.toISOString().slice(0, 10) === value;
 };
-const malformed = () => fail('malformed', 'AI 回傳的內容格式不正確，沒有產生任何候選品項。可以改用本機辨識或手動輸入。');
+const malformed = () => fail('malformed', 'AI 回傳的內容格式不正確，沒有產生任何候選品項。請稍後重試或手動輸入。');
 const optionalText = (value, re) => {
   if (value === undefined || value === null || value === '') return '';
   if (typeof value !== 'string') throw malformed();
@@ -124,16 +130,16 @@ export async function prepareAiImage(file, { maxBytes = AI_MAX_BYTES, signal } =
 const STATUS_MESSAGES = {
   400: '伺服器拒絕這張圖片（格式或尺寸不符），沒有產生候選品項。',
   401: '登入已失效，請重新登入後再試。',
-  403: '你沒有使用 AI 辨識的權限，或同意傳送的確認沒有送達。',
+  403: '你沒有使用 AI 辨識的權限，或收據上傳授權未送達。',
   404: '找不到 AI 辨識服務或這趟旅行，請重新整理頁面。',
-  408: 'AI 辨識逾時，請稍後再試或改用本機辨識。',
+  408: 'AI 辨識逾時，請稍後再試。',
   413: '圖片超過 AI 辨識的大小限制，請裁切後再試。',
   415: 'AI 辨識只接受處理後的 JPEG 或 PNG 圖片。',
-  422: 'AI 無法確認這張收據的內容，請改用本機辨識或手動輸入。',
+  422: 'AI 無法確認這張收據的內容，請手動輸入。',
   429: 'AI 服務忙碌或已達使用上限，請稍後再試（不會自動重送）。',
-  502: 'AI 服務沒有完成辨識，請稍後再試或改用本機辨識。',
-  503: 'AI 辨識尚未設定或暫停使用，請改用本機辨識。',
-  504: 'AI 辨識逾時，請稍後再試或改用本機辨識。'
+  502: 'AI 服務沒有完成辨識，請稍後再試。',
+  503: 'AI 辨識尚未設定或暫停使用，請聯絡管理員。',
+  504: 'AI 辨識逾時，請稍後再試。'
 };
 // Server text is shown only when it is short plain prose, so provider internals or markup never reach the page.
 export function sanitizeServerMessage(value) {
@@ -171,7 +177,9 @@ export async function sendReceiptToAi({ tripId, userId, image, signal, timeoutMs
     if (!response.ok) {
       const base = STATUS_MESSAGES[response.status] || (response.status >= 500 ? STATUS_MESSAGES[502] : 'AI 辨識被伺服器拒絕。');
       const detail = sanitizeServerMessage(data?.error);
-      throw Object.assign(fail('http', detail && detail !== base ? `${base}（${detail}）` : base, { uploaded: true }), { status: response.status });
+      const policy = (response.status === 403 || response.status === 503) && POLICY_ERROR_MESSAGES.has(detail);
+      const message = policy ? `${detail}請手動輸入。` : detail && detail !== base ? `${base}（${detail}）` : base;
+      throw Object.assign(fail(policy ? 'policy' : 'http', message, { uploaded: true }), { status: response.status });
     }
     if (controller.signal.aborted) throw stop();
     return normalizeAiReceipt(data);

@@ -10,6 +10,8 @@
 --     sequence (Req 13.10).
 --   * JSON payload columns (state_json, ledger_json, requests_json) stay TEXT so
 --     stored bytes, requestHash and corruption checks behave exactly as before.
+--   * trips.cover_kind already includes forest, beach and sunrise from the
+--     security-harden branch, so 0002 does not need to replace the constraint.
 --
 -- Runs inside a single transaction: no CONCURRENTLY, no non-transactional DDL.
 
@@ -40,7 +42,7 @@ CREATE TABLE trips (
   end_date TEXT NOT NULL,
   description TEXT NOT NULL,
   note TEXT NOT NULL,
-  cover_kind TEXT NOT NULL CHECK (cover_kind IN ('camp', 'mountain', 'lake', 'night')),
+  cover_kind TEXT NOT NULL CHECK (cover_kind IN ('camp', 'mountain', 'lake', 'night', 'forest', 'beach', 'sunrise')),
   status TEXT NOT NULL CHECK (status IN ('planning', 'completed')),
   revision INTEGER NOT NULL,
   people_count INTEGER NOT NULL,

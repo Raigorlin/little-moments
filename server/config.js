@@ -1,7 +1,24 @@
 // 應用程式設定模組（Requirement 8.1、8.2、8.4、8.5、8.7、9.3、9.12、11.8）。
 // 全部為純函式：不讀檔、不連網，只依傳入的 env／參數計算結果，便於 property-based test。
 // 錯誤訊息只包含變數名稱與原因類別，絕不包含設定值本身（避免洩漏秘密）。
+//
+// 除部署設定外，也驗證 security-harden 的應用層設定（預設值與驗證規則相同）：
+// CAMPING_REGISTRATION、CAMPING_RECEIPT_AI_POLICY 與收據 AI 用量上限（AI_ENV）。
 import { isIP } from 'node:net';
+import { RECEIPT_AI_POLICIES, resolveReceiptAiPolicy } from './settings.js';
+
+/**
+ * 單一設定值無效。`setting` 為變數名稱，`reason` 為原因（不含設定值）。
+ * parseConfig 不丟出例外，而是回傳 `{name, reason}` 清單；需要例外的呼叫端（server/ai-cost.js）使用此型別。
+ */
+export class ConfigError extends Error {
+  constructor(setting, reason) {
+    super(`${setting}: ${reason}`);
+    this.name = 'ConfigError';
+    this.setting = setting;
+    this.reason = reason;
+  }
+}
 
 export const DEFAULT_BIND_ADDRESS = '127.0.0.1';
 export const DEFAULT_PORT = 5173;
@@ -12,6 +29,41 @@ export const DATABASE_SSLMODES = Object.freeze(['disable', 'require', 'verify-fu
 export const MIN_SETUP_TOKEN_LENGTH = 32;
 export const MAX_ALLOWED_HOSTS = 32;
 export const MAX_HOST_LENGTH = 253;
+
+// 註冊政策（security-harden）：未設定時為 open。
+export const REGISTRATION_POLICIES = Object.freeze(['open', 'closed']);
+export const DEFAULT_REGISTRATION_POLICY = 'open';
+
+// 收據 AI 用量設定（security-hardening Requirement 18；原 server/ai-cost.js）。
+// CAMPING_OPENAI_MODEL_ID／IMAGE_DETAIL／MAX_COMPLETION_TOKENS 是 OpenAI 請求的成本欄位（模型、圖片細節、
+// 回覆 token 上限），與用量上限一起組成 AI_Cost_Config，無效值拒絕啟動。
+// API 金鑰（CAMPING_OPENAI_API_KEY／CAMPING_OPENAI_API_KEY_FILE）不在此讀取：只有 server/receipt-ai.js 讀取，
+// 因此金鑰不會出現在 parseConfig 的結果、redactedSummary、policySummary 或啟動訊息中。
+export const AI_ENV = Object.freeze({
+  modelId: 'CAMPING_OPENAI_MODEL_ID',
+  imageDetail: 'CAMPING_OPENAI_IMAGE_DETAIL',
+  maxCompletionTokens: 'CAMPING_OPENAI_MAX_COMPLETION_TOKENS',
+  perUser: 'CAMPING_RECEIPT_AI_USER_LIMIT',
+  daily: 'CAMPING_RECEIPT_AI_DAILY_LIMIT',
+  monthly: 'CAMPING_RECEIPT_AI_MONTHLY_LIMIT'
+});
+export const AI_COST_DEFAULTS = Object.freeze({
+  modelId: 'gpt-6-luna',
+  imageDetail: 'high',
+  maxCompletionTokens: 6000,
+  perUser: 10,
+  daily: 100,
+  monthly: 1000
+});
+export const AI_COST_RANGES = Object.freeze({
+  maxCompletionTokens: Object.freeze([1, 16000]),
+  perUser: Object.freeze([1, 100]),
+  daily: Object.freeze([1, 10000]),
+  monthly: Object.freeze([1, 100000])
+});
+export const AI_IMAGE_DETAILS = Object.freeze(['low', 'high', 'auto']);
+const AI_MODEL_RE = /^gpt-[A-Za-z0-9._-]{1,80}$/;
+const AI_INTEGER_RE = /^[1-9][0-9]*$/;
 
 const REQUIRED_DATABASE_VARS = ['CAMPING_DATABASE_HOST', 'CAMPING_DATABASE_NAME', 'CAMPING_DATABASE_USER', 'CAMPING_DATABASE_PASSWORD'];
 const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -229,13 +281,15 @@ const headerGetter = headers => {
  * 僅在 TCP 來源 IP 屬於 Trusted_Proxies 時採信 X-Forwarded-For／X-Forwarded-Proto；
  * 其他來源完全忽略這兩個標頭。來源屬於 Trusted_Proxies 時一律 viaProxy=true。
  * X-Forwarded-For 由右往左取第一個不在 Trusted_Proxies 內的位址；該位址無效或不存在時使用 TCP 來源 IP。
- * @returns {{clientIp:string, protocol:string, viaProxy:boolean, url:URL}}
+ * 選中的項目不是有效 IP 時另標記 forwardedForInvalid=true（server/http.js 以 400 拒絕，沿用 security-harden
+ * 較嚴格的規則：代理送來無法解析的用戶端位址時不以代理 IP 代替，避免所有用戶端共用同一個限速鍵）。
+ * @returns {{clientIp:string, protocol:string, viaProxy:boolean, forwardedForInvalid:boolean, url:URL}}
  */
 export function resolveClient(tcpIp, headers, url, trustedProxies) {
   const original = url instanceof URL ? url : new URL(String(url));
   const clientIp = typeof tcpIp === 'string' ? tcpIp : '';
   if (!ipInCidrs(clientIp, trustedProxies || [])) {
-    return { clientIp, protocol: original.protocol, viaProxy: false, url: new URL(original.href) };
+    return { clientIp, protocol: original.protocol, viaProxy: false, forwardedForInvalid: false, url: new URL(original.href) };
   }
   const get = headerGetter(headers);
   let protocol = original.protocol;
@@ -244,20 +298,68 @@ export function resolveClient(tcpIp, headers, url, trustedProxies) {
     const p = proto.trim().toLowerCase();
     if (p === 'http' || p === 'https') protocol = `${p}:`;
   }
-  let resolvedIp = clientIp;
+  let resolvedIp = clientIp, forwardedForInvalid = false;
   const xff = get('x-forwarded-for');
-  if (typeof xff === 'string' && xff.trim() !== '') {
+  if (typeof xff === 'string') {
     const entries = xff.split(',').map(s => s.trim());
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i];
       if (parseIp(entry) && ipInCidrs(entry, trustedProxies)) continue;
       if (parseIp(entry)) resolvedIp = stripBrackets(entry);
+      else forwardedForInvalid = true;
       break;
     }
   }
   const effective = new URL(original.href);
   if (effective.protocol !== protocol) effective.protocol = protocol;
-  return { clientIp: resolvedIp, protocol, viaProxy: true, url: effective };
+  return { clientIp: resolvedIp, protocol, viaProxy: true, forwardedForInvalid, url: effective };
+}
+
+/**
+ * 收據 AI 用量設定（AI_Cost_Config）。驗證順序與 security-harden 的 parseAiCostConfig 相同，
+ * 因此 errors[0] 即為其原本會丟出的那一個錯誤。錯誤原因不含設定值。
+ * @returns {{aiCost: object|null, errors: {name:string, reason:string}[]}}
+ */
+export function parseAiCostSettings(env = {}) {
+  env = env || {};
+  const errors = [];
+  const fail = (name, reason) => errors.push({ name, reason });
+  const value = { ...AI_COST_DEFAULTS };
+  const ok = {};
+
+  const modelRaw = env[AI_ENV.modelId];
+  if (!isUnset(modelRaw)) {
+    if (typeof modelRaw !== 'string' || !AI_MODEL_RE.test(modelRaw)) fail(AI_ENV.modelId, '必須是 "gpt-" 後接 1 至 80 個英文字母、數字、"."、"_" 或 "-"');
+    else value.modelId = modelRaw;
+  }
+  const detailRaw = env[AI_ENV.imageDetail];
+  if (!isUnset(detailRaw)) {
+    if (!AI_IMAGE_DETAILS.includes(detailRaw)) fail(AI_ENV.imageDetail, `必須是 ${AI_IMAGE_DETAILS.join('、')} 其中之一`);
+    else value.imageDetail = detailRaw;
+  }
+  const integer = field => {
+    const name = AI_ENV[field];
+    const raw = env[name];
+    ok[field] = true;
+    if (isUnset(raw)) return;
+    const [min, max] = AI_COST_RANGES[field];
+    const text = String(raw);
+    const n = AI_INTEGER_RE.test(text) ? Number(text) : NaN;
+    if (!Number.isSafeInteger(n) || n < min || n > max) { ok[field] = false; fail(name, `必須是 ${min} 至 ${max} 的整數`); }
+    else value[field] = n;
+  };
+  integer('maxCompletionTokens');
+  integer('perUser');
+  integer('daily');
+  if (ok.perUser && ok.daily && value.perUser > value.daily) {
+    ok.daily = false;
+    fail(AI_ENV.daily, `不得小於 ${AI_ENV.perUser}，且不得大於 ${AI_COST_RANGES.daily[1]}`);
+  }
+  integer('monthly');
+  if (ok.daily && ok.monthly && value.daily > value.monthly) {
+    fail(AI_ENV.monthly, `不得小於 ${AI_ENV.daily}，且不得大於 ${AI_COST_RANGES.monthly[1]}`);
+  }
+  return { aiCost: errors.length ? null : Object.freeze(value), errors };
 }
 
 const isUnset = value => value === undefined || value === null || value === '';
@@ -349,12 +451,53 @@ export function parseConfig(env = {}) {
     }
   }
 
+  // 註冊政策（security-harden）：open／closed，未設定時 open
+  let registrationPolicy = DEFAULT_REGISTRATION_POLICY;
+  const registrationRaw = env.CAMPING_REGISTRATION;
+  if (!isUnset(registrationRaw)) {
+    if (!REGISTRATION_POLICIES.includes(registrationRaw)) fail('CAMPING_REGISTRATION', `必須是 ${REGISTRATION_POLICIES.join('、')} 其中之一`);
+    else registrationPolicy = registrationRaw;
+  }
+
+  // 收據 AI 政策的初始值（security-harden）：all／admins／off；未設定時為 null（server/settings.js 解析為 all）。
+  // 管理員在介面儲存的值優先於此初始值。
+  let receiptAiPolicySeed = null;
+  const receiptRaw = env.CAMPING_RECEIPT_AI_POLICY;
+  if (!isUnset(receiptRaw)) {
+    if (!RECEIPT_AI_POLICIES.includes(receiptRaw)) fail('CAMPING_RECEIPT_AI_POLICY', `必須是 ${RECEIPT_AI_POLICIES.join('、')} 其中之一`);
+    else receiptAiPolicySeed = receiptRaw;
+  }
+
+  // 收據 AI 用量上限（AI_Cost_Config）
+  const ai = parseAiCostSettings(env);
+  for (const e of ai.errors) fail(e.name, e.reason);
+
   if (errors.length) return { ok: false, errors };
-  return { ok: true, config: { bindAddress, port, allowedHosts, setupTokenMode, setupToken, trustedProxies, database } };
+  return {
+    ok: true,
+    config: { bindAddress, port, allowedHosts, setupTokenMode, setupToken, trustedProxies, database, registrationPolicy, receiptAiPolicySeed, aiCost: ai.aiCost },
+  };
 }
 
 /** 啟動訊息摘要（Req 8.5）：只含 Bind_Address、連接埠與完整 Allowed_Hosts，不含任何秘密。 */
 export function redactedSummary(config) {
   const hosts = Array.isArray(config?.allowedHosts) ? config.allowedHosts.join(',') : '';
   return `bind=${config?.bindAddress} port=${config?.port} allowedHosts=${hosts}`;
+}
+
+const POLICY_SOURCES = Object.freeze({ default: 'default', seed: 'CAMPING_RECEIPT_AI_POLICY', stored: 'admin setting' });
+
+/**
+ * 啟動時的應用層設定摘要：註冊政策與實際生效的收據 AI 政策。只由設定欄位與政策值組成，不含秘密。
+ * @param {object} config parseConfig 的 config
+ * @param {{value:string, source:string}|string} [receiptAiPolicy] 帳號服務回報的實際政策；未提供時依 config 的初始值推算
+ */
+export function policySummary(config, receiptAiPolicy) {
+  const registration = REGISTRATION_POLICIES.includes(config?.registrationPolicy) ? config.registrationPolicy : DEFAULT_REGISTRATION_POLICY;
+  const policy = typeof receiptAiPolicy === 'string'
+    ? { value: receiptAiPolicy, source: 'default' }
+    : receiptAiPolicy ?? resolveReceiptAiPolicy(null, config?.receiptAiPolicySeed ?? null);
+  const value = RECEIPT_AI_POLICIES.includes(policy?.value) ? policy.value : 'off';
+  const source = POLICY_SOURCES[policy?.source] ?? 'default';
+  return `registration=${registration} receiptAiPolicy=${value} (${source})`;
 }

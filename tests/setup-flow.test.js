@@ -31,7 +31,7 @@ async function call(method, path, { body, raw, cookie, info = LAN_INFO, base = L
 const setup = (extra, opts) => call('POST', '/api/setup', { body: { ...ADMIN, ...extra }, ...opts });
 
 test('session reports setupTokenRequired while setup is pending', async () => {
-  expect((await call('GET', '/api/session')).body).toEqual({ user: null, needsSetup: true, setupTokenRequired: true });
+  expect((await call('GET', '/api/session')).body).toEqual({ user: null, needsSetup: true, setupTokenRequired: true, webSetup: true, registrationOpen: true, inviteRegistration: false });
   expect((await setup({ setupToken: TOKEN })).status).toBe(200);
   expect((await call('GET', '/api/session')).body).toMatchObject({ needsSetup: false, setupTokenRequired: false });
 });

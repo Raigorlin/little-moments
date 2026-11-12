@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 import {seed,STORAGE_KEY,THEMES_KEY} from '../src/model.js';
 const base=process.env.CAMPING_BASE_URL;
 const slogan='把平凡的日子，留成喜歡的回憶。';
@@ -52,7 +52,7 @@ test('demo routes retain browser data and original-site attribution while changi
  const before=await page.evaluate(key=>localStorage.getItem(key),STORAGE_KEY);
  for(const route of ['home','privacy','invite','go','trip']){
   await page.goto(`/demo/#/${route}`);await brand(page,'#/home');
-  if(route==='privacy')await expect(page.locator('main')).toContainText('依「好好露營」視覺與工作流程獨立製作');
+  if(route==='privacy')await expect(page.locator('main')).toContainText('不代表「好好露營」網站或其營運者');
  }
  expect(await page.evaluate(key=>localStorage.getItem(key),STORAGE_KEY)).toBe(before);
 });

@@ -330,11 +330,20 @@ function custom() {
 }
 
 const DISHES = { hotpot, bbq, toast, curry, pasta, breakfast, salad, custom };
+const GENERIC_DISHES = Object.keys(DISHES).filter(kind => kind !== 'custom');
 
 export const DISH_KINDS = Object.freeze(Object.keys(DISHES));
 
-export function dishIllustration(kind = 'custom', className = '') {
+function randomGenericDish(random) {
+  const choice = Number(random());
+  const index = Number.isFinite(choice) ? Math.min(GENERIC_DISHES.length - 1, Math.max(0, Math.floor(choice * GENERIC_DISHES.length))) : 0;
+  return GENERIC_DISHES[index];
+}
+
+export function dishIllustration(kind = 'custom', className = '', random = Math.random) {
   const key = Object.prototype.hasOwnProperty.call(DISHES, kind) ? kind : 'custom';
+  const variation = key === 'custom' ? randomGenericDish(random) : key;
   const cls = escapeAttr(['dish-illustration', `dish-illustration--${key}`, className].filter(Boolean).join(' '));
-  return `<span class="${cls}" data-dish-kind="${key}" style="display:block"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 260" preserveAspectRatio="xMidYMid meet" class="dish-illustration__svg" aria-hidden="true" focusable="false" fill="none" style="display:block;width:100%;height:auto">${DISHES[key]()}</svg></span>`;
+  const variationAttr = key === 'custom' ? ` data-dish-variation="${variation}"` : '';
+  return `<span class="${cls}" data-dish-kind="${key}"${variationAttr} style="display:block"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 260" preserveAspectRatio="xMidYMid meet" class="dish-illustration__svg" aria-hidden="true" focusable="false" fill="none" style="display:block;width:100%;height:auto">${DISHES[variation]()}</svg></span>`;
 }

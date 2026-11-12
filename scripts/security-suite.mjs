@@ -69,10 +69,11 @@ for (const g of selected) if (!GROUPS[g]) fail(`安全測試環境變數無效 C
 
 // 子程序基礎環境：移除任何可能指向真實環境的資料庫、網路、設定碼、AI 與套件設定。
 // 測試資料庫的管理憑證（CAMPING_TEST_DATABASE_*）只交給 e2e-db.mjs，不進入伺服器或套件程序。
-const STRIP = /^(CAMPING_DATABASE_|CAMPING_TEST_DATABASE_|CAMPING_DB$|CAMPING_BIND_ADDRESS$|CAMPING_ALLOWED_HOSTS$|CAMPING_TRUSTED_PROXIES$|CAMPING_SETUP_TOKEN$|CAMPING_BEDROCK_|CAMPING_SECURITY_)/;
+const STRIP = /^(CAMPING_DATABASE_|CAMPING_TEST_DATABASE_|CAMPING_DB$|CAMPING_BIND_ADDRESS$|CAMPING_ALLOWED_HOSTS$|CAMPING_TRUSTED_PROXIES$|CAMPING_SETUP_TOKEN$|CAMPING_OPENAI_|CAMPING_SECURITY_)/;
 const baseEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !STRIP.test(k)));
 const dbAdminEnv = { ...baseEnv, ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('CAMPING_TEST_DATABASE_'))) };
-const noAi = { CAMPING_BEDROCK_REGION: '', CAMPING_BEDROCK_MODEL_ID: '', CAMPING_BEDROCK_API_KEY: '' };
+// 收據 AI 停用：不提供金鑰，金鑰檔指向不存在的路徑（否則 server/receipt-ai.js 會讀取 repository 的 .secrets/openai_api_key）。
+const noAi = { CAMPING_OPENAI_API_KEY: '', CAMPING_OPENAI_API_KEY_FILE: resolve(reports, 'no-openai-key', 'openai_api_key') };
 
 fs.mkdirSync(reports, { recursive: true });
 

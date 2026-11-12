@@ -7,12 +7,16 @@ backups/
 uploads/
 previews/
 test-results/
+test-results*/
+.tmp-e2e-dist/
+tmp-menu-check/
 playwright-report/
 reports/
 coverage/
 .env
 .env.*
 !.env.example
+.secrets/
 *.sqlite
 *.sqlite-*
 *.sqlite3

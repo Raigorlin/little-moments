@@ -246,7 +246,8 @@ describe('deploy/compose/drill.yaml 隔離（Req 14.6）', () => {
     for (const f of files) expect(f).toMatch(/^drill-(db|app|tool)\.env$/);
     const yamlCode = drillYamlText.split('\n').filter((l) => !l.trim().startsWith('#')).join('\n');
     expect(yamlCode).not.toMatch(/(?<![-\w])(app|db|prod|staging)\.env\b/);
-    expect(drillYaml.services.app.environment.CAMPING_BEDROCK_API_KEY).toBe('');
+    expect(drillYaml.services.app.environment.CAMPING_OPENAI_API_KEY).toBe('');
+    expect(drillYaml.services.app.environment.CAMPING_OPENAI_API_KEY_FILE).toBe('');
     expect(drillYaml.services.app.environment.CAMPING_ALLOWED_HOSTS).toBe('app');
     expect(drillYaml.services.tool.environment.CAMPING_DATABASE_NAME).toBe('lm_drill');
   });

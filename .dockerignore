@@ -34,3 +34,14 @@ Dockerfile
 .dockerignore
 .gitignore
 README.md
+# security-harden 新增的排除項目
+dist-*/
+backups/
+uploads/
+coverage/
+.secrets/
+*.db-*
+*.zip
+*.tar
+*.tar.gz
+Thumbs.db

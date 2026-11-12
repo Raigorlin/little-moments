@@ -91,7 +91,7 @@ function secretBad(config) {
 
 function secretGood(env) {
   // ok: lm-js-hardcoded-secret
-  const apiKey = env.CAMPING_BEDROCK_API_KEY;
+  const apiKey = env.CAMPING_OPENAI_API_KEY;
   // ok: lm-js-hardcoded-secret
   let setupTokenMode = 'generated';
   // ok: lm-js-hardcoded-secret

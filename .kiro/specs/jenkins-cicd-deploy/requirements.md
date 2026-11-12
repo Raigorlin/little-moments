@@ -81,7 +81,7 @@
 1. WHEN Jenkins 收到 Webhook 請求，THE Jenkins SHALL 以 Credential_Store 中的 Webhook secret 對完整請求內容計算 GitHub Webhook 簽章，以固定時間比較方式與請求所附簽章比對，且僅在兩者完全一致時觸發建置。
 2. IF Webhook 請求缺少簽章、簽章與計算結果不一致，或事件中的 repository 不是 Jenkins 設定的 repository，THEN THE Jenkins SHALL 拒絕該請求、不觸發建置，並記錄包含接收時間、來源 IP 與拒絕原因的事件，且記錄中不包含請求內容或 Webhook secret。
 3. IF 已通過簽章驗證的 Webhook 事件不屬於 Requirement 1 定義的 Pull Request 建立、更新或重新開啟、推送至 `main` 或其他分支、或 Release_Tag 推送事件，THEN THE Jenkins SHALL 不觸發建置。
-4. WHILE 執行 Untrusted_PR 建置，THE Pipeline SHALL 僅提供 Ephemeral_Database 的臨時憑證，且不提供 Registry 推送憑證、Deploy_Host 部署憑證、映像簽章金鑰、Staging_Environment 或 Production_Environment 的 Database 憑證、Setup_Token 或 `CAMPING_BEDROCK_*` 值。
+4. WHILE 執行 Untrusted_PR 建置，THE Pipeline SHALL 僅提供 Ephemeral_Database 的臨時憑證，且不提供 Registry 推送憑證、Deploy_Host 部署憑證、映像簽章金鑰、Staging_Environment 或 Production_Environment 的 Database 憑證、Setup_Token 或 `CAMPING_OPENAI_*` 值。
 5. IF Untrusted_PR 建置向 Credential_Store 請求第 4 條列出的任一憑證，THEN THE Pipeline SHALL 不提供該憑證值並將建置標記為失敗。
 6. WHILE 執行 Untrusted_PR 建置，THE Pipeline SHALL 在無法建立網路連線至 Deploy_Host、Staging_Environment、Production_Environment 及其 Database 的 Build_Agent 上執行，並於建置結束後（不論成功或失敗）刪除該建置的工作目錄與容器。
 7. WHEN Untrusted_PR 來自 fork 或 PR 作者不具 repository 寫入權限，THE Jenkins SHALL 使用 `main` 分支的 `Jenkinsfile` 執行建置，而不使用 PR 中修改過的 `Jenkinsfile`。
@@ -178,7 +178,7 @@
 2. WHEN App_Server 啟動，THE App_Server SHALL 從環境變數讀取 Allowed_Hosts（以逗號分隔、1 至 32 個項目、每個項目為 1 至 253 字元的主機名稱或 IP 位址字面值，IPv6 以方括號表示），未設定時使用 `127.0.0.1`、`localhost` 與 `[::1]` 三個項目。
 3. IF 請求缺少 Host 標頭，或 Host 標頭在移除 `:<port>` 後綴並轉為小寫後與 Allowed_Hosts 中任一項目（不分大小寫）皆不完全相符，THEN THE App_Server SHALL 回應 HTTP 421 並附上 `server/http.js` 中 `SECURITY_HEADERS` 定義的安全標頭，且不執行任何 API 處理、靜態檔案讀取或資料寫入。
 4. IF Bind_Address 不是 loopback 位址（`127.0.0.0/8` 或 `::1`）且 Allowed_Hosts 環境變數未設定或為空字串，THEN THE App_Server SHALL 在 5 秒內以非零結束碼結束、不監聽任何連接埠，並輸出指出缺少 Allowed_Hosts 設定的錯誤訊息。
-5. WHEN App_Server 成功開始監聽，THE App_Server SHALL 輸出一行包含實際 Bind_Address、實際連接埠與完整 Allowed_Hosts 清單的啟動訊息，且啟動輸出中不包含 Setup_Token、Database 憑證、Session 密鑰或任何 `CAMPING_BEDROCK_*` 值。
+5. WHEN App_Server 成功開始監聽，THE App_Server SHALL 輸出一行包含實際 Bind_Address、實際連接埠與完整 Allowed_Hosts 清單的啟動訊息，且啟動輸出中不包含 Setup_Token、Database 憑證、Session 密鑰或任何 `CAMPING_OPENAI_*` 值。
 6. THE Deploy_Host SHALL 僅接受來源 IP 位於設定 LAN 網段（以 CIDR 表示）內的主機連線至 App_Server 連接埠，並使來自該網段以外來源的 TCP 連線無法建立；此限制 SHALL 同樣適用於 Docker 發布的連接埠（Docker 發布連接埠的流量會繞過 UFW 等主機防火牆規則，因此限制須在 Docker 轉送層生效），使網段外來源即使直接連線至 Docker 發布的連接埠也無法建立連線。
 7. IF Bind_Address 不是有效的 IP 位址字面值、`PORT` 不是 1 至 65535 的整數，或 Allowed_Hosts 含有空項目、萬用字元（`*`）、超過 32 個項目或超過 253 字元的項目，THEN THE App_Server SHALL 在 5 秒內以非零結束碼結束、不監聽任何連接埠，並輸出指出無效設定名稱的錯誤訊息（不含秘密值）。
 
@@ -295,9 +295,9 @@
 3. IF 某一階段所需的憑證在 Credential_Store 中不存在或無法讀取，THEN THE Pipeline SHALL 在該階段執行任何指令前將建置標記為失敗、輸出僅包含憑證識別名稱（不含值）的錯誤訊息，且不以預設值或空值繼續執行。
 4. THE Pipeline SHALL 在 Jenkins 主控台日誌、測試報告、掃描報告與 Build_Record 中，將每一個來自 Credential_Store 的值以遮罩字元取代，使該值的完整原文、其 Base64 編碼形式與其 URL 編碼形式皆不出現；THE Pipeline SHALL 在將日誌與報告存入 Build_Record 前，掃描這些檔案中是否出現上述三種形式，IF 偵測到任一形式，THEN THE Pipeline SHALL 不存入該檔案的未遮罩版本並將建置標記為失敗。
 5. THE App_Image SHALL 不包含符合下列任一條件的檔案：`.env*`、副檔名為 `.pem`、`.key`、`.p12`、`.pfx`、`.crt` 的檔案、`data/` 目錄內容、副檔名為 `.db`、`.sqlite`、`.sqlite3` 的資料庫檔案，以及 `tests/` 目錄內容；且 Requirement 17 的 App_Image 秘密掃描結果中偵測到的秘密數量 SHALL 為 0。
-6. WHERE 雲端 AI 收據辨識未經明確啟用（預設狀態），THE Pipeline SHALL 在 Test_Environment、Staging_Environment 與 Production_Environment 中將 `CAMPING_BEDROCK_REGION`、`CAMPING_BEDROCK_MODEL_ID` 與 `CAMPING_BEDROCK_API_KEY` 設為空字串。
-7. WHERE 雲端 AI 收據辨識經 Release_Approver 於 Pipeline 設定中針對特定環境明確啟用，THE Pipeline SHALL 僅從 Credential_Store 取得 `CAMPING_BEDROCK_*` 值，且僅提供給部署至該已啟用環境的 Trusted_Ref 建置。
-8. WHILE 執行 Untrusted_PR 建置，THE Pipeline SHALL 將所有 `CAMPING_BEDROCK_*` 變數設為空字串，不論雲端 AI 收據辨識是否已啟用。
+6. WHERE 雲端 AI 收據辨識未經明確啟用（預設狀態），THE Pipeline SHALL 在 Test_Environment、Staging_Environment 與 Production_Environment 中將 `CAMPING_OPENAI_API_KEY`、`CAMPING_OPENAI_API_KEY_FILE`、`CAMPING_OPENAI_MODEL_ID`、`CAMPING_OPENAI_IMAGE_DETAIL` 與 `CAMPING_OPENAI_MAX_COMPLETION_TOKENS` 設為空字串。
+7. WHERE 雲端 AI 收據辨識經 Release_Approver 於 Pipeline 設定中針對特定環境明確啟用，THE Pipeline SHALL 僅從 Credential_Store 取得 `CAMPING_OPENAI_*` 值，且僅提供給部署至該已啟用環境的 Trusted_Ref 建置。
+8. WHILE 執行 Untrusted_PR 建置，THE Pipeline SHALL 將所有 `CAMPING_OPENAI_*` 變數設為空字串，不論雲端 AI 收據辨識是否已啟用。
 9. THE Deploy_Host 部署憑證 SHALL 僅具備以下權限：自 Registry 拉取 App_Image（不含推送或刪除）、於 Deploy_Host 執行 Docker Compose 部署指令、執行 Migration_Runner，以及寫入 Database 備份；且 Staging_Environment 與 Production_Environment SHALL 使用不同的部署憑證，任一環境的部署憑證皆無法存取另一環境。
 
 ### Requirement 16: App_Image 建置
@@ -452,5 +452,5 @@
 6. THE README SHALL 以編號步驟說明由 Release_Approver 手動觸發、將 Production_Environment 切換至 Deploy_Host 保留的最近 3 個 Image_Digest 之一的回滾操作，並註明回滾時 Database Schema 保持不變。
 7. THE README SHALL 以編號步驟說明將指定備份識別碼的 Database 備份還原至 Database 的操作，包含選擇最近 14 份已保留備份之一、執行還原的指令，以及還原後執行 Smoke_Test 驗證。
 8. THE README SHALL 說明在本機執行 `bun test tests/*.test.js` 與 `playwright.config.js` 定義的瀏覽器測試時，建立 Ephemeral_Database、指定測試使用該 Ephemeral_Database 的環境變數，以及測試結束後銷毀 Ephemeral_Database 的指令。
-9. THE README SHALL 不包含任何實際秘密值，包含 Database 密碼、Setup_Token、Registry 憑證、Deploy_Host 部署憑證與 `CAMPING_BEDROCK_API_KEY`，且所有範例值皆以佔位符表示。
+9. THE README SHALL 不包含任何實際秘密值，包含 Database 密碼、Setup_Token、Registry 憑證、Deploy_Host 部署憑證與 `CAMPING_OPENAI_API_KEY`，且所有範例值皆以佔位符表示。
 10. THE README SHALL 註明 Database 憑證與 Setup_Token 僅由 Credential_Store 提供，且不得寫入 repository 或 App_Image。

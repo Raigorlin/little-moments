@@ -257,3 +257,53 @@ describe('Property 46: resolveClient 只採信 Trusted_Proxies 的轉送標頭',
     expect(resolveClient('127.0.0.1', forged, url, [])).toMatchObject({ clientIp: '127.0.0.1', protocol: 'http:', viaProxy: false });
   });
 });
+
+// ---------------------------------------------------------------------------
+// 原 tests/deploy-config.test.js（security-harden）仍適用的案例，改以 main 的 resolveClient 表達。
+
+describe('resolveClient：自 security-harden 移入的案例', () => {
+  const url = new URL('http://lan.example:5173/api/login');
+
+  test('非代理來源偽造的轉送標頭（含 X-Forwarded-Host、X-Real-IP、Forwarded）一律忽略', () => {
+    const proxies = parseCidrList('127.0.0.1,::1');
+    const spoof = new Headers({
+      'x-forwarded-for': '10.0.0.1', 'x-forwarded-host': 'evil.example', 'x-forwarded-proto': 'https',
+      'x-real-ip': '127.0.0.1', forwarded: 'for=127.0.0.1;proto=https;host=evil.example',
+    });
+    const r = resolveClient('198.51.100.7', spoof, url, proxies);
+    expect(r).toMatchObject({ clientIp: '198.51.100.7', protocol: 'http:', viaProxy: false, forwardedForInvalid: false });
+    expect(r.url.origin).toBe('http://lan.example:5173');
+  });
+
+  test('X-Forwarded-Host 即使來自 Trusted_Proxies 也不改變有效網址的主機', () => {
+    const proxies = parseCidrList('172.18.0.2');
+    const r = resolveClient('172.18.0.2', { 'x-forwarded-for': '203.0.113.5', 'x-forwarded-host': 'evil.example', 'x-forwarded-proto': 'https' }, url, proxies);
+    expect(r).toMatchObject({ clientIp: '203.0.113.5', protocol: 'https:', viaProxy: true });
+    expect(r.url.origin).toBe('https://lan.example:5173');
+  });
+
+  test('IPv4-mapped IPv6 的代理位址與 IPv4 清單項目視為相同', () => {
+    const r = resolveClient('::ffff:127.0.0.1', { 'x-forwarded-for': '203.0.113.5' }, url, parseCidrList('127.0.0.1'));
+    expect(r).toMatchObject({ clientIp: '203.0.113.5', viaProxy: true, forwardedForInvalid: false });
+  });
+
+  test('多個 X-Forwarded-For 項目取最右側非代理項目；全部皆為代理時使用 TCP 來源 IP', () => {
+    const proxies = parseCidrList('127.0.0.1,::1');
+    expect(resolveClient('127.0.0.1', { 'x-forwarded-for': '1.1.1.1, 203.0.113.5, 127.0.0.1' }, url, proxies).clientIp).toBe('203.0.113.5');
+    expect(resolveClient('127.0.0.1', { 'x-forwarded-for': '::1, 127.0.0.1' }, url, proxies)).toMatchObject({ clientIp: '127.0.0.1', forwardedForInvalid: false });
+  });
+
+  test('選中的 X-Forwarded-For 項目無效時標記 forwardedForInvalid（server/http.js 回應 400）', () => {
+    const proxies = parseCidrList('127.0.0.1');
+    for (const xff of ['not-an-ip', '203.0.113.5, not-an-ip', '', ' ', 'unknown, 127.0.0.1', '1.2.3.4:80']) {
+      const r = resolveClient('127.0.0.1', { 'x-forwarded-for': xff }, url, proxies);
+      expect({ xff, ...r, url: undefined }).toMatchObject({ xff, clientIp: '127.0.0.1', viaProxy: true, forwardedForInvalid: true });
+    }
+    // 無效值在選中項目左側：不影響
+    expect(resolveClient('127.0.0.1', { 'x-forwarded-for': 'not-an-ip, 203.0.113.5' }, url, proxies)).toMatchObject({ clientIp: '203.0.113.5', forwardedForInvalid: false });
+    // 未送 X-Forwarded-For：不是無效
+    expect(resolveClient('127.0.0.1', {}, url, proxies)).toMatchObject({ clientIp: '127.0.0.1', viaProxy: true, forwardedForInvalid: false });
+    // 非代理來源：無效值一律忽略
+    expect(resolveClient('10.0.0.9', { 'x-forwarded-for': 'not-an-ip' }, url, proxies)).toMatchObject({ clientIp: '10.0.0.9', viaProxy: false, forwardedForInvalid: false });
+  });
+});

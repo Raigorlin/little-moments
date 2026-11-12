@@ -1,6 +1,6 @@
 // Feature: jenkins-cicd-deploy, Property 33: SQLite 匯入往返
 //
-// For any 合成的有效 SQLite 資料集（每表 0..1,000 列，含 NULL、非 ASCII UTF-8 文字、64 位元整數時間戳記，
+// For any 合成的有效 SQLite 資料集（舊版或 security-harden 版 Schema；每表 0..1,000 列，含 NULL、非 ASCII UTF-8 文字、64 位元整數時間戳記，
 // 並滿足外鍵），匯入 PostgreSQL 後再匯出，得到的資料列集合與來源相同：每列主鍵與每個欄位值
 // （含 NULL、password_hash 原字串）皆相等。另檢查以原密碼可登入、錯誤密碼不可登入。
 //
@@ -43,12 +43,12 @@ async function login(sql, password) {
   }
 }
 
-async function roundTrip({ data, withLogin }) {
+async function roundTrip({ data, withLogin }, schema = 'old') {
   await resetTables(db.sql);
   const dir = await mkdtemp(join(tmpdir(), 'lm-roundtrip-'));
   try {
     const source = join(dir, 'accounts.sqlite');
-    buildSqliteFixture(source, data);
+    buildSqliteFixture(source, data, { schema });
     const errors = [];
     const result = await importSqlite({ sourcePath: source, sql: db.sql, err: l => errors.push(l) });
     expect(errors).toEqual([]);
@@ -78,4 +78,10 @@ describe('Property 33: SQLite 匯入往返', () => {
   test('large datasets (≤ 1,000 rows per table) round-trip exactly', async () => {
     await fc.assert(fc.asyncProperty(sqliteDatasetArb({ maxRows: 1000, textMax: 12, loginHash, size: 'max' }), roundTrip), { numRuns: 20 });
   }, 1_200_000);
+
+  // security-harden 版來源：0002 的資料表（settings、receipt_ai_usage、security_events、security_alerts）
+  // 與 invites 的 used_at／used_by／id 也逐欄相等；舊版來源（上方兩個測試）的 0002 欄位匯入為 NULL、資料表為 0 筆。
+  test('security-harden datasets (≤ 20 rows per table) round-trip exactly', async () => {
+    await fc.assert(fc.asyncProperty(sqliteDatasetArb({ maxRows: 20, loginHash, size: 'max', schema: 'harden' }), d => roundTrip(d, 'harden')), { numRuns: 50 });
+  }, 600_000);
 });

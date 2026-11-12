@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 import {STORAGE_KEY,seed} from '../src/model.js';
 import {poolMember} from './support/e2e-pool.js';
 const base=process.env.CAMPING_BASE_URL;
@@ -33,7 +33,8 @@ test('[TC-ADMIN-003] admin can cancel then confirm own trip deletion from home o
  const user=await admin(page),trip=await create(page,'要確認才刪除的旅行');
  await page.goto(`/${user.username}/home`);await expect(tile(page,trip.id)).toBeVisible();
  for(const width of [320,1440]){
-  await page.setViewportSize({width,height:1000});await tile(page,trip.id).getByRole('button',{name:'刪除旅行',exact:true}).click();
+  // 手機寬度的刪除鈕收在滑動面板中（src/mobile-swipe.js），先按該卡片的展開鈕。
+  await page.setViewportSize({width,height:1000});if(width<=760)await tile(page,trip.id).locator('.swipe-toggle').click();await tile(page,trip.id).getByRole('button',{name:'刪除旅行',exact:true}).click();
   await expect(page.locator('#dialog')).toBeVisible();await expect(page.getByRole('button',{name:'確認刪除旅行',exact:true})).toBeDisabled();
   expect(await page.locator('#dialog').evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
   await page.screenshot({path:`previews/trip-delete-confirm-${width}.png`});
@@ -50,7 +51,7 @@ test('[TC-ADMIN-003] admin can cancel then confirm own trip deletion from home o
 test('[TC-ADMIN-002] admin deletes another owner trip in backend, revokes link and leaves other trips and account intact',async({page,browser})=>{
  const owner=await member(page),trip=await create(page,'主揪的待刪卡片'),keep=await create(page,'要保留的另一趟');
  const link=await (await api(page,`/api/trips/${trip.id}/invites`,'POST',{})).json();
- await page.goto(`/${owner.username}/home`);await expect(tile(page,trip.id)).toBeVisible();await expect(tile(page,trip.id).locator('[data-action=acct-delete-trip]')).toBeVisible();
+ await page.goto(`/${owner.username}/home`);await expect(tile(page,trip.id)).toBeVisible();await expect(tile(page,trip.id).locator('[data-action=acct-delete-trip]:not(.swipe-action)')).toBeVisible();
  expect((await api(page,`/api/admin/trips/${trip.id}/delete`,'POST',{expectedUserId:owner.id,revision:trip.revision,confirmTitle:trip.title})).status()).toBe(403);
  const ctx=await browser.newContext({baseURL:base});try{
   const p=await ctx.newPage();await admin(p);await p.goto('/admin');await tile(p,trip.id).getByRole('button',{name:'刪除旅行',exact:true}).click();

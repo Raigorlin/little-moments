@@ -246,15 +246,21 @@ export async function dropE2eDatabase(name, { env = process.env } = {}) {
 }
 
 /** App_Server 定義的所有資料表（不含 schema_migrations）；resetTables 清空這些表。 */
-export const APP_TABLES = Object.freeze(['users', 'sessions', 'trips', 'trip_members', 'invites', 'trip_deletions', 'audit', 'trip_ledgers']);
+export const APP_TABLES = Object.freeze([
+  'users', 'sessions', 'trips', 'trip_members', 'invites', 'trip_deletions', 'audit', 'trip_ledgers',
+  // migrations/0002_security_harden.sql
+  'settings', 'receipt_ai_usage', 'security_events', 'security_alerts',
+]);
 
 /**
- * 清空測試 schema 中的所有應用程式資料表並重設 audit identity（保留 Schema 與遷移紀錄）。
+ * 清空測試 schema 中的所有應用程式資料表並重設 identity（audit、security_events、security_alerts.seq；
+ * 保留 Schema 與遷移紀錄）。
  * 供每個測試或每次 fast-check 執行之間快速取得「全新、無資料列」的 Database（Req 4.2）。
  * 固定語句、無插值；資料表依 search_path 解析到該測試檔自己的 `t_<random>` schema。
  */
 export async function resetTables(sql) {
-  await sql`TRUNCATE users, sessions, trips, trip_members, invites, trip_deletions, audit, trip_ledgers RESTART IDENTITY CASCADE`;
+  await sql`TRUNCATE users, sessions, trips, trip_members, invites, trip_deletions, audit, trip_ledgers,
+    settings, receipt_ai_usage, security_events, security_alerts RESTART IDENTITY CASCADE`;
 }
 
 /**
@@ -284,4 +290,59 @@ export function useTestDatabase(options = {}) {
     get schema() { return get('schema'); },
     get config() { return get('config'); },
   };
+}
+
+// ---------------------------------------------------------------------------
+// security-harden 測試移植用輔助（task 18.4）。
+//
+// 原本的 SQLite 測試以「複製種子資料庫檔」讓每個測試從相同資料開始，並以 bun:sqlite 的
+// `db.query(sql).all(...params)` 直接讀寫資料列。以下函式在測試 schema 內提供相同的能力。
+
+/** Bun.SQL 以字串回傳 BIGINT 與 COUNT(*)；這些欄位名稱的值轉成 number（測試只用安全整數）。 */
+const TEST_INT_COLUMNS = new Set([
+  'n', 'at', 'created_at', 'deleted_at', 'expires_at', 'joined_at', 'revoked_at', 'updated_at', 'used_at',
+  'revision', 'people_count', 'trip_count', 'prompt_tokens', 'completion_tokens', 'count', 'window_start', 'window_end', 'acknowledged_at',
+]);
+const numericRow = row => Object.fromEntries(Object.entries(row).map(([k, v]) => [k, TEST_INT_COLUMNS.has(k) && v !== null && v !== undefined ? Number(v) : v]));
+
+/**
+ * 以 `?` 佔位符執行測試查詢（SQLite 測試語法），值一律以參數綁定；回傳資料列陣列（整數欄位轉 number）。
+ * 只供測試使用：查詢文字是測試程式中的固定字串，不含外部輸入；值不會被插入 SQL 文字。
+ */
+export async function testQuery(sql, text, ...params) {
+  if (typeof text !== 'string') throw new TypeError('testQuery 需要 SQL 文字');
+  let index = 0;
+  const converted = text.replace(/\?/g, () => `$${++index}`);
+  if (index !== params.length) throw new Error(`testQuery 參數數量不符（佔位符 ${index}、參數 ${params.length}）`);
+  // 唯一允許的 unsafe（測試）：固定的查詢文字，值以 $n 參數綁定。
+  const rows = await sql.unsafe(converted, params);
+  return Array.from(rows, numericRow);
+}
+
+/** 快照名稱的唯一允許格式；identifier 由此組成。 */
+const SNAPSHOT_TAG = /^[a-z][a-z0-9_]{0,15}$/;
+
+/** 將目前所有應用程式資料表複製到 `snap_<tag>_<table>`（同一測試 schema 內）。 */
+export async function saveSnapshot(sql, tag) {
+  if (!SNAPSHOT_TAG.test(tag)) throw new Error('快照名稱格式無效');
+  for (const table of APP_TABLES) {
+    const copy = `snap_${tag}_${table}`;
+    await sql`DROP TABLE IF EXISTS ${sql(copy)}`;
+    await sql`CREATE TABLE ${sql(copy)} AS SELECT * FROM ${sql(table)}`;
+  }
+}
+
+/**
+ * 清空應用程式資料表後還原 saveSnapshot 的內容（含原 id），並把 identity 設在最大值之後，
+ * 等同原測試「複製種子資料庫檔」。
+ */
+export async function restoreSnapshot(sql, tag) {
+  if (!SNAPSHOT_TAG.test(tag)) throw new Error('快照名稱格式無效');
+  await resetTables(sql);
+  for (const table of APP_TABLES) {
+    await sql`INSERT INTO ${sql(table)} OVERRIDING SYSTEM VALUE SELECT * FROM ${sql(`snap_${tag}_${table}`)}`;
+  }
+  for (const [table, column] of [['audit', 'id'], ['security_events', 'id'], ['security_alerts', 'seq']]) {
+    await sql`SELECT setval(pg_get_serial_sequence(${table}, ${column}), GREATEST(COALESCE(max(${sql(column)}), 0), 1), max(${sql(column)}) IS NOT NULL) FROM ${sql(table)}`;
+  }
 }

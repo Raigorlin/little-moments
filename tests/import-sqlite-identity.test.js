@@ -84,7 +84,8 @@ test('Property 36: audit ids allocated after import never collide with imported 
             } finally {
               await svc.close?.();
             }
-            const fresh = (await db.sql`SELECT id::text AS id FROM audit ORDER BY id`)
+            // ORDER BY audit.id（bigint）：只寫 id 會依 text 別名排序，"1000000" 會排在 "999999" 前面。
+            const fresh = (await db.sql`SELECT id::text AS id FROM audit ORDER BY audit.id`)
               .map(r => r.id).filter(id => !before.has(id)).map(BigInt);
             expect(fresh.length).toBe(appEvents);
             for (const id of fresh) {

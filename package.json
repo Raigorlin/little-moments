@@ -11,15 +11,12 @@
     "test:e2e": "playwright test",
     "test:security": "bun tests/security/run.mjs",
     "test:security:local": "bun scripts/security-suite.mjs",
-    "start": "bun scripts/serve.mjs"
+    "start": "bun scripts/serve.mjs",
+    "create-admin": "bun scripts/create-admin.mjs",
+    "reset-password": "bun scripts/reset-password.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.56.1",
-    "fast-check": "4.3.0"
-  },
-  "dependencies": {
-    "@tesseract.js-data/chi_tra": "1.0.0",
-    "@tesseract.js-data/eng": "1.0.0",
-    "tesseract.js": "7.0.0"
+    "fast-check": "4.10.2"
   }
 }

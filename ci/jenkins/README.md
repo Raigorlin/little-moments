@@ -87,7 +87,7 @@
 規則（Req 2.4、2.5、15.1）：
 
 - 沒有任何 GLOBAL 範圍的系統憑證。PR 建置位於 `ci/`，請求表中任何 `release/` 專屬憑證時 `withCredentials` 直接失敗。
-- `CAMPING_BEDROCK_*` 預設不定義任何憑證（Req 15.6、15.8）。若 Release_Approver 決定為某一環境啟用（Req 15.7），只能在 `release/` 新增憑證（例如 `lm-prod-bedrock-api-key`），並同時修改 Pipeline 與本表；`ci/` 永遠不得定義。
+- `CAMPING_OPENAI_*` 預設不定義任何憑證（Req 15.6、15.8）。若 Release_Approver 決定為某一環境啟用（Req 15.7），只能在 `release/` 新增憑證（例如 Secret file `lm-prod-openai-api-key`，部署時以金鑰檔提供並設定 `CAMPING_OPENAI_API_KEY_FILE`），並同時修改 Pipeline 與本表；`ci/` 永遠不得定義。
 - `lm-jenkins-api-readonly` 的帳號只有 Overall/Read 與 Job/Read（全域 `authenticated`）。
 
 ## 授權（Req 21.12）

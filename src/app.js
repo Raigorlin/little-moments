@@ -10,7 +10,8 @@ import { PERSONAL_GEAR_GROUPS, personalGearPreset } from './gear-presets.js';
 import { SHOPPING_CATEGORIES, parseIngredients, classifyIngredient, syncMealIngredients } from './ingredients.js';
 import { illustration, logo } from './art.js';
 import { setupSceneMotion, syncSceneMotion, sceneMotionSettings } from './scene-motion.js';
-import { STORAGE_KEY, THEMES_KEY, TABS, COLORS, seed, load, readStorage, save, uid, escape as e, dateRange, dateLabel, weekday, personName, myGear, readyCount, unassigned, togglePacking, assignGear, assignShopping, canDepart, progress, logEvent, isValidState, addParticipant } from './model.js';
+import { tripMenuEntries } from './trip-menu.js';
+import { STORAGE_KEY, THEMES_KEY, TABS, COLORS, emptyState, readStorage, save, uid, escape as e, dateRange, dateLabel, weekday, personName, myGear, readyCount, unassigned, togglePacking, assignGear, assignShopping, canDepart, progress, logEvent, isValidState, addParticipant, resolveTab } from './model.js';
 
 const app = document.querySelector('#app');
 const dialog = document.querySelector('#dialog');
@@ -18,6 +19,8 @@ const storage = { getItem: key => localStorage.getItem(key), setItem: (key,value
 const account = globalThis.campingAccountContext || null;
 const initial = account ? {state:account.state,status:'ok'} : readStorage(storage);
 let accountSaving=false, accountError='', accountInviteUrl='', deferredFocus='';
+const INVITE_ACTIONS=['invite','create-invite','revoke-invite'], INVITE_DENIED='只有這趟旅行的成員或管理員可以發出邀請。';
+let accountInviteId='', accountInviteExpiresAt='', accountInvites=[], accountInviteError='', accountInviteOpen=false, accountInviteBusy=false;
 let state = initial.state;
 let storageLocked = ['invalid','unavailable'].includes(initial.status), pendingRemote = null;
 let baseRevision = state.revision, originalBackup = initial.raw || '';
@@ -25,6 +28,7 @@ let dialogDirty = false;
 let inviteDraft={name:'',role:''}, inviteError='';
 let expensePanel = null;
 let scheduleVehicle = '';
+let tripMenuOpen = false;
 let tab = 'schedule', day = state.trip.startDate, shoppingFilter = 'all', gearFilter = 'all', hideDone = false;
 let syncStartupError = '', migrated = false;
 try { migrated = !account && syncMealIngredients(state).changed; if(migrated && initial.status==='ok')logEvent(state,'料理食材已自動連動採買清單'); } catch(err) { syncStartupError=err.message; }
@@ -55,7 +59,8 @@ const icons = {
   link:'<path d="m10 14 4-4m-6 6-2 2a4 4 0 0 1-6-6l5-5a4 4 0 0 1 6 0m2 10a4 4 0 0 0 6 0l4-4a4 4 0 0 0-6-6l-2 2" transform="translate(1 0) scale(.9)"/>',
   leaf:'<path d="M20 3C8 1 1 8 5 16c8 6 17-2 15-13ZM3 21 15 9"/>',
   info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v1"/>',
-  cloud:'<path d="M6 18a5 5 0 0 1-1-10 7 7 0 0 1 13-1 5.5 5.5 0 0 1 0 11H6Z"/>'
+  cloud:'<path d="M6 18a5 5 0 0 1-1-10 7 7 0 0 1 13-1 5.5 5.5 0 0 1 0 11H6Z"/>',
+  menu:'<path d="M4 7h16M4 12h16M4 17h16"/>'
 };
 function icon(name, className='') { return `<svg class="icon ${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.tent}</svg>`; }
 function avatar(p, small=false) { return `<span class="avatar ${COLORS.includes(p.color)?p.color:'coral'} ${small?'small':''}" aria-label="${e(p.name)}">${e([...String(p.name || '?').trim()][0] || '?')}</span>`; }
@@ -78,22 +83,33 @@ function render() {
   if(expenseMount){expensePanel??=createExpensePanel({getState:()=>state,account,assertSession:()=>assertAccountSession(),onDirty:()=>{}});expenseMount.append(expensePanel.element);if(accountSessionChanged)expensePanel.lock('登入帳號已在其他分頁變更。請匯出分帳草稿，再重新登入原帳號。');}
   syncSceneMotion();
   if(active) [...document.querySelectorAll('[data-focus]')].find(el=>el.dataset.focus===active)?.focus({preventScroll:true});
+  const activeTab=app.querySelector('.section-tabs [aria-current="page"]');
+  if(activeTab&&matchMedia('(max-width:760px)').matches){
+    const tabs=activeTab.parentElement,tabRect=activeTab.getBoundingClientRect(),tabsRect=tabs.getBoundingClientRect();
+    if(tabRect.left<tabsRect.left||tabRect.right>tabsRect.right)tabs.scrollLeft+=tabRect.left<tabsRect.left?tabRect.left-tabsRect.left:tabRect.right-tabsRect.right;
+  }
+  const activeDay=app.querySelector('.date-tabs button[aria-pressed="true"]');
+  if(activeDay&&matchMedia('(max-width:760px)').matches){
+    const days=activeDay.parentElement,dayRect=activeDay.getBoundingClientRect(),daysRect=days.getBoundingClientRect();
+    if(dayRect.left<daysRect.left||dayRect.right>daysRect.right)days.scrollLeft+=dayRect.left<daysRect.left?dayRect.left-daysRect.left:dayRect.right-daysRect.right;
+  }
 }
 function header() {
   if(account)return accountHeader();
   const user=state.people.find(p=>p.id===state.currentUser);
-  return `<header class="topbar"><div class="topbar-inner"><a class="brand" href="#/home" aria-label="日子拾光首頁">${logo()}<span>日子拾光<small>LITTLE MOMENTS</small></span></a><div class="header-actions"><span class="demo-badge"><i></i> 本機示範</span><button class="icon-button theme-button" data-action="theme" aria-label="切換${theme==='light'?'深色':'淺色'}模式">${icon(theme==='light'?'moon':'sun')}</button><button class="profile-button" data-action="profile" aria-label="切換旅伴身分">${avatar(user,true)}<span>${e(user.name)}</span><span class="chevron">⌄</span></button></div></div></header>`;
+  return `<header class="topbar"><div class="topbar-inner"><a class="brand" href="#/home" aria-label="日子拾光首頁">${logo()}<span>日子拾光<small>LITTLE MOMENTS</small></span></a><div class="header-actions"><span class="demo-badge"><i></i> 本機模式</span><button class="icon-button theme-button" data-action="theme" aria-label="切換${theme==='light'?'深色':'淺色'}模式">${icon(theme==='light'?'moon':'sun')}</button><button class="profile-button" data-action="profile" aria-label="切換旅伴身分">${avatar(user,true)}<span>${e(user.name)}</span><span class="chevron">⌄</span></button></div></div></header>`;
 }
-function footer() { if(account)return `<footer class="footer"><span>日子拾光 · 帳號版</span><span>資料儲存在本機伺服器，尚未公開部署。</span></footer>`;return `<footer class="footer"><div class="footer-brand">${icon('tent')} <span>日子拾光<span class="footer-dot">·</span>把平凡的日子，留成喜歡的回憶。</span></div><div><span>獨立重製示範 · 虛構資料</span><a href="#/privacy">資料與隱私</a></div></footer>`; }
+function footer() { if(account)return `<footer class="footer"><span>日子拾光 · 帳號版</span><span>資料儲存在本機伺服器，尚未公開部署。</span></footer>`;return `<footer class="footer"><div class="footer-brand">${icon('tent')} <span>日子拾光<span class="footer-dot">·</span>把平凡的日子，留成喜歡的回憶。</span></div><div><span>本機版 · 資料只儲存在此瀏覽器</span><a href="#/privacy">資料與隱私</a></div></footer>`; }
 function hero(compact=false) {
   const trip=state.trip;
   const days=Math.ceil((Date.parse(trip.startDate+'T00:00:00+08:00')-Date.now())/86400000);
-  return `<section class="hero ${compact?'hero-home':''}"><div class="hero-copy"><span class="eyebrow">LITTLE MOMENTS</span><h1>${compact?'下一個故事，<br>我們一起出發。':e(trip.title)}</h1><p>${compact?'把想去的地方、想煮的料理，和想一起出發的人，收進這本小小旅行手冊。':e(trip.description)}</p>${compact?`<a class="button primary" href="#/trip">翻開我的旅行 ${icon('arrow')}</a>`:`<div class="hero-tags"><span>${icon('calendar')}${dateLabel(trip.startDate)} — ${dateLabel(trip.endDate)}</span><span class="hero-destination">${icon('pin')}${mapLink(trip.destination)}</span><span>${icon('people')}${state.people.length} 位旅伴</span></div><div class="hero-note">${icon('leaf')} 旅行前一起規劃，出發後專心玩。</div>`}</div><div class="hero-art"><span class="postcard-sticker">Let's go camping!</span><div class="scene-motion illustration scene-motion--camp">${illustration('camp')}${!compact?`<div class="countdown"><small>${days>0?'距離出發':days===0?'今天出發':'旅行手冊'}</small><strong>${days>0?days:days===0?'GO':dateRange(trip.startDate,trip.endDate).length}</strong><span>${days>0?'天':days===0?'!':'天的好日子'}</span></div>`:''}</div></div></section>`;
+  return `<section class="hero ${compact?'hero-home':''}"><div class="hero-copy"><span class="eyebrow">LITTLE MOMENTS</span>${compact?'<h1>下一個故事，<br>我們一起出發。</h1>':`<div class="trip-title-row"><h1 id="trip-title">${e(trip.title)}</h1><button type="button" class="icon-button trip-menu-button" data-action="trip-menu" data-focus="trip-menu-button" aria-label="旅行選單" aria-haspopup="dialog" aria-expanded="${tripMenuOpen}"${tripMenuOpen?' aria-controls="trip-menu"':''}>${icon('menu')}</button></div>`}<p>${compact?'把想去的地方、想煮的料理，和想一起出發的人，收進這本小小旅行手冊。':e(trip.description)}</p>${compact?`<a class="button primary" href="#/trip">翻開我的旅行 ${icon('arrow')}</a>`:`<div class="hero-tags"><span>${icon('calendar')}${dateLabel(trip.startDate)} — ${dateLabel(trip.endDate)}</span><span class="hero-destination">${icon('pin')}${mapLink(trip.destination)}</span><span>${icon('people')}${state.people.length} 位旅伴</span></div><div class="hero-note">${icon('leaf')} 旅行前一起規劃，出發後專心玩。</div>`}</div><div class="hero-art"><span class="postcard-sticker">Let's go camping!</span><div class="scene-motion illustration scene-motion--camp">${illustration('camp')}${!compact?`<div class="countdown"><small>${days>0?'距離出發':days===0?'今天出發':'旅行手冊'}</small><strong>${days>0?days:days===0?'GO':dateRange(trip.startDate,trip.endDate).length}</strong><span>${days>0?'天':days===0?'!':'天的好日子'}</span></div>`:''}</div></div></section>`;
 }
 function home() { return `<main id="main" class="page">${hero(true)}<div class="section-title home-title"><div><span class="eyebrow">OUR LITTLE ADVENTURES</span><h2>我的旅行手冊 <span class="count-bubble">1</span></h2></div><a href="#/invite" class="text-link">看看邀請頁 ${icon('arrow')}</a></div><a href="#/trip" class="trip-card"><div class="trip-card-art">${illustration('camp')}</div><div><span class="eyebrow">一起出發</span><h3>${e(state.trip.title)}</h3><p>${dateLabel(state.trip.startDate)} — ${dateLabel(state.trip.endDate)} · ${e(state.trip.destination)}</p><span class="text-link">翻開手冊 ${icon('arrow')}</span></div></a></main>`; }
 function trip() {
+  tab = resolveTab(tab);
   const count=unassigned(state).length;
-  return `<main id="main" class="page"><nav class="breadcrumb" aria-label="麵包屑"><a href="#/home">我的旅行</a><span>/</span><span>${e(state.trip.title)}</span></nav>${hero()}<div class="trip-toolbar"><nav class="mode-switch" aria-label="旅行模式"><a href="#/trip" aria-current="page">${icon('book')} 規劃手冊</a><a href="#/go">${icon('tent')} 出發模式 ${icon('arrow')}</a></nav><div class="toolbar-actions">${button(icon('download')+'<span>匯出手冊</span>','export','quiet')}${button(icon('people')+'邀請旅伴','invite','blue')}</div></div><div class="sync-status"><i></i>${saved?'已儲存在這台裝置':'尚未儲存'}<span>·</span> ${navigator.onLine?'示範資料，不會同步至原網站':'目前離線，仍可在本機編輯'}</div><nav class="section-tabs" aria-label="旅行內容">${TABS.map(([key,label],i)=>`<button data-tab="${key}" data-focus="tab-${key}" ${tab===key?'aria-current="page"':''}><span class="tab-number">0${i+1}</span>${label}${key==='gear'&&count?`<span class="tab-badge" aria-label="${count} 項待分配">${count}</span>`:''}</button>`).join('')}</nav><div class="workspace"><section class="workspace-main" aria-label="${TABS.find(t=>t[0]===tab)?.[1] || ''}">${tab==='schedule'?schedule():tab==='meals'?meals():tab==='shopping'?shopping():tab==='gear'?gear():tab==='crew'?crew():tab==='expenses'?'<div id="expenses-mount"></div>':settings()}</section>${sidebar()}</div></main>`;
+  return `<main id="main" class="page"><nav class="breadcrumb" aria-label="麵包屑"><a href="#/home">我的旅行</a><span>/</span><span>${e(state.trip.title)}</span></nav>${hero()}<div class="trip-toolbar"><nav class="mode-switch" aria-label="旅行模式"><a href="#/trip" aria-current="page">${icon('book')} 規劃手冊</a><a href="#/go">${icon('tent')} 出發模式 ${icon('arrow')}</a></nav><div class="toolbar-actions">${button(icon('download')+'<span>匯出手冊</span>','export','quiet')}${button(icon('people')+'邀請旅伴','invite','blue')}</div></div><div class="sync-status"><i></i>${saved?'已儲存在這台裝置':'尚未儲存'}<span>·</span> ${navigator.onLine?'本機資料，不會同步至其他裝置':'目前離線，仍可在本機編輯'}</div><nav class="section-tabs" aria-label="旅行內容">${TABS.map(([key,label],i)=>`<button data-tab="${key}" data-focus="tab-${key}" ${tab===key?'aria-current="page"':''}><span class="tab-number">0${i+1}</span>${label}${key==='gear'&&count?`<span class="tab-badge" aria-label="${count} 項待分配">${count}</span>`:''}</button>`).join('')}</nav><div class="workspace"><section class="workspace-main" aria-label="${TABS.find(t=>t[0]===tab)?.[1] || ''}">${tab==='schedule'?schedule():tab==='meals'?meals():tab==='shopping'?shopping():tab==='gear'?gear():tab==='expenses'?'<div id="expenses-mount"></div>':schedule()}</section>${sidebar()}</div>${tripMenuOpen?tripMenu():''}</main>`;
 }
 function sidebar() {
   const p=progress(state), u=unassigned(state).length, note=dailyNote();
@@ -104,7 +120,8 @@ function schedule() {
   if(!dates.includes(day))day=dates[0];
   if(scheduleVehicle&&!state.vehicles.some(v=>v.id===scheduleVehicle))scheduleVehicle='';
   const activities=state.activities.filter(a=>a.date===day&&(!scheduleVehicle||activityForVehicle(state,a,scheduleVehicle))).sort((a,b)=>a.time.localeCompare(b.time));
-  return `<div class="schedule-bar"><div class="date-tabs" aria-label="選擇行程日期">${dates.map((date,i)=>`<button class="${day===date?'selected':''} ${COLORS[i%3]}" data-day="${date}" data-focus="day-${date}" aria-pressed="${day===date}"><small>DAY ${String(i+1).padStart(2,'0')}</small><b>${dateLabel(date)}</b><span>${weekday(date)}</span></button>`).join('')}</div>${button(icon('plus')+'新增一站','activity','small')}</div>${vehicleDepartureSection()}${vehicleScheduleFilter()}<div class="schedule-intro"><span>${scheduleVehicle?e(state.vehicles.find(v=>v.id===scheduleVehicle).name)+' 的當日行程':'當日行程 · 慢慢走，好好玩。'}</span><span>${activities.length} 個小片刻</span></div><div class="timeline">${activities.length?activities.map((a,i)=>`<article class="activity-card ${a.done?'done':''}" data-activity-id="${e(a.id)}"><span class="timeline-stamp ${COLORS[i%3]}">${icon(a.type==='meet'?'people':a.type==='market'?'bag':a.type==='meal'?'cup':a.type==='night'?'moon':a.type==='travel'?'car':'tent')}</span><div class="activity-top"><time>${e(a.time)}</time><span class="tag ${COLORS[i%3]}">${types[a.type] || '活動'}</span><button class="icon-button activity-edit" data-action="activity" data-id="${e(a.id)}" aria-label="編輯 ${e(a.title)}">${icon('edit')}</button></div><h3>${e(a.title)}</h3><div class="activity-location">${icon('pin')}${mapLink(a.location)}</div><p>${e(a.note)}</p><div class="activity-bottom"><span>${icon(a.vehicleIds?'car':'people')}<span>${e(activityParticipantLabel(state,a))}</span></span><label class="mini-check"><input type="checkbox" data-activity-check="${e(a.id)}" data-focus="activity-${e(a.id)}" ${a.done?'checked':''} aria-label="${e(a.title)}已完成"><span>${a.done?'已完成':'完成'}</span></label></div></article>`).join(''):`<div class="empty">${icon('cloud')}<h3>這一天，留給新的故事。</h3><p>${scheduleVehicle?'這台車今天還沒有安排，新增一站即可指定參與車輛。':'新增第一站，一起開始規劃。'}</p></div>`}</div><div class="endnote"><span></span>${icon('leaf')} 好日子，不用急。<span></span></div>`;
+  const rows=activities.map((a,i)=>`<article class="activity-card ${a.done?'done':''}" data-swipe-row data-activity-id="${e(a.id)}"><span class="timeline-stamp ${COLORS[i%3]}">${icon(a.type==='meet'?'people':a.type==='market'?'bag':a.type==='meal'?'cup':a.type==='night'?'moon':a.type==='travel'?'car':'tent')}</span><div class="activity-top"><time>${e(a.time)}</time><span class="tag ${COLORS[i%3]}">${types[a.type]||'活動'}</span><div class="activity-actions"><button class="icon-button activity-edit" data-action="activity" data-id="${e(a.id)}" aria-label="編輯 ${e(a.title)}">${icon('edit')}</button>${!account||account.permissions.canDelete?`<button class="icon-button danger" data-action="delete" data-kind="activity" data-id="${e(a.id)}" aria-label="移除 ${e(a.title)}">${icon('close')}</button>`:''}</div></div><h3>${e(a.title)}</h3><div class="activity-location">${icon('pin')}${mapLink(a.location)}</div><p>${e(a.note)}</p><div class="activity-bottom"><span>${icon(a.vehicleIds?'car':'people')}<span>${e(activityParticipantLabel(state,a))}</span></span><label class="mini-check"><input type="checkbox" data-activity-check="${e(a.id)}" data-focus="activity-${e(a.id)}" ${a.done?'checked':''} aria-label="${e(a.title)}已完成"><span>${a.done?'已完成':'完成'}</span></label></div></article>`).join('');
+  return `<div class="schedule-bar"><div class="date-tabs" aria-label="選擇行程日期">${dates.map((date,i)=>`<button class="${day===date?'selected':''} ${COLORS[i%3]}" data-day="${date}" data-focus="day-${date}" aria-pressed="${day===date}"><small>DAY ${String(i+1).padStart(2,'0')}</small><b>${dateLabel(date)}</b><span>${weekday(date)}</span></button>`).join('')}</div>${button(icon('plus')+'新增一站','activity','small')}</div>${vehicleDepartureSection()}${vehicleScheduleFilter()}<div class="schedule-intro"><span>${scheduleVehicle?e(state.vehicles.find(v=>v.id===scheduleVehicle).name)+' 的當日行程':'當日行程 · 慢慢走，好好玩。'}</span><span>${activities.length} 個小片刻</span></div><div class="timeline">${rows||`<div class="empty">${icon('cloud')}<h3>這一天，留給新的故事。</h3><p>${scheduleVehicle?'這台車今天還沒有安排，新增一站即可指定參與車輛。':'新增第一站，一起開始規劃。'}</p></div>`}</div><div class="endnote"><span></span>${icon('leaf')} 好日子，不用急。<span></span></div>`;
 }
 function vehicleScheduleFilter() {
   if(!state.vehicles.length)return '';
@@ -113,7 +130,7 @@ function vehicleScheduleFilter() {
 function activityParticipationFields(item) {
   const mode=item.vehicleIds?'vehicles':item.people?.length?'legacy':!item.id&&scheduleVehicle?'vehicles':'all';
   const selected=item.vehicleIds||(!item.id&&scheduleVehicle?[scheduleVehicle]:[]);
-  return field('這一站誰參加',`<select name="participation" aria-label="這一站誰參加" aria-describedby="activity-participation-help"><option value="all" ${mode==='all'?'selected':''}>全體旅伴</option><option value="vehicles" ${mode==='vehicles'?'selected':''} ${!state.vehicles.length?'disabled':''}>指定車輛（可複選）</option>${item.people?.length?`<option value="legacy" ${mode==='legacy'?'selected':''}>保留原旅伴名單</option>`:''}</select>`,true)+`<p id="activity-participation-help" class="help wide">${item.people?.length?`原旅伴名單：${e(item.people.map(id=>personName(state,id)).join('、'))}。不更改此選項就會保留。`:''}${state.vehicles.length?'指定車輛只代表這些車參加；即使抵達營區，也不會自動改成全體。':'請先到「旅伴與車輛」新增車輛，才能分車安排。'}</p><fieldset class="wide activity-vehicle-choices" data-activity-vehicles ${mode==='vehicles'?'':'hidden disabled'}><legend>參與車輛（至少選一台）</legend>${state.vehicles.map(v=>`<label><input type="checkbox" name="vehicleIds" value="${e(v.id)}" ${selected.includes(v.id)?'checked':''}><span><strong>${e(v.name)}</strong><small>駕駛：${e(personName(state,v.driver))} · 乘客：${v.passengers.length?v.passengers.map(id=>e(personName(state,id))).join('、'):'尚未分配'}</small></span></label>`).join('')}</fieldset>`;
+  return field('這一站誰參加',`<select name="participation" aria-label="這一站誰參加" aria-describedby="activity-participation-help"><option value="all" ${mode==='all'?'selected':''}>全體旅伴</option><option value="vehicles" ${mode==='vehicles'?'selected':''} ${!state.vehicles.length?'disabled':''}>指定車輛（可複選）</option>${item.people?.length?`<option value="legacy" ${mode==='legacy'?'selected':''}>保留原旅伴名單</option>`:''}</select>`,true)+`<p id="activity-participation-help" class="help wide">${item.people?.length?`原旅伴名單：${e(item.people.map(id=>personName(state,id)).join('、'))}。不更改此選項就會保留。`:''}${state.vehicles.length?'指定車輛只代表這些車參加；即使抵達營區，也不會自動改成全體。':'請先在「旅行選單」新增車輛，才能分車安排。'}</p><fieldset class="wide activity-vehicle-choices" data-activity-vehicles ${mode==='vehicles'?'':'hidden disabled'}><legend>參與車輛（至少選一台）</legend>${state.vehicles.map(v=>`<label><input type="checkbox" name="vehicleIds" value="${e(v.id)}" ${selected.includes(v.id)?'checked':''}><span><strong>${e(v.name)}</strong><small>駕駛：${e(personName(state,v.driver))} · 乘客：${v.passengers.length?v.passengers.map(id=>e(personName(state,id))).join('、'):'尚未分配'}</small></span></label>`).join('')}</fieldset>`;
 }
 function updateActivityParticipation() {
   const form=dialog.querySelector('#edit-form[data-kind="activity"]');
@@ -124,15 +141,16 @@ function updateActivityParticipation() {
 function vehicleDepartureSection() {
   if(day!==state.trip.startDate)return '';
   const departures=vehicleDepartures(state,day).filter(({vehicle})=>!scheduleVehicle||vehicle.id===scheduleVehicle);
-  return `<section class="vehicle-departures" aria-labelledby="vehicle-departures-title"><div class="vehicle-departures-heading"><div><span class="eyebrow">DIFFERENT STARTS, SHARED MEMORIES</span><h2 id="vehicle-departures-title">各車出發 <span>${departures.length} 台車</span></h2></div>${button(icon('plus')+'新增車輛','vehicle','small')}</div><p class="help">出發時間與地點會同步到「旅伴與車輛」。沿途採買、接人與抵達營區，請在下方新增一站，指定參與車輛。</p>${departures.length?`<div class="departure-vehicles">${departures.map(({vehicle:v,time,location})=>`<article class="departure-vehicle" data-vehicle-departure="${e(v.id)}"><div class="departure-vehicle-top"><div class="departure-vehicle-name" data-person-color="${personColor(v.driver)}">${icon('car')}<h3>${e(v.name)}</h3></div><button class="icon-button" data-action="vehicle" data-id="${e(v.id)}" aria-label="編輯 ${e(v.name)}出發安排">${icon('edit')}</button></div><div class="departure-vehicle-time">${time?`<time datetime="${e(day)}T${e(time)}">${e(time)}</time><span>出發</span>`:'<span class="help">出發時間待確認</span>'}</div><p class="departure-vehicle-place">${icon('pin')}<span>${mapLink(location,{fallback:'出發地點待確認'})}</span></p><dl><div><dt>駕駛</dt><dd>${e(personName(state,v.driver))}</dd></div><div><dt>乘客</dt><dd>${v.passengers.length?v.passengers.map(id=>e(personName(state,id))).join('、'):'尚未分配乘客'}</dd></div></dl><small class="departure-vehicle-count">${v.passengers.length+(v.driver?1:0)} / ${v.seats} 人</small></article>`).join('')}</div>`:'<div class="departure-vehicles-empty">新增車輛，各自填寫出發時間與地點，就能分開查看。</div>'}</section>`;
+  const rows=departures.map(({vehicle:v,time,location})=>`<article class="departure-vehicle" data-swipe-row data-vehicle-departure="${e(v.id)}"><div class="departure-vehicle-top"><div class="departure-vehicle-name" data-person-color="${personColor(v.driver)}">${icon('car')}<h3>${e(v.name)}</h3></div><div class="vehicle-swipe-actions"><button class="icon-button" data-action="vehicle" data-id="${e(v.id)}" aria-label="編輯 ${e(v.name)}出發安排">${icon('edit')}</button>${!account||account.permissions.canDelete?`<button class="icon-button danger" data-action="delete" data-kind="vehicle" data-id="${e(v.id)}" aria-label="移除 ${e(v.name)}">${icon('close')}</button>`:''}</div></div><div class="departure-vehicle-time">${time?`<time datetime="${e(day)}T${e(time)}">${e(time)}</time><span>出發</span>`:'<span class="help">出發時間待確認</span>'}</div><p class="departure-vehicle-place">${icon('pin')}<span>${mapLink(location,{fallback:'出發地點待確認'})}</span></p><dl><div><dt>駕駛</dt><dd>${e(personName(state,v.driver))}</dd></div><div><dt>乘客</dt><dd>${v.passengers.length?v.passengers.map(id=>e(personName(state,id))).join('、'):'尚未分配乘客'}</dd></div></dl><small class="departure-vehicle-count">${v.passengers.length+(v.driver?1:0)} / ${v.seats} 人</small></article>`).join('');
+  return `<section class="vehicle-departures" aria-labelledby="vehicle-departures-title"><div class="vehicle-departures-heading"><div><span class="eyebrow">DIFFERENT STARTS, SHARED MEMORIES</span><h2 id="vehicle-departures-title">各車出發 <span>${departures.length} 台車</span></h2></div>${button(icon('plus')+'新增車輛','vehicle','small')}</div><p class="help">出發時間與地點會同步到「旅行選單」的車輛。沿途採買、接人與抵達營區，請在下方新增一站，指定參與車輛。</p>${rows?`<div class="departure-vehicles">${rows}</div>`:'<div class="departure-vehicles-empty">新增車輛，各自填寫出發時間與地點，就能分開查看。</div>'}</section>`;
 }
 function sectionTitle(eyebrow,title,action='') { return `<div class="section-title"><div><span class="eyebrow">${eyebrow}</span><h2>${title}</h2></div>${action}</div>`; }
 function mealCard(m) {
   const kind=inferDishKind(m), names=parseIngredients(m.ingredients);
-  return `<article class="meal-card" data-meal-id="${e(m.id)}" data-meal-slot="${e(m.slot)}">
+  return `<article class="meal-card" data-swipe-row data-meal-id="${e(m.id)}" data-meal-slot="${e(m.slot)}">
     <div class="meal-illustration">${dishIllustration(kind)}</div>
     <div class="meal-content">
-      <div class="meal-heading"><div><span class="meal-slot">${e(m.slot)}</span><h4>${e(m.title)}</h4></div><button class="icon-button" data-action="meal" data-id="${e(m.id)}" aria-label="編輯 ${e(m.title)}">${icon('edit')}</button></div>
+      <div class="meal-heading"><div><span class="meal-slot">${e(m.slot)}</span><h4>${e(m.title)}</h4></div><div class="meal-actions"><button class="icon-button" data-action="meal" data-id="${e(m.id)}" aria-label="編輯 ${e(m.title)}">${icon('edit')}</button>${!account||account.permissions.canDelete===true?`<button class="icon-button meal-remove-button" data-action="delete" data-kind="meal" data-id="${e(m.id)}" aria-label="移除 ${e(m.title)}">${icon('close')}</button>`:''}</div></div>
       <p class="meal-meta">${m.servings} 人份 <span aria-hidden="true">·</span> 主廚 ${e(personName(state,m.cookId))}</p>
       <p class="meal-ingredients"><span>食材</span> ${names.length?e(names.join('、')):'尚未填寫'}</p>
       <div class="meal-card-footer">${m.notes?`<details class="meal-notes"><summary>料理筆記</summary><p>${e(m.notes)}</p></details>`:''}<button class="text-button" data-tab="shopping">${icon('bag')}查看採買清單</button></div>
@@ -155,24 +173,48 @@ function assigneeSelect(item, kind) {
 function shopping() {
   const p=progress(state);
   const rows=state.shopping.filter(item=>(shoppingFilter==='all'||item.assignee===state.currentUser)&&(!hideDone||!item.done));
-  return `${sectionTitle('GATHER INGREDIENTS, MAKE MEMORIES','把好吃的買齊',button(icon('plus')+'新增品項','shopping','small'))}<p class="section-description">料理食材會自動分類到這裡；數量與負責人請再確認，分類也可以手動調整。</p><div class="shopping-expense-link"><span>買好後，拍張收據逐項記帳。</span><button type="button" class="text-button" data-tab="expenses">收據辨識與分帳 ${icon('arrow')}</button></div><div class="filter-toolbar"><div class="segmented"><button data-shop-filter="all" aria-pressed="${shoppingFilter==='all'}">全部 <span>${state.shopping.length}</span></button><button data-shop-filter="mine" aria-pressed="${shoppingFilter==='mine'}">我負責的</button></div><label class="hide-done"><input type="checkbox" id="hide-done" ${hideDone?'checked':''}>隱藏已買</label></div><div class="shopping-summary"><span>${p.shoppingDone} / ${p.shoppingTotal} 項已買齊</span><progress aria-label="採買完成度" max="${Math.max(1,p.shoppingTotal)}" value="${p.shoppingDone}"></progress></div><div class="shopping-list">${categories.filter(cat=>rows.some(s=>s.category===cat)).map(cat=>`<section class="shopping-category"><h3>${cat}<span>${rows.filter(s=>s.category===cat).length} 項</span></h3>${rows.filter(s=>s.category===cat).map(s=>`<div class="shopping-row ${s.done?'done':''}"><label><input type="checkbox" data-shopping-check="${e(s.id)}" data-focus="shopping-${e(s.id)}" ${s.done?'checked':''} aria-label="${e(s.name)}已買齊"><span><b>${e(s.name)}</b>${s.mealIds?.length?`<small class="recipe-source">料理：${s.mealIds.map(id=>e(state.meals.find(m=>m.id===id)?.title||'')).join('、')}</small>`:s.recipeRemoved?'<small class="recipe-source">料理已不需要，保留採買品項</small>':''}</span></label>${assigneeSelect(s,'shopping')}<span class="quantity">${e(s.quantity)}</span><button class="icon-button" data-action="shopping" data-id="${e(s.id)}" aria-label="編輯 ${e(s.name)}">${icon('edit')}</button></div>`).join('')}</section>`).join('') || `<div class="empty">${icon('check')}<h3>${hideDone?'眼前的清單，全部搞定！':'目前沒有品項'}</h3><p>切換篩選或新增採買品項。</p></div>`}</div>`;
+  return `${sectionTitle('GATHER INGREDIENTS, MAKE MEMORIES','把好吃的買齊',button(icon('plus')+'新增品項','shopping','small'))}<p class="section-description">料理食材會自動分類到這裡；點選數量可直接修改，負責人與分類也能手動調整。</p><div class="shopping-expense-link"><span>買好後，拍張收據逐項記帳。</span><button type="button" class="text-button" data-tab="expenses">收據辨識與分帳 ${icon('arrow')}</button></div><div class="filter-toolbar"><div class="segmented"><button data-shop-filter="all" aria-pressed="${shoppingFilter==='all'}">全部 <span>${state.shopping.length}</span></button><button data-shop-filter="mine" aria-pressed="${shoppingFilter==='mine'}">我負責的</button></div><label class="hide-done"><input type="checkbox" id="hide-done" ${hideDone?'checked':''}>隱藏已買</label></div><div class="shopping-summary"><span>${p.shoppingDone} / ${p.shoppingTotal} 項已買齊</span><progress aria-label="採買完成度" max="${Math.max(1,p.shoppingTotal)}" value="${p.shoppingDone}"></progress></div><div class="shopping-list">${categories.filter(cat=>rows.some(s=>s.category===cat)).map(cat=>`<section class="shopping-category"><h3>${cat}<span>${rows.filter(s=>s.category===cat).length} 項</span></h3>${rows.filter(s=>s.category===cat).map(s=>`<div class="shopping-row ${s.done?'done':''}" data-swipe-row><label><input type="checkbox" data-shopping-check="${e(s.id)}" data-focus="shopping-${e(s.id)}" ${s.done?'checked':''} aria-label="${e(s.name)}已買齊"><span><b>${e(s.name)}</b>${s.mealIds?.length?`<small class="recipe-source">料理：${s.mealIds.map(id=>e(state.meals.find(m=>m.id===id)?.title||'')).join('、')}</small>`:s.recipeRemoved?'<small class="recipe-source">料理已不需要，保留採買品項</small>':''}</span></label>${assigneeSelect(s,'shopping')}${account&&!account.permissions.canEdit?`<span class="quantity">${e(s.quantity)}</span>`:`<button type="button" class="quantity quantity-editable" data-action="edit-shopping-quantity" data-id="${e(s.id)}" data-focus="shopping-quantity-${e(s.id)}" aria-label="編輯 ${e(s.name)}數量" title="點選直接編輯數量">${e(s.quantity)}</button>`}<div class="shopping-row-actions"><button type="button" class="icon-button" data-action="shopping" data-id="${e(s.id)}" aria-label="編輯 ${e(s.name)}">${icon('edit')}</button>${!account||account.permissions.canDelete?`<button type="button" class="icon-button meal-remove-button" data-action="delete" data-kind="shopping" data-id="${e(s.id)}" aria-label="移除 ${e(s.name)}">${icon('close')}</button>`:''}</div></div>`).join('')}</section>`).join('') || `<div class="empty">${icon('check')}<h3>${hideDone?'眼前的清單，全部搞定！':'目前沒有品項'}</h3><p>切換篩選或新增採買品項。</p></div>`}</div>`;
 }
 function gear() {
   const missing=unassigned(state);
   const rows=state.gear.filter(g=>gearFilter==='all'||(gearFilter==='mine'?myGear(state).includes(g):!g.assignee&&g.scope==='shared'));
-  return `${sectionTitle('PACK A LITTLE HAPPINESS','小隊裝備分工',button(icon('plus')+'新增裝備','gear','small'))}<p class="section-description">個人的自己帶，公用的一起分工。選擇攜帶人後會立即儲存。</p>${missing.length?`<div class="notice">${icon('info')}<span>還有 <b>${missing.length} 項</b>公用裝備待分配，出發前記得找個主人。</span></div>`:''}<div class="segmented gear-filters">${[['all','全部裝備'],['mine','我負責的'],['unassigned','待分配']].map(([key,label])=>`<button data-gear-filter="${key}" aria-pressed="${gearFilter===key}">${label}</button>`).join('')}</div>${['personal','shared'].map(scope=>{const items=rows.filter(g=>g.scope===scope);return items.length?`<section class="gear-group"><h3>${scope==='personal'?'每個人，都帶一份':'公用裝備，一起分工'}<span>${items.length} 項</span></h3><div class="gear-table">${items.map(g=>`<div class="gear-row"><div class="gear-item">${icon(scope==='personal'?'bag':'tent')}<span><strong>${e(g.name)}</strong><small>${e(g.quantity)}</small></span></div>${scope==='personal'?`<span class="tag green">每人一份</span>`:assigneeSelect(g,'gear')}<button class="icon-button" data-action="gear" data-id="${e(g.id)}" aria-label="編輯 ${e(g.name)}">${icon('edit')}</button></div>`).join('')}</div></section>`:''}).join('')||'<div class="empty"><h3>這裡已經都分配好了。</h3></div>'}<a href="#/go" class="button primary gear-go">打開我的行前清單 ${icon('arrow')}</a>`;
+  const groups=['personal','shared'].map(scope=>{
+    const items=rows.filter(g=>g.scope===scope);
+    if(!items.length)return '';
+    return `<section class="gear-group"><h3>${scope==='personal'?'每個人，都帶一份':'公用裝備，一起分工'}<span>${items.length} 項</span></h3><div class="gear-table">${items.map(g=>`<div class="gear-row" data-swipe-row><div class="gear-item">${icon(scope==='personal'?'bag':'tent')}<span><strong>${e(g.name)}</strong><small>${e(g.quantity)}</small></span></div>${scope==='personal'?`<span class="tag green">每人一份</span>`:assigneeSelect(g,'gear')}<div class="gear-row-actions"><button class="icon-button" data-action="gear" data-id="${e(g.id)}" aria-label="編輯 ${e(g.name)}">${icon('edit')}</button>${!account||account.permissions.canDelete?`<button class="icon-button danger" data-action="delete" data-kind="gear" data-id="${e(g.id)}" aria-label="移除 ${e(g.name)}">${icon('close')}</button>`:''}</div></div>`).join('')}</div></section>`;
+  }).join('');
+  return `${sectionTitle('PACK A LITTLE HAPPINESS','小隊裝備分工',button(icon('plus')+'新增裝備','gear','small'))}<p class="section-description">個人的自己帶，公用的一起分工。選擇攜帶人後會立即儲存。</p>${missing.length?`<div class="notice">${icon('info')}<span>還有 <b>${missing.length} 項</b>公用裝備待分配，出發前記得找個主人。</span></div>`:''}<div class="segmented gear-filters">${[['all','全部裝備'],['mine','我負責的'],['unassigned','待分配']].map(([key,label])=>`<button data-gear-filter="${key}" aria-pressed="${gearFilter===key}">${label}</button>`).join('')}</div>${groups||'<div class="empty"><h3>這裡已經都分配好了。</h3></div>'}<a href="#/go" class="button primary gear-go">打開我的行前清單 ${icon('arrow')}</a>`;
 }
-function crew() { return `${sectionTitle('BETTER TOGETHER','最好的風景，是一起的人',button(icon('plus')+'新增旅伴','person','small'))}<div class="identity-note">${icon('info')}你現在是 <b>${e(personName(state,state.currentUser))}</b>${button('切換身分','profile','text-button')}</div><div class="member-grid">${state.people.map(p=>`<article class="member-card">${avatar(p)}<div><h3>${e(p.name)}${p.id===state.currentUser?'<span class="tag yellow">我</span>':''}</h3><p>${e(p.role)}</p><small>行前準備 ${readyCount(state,p.id)} / ${myGear(state,p.id).length}</small>${account?.permissions.canEdit&&(account.permissions.canManage||p.id===account.permissions.personId)?button('編輯旅伴','person','text-button',`data-id="${e(p.id)}"`):''}</div></article>`).join('')}</div><div class="section-title spaced"><div><span class="eyebrow">ON THE ROAD</span><h2>我們怎麼去？</h2></div>${button(icon('plus')+'新增車輛','vehicle','small')}</div><div class="vehicles">${state.vehicles.map(v=>`<article class="vehicle-card"><div class="vehicle-title">${icon('car')}<h3>${e(v.name)}</h3><button class="icon-button" data-action="vehicle" data-id="${e(v.id)}" aria-label="編輯 ${e(v.name)}">${icon('edit')}</button></div><p>駕駛 ${e(personName(state,v.driver))} <span>·</span> ${v.passengers.length+(v.driver?1:0)} / ${v.seats} 人</p><p class="help">${icon('pin')}${mapLink(parseVehicleMeeting(v.meeting).location,{label:v.meeting,fallback:'出發地點待確認'})}</p><div class="passenger-list">${v.passengers.map(id=>`<span>${e(personName(state,id))}</span>`).join('')}</div></article>`).join('')}</div>`; }
-function settings() { return `${sectionTitle('KEEP OUR STORY TOGETHER','旅行設定與紀錄',button(icon('edit')+'編輯旅行','trip-settings','small'))}<section class="settings-panel"><dl><dt>旅行名稱</dt><dd>${e(state.trip.title)}</dd><dt>旅行日期</dt><dd>${e(state.trip.startDate)} — ${e(state.trip.endDate)}</dd><dt>目的地</dt><dd>${mapLink(state.trip.destination)}</dd><dt>旅行小叮嚀</dt><dd>${e(state.trip.note)}</dd><dt>資料儲存</dt><dd>這台裝置的瀏覽器，不會傳送到原網站。</dd></dl></section>${sceneMotionSettings()}<section class="data-tools"><h3>把這本手冊帶走</h3><p>匯出 JSON 備份，也可以在另一台裝置匯入。匯入會取代目前資料。</p><div>${button(icon('download')+'匯出備份','export')}${button('匯入備份','import')}${button('列印目前頁面','print')}</div></section><section class="event-section"><h3>小隊最近的動態</h3><ul class="event-list">${state.events.slice(0,8).map(ev=>`<li><span><b>${e(ev.actor)}</b> ${e(ev.text)}</span><time>${new Date(ev.at).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</time></li>`).join('')}</ul></section><div class="reset-area"><span>想重新試玩？恢復最初的虛構旅行資料。</span>${button('重設示範資料','reset','danger')}</div>`; }
+// Markup moved out of the removed crew and settings tabs, kept for the Trip_Menu drawer.
+// Class names (identity-note, member-card, vehicle-card, settings-panel, data-tools, event-section, reset-area) are what account mode and the tests look up.
+function identityNote(menu) { return `<div class="identity-note">${icon('info')}你現在是 <b>${e(personName(state,state.currentUser))}</b>${button('切換身分',menu.switchIdentity.action,'text-button')}</div>`; }
+// Permission rules come from tripMenuEntries() so they live in one place.
+function memberCards(menu) { return menu.people.map(entry=>{const p=state.people.find(x=>x.id===entry.id);return `<article class="member-card">${avatar(p)}<div><h3>${e(p.name)}${entry.isMe?'<span class="tag yellow">我</span>':''}</h3><p>${e(p.role)}</p><small>行前準備 ${readyCount(state,p.id)} / ${myGear(state,p.id).length}</small>${entry.canEdit?button('編輯旅伴',menu.addPerson.action,'text-button',`data-id="${e(p.id)}"`):''}</div></article>`;}).join(''); }
+function vehicleCards(menu) { return menu.vehicles.map(entry=>{const v=state.vehicles.find(x=>x.id===entry.id);return `<article class="vehicle-card"><div class="vehicle-title">${icon('car')}<h3>${e(v.name)}</h3><button class="icon-button" data-action="${entry.edit.action}" data-id="${e(v.id)}" aria-label="編輯 ${e(v.name)}">${icon('edit')}</button>${entry.canDelete?`<button class="icon-button danger" data-action="delete" data-kind="vehicle" data-id="${e(v.id)}" aria-label="移除 ${e(v.name)}">${icon('close')}</button>`:''}</div><p>駕駛 ${e(personName(state,v.driver))} <span>·</span> ${v.passengers.length+(v.driver?1:0)} / ${v.seats} 人</p><p class="help">${icon('pin')}${mapLink(parseVehicleMeeting(v.meeting).location,{label:v.meeting,fallback:'出發地點待確認'})}</p><div class="passenger-list">${v.passengers.map(id=>`<span>${e(personName(state,id))}</span>`).join('')}</div></article>`;}).join(''); }
+function tripDetailsPanel() { return `<section class="settings-panel"><dl><dt>旅行名稱</dt><dd>${e(state.trip.title)}</dd><dt>旅行日期</dt><dd>${e(state.trip.startDate)} — ${e(state.trip.endDate)}</dd><dt>目的地</dt><dd>${mapLink(state.trip.destination)}</dd><dt>旅行小叮嚀</dt><dd>${e(state.trip.note)}</dd><dt>資料儲存</dt><dd>這台裝置的瀏覽器，不會傳送到原網站。</dd></dl></section>`; }
+const DATA_TOOL_LABELS={export:icon('download')+'匯出備份',import:'匯入備份',print:'列印目前頁面'};
+function dataTools(menu) { return `<section class="data-tools"><h3>把這本手冊帶走</h3><p>匯出 JSON 備份，也可以在另一台裝置匯入。匯入會取代目前資料。</p><div>${menu.data.map(action=>button(DATA_TOOL_LABELS[action],action)).join('')}</div></section>`; }
+function eventSection(menu) { return `<section class="event-section"><h3>小隊最近的動態</h3><ul class="event-list">${menu.events.map(ev=>`<li><span><b>${e(ev.actor)}</b> ${e(ev.text)}</span><time>${new Date(ev.at).toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</time></li>`).join('')}</ul></section>`; }
+function resetArea(menu) { return `<div class="reset-area"><span>清除目前本機手冊內容並重新開始。</span>${button('清除旅行資料',menu.reset.action,'danger')}</div>`; }
+// Non-modal drawer holding the content of the removed crew and settings tabs.
+// Rows carry no data-swipe-row, so their buttons stay visible inside the drawer.
+function tripMenu() {
+  const menu=tripMenuEntries(state,account);
+  return `<div class="trip-menu-backdrop" data-action="close-trip-menu" aria-hidden="true"></div><aside id="trip-menu" class="trip-menu" role="dialog" aria-modal="false" aria-labelledby="trip-menu-title"><div class="trip-menu-heading"><h2 id="trip-menu-title" tabindex="-1">旅行選單</h2><button type="button" class="icon-button" data-action="close-trip-menu" data-focus="trip-menu-close" aria-label="關閉旅行選單">${icon('close')}</button></div>`
+    +`<section class="trip-menu-section" aria-labelledby="trip-menu-trip"><h3 id="trip-menu-trip">旅行設定</h3>${tripDetailsPanel()}<div>${button(icon('edit')+'編輯旅行',menu.trip.action,'small')}</div></section>`
+    +`<section class="trip-menu-section" aria-labelledby="trip-menu-people"><h3 id="trip-menu-people">旅伴</h3>${identityNote(menu)}<div class="member-grid">${memberCards(menu)}</div><div>${button(icon('plus')+'新增旅伴',menu.addPerson.action,'small')}</div></section>`
+    +`<section class="trip-menu-section" aria-labelledby="trip-menu-vehicles"><h3 id="trip-menu-vehicles">車輛</h3><div class="vehicles">${vehicleCards(menu)}</div><div>${button(icon('plus')+'新增車輛',menu.addVehicle.action,'small')}</div></section>`
+    +`${sceneMotionSettings()}${dataTools(menu)}${eventSection(menu)}${resetArea(menu)}</aside>`;
+}
 function departure() {
   const items=myGear(state), done=readyCount(state), missing=unassigned(state), departed=state.departed.includes(state.currentUser);
   const next=[...state.activities].sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).find(a=>!a.done&&activityForPerson(state,a,state.currentUser));
   return `<main id="main" class="page departure"><a class="back-link" href="#/trip">← 回到規劃手冊</a><div class="departure-heading"><span class="eyebrow">LESS PLANNING, MORE LIVING</span><h1>${departed?'準備好了，一起出發！':'出發前，把小幸福帶齊。'}</h1><p>${e(state.trip.title)} · ${e(personName(state,state.currentUser))}的行前清單</p></div><div class="departure-banner">${icon('tent')}<div><strong>${done} / ${items.length} 項準備完成</strong><progress max="${Math.max(1,items.length)}" value="${done}" aria-label="我的準備進度"></progress></div><span>${Math.round(done/Math.max(1,items.length)*100)}%</span></div>${missing.length?`<div class="notice">${icon('info')}<div><b>別落下全隊的裝備</b><p>${missing.map(g=>e(g.name)).join('、')}還沒有人負責。</p><button class="text-button" data-action="resolve-gear">回去分配 ${icon('arrow')}</button></div></div>`:''}<div class="packing-columns">${['personal','shared'].map(scope=>`<section><h2>${scope==='personal'?'自己的小行李':'我負責的公用裝備'}</h2><div class="packing-list">${items.filter(g=>g.scope===scope).map(g=>`<label class="packing-item ${g.ready.includes(state.currentUser)?'done':''}"><input type="checkbox" data-pack="${e(g.id)}" data-focus="pack-${e(g.id)}" ${g.ready.includes(state.currentUser)?'checked':''} aria-label="${e(g.name)}已裝好"><span>${e(g.name)}</span><small>${e(g.quantity)}</small></label>`).join('')||'<p class="help">目前沒有分配給你的公用裝備。</p>'}</div></section>`).join('')}</div><div class="departure-confirm">${button(departed?icon('check')+'已準備完成':`確認準備完成，出發 ${icon('arrow')}`,'depart','primary',(!canDepart(state)||departed)?'disabled':'')}<p>${missing.length?'先分配公用裝備，再完成自己的清單。':done<items.length?'不用急，帶齊了再出發。':'好日子，就從現在開始。'}</p></div><section class="next-stop"><span class="eyebrow">${departed?'YOUR NEXT LITTLE MOMENT':'FIRST STOP'}</span><h2>${next?e(next.title):'你目前沒有待完成的行程。'}</h2>${next?`<p>${dateLabel(next.date)} ${e(next.time)} · ${mapLink(next.location)}</p><p class="help">${e(activityParticipantLabel(state,next))}</p><p class="help">${e(next.note)}</p>${departed?button('完成這一站 '+icon('arrow'),'advance','',`data-id="${e(next.id)}"`):''}`:'<p>可回規劃手冊查看全隊行程，或確認自己搭乘的車輛。</p>'}</section><a class="button full" href="#/trip" data-nav-tab="shopping">${icon('bag')} 打開採買清單</a></main>`;
 }
 function invite() {
-  return `<main id="main" class="page invite-page"><section class="invite-card"><div class="invite-art">${illustration('travel')}</div><div class="invite-content"><span class="eyebrow">SAVE YOU A SPOT</span><h1>空一個位子，等你來。</h1><h2>${e(state.trip.title)}</h2><p class="invite-date">${icon('calendar')}${e(state.trip.startDate)} — ${e(state.trip.endDate)}</p><p class="invite-intro">不用從名單找自己。留下你的名字，就能成為這趟旅行的新旅伴。</p><form id="invite-form">${field('你的名字或暱稱',input('name',inviteDraft.name,'text','id="invite-name" aria-label="你的名字或暱稱" data-focus="invite-name" autocomplete="nickname" required maxlength="30" placeholder="例如：小樹"'))}${field('小隊角色（選填）',input('role',inviteDraft.role,'text','id="invite-role" aria-label="小隊角色（選填）" data-focus="invite-role" maxlength="60" placeholder="例如：早餐擔當、開心跟班"'))}<p class="form-error" role="alert">${e(inviteError)}</p><button class="button primary full" id="join-button" type="submit" ${!inviteDraft.name.trim()?'disabled':''}>填好名字，加入旅行 ${icon('arrow')}</button></form><div class="invite-demo">${icon('info')}<span>本機流程示範：名字只會加入這個瀏覽器的手冊。此網址不能讓其他裝置加入同一趟旅行，也不會建立真實帳號。</span></div></div></section><a class="back-link" href="#/trip">先看看這本旅行手冊 →</a></main>`;
+  return `<main id="main" class="page invite-page"><section class="invite-card"><div class="invite-art">${illustration('travel')}</div><div class="invite-content"><span class="eyebrow">SAVE YOU A SPOT</span><h1>空一個位子，等你來。</h1><h2>${e(state.trip.title)}</h2><p class="invite-date">${icon('calendar')}${e(state.trip.startDate)} — ${e(state.trip.endDate)}</p><p class="invite-intro">不用從名單找自己。留下你的名字，就能成為這趟旅行的新旅伴。</p><form id="invite-form">${field('你的名字或暱稱',input('name',inviteDraft.name,'text','id="invite-name" aria-label="你的名字或暱稱" data-focus="invite-name" autocomplete="nickname" required maxlength="30" placeholder="例如：小樹"'))}${field('小隊角色（選填）',input('role',inviteDraft.role,'text','id="invite-role" aria-label="小隊角色（選填）" data-focus="invite-role" maxlength="60" placeholder="例如：早餐擔當、開心跟班"'))}<p class="form-error" role="alert">${e(inviteError)}</p><button class="button primary full" id="join-button" type="submit" ${!inviteDraft.name.trim()?'disabled':''}>填好名字，加入旅行 ${icon('arrow')}</button></form><div class="invite-demo">${icon('info')}<span>本機流程：名字只會加入這個瀏覽器的手冊。此網址不能讓其他裝置加入同一趟旅行，也不會建立真實帳號。</span></div></div></section><a class="back-link" href="#/trip">先看看這本旅行手冊 →</a></main>`;
 }
-function privacy() { return `<main id="main" class="page privacy-page"><span class="eyebrow">A LITTLE NOTE ABOUT YOUR DATA</span><h1>資料留在這裡，安心去玩。</h1><section><h2>這是什麼？</h2><p>這是依「好好露營」視覺與工作流程獨立製作的本機示範。插畫重新繪製，所有旅伴、營地與旅行資料均為虛構，不代表原網站或其營運者。</p><h2>資料存在哪裡？</h2><p>旅行內容保存在這個瀏覽器的 localStorage。不使用 Google 登入、分析追蹤或遠端資料庫；所有資源都從本機載入。沒有跨裝置同步，也沒有真正的邀請授權。</p><h2>離線與備份</h2><p>正式建置版在首次成功載入後可離線使用。你可以從旅行設定匯出備份。清除瀏覽器網站資料會刪除本機手冊，匯入備份會取代目前的手冊。</p><h2>共用裝置</h2><p>這個示範沒有帳號隔離，在同一瀏覽器使用的人都可以看到這本手冊。請勿輸入真實個資或機密資料。</p><a class="button" href="#/trip">回到旅行手冊 ${icon('arrow')}</a></section></main>`; }
+function privacy() { return `<main id="main" class="page privacy-page"><span class="eyebrow">A LITTLE NOTE ABOUT YOUR DATA</span><h1>資料留在這裡，安心去玩。</h1><section><h2>這是什麼？</h2><p>這是獨立製作的本機旅行規劃工具，不代表「好好露營」網站或其營運者。</p><h2>資料存在哪裡？</h2><p>旅行內容保存在這個瀏覽器的 localStorage。不使用 Google 登入、分析追蹤或遠端資料庫；所有資源都從本機載入。沒有跨裝置同步，也沒有真正的邀請授權。</p><h2>離線與備份</h2><p>正式建置版在首次成功載入後可離線使用。你可以從旅行選單匯出備份。清除瀏覽器網站資料會刪除本機手冊，匯入備份會取代目前的手冊。</p><h2>共用裝置</h2><p>這個本機版沒有帳號隔離，在同一瀏覽器使用的人都可以看到這本手冊。請勿輸入真實個資或機密資料。</p><a class="button" href="#/trip">回到旅行手冊 ${icon('arrow')}</a></section></main>`; }
 function field(label, input, wide=false) { return `<label class="field ${wide?'wide':''}"><span>${label}</span>${input}</label>`; }
 function input(name,value='',type='text',extra='') { return `<input name="${name}" type="${type}" value="${e(value)}" ${extra}>`; }
 function showDialog(title, content) { dialogDirty=false;returnFocus=document.activeElement; dialog.innerHTML=`<div class="dialog-heading"><h2 id="dialog-title">${title}</h2><button class="icon-button" data-action="close-dialog" aria-label="關閉視窗">${icon('close')}</button></div><div class="dialog-content">${content}</div>`; if(!dialog.open)dialog.showModal(); }
@@ -183,10 +225,8 @@ function ingredientPreview(text) {
   return `<p class="help">${names.length} 項食材 · 分類預覽，儲存後才會更新採買清單。</p><div class="ingredient-tags">${names.map(name=>`<span>${e(name)}<b>${e(classifyIngredient(name))}</b></span>`).join('')}</div><p id="ingredient-help" class="help">可用頓號、/、逗號、句點或換行分隔；數字中的小數點會保留。數量請到採買清單填寫，無法辨識的歸「其他」；既有品項保留原分類。</p>`;
 }
 function mealDraft(){const form=document.querySelector('#edit-form');return form?.dataset.kind==='meal'?Object.fromEntries(new FormData(form)):null;}
-function updateMealPreview(){
+function updateMealForm(){
   const draft=mealDraft();if(!draft)return;
-  const kind=inferDishKind(draft), preview=document.querySelector('#meal-image-preview');
-  if(preview)preview.innerHTML=dishIllustration(kind);
   const chosen=new Set(parseIngredients(draft.ingredients));
   for(const button of dialog.querySelectorAll('[data-ingredient]')){const included=chosen.has(button.dataset.ingredient);button.disabled=included;button.setAttribute('aria-pressed',String(included));}
 }
@@ -202,13 +242,13 @@ function applySelectedRecipe(){
   const next=applyRecipeTemplate(draft,recipe.id), form=document.querySelector('#edit-form');
   if(next.ingredients.length>500){form.querySelector('.form-error').textContent='合併後食材超過 500 字，請先整理食材。';return;}
   for(const name of ['title','notes','ingredients','imageKind'])form.elements[name].value=next[name];
-  dialogDirty=true;form.querySelector('.form-error').textContent='';document.querySelector('#ingredient-preview').innerHTML=ingredientPreview(next.ingredients);updateMealPreview();
+  dialogDirty=true;form.querySelector('.form-error').textContent='';document.querySelector('#ingredient-preview').innerHTML=ingredientPreview(next.ingredients);updateMealForm();
 }
 function addQuickIngredient(name){
   const draft=mealDraft();if(!draft||!Object.values(COMMON_INGREDIENTS).some(items=>items.includes(name)))return;
   const value=mergeIngredients(draft.ingredients,name), form=document.querySelector('#edit-form');
   if(value.length>500){form.querySelector('.form-error').textContent='食材最多 500 字，請先整理清單。';return;}
-  form.elements.ingredients.value=value;dialogDirty=true;document.querySelector('#ingredient-preview').innerHTML=ingredientPreview(value);updateMealPreview();
+  form.elements.ingredients.value=value;dialogDirty=true;document.querySelector('#ingredient-preview').innerHTML=ingredientPreview(value);updateMealForm();
 }
 function gearPresetOptions() {
   return `<option value="">自行輸入裝備名稱</option>${PERSONAL_GEAR_GROUPS.map(group=>`<optgroup label="${e(group.label)}">${group.items.map(item=>`<option value="${e(item.name)}">${e(item.name)}</option>`).join('')}</optgroup>`).join('')}`;
@@ -237,8 +277,8 @@ function editForm(kind,id) {
     const templates=`<section class="wide recipe-tools"><div class="recipe-tools-heading"><span class="eyebrow">A LITTLE HELP IN THE KITCHEN</span><h3>今晚想煮什麼？</h3><p>從常用料理開始，或直接往下填。食材會合併，不會清空你的清單。</p></div><div class="template-controls">${field('常用料理範本',`<select id="recipe-template" aria-label="常用料理範本"><option value="">選一道常用料理</option>${RECIPE_TEMPLATES.map(r=>`<option value="${r.id}">${e(r.title)}</option>`).join('')}</select>`)}<button type="button" class="button primary" data-action="apply-recipe" disabled>套用範本</button></div><div id="template-preview" hidden></div></section>`;
     const imageField=input('imageKind',item.imageKind||'auto','hidden');
     const shortcuts=`<details class="wide common-ingredients"><summary>常用食材，點一下加進來</summary><p class="help">已在清單裡的食材不會重複加入；移除請直接編輯食材欄。</p>${Object.entries(COMMON_INGREDIENTS).map(([category,names])=>`<fieldset><legend>${e(category)}</legend><div class="ingredient-shortcuts">${names.map(name=>`<button type="button" data-action="add-ingredient" data-ingredient="${e(name)}">${e(name)}</button>`).join('')}</div></fieldset>`).join('')}</details>`;
-    formDialog(id?'編輯餐次':'新增一道好日子','meal',templates+field('料理名稱',input('title',item.title,'text','required maxlength="100" aria-label="料理名稱"'),true)+field('日期',`<select name="date" aria-label="日期">${dateOptions(item.date)}</select>`)+field('餐次',`<select name="slot" aria-label="餐次" required>${mealSlotOptions(item.slot).map(slot=>`<option value="${e(slot)}" ${slot===(item.slot||'晚餐')?'selected':''}>${e(slot)}${MEAL_SLOTS.includes(slot)?'':'（原餐次）'}</option>`).join('')}</select>`)+field('主廚',`<select name="cookId" aria-label="主廚">${personOptions(item.cookId)}</select>`)+field('人數',input('servings',item.servings||state.people.length,'number','required min="1" max="100"'))+imageField+`<div class="wide meal-image-preview" id="meal-image-preview"></div>`+field('食材（以頓號、/、逗號或句點分隔）',`<textarea name="ingredients" aria-label="食材（以頓號、/、逗號或句點分隔）" rows="3" maxlength="500" aria-describedby="ingredient-help" placeholder="牛肉片、高麗菜、雞蛋、壽喜燒醬">${e(item.ingredients||'')}</textarea>`,true)+shortcuts+`<div id="ingredient-preview" class="wide ingredient-preview" aria-live="polite">${ingredientPreview(item.ingredients||'')}</div>`+field('料理筆記',`<textarea name="notes" aria-label="料理筆記" rows="3" maxlength="1000">${e(item.notes||'')}</textarea>`,true),id);
-    updateMealPreview();
+    formDialog(id?'編輯餐次':'新增一道好日子','meal',templates+field('料理名稱',input('title',item.title,'text','required maxlength="100" aria-label="料理名稱"'),true)+field('日期',`<select name="date" aria-label="日期">${dateOptions(item.date)}</select>`)+field('餐次',`<select name="slot" aria-label="餐次" required>${mealSlotOptions(item.slot).map(slot=>`<option value="${e(slot)}" ${slot===(item.slot||'晚餐')?'selected':''}>${e(slot)}${MEAL_SLOTS.includes(slot)?'':'（原餐次）'}</option>`).join('')}</select>`)+field('主廚',`<select name="cookId" aria-label="主廚">${personOptions(item.cookId)}</select>`)+field('人數',input('servings',item.servings||state.people.length,'number','required min="1" max="100"'))+imageField+field('食材（以頓號、/、逗號或句點分隔）',`<textarea name="ingredients" aria-label="食材（以頓號、/、逗號或句點分隔）" rows="3" maxlength="500" aria-describedby="ingredient-help" placeholder="牛肉片、高麗菜、雞蛋、壽喜燒醬">${e(item.ingredients||'')}</textarea>`,true)+shortcuts+`<div id="ingredient-preview" class="wide ingredient-preview" aria-live="polite">${ingredientPreview(item.ingredients||'')}</div>`+field('料理筆記',`<textarea name="notes" aria-label="料理筆記" rows="3" maxlength="1000">${e(item.notes||'')}</textarea>`,true),id);
+    updateMealForm();
   }
   if(kind==='shopping')formDialog(id?'編輯採買品項':'把好吃的加進清單','shopping',field('品項名稱',input('name',item.name,'text',`required aria-label="品項名稱" maxlength="100" ${item.mealIds?.length?'readonly aria-describedby="linked-name-help"':''}`)+(item.mealIds?.length?'<small id="linked-name-help" class="help">食材名稱與料理連動，請在料理菜單修改；數量、分類與負責人可在這裡調整。</small>':''),true)+field('數量與單位',input('quantity',item.quantity||'1 份','text','required maxlength="40"'))+field('分類',`<select name="category">${categories.map(c=>`<option ${(item.category||'其他')===c?'selected':''}>${c}</option>`).join('')}</select>`)+field('誰負責買',`<select name="assignee" class="assignee-select" data-person-select data-person-color="${personColor(item.assignee)}">${personOptions(item.assignee)}</select>`,true),id);
   if(kind==='gear'){
@@ -248,19 +288,23 @@ function editForm(kind,id) {
     updateGearScope();
   }
   if(kind==='person'){const p=state.people.find(p=>p.id===id);formDialog(p?'編輯旅伴':'多一個人，多一份快樂','person',field('旅伴名字',input('name',p?.name||'','text','required maxlength="30"'),true)+field('小隊角色',input('role',p?.role||'','text','required maxlength="60" placeholder="例如：早餐擔當"'),true)+field('旅伴代表色',`<select name="color" aria-label="旅伴代表色">${COLORS.map(color=>`<option value="${color}" ${color===(p?.color||COLORS[state.people.length%COLORS.length])?'selected':''}>${colorChoices[color]}</option>`).join('')}</select>`,true),id);}
-  if(kind==='vehicle'){const departure=parseVehicleMeeting(item.meeting);formDialog(id?'編輯這台車':'新增一台出發的車','vehicle',field('車輛暱稱',input('name',item.name,'text','required maxlength="50"'),true)+field('駕駛',`<select name="driver" aria-label="駕駛">${personOptions(item.driver??state.currentUser,!!account)}</select>`)+field('座位數（含駕駛）',input('seats',item.seats||4,'number','required min="1" max="9"'))+field('出發時間（選填）',input('departTime',departure.time,'time'))+field('出發地點',input('departLocation',departure.location,'text',`${id&&!departure.location?'':'required '}maxlength="150" placeholder="例如：台北車站東三門"`),true)+`<p class="help wide">顯示在 ${dateLabel(state.trip.startDate)} 首日行程的「各車出發」，也同步到旅伴與車輛。</p>`+`<fieldset class="wide"><legend>乘客（請勿重複選駕駛）</legend><div class="passenger-checks">${state.people.map(p=>`<label><input type="checkbox" name="passengers" value="${e(p.id)}" ${item.passengers?.includes(p.id)?'checked':''}>${e(p.name)}</label>`).join('')}</div></fieldset>`,id);}
+  if(kind==='vehicle'){const departure=parseVehicleMeeting(item.meeting);formDialog(id?'編輯這台車':'新增一台出發的車','vehicle',field('車輛暱稱',input('name',item.name,'text','required maxlength="50"'),true)+field('駕駛',`<select name="driver" aria-label="駕駛">${personOptions(item.driver??state.currentUser,!!account)}</select>`)+field('座位數（含駕駛）',input('seats',item.seats||4,'number','required min="1" max="9"'))+field('出發時間（選填）',input('departTime',departure.time,'time'))+field('出發地點',input('departLocation',departure.location,'text',`${id&&!departure.location?'':'required '}maxlength="150" placeholder="例如：台北車站東三門"`),true)+`<p class="help wide">顯示在 ${dateLabel(state.trip.startDate)} 首日行程的「各車出發」，也同步到旅行選單。</p>`+`<fieldset class="wide"><legend>乘客（請勿重複選駕駛）</legend><div class="passenger-checks">${state.people.map(p=>`<label><input type="checkbox" name="passengers" value="${e(p.id)}" ${item.passengers?.includes(p.id)?'checked':''}>${e(p.name)}</label>`).join('')}</div></fieldset>`,id);}
   if(kind==='trip-settings')formDialog('把旅行，寫成你喜歡的樣子','trip-settings',field('旅行名稱',input('title',state.trip.title,'text','required maxlength="100"'),true)+field('目的地',input('destination',state.trip.destination,'text','required maxlength="100"'),true)+field('開始日期',input('startDate',state.trip.startDate,'date','required'))+field('結束日期',input('endDate',state.trip.endDate,'date','required'))+field('旅行介紹',`<textarea name="description" rows="2" maxlength="300">${e(state.trip.description)}</textarea>`,true)+field('旅行小叮嚀',`<textarea name="note" rows="2" maxlength="500">${e(state.trip.note)}</textarea>`,true));
 }
 function exportData() { const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='good-good-camping-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notify('旅行手冊已匯出'); }
-function formLinkedError(){dialog.querySelector('.form-error').textContent='這項食材仍被料理使用。請先到料理菜單移除食材，再刪除採買品項。';}
+function formLinkedError(){const message='這項食材仍被料理使用。請先到料理菜單移除食材，再刪除採買品項。',error=dialog.querySelector('#edit-form[data-kind="shopping"] .form-error');if(error)error.textContent=message;else notify(message);}
 const actions={
   'apply-recipe':applySelectedRecipe,
   'add-ingredient'(id,el){addQuickIngredient(el.dataset.ingredient);},
+  'edit-shopping-quantity'(id,el){
+    const item=state.shopping.find(s=>s.id===id);if(!item||accountSaving||!saved||account&&!account.permissions.canEdit)return;
+    const input=document.createElement('input');input.type='text';input.className='quantity quantity-input';input.maxLength=40;input.value=item.quantity==='數量待確認'?'':item.quantity;input.dataset.shoppingQuantityInput=id;input.dataset.originalQuantity=item.quantity;input.dataset.focus=el.dataset.focus;input.setAttribute('aria-label',`${item.name}數量`);input.placeholder='數量待確認';el.replaceWith(input);input.focus();input.select();
+  },
   theme(){ theme=theme==='light'?'dark':'light'; document.documentElement.dataset.theme=theme;try{localStorage.setItem(THEMES_KEY,theme);}catch{}render(); },
-  profile(){ if(account){showDialog('你的登入帳號',`<p>${e(account.user.displayName)} · @${e(account.user.username)}</p><p>帳號身分由伺服器確認，不能切換成其他旅伴。</p><a class="button" href="/${e(account.user.username)}/home">回到我的首頁</a>`);return;}showDialog('今天，你是哪一位旅伴？',`<p class="dialog-note">只切換本機示範身分，不會登入真實帳號。</p><div class="identity-grid">${state.people.map(p=>`<button class="identity-option ${p.id===state.currentUser?'selected':''}" data-action="choose-person" data-id="${e(p.id)}">${avatar(p)}<span>${e(p.name)}</span>${p.id===state.currentUser?icon('check'):''}</button>`).join('')}</div>`); },
+  profile(){ if(account){showDialog('你的登入帳號',`<p>${e(account.user.displayName)} · @${e(account.user.username)}</p><p>帳號身分由伺服器確認，不能切換成其他旅伴。</p><a class="button" href="/${e(account.user.username)}/home">回到我的首頁</a>`);return;}showDialog('今天，你是哪一位旅伴？',`<p class="dialog-note">只切換本機手冊的旅伴身分，不會登入真實帳號。</p><div class="identity-grid">${state.people.map(p=>`<button class="identity-option ${p.id===state.currentUser?'selected':''}" data-action="choose-person" data-id="${e(p.id)}">${avatar(p)}<span>${e(p.name)}</span>${p.id===state.currentUser?icon('check'):''}</button>`).join('')}</div>`); },
   'choose-person'(id){ state.currentUser=id;closeDialog(true);commit(`現在是${personName(state,id)}的視角`); },
-  invite(){ if(account){void createAccountInvite();return;}showDialog('邀請旅伴，名字讓他自己填',`<div class="invite-mini">${illustration('travel')}</div><p>把邀請頁交給旅伴，由對方自行填寫名字，不必預先建立名單。</p><div class="notice">${icon('info')}<span>目前只在本機運作。這個網址不會把你的手冊同步到其他裝置，正式多人邀請需要後端服務。</span></div><div class="form-actions"><button class="button" data-action="copy-invite">${icon('link')}複製示範網址</button><a class="button primary" href="#/invite" data-action="close-dialog">預覽邀請頁 ${icon('arrow')}</a></div>`); },
-  async 'copy-invite'(){if(account){try{await navigator.clipboard.writeText(accountInviteUrl);notify('已複製邀請網址');}catch{notify('請選取邀請網址後手動複製');}return;}const url=location.href.split('#')[0]+'#/invite';try{await navigator.clipboard.writeText(url);notify('已複製本機示範網址');}catch{showDialog('複製本機示範網址',field('請選取並複製',input('url',url,'text','readonly')));} },
+  invite(){ if(account){void openAccountInviteDialog();return;}showDialog('邀請旅伴，名字讓他自己填',`<div class="invite-mini">${illustration('travel')}</div><p>把邀請頁交給旅伴，由對方自行填寫名字，不必預先建立名單。</p><div class="notice">${icon('info')}<span>目前只在本機運作。這個網址不會把你的手冊同步到其他裝置，正式多人邀請需要後端服務。</span></div><div class="form-actions"><button class="button" data-action="copy-invite">${icon('link')}複製本機網址</button><a class="button primary" href="#/invite" data-action="close-dialog">預覽邀請頁 ${icon('arrow')}</a></div>`); },
+  async 'copy-invite'(){if(account){try{await navigator.clipboard.writeText(accountInviteUrl);notify('已複製邀請網址');}catch{notify('請選取邀請網址後手動複製');}return;}const url=location.href.split('#')[0]+'#/invite';try{await navigator.clipboard.writeText(url);notify('已複製本機網址');}catch{showDialog('複製本機網址',field('請選取並複製',input('url',url,'text','readonly')));} },
   export:exportData,
   'recover-storage'(){showDialog('先保留資料，再繼續',`<p>為避免覆蓋損毀資料或另一分頁的更新，目前暫停儲存。請先匯出目前內容，再選擇下一步。</p><div class="form-actions">${button('匯出目前內容','export')}${originalBackup?button('下載原始資料','export-original'):''}${pendingRemote?button('載入另一分頁版本','apply-remote'):''}${button('以目前內容取代儲存','unlock-storage','primary')}</div>`);},
   'export-original'(){const url=URL.createObjectURL(new Blob([originalBackup],{type:'text/plain'}));const a=document.createElement('a');a.href=url;a.download='camping-original-recovery.txt';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);},
@@ -268,16 +312,26 @@ const actions={
   'unlock-storage'(){storageLocked=false;pendingRemote=null;state.revision=Math.max(state.revision,readStorage(storage).state.revision)+1;saved=save(storage,state);if(saved){baseRevision=state.revision;originalBackup='';}closeDialog(true);render();notify(saved?'已儲存目前內容':'仍無法儲存，請匯出備份。');},
   import(){showDialog('匯入旅行備份',`<form id="import-form"><p class="dialog-note">匯入會取代這台裝置的旅行手冊。請先匯出目前的資料。</p><label class="field">選擇 JSON 備份<input type="file" name="backup" accept=".json,application/json" required></label><p class="form-error" role="alert"></p><div class="form-actions"><button class="button" type="button" data-action="close-dialog">取消</button><button class="button primary">匯入並取代</button></div></form>`);},
   print(){window.print();},
-  reset(){showDialog('重新開始這趟小旅行？',`<p>這會刪除目前的本機修改，恢復最初的示範資料。此操作無法復原。</p><div class="form-actions">${button('先不要','close-dialog')}${button('確定重設','confirm-reset','danger')}</div>`);},
-  'confirm-reset'(){state=seed();syncMealIngredients(state);day=state.trip.startDate;tab='schedule';storageLocked=false;pendingRemote=null;saved=save(storage,state);baseRevision=state.revision;closeDialog(true);render();notify(saved?'已恢復示範資料':'重設只保留在記憶體，請檢查儲存空間。');},
+  reset(){showDialog('清除這本旅行手冊？',`<p>這會移除目前裝置儲存的行程、料理、採買與其他內容，並建立一本空白手冊。此操作無法復原。</p><div class="form-actions">${button('先不要','close-dialog')}${button('清除並重新開始','confirm-reset','danger')}</div>`);},
+  'confirm-reset'(){state=emptyState();day=state.trip.startDate;tab='schedule';storageLocked=false;pendingRemote=null;saved=save(storage,state);baseRevision=state.revision;closeDialog(true);render();notify(saved?'已建立空白旅行手冊':'重設只保留在記憶體，請檢查儲存空間。');},
   'close-dialog'(){closeDialog();},
   'resolve-gear'(){tab='gear';gearFilter='unassigned';if(account)location.href=accountTripPath();else location.hash='/trip';},
   depart(){if(account){void accountCheck('depart','',true);return;}if(!canDepart(state))return;state.departed.push(state.currentUser);commit('準備完成，一起出發');},
   advance(id){const item=state.activities.find(a=>a.id===id);if(item){item.done=true;commit(`完成了「${item.title}」`);}},
-  delete(id,el){if(el.dataset.kind==='vehicle'&&state.activities.some(a=>a.vehicleIds?.includes(id))){dialog.querySelector('.form-error').textContent='這台車仍有指定行程。請先把那些行程改派其他車輛或改為全體，再移除車輛。';return;}if(el.dataset.kind==='shopping' && state.shopping.find(s=>s.id===id)?.mealIds?.length){formLinkedError();return;}if(dialogDirty&&!window.confirm('移除項目前，會放棄尚未儲存的修改。確定繼續？'))return;const kind=el.dataset.kind;showDialog('移除這個項目？',`<p>${account?'會從這趟旅行移除項目，其他旅伴也會看到變更。':'只會移除本機示範資料，無法復原。'}</p><div class="form-actions">${button('取消','close-dialog')}${button('確認移除','confirm-delete','danger',`data-id="${e(id)}" data-kind="${kind}"`)}</div>`);},
+  delete(id,el){if(el.dataset.kind==='vehicle'&&state.activities.some(a=>a.vehicleIds?.includes(id))){const message='這台車仍有指定行程。請先把那些行程改派其他車輛或改為全體，再移除車輛。',error=dialog.querySelector('#edit-form[data-kind="vehicle"] .form-error');if(error)error.textContent=message;else notify(message);return;}if(el.dataset.kind==='shopping' && state.shopping.find(s=>s.id===id)?.mealIds?.length){formLinkedError();return;}if(dialogDirty&&!window.confirm('移除項目前，會放棄尚未儲存的修改。確定繼續？'))return;const kind=el.dataset.kind;showDialog('移除這個項目？',`<p>${account?'會從這趟旅行移除項目，其他旅伴也會看到變更。':'只會從這台裝置的本機手冊移除，無法復原。'}</p><div class="form-actions">${button('取消','close-dialog')}${button('確認移除','confirm-delete','danger',`data-id="${e(id)}" data-kind="${kind}"`)}</div>`);},
   'confirm-delete'(id,el){const collection={activity:'activities',meal:'meals',shopping:'shopping',gear:'gear',vehicle:'vehicles'}[el.dataset.kind];if(collection){if(collection==='vehicles'&&state.activities.some(a=>a.vehicleIds?.includes(id))){notify('這台車仍有指定行程，請先重新安排。');return;}const next={...state,[collection]:state[collection].filter(x=>x.id!==id)};try{if(collection==='meals'||collection==='shopping')syncMealIngredients(next);}catch(err){notify(err.message);return;}state=next;if(collection==='gear')state.departed=[];closeDialog();commit('已移除項目');}}
 };
 ['activity','meal','shopping','gear','person','vehicle','trip-settings'].forEach(kind=>actions[kind]=id=>editForm(kind,id));
+function openTripMenu(){tripMenuOpen=true;render();app.querySelector('#trip-menu-title')?.focus({preventScroll:true});}
+function closeTripMenu(){
+  if(!tripMenuOpen)return;
+  tripMenuOpen=false;deferredFocus='trip-menu-button';
+  // The focused control lives in the drawer, so render() would otherwise try to restore focus to it.
+  if(document.activeElement?.closest?.('#trip-menu'))document.activeElement.blur();
+  render();
+}
+actions['trip-menu']=()=>tripMenuOpen?closeTripMenu():openTripMenu();
+actions['close-trip-menu']=()=>closeTripMenu();
 
 document.addEventListener('click',event=>{
   const el=event.target.closest('button,a');if(!el||expensePanel?.element.contains(el))return;
@@ -292,11 +346,13 @@ document.addEventListener('click',event=>{
 },true);
 
 document.addEventListener('click',event=>{
+  if(event.target.closest?.('.trip-menu-backdrop')){closeTripMenu();return;}
   const el=event.target.closest('button,a');if(!el)return;
   if(account&&el.dataset.action&&!allowAccountAction(el.dataset.action)){event.preventDefault();return;}
+  if(tripMenuOpen&&el.dataset.action&&el.closest('#trip-menu')&&!['trip-menu','close-trip-menu'].includes(el.dataset.action))closeTripMenu();
   if(el.dataset.navTab)tab=el.dataset.navTab;
   if(el.dataset.action && actions[el.dataset.action]) actions[el.dataset.action](el.dataset.id,el);
-  if(el.dataset.tab){tab=el.dataset.tab;render();}
+  if(el.dataset.tab){tripMenuOpen=false;tab=el.dataset.tab;render();}
   if(el.dataset.day){day=el.dataset.day;render();}
   if(el.dataset.shopFilter){shoppingFilter=el.dataset.shopFilter;render();}
   if(el.dataset.gearFilter){gearFilter=el.dataset.gearFilter;render();}
@@ -305,7 +361,7 @@ document.addEventListener('change',event=>{
   const el=event.target;
   if(el.matches('select[data-person-select]'))el.dataset.personColor=personColor(el.value);
   if(el.dataset.shoppingAssignee||el.dataset.gearAssignee)deferredFocus=el.dataset.focus;
-  if(el.name==='imageKind' && el.closest('#edit-form')){dialogDirty=true;updateMealPreview();}
+  if(el.name==='imageKind' && el.closest('#edit-form')){dialogDirty=true;updateMealForm();}
   if(el.id==='recipe-template')updateTemplatePreview();
   if(el.id==='gear-preset')applyGearPreset();
   if(el.id==='schedule-vehicle'){scheduleVehicle=el.value;render();}
@@ -321,6 +377,21 @@ document.addEventListener('change',event=>{
   if(el.dataset.gearAssignee){const item=state.gear.find(g=>g.id===el.dataset.gearAssignee);if(item&&item.assignee!==el.value&&assignGear(state,item.id,el.value))commit('裝備分工已更新');else render();}
   if(el.dataset.pack){togglePacking(state,el.dataset.pack);commit('行前清單已更新',false);}
 });
+document.addEventListener('keydown',event=>{
+  const input=event.target.closest('input[data-shopping-quantity-input]');if(!input)return;
+  if(event.key==='Enter'){event.preventDefault();input.blur();}
+  if(event.key==='Escape'){event.preventDefault();input.dataset.cancel='true';input.blur();}
+});
+document.addEventListener('focusout',event=>{
+  const input=event.target.closest('input[data-shopping-quantity-input]');if(!input)return;
+  const id=input.dataset.shoppingQuantityInput,item=state.shopping.find(s=>s.id===id);if(!item){render();return;}
+  deferredFocus=input.dataset.focus;
+  if(input.dataset.cancel==='true'){render();return;}
+  const value=input.value.trim(),next=value|| (input.dataset.originalQuantity==='數量待確認'?'數量待確認':'');
+  if(next===item.quantity){render();return;}
+  if(!value||value.length>40){notify(!value?'請填寫數量與單位。':'數量與單位最多 40 字。');render();return;}
+  item.quantity=value;commit('採買數量已更新');
+});
 document.addEventListener('submit',async event=>{
   const form=event.target;
   if(!['edit-form','invite-form','import-form'].includes(form.id))return;
@@ -331,7 +402,7 @@ document.addEventListener('submit',async event=>{
     catch(err){inviteError=err.message;form.querySelector('.form-error').textContent=inviteError;}
     return;
   }
-  if(form.id==='import-form'){try{const file=data.get('backup');if(!file||file.size>2_000_000)throw new Error('請選擇小於 2 MB 的備份檔。');const imported=JSON.parse(await file.text());if(!isValidState(imported))throw new Error('這不是有效的旅行手冊備份。');syncMealIngredients(imported);state=imported;day=state.trip.startDate;storageLocked=false;pendingRemote=null;state.revision=Math.max(state.revision,readStorage(storage).state.revision)+1;saved=save(storage,state);baseRevision=state.revision;closeDialog(true);render();notify(saved?'旅行備份已匯入':'已載入，但無法永久儲存。');}catch(err){form.querySelector('.form-error').textContent=err.message;}return;}
+  if(form.id==='import-form'){try{const file=data.get('backup');if(!file||file.size>1_048_576)throw new Error('請選擇不超過 1 MiB 的備份檔。');const imported=JSON.parse(await file.text());if(!isValidState(imported))throw new Error('這不是有效的旅行手冊備份。');syncMealIngredients(imported);state=imported;day=state.trip.startDate;storageLocked=false;pendingRemote=null;state.revision=Math.max(state.revision,readStorage(storage).state.revision)+1;saved=save(storage,state);baseRevision=state.revision;closeDialog(true);render();notify(saved?'旅行備份已匯入':'已載入，但無法永久儲存。');}catch(err){form.querySelector('.form-error').textContent=err.message;}return;}
   const kind=form.dataset.kind,id=form.dataset.id;
   const values=Object.fromEntries([...data.entries()].filter(([key])=>!['passengers','vehicleIds','participation'].includes(key)).map(([key,value])=>[key,typeof value==='string'?value.trim():value]));
   if([...form.querySelectorAll('[required]')].some(el=>!String(el.value).trim())){form.querySelector('.form-error').textContent='請填寫必要欄位，不能只有空白。';return;}
@@ -374,23 +445,27 @@ document.addEventListener('input',event=>{
   if(el.closest('#invite-form')){inviteDraft[el.name]=el.value;inviteError='';el.closest('form').querySelector('.form-error').textContent='';document.querySelector('#join-button').disabled=!inviteDraft.name.trim();}
   if(el.closest('#edit-form'))dialogDirty=true;
   if(el.name==='name'&&el.closest('#edit-form[data-kind="gear"]')){const picker=dialog.querySelector('#gear-preset');if(picker&&picker.value!==el.value)picker.value='';}
-  if(el.closest('#edit-form')?.dataset.kind==='meal'&&!event.isComposing){if(el.name==='ingredients')document.querySelector('#ingredient-preview').innerHTML=ingredientPreview(el.value);updateMealPreview();}
+  if(el.closest('#edit-form')?.dataset.kind==='meal'&&!event.isComposing){if(el.name==='ingredients')document.querySelector('#ingredient-preview').innerHTML=ingredientPreview(el.value);updateMealForm();}
 });
-document.addEventListener('compositionend',event=>{if(event.target.closest('#edit-form')?.dataset.kind==='meal'){if(event.target.name==='ingredients')document.querySelector('#ingredient-preview').innerHTML=ingredientPreview(event.target.value);updateMealPreview();}});
+document.addEventListener('compositionend',event=>{if(event.target.closest('#edit-form')?.dataset.kind==='meal'){if(event.target.name==='ingredients')document.querySelector('#ingredient-preview').innerHTML=ingredientPreview(event.target.value);updateMealForm();}});
 dialog.addEventListener('cancel',event=>{if(dialogDirty){event.preventDefault();closeDialog();}});
 dialog.addEventListener('click',event=>{if(event.target===dialog){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)closeDialog();}});
-window.addEventListener('hashchange',()=>{if(dialog.open)closeDialog();render();window.scrollTo({top:0,behavior:'instant'});});
+document.addEventListener('keydown',event=>{
+  if(event.key!=='Escape'||!tripMenuOpen||dialog.open)return;
+  event.preventDefault();closeTripMenu();
+});
+window.addEventListener('hashchange',()=>{if(dialog.open)closeDialog();tripMenuOpen=false;render();window.scrollTo({top:0,behavior:'instant'});});
 window.addEventListener('storage',event=>{if(account)return;if(event.key!==STORAGE_KEY||!event.newValue)return;let incoming;try{incoming=JSON.parse(event.newValue);}catch{return;}if(!isValidState(incoming)||incoming.revision===baseRevision)return;if(!saved||dialog.open||(route()==='invite'&&(inviteDraft.name||inviteDraft.role))){pendingRemote=incoming;storageLocked=true;saved=false;render();notify('另一分頁有更新。已保留你的修改，請先匯出備份。');return;}state=incoming;baseRevision=incoming.revision;render();notify('已載入另一個分頁的本機更新');});
 window.addEventListener('beforeunload',event=>{if(expensePanel?.isDirty()||dialogDirty||!saved||(route()==='invite'&&(inviteDraft.name||inviteDraft.role))){event.preventDefault();event.returnValue='';}});
 function accountTripPath(){return `/${account.user.username}/trips/${account.trip.id}`;}
 function accountHeader(){return `<header class="topbar"><div class="topbar-inner"><a class="brand" href="/${e(account.user.username)}/home" aria-label="日子拾光首頁">${logo()}<span>日子拾光<small>LITTLE MOMENTS</small></span></a><div class="header-actions"><a class="text-link" href="/${e(account.user.username)}/home">我的首頁</a>${account.user.role==='admin'?'<a class="text-link" href="/admin">管理後台</a>':''}<button class="icon-button" data-action="theme" aria-label="切換${theme==='light'?'深色':'淺色'}模式">${icon(theme==='light'?'moon':'sun')}</button><button class="profile-button" data-action="profile">${e(account.user.displayName)}</button><button class="text-button" data-action="account-logout">登出</button></div></div></header>`;}
 function allowAccountAction(action){
   if(['delete','confirm-delete'].includes(action)&&account.permissions.canDelete!==true){notify('只有旅行建立者與管理員可以刪除內容。');return false;}
-  if(action==='invite'&&account.permissions.canInvite!==true){notify('只有旅行建立者與管理員可以發出邀請。');return false;}
+  if(INVITE_ACTIONS.includes(action)&&account.permissions.canInvite!==true){notify(INVITE_DENIED);return false;}
   const blocked=['choose-person','import','reset','confirm-reset','unlock-storage','recover-storage','apply-remote','export-original'];
-  if(blocked.includes(action)){notify('帳號版不提供這個示範操作。');return false;}
-  const safe=['theme','profile','export','print','close-dialog','resolve-gear','account-reload','account-retry','account-logout'];
-  if(safe.includes(action))return !accountSaving||action==='export';
+  if(blocked.includes(action)){notify('帳號版不提供這項本機操作。');return false;}
+  const safe=['theme','profile','export','print','close-dialog','resolve-gear','account-reload','account-retry','account-logout','trip-menu','close-trip-menu'];
+  if(safe.includes(action))return !accountSaving||['export','trip-menu','close-trip-menu'].includes(action);
   if(action==='depart')return !!account.permissions.personId&&saved&&!accountSaving;
   if(accountSaving||!saved){notify('請先完成儲存或處理尚未儲存的內容。');return false;}
   if(!account.permissions.canEdit){notify('你目前沒有這趟旅行的編輯權限。');return false;}
@@ -403,16 +478,16 @@ function applyAccountChrome(){
   }
   const sync=app.querySelector('.sync-status');
   if(sync)sync.innerHTML=`<i></i>${accountSaving?'正在儲存…':saved?'已儲存至本機伺服器':'尚未儲存'}<span>·</span>${account.permissions.canDelete?'建立者／管理員模式':account.permissions.canEdit?'協作編輯模式，不能刪除':'僅可檢視模式'}${navigator.onLine?'':' · 離線時無法儲存'}`;
-  if(!account.permissions.canEdit)for(const el of app.querySelectorAll('[data-action]'))if(!['theme','profile','export','print','close-dialog','resolve-gear','depart','account-logout'].includes(el.dataset.action))el.hidden=true;
-  if(account.permissions.canInvite!==true)for(const el of app.querySelectorAll('[data-action=invite]'))el.hidden=true;
+  if(!account.permissions.canEdit)for(const el of app.querySelectorAll('[data-action]'))if(!['theme','profile','export','print','close-dialog','resolve-gear','depart','account-logout','trip-menu','close-trip-menu'].includes(el.dataset.action))el.hidden=true;
+  if(account.permissions.canInvite!==true)for(const el of app.querySelectorAll(INVITE_ACTIONS.map(a=>`[data-action="${a}"]`).join(',')))el.hidden=true;
   for(const selector of ['.reset-area','.data-tools [data-action="import"]','.identity-note [data-action="profile"]'])for(const el of app.querySelectorAll(selector))el.remove();
   const note=app.querySelector('.identity-note');if(note)note.innerHTML=`${icon('info')}登入帳號：<b>${e(account.user.displayName)}</b> · ${account.permissions.personId?'已綁定旅伴':'管理員檢視，未加入此旅行'}`;
-  const info=app.querySelector('.settings-panel dl');if(info){const dt=[...info.querySelectorAll('dt')].find(el=>el.textContent==='資料儲存');if(dt)dt.nextElementSibling.textContent='本機伺服器 SQLite 資料庫，由登入帳號與旅行權限控管。';}
+  const info=app.querySelector('.settings-panel dl');if(info){const dt=[...info.querySelectorAll('dt')].find(el=>el.textContent==='資料儲存');if(dt)dt.nextElementSibling.textContent='伺服器的 PostgreSQL 資料庫，由登入帳號與旅行權限控管。';}
   const dataCopy=app.querySelector('.data-tools>p');if(dataCopy)dataCopy.textContent='匯出這趟旅行的行程 JSON 備份，不包含獨立分帳帳本。帳目請到「分帳記帳」另行匯出；帳號版不會以匯入檔直接覆蓋共用旅行。';
   for(const el of app.querySelectorAll('[data-shopping-check]')){const row=state.shopping.find(s=>s.id===el.dataset.shoppingCheck);el.disabled=accountSaving||!saved||(!account.permissions.canEdit&&row?.assignee!==account.permissions.personId);}
   for(const el of app.querySelectorAll('[data-pack]'))el.disabled=accountSaving||!saved||!account.permissions.personId;
   for(const el of app.querySelectorAll('[data-activity-check],[data-gear-assignee],[data-shopping-assignee]'))el.disabled=accountSaving||!saved||!account.permissions.canEdit;
-  for(const el of app.querySelectorAll('[data-action]'))if(accountSaving&&!['export','theme','profile'].includes(el.dataset.action))el.disabled=true;
+  for(const el of app.querySelectorAll('[data-action]'))if(accountSaving&&!['export','theme','profile','trip-menu','close-trip-menu'].includes(el.dataset.action))el.disabled=true;
   if(route()==='go'&&!account.permissions.personId){app.querySelector('main').innerHTML=`<div class="empty"><h1>你目前以管理員身分檢視</h1><p>尚未加入此旅行，因此沒有個人行前清單。你仍可編輯所有旅行內容。</p><a class="button primary" href="${accountTripPath()}">回到規劃手冊</a></div>`;}
   if(accountError||!saved){const warning=document.createElement('div');warning.className='save-warning';warning.setAttribute('role','alert');warning.innerHTML=`<span>${e(accountError||'內容尚未儲存，請保留備份。')}</span>${!saved?button('匯出未存內容','export')+button('重試儲存','account-retry'):''}${button('重新載入伺服器版本','account-reload')}`;app.querySelector('header').after(warning);}
 }
@@ -433,11 +508,57 @@ async function accountCheck(kind,id,checked){
   catch(err){if(accountSessionChanged||err.status===0||err.status===401)saved=false;accountError=err.status===409?'旅行已有更新，請重新載入後再勾選。':err.status===401?'登入已失效，請重新登入；這次勾選未儲存。':`${err.message}，這次勾選未儲存。`;}
   finally{accountSaving=false;render();}
 }
-async function createAccountInvite(){
-  if(account.permissions.canInvite!==true){notify('只有旅行建立者與管理員可以發出邀請。');return;}
-  try{await assertAccountSession();const result=await account.api(`/api/trips/${account.trip.id}/invites`,{method:'POST',body:{expectedUserId:account.user.id}});accountInviteUrl=location.origin+result.urlPath;showDialog('邀請旅伴，名字讓他自己填',`<p>對方先註冊或登入帳號，再自行填寫這趟旅行使用的名字。邀請有效期限：${e(new Date(result.expiresAt).toLocaleString('zh-TW'))}。</p><p class="notice">目前伺服器只開在這台電腦。要讓朋友從其他裝置使用，還需要公開部署與 HTTPS。</p>${field('邀請網址',input('invite-url',accountInviteUrl,'text','readonly'))}<div class="form-actions">${button('複製邀請網址','copy-invite')}<a class="button primary" href="${e(result.urlPath)}">開啟邀請頁</a></div>`);}
-  catch(err){notify(err.message);}
+// Invitation_Dialog (Req 16.10, 16.11, 18.1, 19.10–19.13): opening only loads the Invite_List; links are created on request.
+const invitesPath=()=>`/api/trips/${encodeURIComponent(account.trip.id)}/invites`;
+const inviteTime=value=>e(new Date(value).toLocaleString('zh-TW'));
+async function loadAccountInvites(){const result=await account.api(invitesPath());accountInvites=Array.isArray(result?.invites)?result.invites:[];}
+function clearAccountInviteLink(){accountInviteUrl='';accountInviteId='';accountInviteExpiresAt='';}
+function renderAccountInviteDialog(focus=''){
+  const keepFocus=dialog.open?returnFocus:null;
+  const busy=accountInviteBusy?'disabled':'';
+  const link=accountInviteUrl?`${field('邀請網址',input('invite-url',accountInviteUrl,'text','id="invite-url" readonly'))}<div class="form-actions">${button('複製邀請網址','copy-invite')}</div><p>這個連結只能讓一位旅伴加入，建立 7 天後失效（有效期限：${inviteTime(accountInviteExpiresAt)}）。沒有帳號的人可以直接在邀請頁建立帳號。</p><p class="dialog-note"><b>連結只會顯示這一次，請現在複製。</b></p>`:'';
+  const list=accountInvites.length?`<ul class="invite-links">${accountInvites.map(inv=>`<li><span><b>${e(inv.creatorName)}</b> · 建立於 ${inviteTime(inv.createdAt)} · 到期 ${inviteTime(inv.expiresAt)}</span>${button('撤銷','revoke-invite','text-button danger',`type="button" data-id="${e(inv.id)}" aria-label="撤銷 ${e(inv.creatorName)} 於 ${inviteTime(inv.createdAt)} 建立的連結" ${busy}`)}</li>`).join('')}</ul>`:'<p class="dialog-note">目前沒有可撤銷的邀請連結。</p>';
+  showDialog('邀請旅伴，名字讓他自己填',`<p>對方用邀請連結登入或建立帳號後，再自行填寫這趟旅行使用的名字。</p>${link}<p class="form-error" role="alert">${e(accountInviteError)}</p><div class="form-actions">${button(icon('link')+'建立邀請連結','create-invite','primary',`type="button" ${busy}`)}</div><h3>尚未使用的邀請連結</h3>${list}`);
+  if(keepFocus)returnFocus=keepFocus;
+  if(focus)dialog.querySelector(focus)?.focus();
 }
+async function openAccountInviteDialog(){
+  if(account.permissions.canInvite!==true){notify(INVITE_DENIED);return;}
+  if(accountInviteBusy)return;
+  accountInviteBusy=true;let ok=false;
+  try{await assertAccountSession();clearAccountInviteLink();accountInviteError='';await loadAccountInvites();ok=true;}
+  catch(err){notify(err.message);}
+  finally{accountInviteBusy=false;}
+  if(ok){accountInviteOpen=true;renderAccountInviteDialog('[data-action="create-invite"]');}
+}
+async function createAccountInvite(){
+  if(account.permissions.canInvite!==true){notify(INVITE_DENIED);return;}
+  if(accountInviteBusy||!accountInviteOpen)return;
+  accountInviteBusy=true;renderAccountInviteDialog('[data-action="create-invite"]');let focus='[data-action="create-invite"]';
+  try{
+    await assertAccountSession();
+    const result=await account.api(invitesPath(),{method:'POST',body:{expectedUserId:account.user.id}});
+    accountInviteUrl=location.origin+result.urlPath;accountInviteId=result.id;accountInviteExpiresAt=result.expiresAt;accountInviteError='';focus='#invite-url';
+    try{await loadAccountInvites();}catch(err){notify(err.message);}
+  }catch(err){if(err.status===409)accountInviteError=err.message;else notify(err.message);}
+  finally{accountInviteBusy=false;if(accountInviteOpen&&dialog.open)renderAccountInviteDialog(focus);}
+}
+async function revokeAccountInvite(id){
+  if(account.permissions.canInvite!==true){notify(INVITE_DENIED);return;}
+  if(accountInviteBusy||!accountInviteOpen||!id)return;
+  accountInviteBusy=true;renderAccountInviteDialog();
+  try{
+    await assertAccountSession();
+    await account.api(`${invitesPath()}/${encodeURIComponent(id)}/revoke`,{method:'POST',body:{expectedUserId:account.user.id}});
+    notify('邀請連結已撤銷');if(id===accountInviteId)clearAccountInviteLink();
+  }catch(err){notify(err.message);}
+  // Reload after success and after errors (for example a link used meanwhile), but never under a changed account.
+  try{if(!accountSessionChanged)await loadAccountInvites();}catch(err){notify(err.message);}
+  finally{accountInviteBusy=false;if(accountInviteOpen&&dialog.open)renderAccountInviteDialog('[data-action="create-invite"]');}
+}
+actions['create-invite']=()=>{void createAccountInvite();};
+actions['revoke-invite']=id=>{void revokeAccountInvite(id);};
+if(account)dialog.addEventListener('close',()=>{if(!accountInviteOpen)return;accountInviteOpen=false;clearAccountInviteLink();accountInviteError='';accountInvites=[];});
 actions['account-retry']=()=>{void commitAccount('旅行手冊已更新');};
 actions['account-reload']=()=>{if((!saved||dialogDirty)&&!confirm('重新載入會放棄尚未儲存的修改。請確認已匯出備份，是否繼續？'))return;saved=true;dialogDirty=false;location.reload();};
 actions['account-logout']=async()=>{if((!saved||dialogDirty)&&!confirm('登出會放棄尚未儲存的修改，確定繼續？'))return;try{await account.api('/api/logout',{method:'POST',body:{}});saved=true;dialogDirty=false;location.href='/login';}catch(err){notify(err.message);}};

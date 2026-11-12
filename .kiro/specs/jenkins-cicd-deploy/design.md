@@ -19,7 +19,7 @@
 | `server/http.js` | 先呼叫 `accounts.handle`，再以路由／資產 regex 提供靜態檔；`SECURITY_HEADERS` 套用於所有回應；資產回應 `Cache-Control: no-cache`。**目前沒有 Host 檢查**。 |
 | `server/accounts.js` | `new Database(dbPath)`、`PRAGMA foreign_keys/busy_timeout/WAL`、`db.exec(SCHEMA + LEDGER_SCHEMA)`；約 50 個同步 `db.query(...)` prepared statement；`tx = fn => db.transaction(fn).immediate()`（單一寫入者語意）；記憶體 `RateLimiter`；`isLoopback(url, info)` 僅用於 `/api/setup`；非 GET 檢查 `Origin === url.origin`；Cookie `ggc_session; HttpOnly; SameSite=Strict; Path=/; Max-Age=…`，`https:` 時加 `Secure`；scrypt `N=16384,r=8,p=1,keylen=64`。 |
 | `server/ledger.js` | `LEDGER_SCHEMA`（`trip_ledgers`）。 |
-| `server/receipt-ai.js` | 僅讀取 `CAMPING_BEDROCK_REGION/MODEL_ID/API_KEY`，格式不符即停用。 |
+| `server/receipt-ai.js` | OpenAI 收據辨識（任務 18.5 取代 Bedrock）：只讀取 `CAMPING_OPENAI_API_KEY` 或 `CAMPING_OPENAI_API_KEY_FILE` 指定的金鑰檔，以及模型、圖片細節與回覆 token 上限（`CAMPING_OPENAI_*`）；金鑰或模型格式不符即停用。 |
 | `scripts/build.mjs` | `Bun.build` 前端至 `dist/`，複製字型與 OCR 資產（`tesseract.js` 等需存在於 `node_modules`），產生 `sw.js`。 |
 | `scripts/check-accounts.mjs` | 需要 `CAMPING_BUN`；以 `PORT=5181`、`CAMPING_DB=:memory:` 啟動伺服器；`CHROME_PATH` 缺省時改用 Windows Chrome 路徑；之後啟動 Playwright。 |
 | `playwright.config.js` | `workers:2, retries:0`，`CHROME_PATH` 同樣有 Windows 預設，`reporter:'list'`，`outputDir: test-results`。 |
@@ -231,7 +231,7 @@ export function resolveClient(tcpIp, headers, url, trustedProxies) {}
 | `CAMPING_TRUSTED_PROXIES` | 否 | 空（不採信任何轉送標頭） | 逗號分隔，每項為 IPv4／IPv6 位址或 CIDR（IPv4 前綴 0..32、IPv6 前綴 0..128）；不得空項、不得含 `*` | 無效 → 結束碼 2，訊息含變數名 |
 | `CAMPING_DATABASE_HOST`／`_PORT`／`_NAME`／`_USER`／`_PASSWORD` | 是 | `_PORT`=5432 | 非空；port 1..65535 | 缺少任一 → 結束碼 2，列出缺少名稱（Req 11.8） |
 | `CAMPING_DATABASE_SSLMODE` | 否 | `disable`（同一 Compose 網路） | `disable\|require\|verify-full` | 結束碼 2 |
-| `CAMPING_BEDROCK_*` | 否 | 空 | 沿用 `receipt-ai.js` | 停用 AI |
+| `CAMPING_OPENAI_*` | 否 | 空 | 沿用 `receipt-ai.js` | 停用 AI |
 
 `CAMPING_DB` 不再讀取（Req 11.1）；若仍設定，啟動時輸出警告「已忽略」。
 
@@ -503,9 +503,11 @@ services:
       CAMPING_ALLOWED_HOSTS: ${ALLOWED_HOSTS}
       CAMPING_TRUSTED_PROXIES: ${PROXY_IP}
       CAMPING_DATABASE_HOST: db
-      CAMPING_BEDROCK_REGION: ""
-      CAMPING_BEDROCK_MODEL_ID: ""
-      CAMPING_BEDROCK_API_KEY: ""
+      CAMPING_OPENAI_API_KEY: ""
+      CAMPING_OPENAI_API_KEY_FILE: ""
+      CAMPING_OPENAI_MODEL_ID: ""
+      CAMPING_OPENAI_IMAGE_DETAIL: ""
+      CAMPING_OPENAI_MAX_COMPLETION_TOKENS: ""
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -825,7 +827,7 @@ type InventoryResult = { id: string; status: 'pass' | 'fail' | 'missing'; detail
 
 ### Property 13: 設定錯誤與啟動訊息不洩漏秘密
 
-*For any* 含隨機秘密值（Setup_Token、DB 密碼、`CAMPING_BEDROCK_API_KEY`）的環境，`parseConfig` 的錯誤訊息與 `redactedSummary(config)` 皆不包含任何秘密值，且 summary 包含實際 bind、port 與完整 Allowed_Hosts。
+*For any* 含隨機秘密值（Setup_Token、DB 密碼、`CAMPING_OPENAI_API_KEY`）的環境，`parseConfig` 的錯誤訊息與 `redactedSummary(config)` 皆不包含任何秘密值，且 summary 包含實際 bind、port 與完整 Allowed_Hosts。
 
 **Validates: Requirements 8.5, 8.7, 9.3**
 

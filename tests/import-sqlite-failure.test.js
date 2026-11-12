@@ -28,13 +28,15 @@ import {
 } from '../scripts/import-sqlite.mjs';
 import { tableOrder, columnNames, compareCounts } from '../server/db/import-plan.js';
 import { useTestDatabase, resetTables, APP_TABLES } from './support/pg.js';
-import { buildSqliteFixture, OLD_SQLITE_SCHEMA } from './support/sqlite-fixture.js';
+import { buildSqliteFixture, HARDEN_SQLITE_SCHEMA } from './support/sqlite-fixture.js';
 
 const db = useTestDatabase();
 
 // ---------------------------------------------------------------------------
 // 放寬的 SQLite Schema（只用於測試來源檔）：移除 CHECK、NOT NULL 與 UNIQUE，主鍵保留。
-const RELAXED_SQLITE_SCHEMA = OLD_SQLITE_SCHEMA
+// 以 security-harden 版 Schema 為基礎，涵蓋全部 12 個資料表與 invites 的 0002 欄位。
+const RELAXED_SQLITE_SCHEMA = HARDEN_SQLITE_SCHEMA
+  .replace(/CREATE UNIQUE INDEX/g, 'CREATE INDEX')
   .replace(/\s+CHECK \((?:[^()]|\([^()]*\))*\)/g, '')
   .replace(/ NOT NULL/g, '')
   .replace(/ UNIQUE,/g, ',')
@@ -107,12 +109,20 @@ function materialize(seed, marker) {
     sessions: seed.sessions.map((s, i) => ({ token_hash: m(`s${i}`), user_id: user(s.user), created_at: s.created, expires_at: s.created })),
     trips,
     trip_members: uniqueBy(seed.members.map((x, i) => ({ trip_id: trip(x.trip), user_id: user(x.user), person_id: m(`p${i}`), joined_at: x.joined })), r => `${r.trip_id}|${r.user_id}`),
-    invites: seed.invites.map((x, i) => ({ token_hash: m(`i${i}`), trip_id: trip(x.trip), created_by: user(x.user), created_at: x.created, expires_at: x.created, revoked_at: x.revoked })),
+    invites: seed.invites.map((x, i) => ({
+      token_hash: m(`i${i}`), trip_id: trip(x.trip), created_by: user(x.user), created_at: x.created, expires_at: x.created, revoked_at: x.revoked,
+      used_at: x.revoked, used_by: x.revoked === null ? null : user(x.user), id: m(`iid${i}`),
+    })),
     trip_deletions: uniqueBy(seed.deletions.map(x => ({ trip_id: trip(x.trip), deleted_by: user(x.user), deleted_at: x.at })), r => r.trip_id),
     audit: Array.from({ length: seed.auditCount }, (_, i) => ({ id: i * 3 + 1, at: i, actor: m(`a${i}`), action: m('act'), target: m(seed.auditText) })),
     trip_ledgers: uniqueBy(seed.ledgers.map(x => ({
       trip_id: trip(x.trip), revision: x.revision, ledger_json: JSON.stringify({ marker, t: x.text }), requests_json: m('[]'), updated_by: user(x.user), updated_at: x.at,
     })), r => r.trip_id),
+    // 0002_security_harden 的資料表（各至少 1 列）。
+    settings: [{ key: m('receiptAiPolicy'), value: m('all'), updated_at: seed.auditCount, updated_by: m('admin') }],
+    receipt_ai_usage: [{ id: m('r0'), at: 1, user_id: users[0].id, trip_id: m('t-any'), model_id: m('gpt'), prompt_tokens: 3, completion_tokens: 4, outcome: 'success' }],
+    security_events: [{ id: 7, at: 1, client: m('c'), username: m('n'), reason: 'bad_credentials' }],
+    security_alerts: [{ id: m('al0'), at: 1, kind: 'global', username: m('all'), client: m('c'), count: 20, window_start: 0, window_end: 1, acknowledged_at: null, acknowledged_by: null }],
   };
 }
 
@@ -121,19 +131,25 @@ function materialize(seed, marker) {
 const NOT_NULL_TARGETS = [
   ['users', 'password_hash'], ['trips', 'title'], ['trips', 'state_json'], ['trip_members', 'person_id'],
   ['invites', 'created_by'], ['trip_deletions', 'deleted_by'], ['audit', 'actor'], ['trip_ledgers', 'ledger_json'],
+  ['settings', 'value'], ['receipt_ai_usage', 'model_id'], ['security_events', 'client'], ['security_alerts', 'window_end'],
 ];
-const INT4_TARGETS = [['trips', 'revision'], ['trips', 'people_count'], ['trip_ledgers', 'revision']];
+const INT4_TARGETS = [['trips', 'revision'], ['trips', 'people_count'], ['trip_ledgers', 'revision'], ['receipt_ai_usage', 'prompt_tokens'], ['security_alerts', 'count']];
 const CONSTRAINT_TARGETS = [
   { table: 'users', column: 'username', kind: 'duplicate', code: '23505' },
   { table: 'users', column: 'role', kind: 'text', value: 'root', code: '23514' },
-  { table: 'trips', column: 'cover_kind', kind: 'text', value: 'beach', code: '23514' },
+  { table: 'trips', column: 'cover_kind', kind: 'text', value: 'ocean', code: '23514' },
   { table: 'trips', column: 'status', kind: 'text', value: 'archived', code: '23514' },
   { table: 'trip_ledgers', column: 'revision', kind: 'int', value: 0, code: '23514' },
   { table: 'sessions', column: 'user_id', kind: 'text', value: 'ghost', code: '23503' },
   { table: 'invites', column: 'trip_id', kind: 'text', value: 'ghost', code: '23503' },
   { table: 'trip_ledgers', column: 'updated_by', kind: 'text', value: 'ghost', code: '23503' },
+  { table: 'invites', column: 'used_by', kind: 'text', value: 'ghost', code: '23503' },
+  { table: 'receipt_ai_usage', column: 'user_id', kind: 'text', value: 'ghost', code: '23503' },
+  { table: 'receipt_ai_usage', column: 'outcome', kind: 'text', value: 'bogus', code: '23514' },
+  { table: 'security_events', column: 'reason', kind: 'text', value: 'bogus', code: '23514' },
+  { table: 'security_alerts', column: 'kind', kind: 'text', value: 'bogus', code: '23514' },
 ];
-const LEAF_TABLES = ['sessions', 'trip_members', 'invites', 'trip_deletions', 'audit', 'trip_ledgers'];
+const LEAF_TABLES = ['sessions', 'trip_members', 'invites', 'trip_deletions', 'audit', 'trip_ledgers', 'settings', 'receipt_ai_usage', 'security_events', 'security_alerts'];
 
 const scenarioArb = fc.oneof(
   fc.record({ kind: fc.constant('nonEmpty'), table: fc.constantFrom(...APP_TABLES) }),
@@ -152,8 +168,8 @@ const pickIndex = (rows, pos) => rows.length - 1 - (pos % rows.length);
 /** 依外鍵鏈在目標寫入一筆資料列（以及必要的父資料列）。 */
 async function preInsert(sql, table, marker) {
   const u = `${marker}:pre-u`, t = `${marker}:pre-t`;
-  const needsUser = table !== 'audit';
-  const needsTrip = !['users', 'sessions', 'audit'].includes(table);
+  const needsUser = !['audit', 'settings', 'security_events', 'security_alerts'].includes(table);
+  const needsTrip = !['users', 'sessions', 'audit', 'settings', 'receipt_ai_usage', 'security_events', 'security_alerts'].includes(table);
   if (needsUser) await sql`INSERT INTO users (id, username, display_name, role, password_hash, created_at) VALUES (${u}, ${u}, ${u}, 'member', ${u}, 1)`;
   if (needsTrip) {
     await sql`INSERT INTO trips (id, owner_id, title, destination, start_date, end_date, description, note, cover_kind, status, revision, people_count, state_json, created_at, updated_at)
@@ -166,6 +182,10 @@ async function preInsert(sql, table, marker) {
     case 'trip_deletions': await sql`INSERT INTO trip_deletions (trip_id, deleted_by, deleted_at) VALUES (${t}, ${u}, 1)`; break;
     case 'audit': await sql`INSERT INTO audit (at, actor, action, target) VALUES (1, ${marker}, 'pre', ${marker})`; break;
     case 'trip_ledgers': await sql`INSERT INTO trip_ledgers (trip_id, revision, ledger_json, requests_json, updated_by, updated_at) VALUES (${t}, 1, '{}', '[]', ${u}, 1)`; break;
+    case 'settings': await sql`INSERT INTO settings (key, value, updated_at, updated_by) VALUES (${marker}, 'all', 1, 'pre')`; break;
+    case 'receipt_ai_usage': await sql`INSERT INTO receipt_ai_usage (id, at, user_id, trip_id, model_id, outcome) VALUES (${`${marker}:pre-r`}, 1, ${u}, 'x', 'gpt', 'pending')`; break;
+    case 'security_events': await sql`INSERT INTO security_events (at, client, username, reason) VALUES (1, ${marker}, 'pre', 'bad_credentials')`; break;
+    case 'security_alerts': await sql`INSERT INTO security_alerts (id, at, kind, username, client, count, window_start, window_end) VALUES (${`${marker}:pre-a`}, 1, 'global', '(all)', 'c', 20, 0, 1)`; break;
     default: break; // users、trips 已寫入
   }
 }
@@ -179,6 +199,8 @@ async function snapshot(sql) {
   }
   const [seq] = await sql`SELECT last_value::text AS last_value, is_called FROM audit_id_seq`;
   out.auditSequence = { last_value: seq.last_value, is_called: seq.is_called };
+  const [eventSeq] = await sql`SELECT last_value::text AS last_value, is_called FROM security_events_id_seq`;
+  out.securityEventsSequence = { last_value: eventSeq.last_value, is_called: eventSeq.is_called };
   return out;
 }
 
@@ -280,7 +302,7 @@ describe('Property 35: 匯入失敗時目標不變', () => {
           }
 
           if (relaxed) buildRelaxedFixture(source, data);
-          else buildSqliteFixture(source, data);
+          else buildSqliteFixture(source, data, { schema: 'harden' });
 
           const before = await snapshot(db.sql);
           const countsBefore = await countsOf(db.sql);

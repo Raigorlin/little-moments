@@ -4,10 +4,12 @@ import { DISH_TYPES } from './recipes.js';
 export const LEGACY_STORAGE_KEY = 'ggc-local-demo-v1';
 export const STORAGE_KEY = 'ggc-local-demo-v2';
 export const THEMES_KEY = 'ggc-local-theme';
-export const TABS = [ ['schedule','行程表'], ['meals','料理菜單'], ['shopping','採買清單'], ['gear','裝備分工'], ['crew','旅伴與車輛'], ['expenses','分帳記帳'], ['settings','旅行設定'] ];
+export const TABS = [ ['schedule','行程表'], ['meals','料理菜單'], ['shopping','採買清單'], ['gear','裝備分工'], ['expenses','分帳記帳'] ];
+/** The tab key to render: the value itself when it is a remaining tab, otherwise 'schedule'. */
+export function resolveTab(value) { return TABS.some(([key]) => key === value) ? value : 'schedule'; }
 export const COLORS = ['coral', 'blue', 'green', 'yellow', 'lavender', 'peach'];
 export const uid = () => globalThis.crypto?.randomUUID?.() || `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-export const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+export const escape = value => String(value ?? '').replace(/[&<>"'`]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','`':'&#96;'}[char]));
 export const dateLabel = date => new Date(`${date}T12:00:00`).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' });
 export const weekday = date => new Date(`${date}T12:00:00`).toLocaleDateString('zh-TW', { weekday: 'short' });
 export const isoDate = date => date.toISOString().slice(0, 10);
@@ -19,6 +21,15 @@ export function dateRange(start, end) {
   return result;
 }
 export const personName = (state, id) => state.people.find(p => p.id === id)?.name || '待分配';
+export function emptyState(date = new Date()) {
+  const today = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  return {
+    schema: 1, revision: 0, currentUser: 'me', joined: true,
+    trip: {title:'我的露營旅行',destination:'',startDate:today,endDate:today,description:'',note:''},
+    people: [{id:'me',name:'我',color:'coral',role:'旅行召集人'}],
+    activities: [], meals: [], shopping: [], gear: [], vehicles: [], events: [], departed: []
+  };
+}
 export function seed() {
   return {
     schema: 1, revision: 0, currentUser: 'p1', joined: true,
@@ -100,10 +111,10 @@ export function isValidState(value) {
 }
 export function readStorage(storage) {
   let raw, migratedFromLegacy=false;
-  try { raw = storage.getItem(STORAGE_KEY); if(raw===null){raw=storage.getItem(LEGACY_STORAGE_KEY);migratedFromLegacy=raw!==null;} } catch { return {state:seed(),status:'unavailable'}; }
-  if (raw === null) return {state:seed(),status:'empty'};
+  try { raw = storage.getItem(STORAGE_KEY); if(raw===null){raw=storage.getItem(LEGACY_STORAGE_KEY);migratedFromLegacy=raw!==null;} } catch { return {state:emptyState(),status:'unavailable'}; }
+  if (raw === null) return {state:emptyState(),status:'empty'};
   try { const state = JSON.parse(raw); if(isValidState(state)) return {state,status:'ok',migratedFromLegacy}; } catch {}
-  return {state:seed(),status:'invalid',raw};
+  return {state:emptyState(),status:'invalid',raw};
 }
 export function load(storage) { return readStorage(storage).state; }
 export function save(storage, state) {

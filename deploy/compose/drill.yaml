@@ -108,9 +108,11 @@ services:
       CAMPING_ALLOWED_HOSTS: app
       CAMPING_DIST: /app/dist
       CAMPING_MIGRATIONS_DIR: /app/migrations
-      CAMPING_BEDROCK_REGION: ""
-      CAMPING_BEDROCK_MODEL_ID: ""
-      CAMPING_BEDROCK_API_KEY: ""
+      CAMPING_OPENAI_API_KEY: ""
+      CAMPING_OPENAI_API_KEY_FILE: ""
+      CAMPING_OPENAI_MODEL_ID: ""
+      CAMPING_OPENAI_IMAGE_DETAIL: ""
+      CAMPING_OPENAI_MAX_COMPLETION_TOKENS: ""
     depends_on:
       db:
         condition: service_healthy

@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   parseConfig, DEFAULT_BIND_ADDRESS, DEFAULT_PORT, DEFAULT_ALLOWED_HOSTS, DEFAULT_DATABASE_PORT, DEFAULT_DATABASE_SSLMODE,
+  AI_ENV, AI_COST_DEFAULTS,
 } from '../server/config.js';
 import { createReceiptAi } from '../server/receipt-ai.js';
 import { findLeaks } from '../ci/scrub.mjs';
@@ -91,8 +92,8 @@ describe('env-table 結構', () => {
     expect(listed.has('CAMPING_DB')).toBe(false);
   });
 
-  test('App 讀取的其他變數（CAMPING_DIST、CAMPING_MIGRATIONS_DIR、CAMPING_BEDROCK_*）也列在表中', () => {
-    for (const name of ['CAMPING_DIST', 'CAMPING_MIGRATIONS_DIR', 'CAMPING_BEDROCK_REGION', 'CAMPING_BEDROCK_MODEL_ID', 'CAMPING_BEDROCK_API_KEY']) {
+  test('App 讀取的其他變數（CAMPING_DIST、CAMPING_MIGRATIONS_DIR、CAMPING_OPENAI_API_KEY／_FILE）也列在表中', () => {
+    for (const name of ['CAMPING_DIST', 'CAMPING_MIGRATIONS_DIR', 'CAMPING_OPENAI_API_KEY', 'CAMPING_OPENAI_API_KEY_FILE']) {
       expect(rowOf(name)).toBeDefined();
     }
   });
@@ -140,9 +141,11 @@ describe('預設值與 parseConfig 一致（Req 24.2）', () => {
     expect(serveSource).toContain(`process.env.CAMPING_DIST||'${rowOf('CAMPING_DIST').defaultValue}'`);
   });
 
-  test('CAMPING_BEDROCK_* 預設為空且停用', () => {
-    expect(rowOf('CAMPING_BEDROCK_API_KEY').defaultValue).toBe('');
-    expect(createReceiptAi({ env: {} }).status.enabled).toBe(false);
+  test('CAMPING_OPENAI_API_KEY 預設為空，沒有金鑰時停用', () => {
+    expect(rowOf('CAMPING_OPENAI_API_KEY').defaultValue).toBe('');
+    // 指向不存在的金鑰檔，避免讀到開發機上的 .secrets/openai_api_key。
+    const missing = fileURLToPath(new URL('./.no-such-dir/openai_api_key', import.meta.url));
+    expect(createReceiptAi({ env: { CAMPING_OPENAI_API_KEY_FILE: missing } }).status.enabled).toBe(false);
   });
 
   test('必要 Database 變數標示為必填、無預設值，缺少時錯誤指出該變數', () => {
@@ -177,6 +180,31 @@ describe('預設值與 parseConfig 一致（Req 24.2）', () => {
     expect(ok.ok).toBe(true);
     expect(ok.config.setupTokenMode).toBe('generated');
     expect(rowOf('CAMPING_SETUP_TOKEN').behavior).toContain('自動產生');
+  });
+
+  test('註冊政策、收據 AI 政策與 AI_Cost_Config 的預設值與 parseConfig 一致；無效值拒絕啟動且只指出該變數', () => {
+    expect(rowOf('CAMPING_REGISTRATION').defaultValue).toBe(result.config.registrationPolicy);
+    // 收據 AI 政策沒有初始值（null）；未儲存設定時由 server/settings.js 解析為 all。
+    expect(rowOf('CAMPING_RECEIPT_AI_POLICY').defaultValue).toBeNull();
+    expect(result.config.receiptAiPolicySeed).toBeNull();
+    for (const [field, name] of Object.entries(AI_ENV)) {
+      expect({ name, def: rowOf(name).defaultValue }).toEqual({ name, def: String(AI_COST_DEFAULTS[field]) });
+      expect(result.config.aiCost[field]).toBe(AI_COST_DEFAULTS[field]);
+      // 空字串視同未設定（Compose 以 ${VAR:-} 傳入空字串）。
+      expect(parseConfig({ ...minimalEnv(), [name]: '' }).config.aiCost[field]).toBe(AI_COST_DEFAULTS[field]);
+    }
+    const invalid = {
+      CAMPING_REGISTRATION: 'invite-only', CAMPING_RECEIPT_AI_POLICY: 'everyone',
+      [AI_ENV.modelId]: 'not-gpt', [AI_ENV.imageDetail]: 'medium', [AI_ENV.maxCompletionTokens]: '0',
+      [AI_ENV.perUser]: '0', [AI_ENV.daily]: '0', [AI_ENV.monthly]: '0',
+    };
+    for (const [name, value] of Object.entries(invalid)) {
+      const row = rowOf(name);
+      expect({ name, required: row.required }).toEqual({ name, required: '否' });
+      expect(row.behavior).toContain('拒絕啟動');
+      const r = parseConfig({ ...minimalEnv(), [name]: value });
+      expect({ name, errors: r.ok ? [] : r.errors.map(e => e.name) }).toEqual({ name, errors: [name] });
+    }
   });
 });
 

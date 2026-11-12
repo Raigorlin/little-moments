@@ -37,17 +37,18 @@ const bun=process.env.CAMPING_BUN;
 const chromePath=process.env.CHROME_PATH;
 const {chromium}=await import('playwright');
 
-// 子程序的基礎環境：移除任何可能指向真實環境的資料庫與網路設定。
-const STRIP=/^(CAMPING_DATABASE_|CAMPING_DB$|CAMPING_BIND_ADDRESS$|CAMPING_ALLOWED_HOSTS$|CAMPING_TRUSTED_PROXIES$|CAMPING_SETUP_TOKEN$|CAMPING_BEDROCK_|CAMPING_E2E_POOL_)/;
+// 子程序的基礎環境：移除任何可能指向真實環境的資料庫與網路設定、收據 AI 憑證，以及會改變測試預期的應用層政策
+// （註冊政策、收據 AI 政策與用量上限；測試以預設值執行）。
+const STRIP=/^(CAMPING_DATABASE_|CAMPING_DB$|CAMPING_BIND_ADDRESS$|CAMPING_ALLOWED_HOSTS$|CAMPING_TRUSTED_PROXIES$|CAMPING_SETUP_TOKEN$|CAMPING_OPENAI_|CAMPING_REGISTRATION$|CAMPING_RECEIPT_AI_|CAMPING_E2E_POOL_)/;
 // member 帳號池（tests/support/e2e-seed-members.mjs、tests/support/e2e-pool.js）：註冊 API 依用戶端 IP 每小時限 20 次，
 // 而所有 E2E 請求都來自 127.0.0.1，因此預先在拋棄式 DATABASE 建立合成帳號供測試認領登入，不放寬任何限速。
 const POOL_PREFIX='e2e-m';
-const POOL_SIZE=60; // 完整套件（desktop＋mobile）約需 35 個
+const POOL_SIZE=150; // 完整套件（desktop＋mobile，含 security-harden 的邀請、安全頁面與 XSS 測試）約需 80 個
 const poolPassword=`E2E-${randomBytes(18).toString('base64url')}`;
 const baseEnv=Object.fromEntries(Object.entries(process.env).filter(([k])=>!STRIP.test(k)));
-const noAi={CAMPING_BEDROCK_REGION:'',CAMPING_BEDROCK_MODEL_ID:'',CAMPING_BEDROCK_API_KEY:''};
-
 const reports=resolve(root,'reports');
+// 收據 AI 停用：不提供金鑰，金鑰檔指向不存在的路徑（否則 server/receipt-ai.js 會讀取 repository 的 .secrets/openai_api_key）。
+const noAi={CAMPING_OPENAI_API_KEY:'',CAMPING_OPENAI_API_KEY_FILE:resolve(reports,'no-openai-key','openai_api_key')};
 fs.mkdirSync(reports,{recursive:true});
 const serverLog=fs.createWriteStream(resolve(reports,'server.log'),{flags:'w'});
 const logLine=text=>serverLog.write(`[${new Date().toISOString()}] ${text}\n`);

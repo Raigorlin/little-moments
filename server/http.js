@@ -1,13 +1,16 @@
 import {resolve,sep} from 'node:path';
 import {DEFAULT_ALLOWED_HOSTS,hostAllowed,resolveClient} from './config.js';
+import {logRequestError} from './safe-log.js';
+// security-harden：瀏覽器端 OCR 已移除，script-src 不再需要 'wasm-unsafe-eval'；禁止 object 與任何框架嵌入，
+// 並加上 COOP／CORP（Req 10.6：所有回應，包含 421 與 500，都帶這些標頭）。
 export const SECURITY_HEADERS={
- 'Content-Security-Policy':"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'",
- 'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Cache-Control':'no-store','X-Frame-Options':'SAMEORIGIN',
- 'Permissions-Policy':'camera=(), microphone=(), geolocation=()'
+ 'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+ 'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Cache-Control':'no-store','X-Frame-Options':'DENY',
+ 'Permissions-Policy':'camera=(), microphone=(), geolocation=()',
+ 'Cross-Origin-Opener-Policy':'same-origin','Cross-Origin-Resource-Policy':'same-origin'
 };
 export const HEALTH_TIMEOUT_MS=2000;
 const HEALTH_OK={status:'ok',database:'ok'},HEALTH_FAIL={status:'error',database:'unavailable'};
-
 // 以 2 秒逾時呼叫 health()；回傳 false、拋出例外或逾時皆視為失敗（Req 11.6）。
 async function checkHealth(health,timeoutMs){
  if(typeof health!=='function')return false;
@@ -19,11 +22,11 @@ async function checkHealth(health,timeoutMs){
  }catch{return false;}
  finally{clearTimeout(timer);}
 }
-
 /**
  * @param {{root:string, accounts:{handle:Function}, allowedHosts?:string[], health?:()=>any, trustedProxies?:object[], healthTimeoutMs?:number}} options
  * 處理順序：Host 檢查（421）→ GET /healthz → resolveClient 重建有效請求網址 → API → 靜態路由。
  * /healthz 同樣須通過 Host 檢查（設計 Components §2）。
+ * accounts.handle 收到的 info：{ip（有效用戶端 IP）, tcpIp, viaProxy, url（有效請求網址，Origin 比對與 Cookie Secure 依此決定）}。
  */
 export function createHttpHandler({root,accounts,allowedHosts=DEFAULT_ALLOWED_HOSTS,health,trustedProxies=[],healthTimeoutMs=HEALTH_TIMEOUT_MS}){
  root=resolve(root);
@@ -41,6 +44,9 @@ export function createHttpHandler({root,accounts,allowedHosts=DEFAULT_ALLOWED_HO
    // 有效請求網址與用戶端（Req 9.12）：僅 Trusted_Proxies 來源的 X-Forwarded-* 會被採信
    const tcpIp=server?.requestIP?.(req)?.address;
    const client=resolveClient(tcpIp,req.headers,url,trustedProxies);
+   // security-harden 的較嚴格規則：Trusted_Proxies 送來的 X-Forwarded-For 選中的項目不是有效 IP 時拒絕，
+   // 不以代理 IP 充當用戶端（否則所有用戶端共用同一個限速鍵）。
+   if(client.forwardedForInvalid)return new Response('Bad forwarding header',{status:400,headers:SECURITY_HEADERS});
    const api=await accounts.handle(req,{ip:tcpIp===undefined?undefined:client.clientIp,tcpIp,viaProxy:client.viaProxy,url:client.url});
    if(api){for(const [k,v]of Object.entries(SECURITY_HEADERS))api.headers.set(k,v);return api;}
    if(!['GET','HEAD'].includes(req.method))return new Response('Method not allowed',{status:405,headers:SECURITY_HEADERS});
@@ -52,6 +58,10 @@ export function createHttpHandler({root,accounts,allowedHosts=DEFAULT_ALLOWED_HO
    if(!path.startsWith(root+sep))return new Response('Forbidden',{status:403,headers:SECURITY_HEADERS});
    const file=Bun.file(path);if(!await file.exists())return new Response('Not found',{status:404,headers:SECURITY_HEADERS});
    return new Response(req.method==='HEAD'?null:file,{headers:{...SECURITY_HEADERS,'Content-Type':file.type,...(asset&&pathname!='/index.html'?{'Cache-Control':'no-cache'}:{})}});
-  }catch(err){console.error('Request failed:',err?.name||'Error');return Response.json({error:'伺服器暫時無法完成要求。'},{status:500,headers:SECURITY_HEADERS});}
+  }catch(err){
+   // 錯誤日誌只含時間、方法、不含查詢字串的路徑與錯誤名稱（server/safe-log.js），不含錯誤訊息或請求內容。
+   logRequestError({method:req.method,url:req.url,error:err});
+   return Response.json({error:'伺服器暫時無法完成要求。'},{status:500,headers:SECURITY_HEADERS});
+  }
  };
 }

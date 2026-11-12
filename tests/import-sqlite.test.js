@@ -8,6 +8,7 @@ import { createAccountService, hashPassword } from '../server/accounts.js';
 import { importSqlite, parseArgs, EXIT_OK, EXIT_SOURCE_INVALID, EXIT_TARGET_NOT_EMPTY, EXIT_IMPORT_FAILED, EXIT_USAGE } from '../scripts/import-sqlite.mjs';
 import { useTestDatabase, resetTables, serviceDb } from './support/pg.js';
 import { buildSqliteFixture } from './support/sqlite-fixture.js';
+import { tableOrder } from '../server/db/import-plan.js';
 
 const BASE = 'http://127.0.0.1:5181';
 const PASS = 'original password 1';
@@ -55,7 +56,7 @@ describe('importSqlite', () => {
       expect(errors).toEqual([]);
       expect(result.exitCode).toBe(EXIT_OK);
       expect(result.counts.find(c => c.table === 'users')).toEqual({ table: 'users', source: 2, target: 2 });
-      expect(lines.slice(-9)[0]).toBe('table source target');
+      expect(lines.slice(-(tableOrder().length + 1))[0]).toBe('table source target');
       expect(lines).toContain('audit 2 2');
       expect((await readdir(dir)).sort()).toEqual(listing);
     } finally {
@@ -137,6 +138,66 @@ describe('importSqlite', () => {
     const r = await importSqlite({ sourcePath: partial, connect, err: l => errors.push(l) });
     expect(r.exitCode).toBe(EXIT_SOURCE_INVALID);
     expect(r.error).toContain('trip_ledgers');
+  });
+
+  test('an old (pre security-harden) source imports with 0 rows for the 0002 tables and NULL invite columns', async () => {
+    const { data } = await sampleData();
+    const source = join(dir, 'old.sqlite');
+    buildSqliteFixture(source, data, { schema: 'old' });
+    const result = await run(source);
+    expect(errors).toEqual([]);
+    expect(result.exitCode).toBe(EXIT_OK);
+    for (const table of ['settings', 'receipt_ai_usage', 'security_events', 'security_alerts']) {
+      expect(result.counts.find(c => c.table === table)).toEqual({ table, source: 0, target: 0 });
+      expect(lines).toContain(`${table} 0 0`);
+    }
+    expect(result.counts.find(c => c.table === 'invites')).toEqual({ table: 'invites', source: 1, target: 1 });
+    expect(await db.sql`SELECT token_hash, used_at, used_by, id FROM invites`).toEqual([{ token_hash: 'b'.repeat(64), used_at: null, used_by: null, id: null }]);
+  });
+
+  test('a security-harden source imports the 0002 tables, invite columns and the security_events identity', async () => {
+    const { data } = await sampleData();
+    const t0 = 1_762_000_000_000;
+    data.trips[0].cover_kind = 'sunrise';
+    data.invites = [
+      { ...data.invites[0], used_at: t0 + 3, used_by: 'u2', id: 'inv-1' },
+      { token_hash: 'c'.repeat(64), trip_id: 'tr1', created_by: 'u1', created_at: t0, expires_at: t0 + 10, revoked_at: null, used_at: null, used_by: null, id: 'inv-2' },
+    ];
+    data.settings = [{ key: 'receiptAiPolicy', value: 'admins', updated_at: t0, updated_by: 'alice' }];
+    data.receipt_ai_usage = [{ id: 'r1', at: t0, user_id: 'u1', trip_id: 'gone-trip', model_id: 'gpt-x', prompt_tokens: 120, completion_tokens: 30, outcome: 'success' }];
+    data.security_events = [
+      { id: 5, at: t0, client: '203.0.113.9', username: 'alice', reason: 'bad_credentials' },
+      { id: 9, at: t0 + 1, client: '203.0.113.9', username: '(invalid)', reason: 'invalid_input' },
+    ];
+    data.security_alerts = [
+      { id: 'al-1', at: t0, kind: 'username', username: 'alice', client: '203.0.113.9', count: 5, window_start: t0 - 900_000, window_end: t0, acknowledged_at: t0 + 2, acknowledged_by: 'alice' },
+      { id: 'al-2', at: t0, kind: 'global', username: '(all)', client: '203.0.113.9', count: 20, window_start: t0 - 900_000, window_end: t0, acknowledged_at: null, acknowledged_by: null },
+    ];
+    const source = join(dir, 'harden.sqlite');
+    buildSqliteFixture(source, data, { schema: 'harden' });
+    const result = await run(source);
+    expect(errors).toEqual([]);
+    expect(result.exitCode).toBe(EXIT_OK);
+    for (const table of tableOrder()) {
+      const expected = (data[table] ?? []).length;
+      expect(result.counts.find(c => c.table === table)).toEqual({ table, source: expected, target: expected });
+    }
+    expect((await db.sql`SELECT cover_kind FROM trips`)[0].cover_kind).toBe('sunrise');
+    const invites = await db.sql`SELECT id, used_at::text AS used_at, used_by FROM invites ORDER BY id`;
+    expect(invites).toEqual([{ id: 'inv-1', used_at: String(t0 + 3), used_by: 'u2' }, { id: 'inv-2', used_at: null, used_by: null }]);
+    // Imported alerts keep the source (rowid) order in seq, so same-millisecond alerts list deterministically.
+    expect((await db.sql`SELECT id FROM security_alerts ORDER BY seq`).map(r => r.id)).toEqual(['al-1', 'al-2']);
+    // Req 13.10: the security_events identity continues after the largest imported id.
+    const [{ id }] = await db.sql`INSERT INTO security_events (at, client, username, reason) VALUES (1, 'c', 'u', 'invalid_input') RETURNING id`;
+    expect(Number(id)).toBe(10);
+
+    const svc = await createAccountService({ db: serviceDb(db.sql), receiptAiPolicySeed: 'all' });
+    try {
+      // The stored setting wins over the seed.
+      expect(await svc.receiptAiPolicy()).toMatchObject({ value: 'admins', source: 'stored' });
+    } finally {
+      svc.close();
+    }
   });
 
   test('parseArgs', () => {

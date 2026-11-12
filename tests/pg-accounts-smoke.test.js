@@ -35,7 +35,7 @@ test('service needs a Bun.SQL pool', async () => {
 });
 
 test('setup → login → trip → ledger → logout end-to-end on PostgreSQL', async () => {
-  expect(expectStatus(await call('GET', '/api/session'), 200).body).toEqual({ user: null, needsSetup: true, setupTokenRequired: false });
+  expect(expectStatus(await call('GET', '/api/session'), 200).body).toEqual({ user: null, needsSetup: true, setupTokenRequired: false, webSetup: true, registrationOpen: true, inviteRegistration: false });
 
   // 首次設定（交易內重新檢查使用者數）
   const setup = expectStatus(await call('POST', '/api/setup', { body: { username: 'admin-one', displayName: '管理員', password: PASS } }), 200);

@@ -1,10 +1,16 @@
 // 帳號、行程、邀請與帳本 API（資料層：PostgreSQL／Bun.SQL，Requirement 11.1–11.3、11.7）。
 // Schema 由 Migration_Runner（migrations/*.sql）建立；本模組不建立或修改 Schema。
+// security-harden 的功能（邀請連結、註冊政策、收據 AI 政策與用量、安全事件與警示、密碼重設）
+// 使用相同的非同步查詢與寫入交易（withWriteTx：pg_advisory_xact_lock）。
 import { AI_IMAGE_LIMIT, ReceiptAiError, readLimitedBytes, validateAiImage } from './receipt-ai.js';
 import { createHash, randomBytes, randomUUID, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
+import { GENERIC_500, logRequestError } from './safe-log.js';
+import { AI_COST_DEFAULTS, PER_USER_WINDOW_MS, quotaDecision, utcDayStart, utcMonthStart } from './ai-cost.js';
 import { addParticipant, canDepart, dateRange, isValidState, myGear, normalizeParticipantName } from '../src/model.js';
 import { syncMealIngredients } from '../src/ingredients.js';
+import { RECEIPT_AI_KEY, RECEIPT_AI_POLICIES, receiptAiDecision, resolveReceiptAiPolicy } from './settings.js';
+import { createAlertDispatcher, createSecurityEventStore, eventUsername } from './security-events.js';
 import { LEDGER_LIMITS, LedgerError, buildLedger, ledgerView, readLedgerRow, refreshSnapshotNames, requestHash, validateLedgerBody } from './ledger.js';
 import { isLoopbackAddress } from './config.js';
 import { createSetupGuard } from './setup-guard.js';
@@ -21,11 +27,13 @@ const COOKIE = 'ggc_session';
 const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 64 };
 const RESERVED = new Set(['api', 'admin', 'setup', 'login', 'register', 'logout', 'demo', 'assets']);
 const USERNAME = /^[a-z][a-z0-9-]{2,31}$/;
-const COVER_KINDS = ['camp', 'mountain', 'lake', 'night'];
+const COVER_KINDS = ['camp', 'mountain', 'lake', 'night', 'forest', 'beach', 'sunrise'];
 const STATUSES = ['planning', 'completed'];
 const ROLES = ['admin', 'member'];
+const REGISTRATION_POLICIES = ['open', 'closed'];
 const CARD_LIMITS = { title: 100, destination: 100, description: 1000, note: 1000 };
 const MAX_ACTIVE_INVITES = 20;
+const MAX_MEMBER_INVITES = 5;
 const MAX_SESSIONS_PER_USER = 20;
 const MAX_AUDIT = 5000;
 const MAX_CLIENT_EVENTS = 10;
@@ -33,14 +41,16 @@ const LIMITS = {
   loginUser: { max: 5, window: 15 * 60000 },
   loginClient: { max: 30, window: 15 * 60000 },
   register: { max: 20, window: 60 * 60000 },
+  invitePreview: { max: 60, window: 15 * 60000 },
   // 首次管理員設定：與登入相同的每用戶端上限，通過與未通過的請求都計入（Req 9.8）
   setupClient: { max: 30, window: 15 * 60000 }
 };
 
+// `headers` is an optional array of [name, value] pairs sent with the error response (for example Retry-After).
 class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, headers) { super(message); this.status = status; if (headers) this.headers = headers; }
 }
-const fail = (status, message) => { throw new HttpError(status, message); };
+const fail = (status, message, headers) => { throw new HttpError(status, message, headers); };
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const newToken = () => randomBytes(32).toString('hex');
@@ -56,19 +66,30 @@ function json(status, data, extraHeaders) {
 }
 const errorResponse = (status, message, extra) => json(status, { error: message }, extra);
 
+// Media type check only; reads no body. JSON_Route handlers call it before the session check (Req 10.3, 10.4).
+function requireJsonType(request) {
+  const type = (request.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  if (type !== 'application/json') fail(415, '請以 JSON 格式送出資料。');
+}
+
 export async function hashPassword(password) {
   const salt = randomBytes(16);
   const hash = await scrypt(password, salt, SCRYPT.keylen, { N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p });
   return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString('base64')}$${hash.toString('base64')}`;
 }
+// Fails closed: a malformed or impossible stored hash returns false instead of throwing (Req 2.6).
 export async function verifyPassword(password, stored) {
-  const parts = String(stored).split('$');
-  if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
-  const [N, r, p] = parts.slice(1, 4).map(Number);
-  const salt = Buffer.from(parts[4], 'base64'), expected = Buffer.from(parts[5], 'base64');
-  if (![N, r, p].every(Number.isSafeInteger) || !expected.length) return false;
-  const actual = await scrypt(password, salt, expected.length, { N, r, p });
-  return timingSafeEqual(actual, expected);
+  try {
+    const parts = String(stored).split('$');
+    if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
+    const [N, r, p] = parts.slice(1, 4).map(Number);
+    const salt = Buffer.from(parts[4], 'base64'), expected = Buffer.from(parts[5], 'base64');
+    if (![N, r, p].every(Number.isSafeInteger) || !expected.length) return false;
+    const actual = await scrypt(password, salt, expected.length, { N, r, p });
+    return actual.length === expected.length && timingSafeEqual(actual, expected);
+  } catch {
+    return false;
+  }
 }
 
 function validateUsername(value) {
@@ -117,6 +138,8 @@ function validateTripText(trip) {
     if (typeof trip[key] !== 'string') fail(400, '旅行資料格式不正確。');
     trip[key] = trip[key].trim();
     if ([...trip[key]].length > max) fail(400, `旅行欄位 ${key} 最多 ${max} 個字。`);
+    // PostgreSQL TEXT 不能儲存 U+0000；先以 400 拒絕，避免寫入時失敗成 500。
+    if (trip[key].includes('\u0000')) fail(400, `旅行欄位 ${key} 含有不允許的字元。`);
   }
   if (!trip.title) fail(400, '請填寫旅行名稱。');
   for (const key of ['startDate', 'endDate']) if (typeof trip[key] !== 'string') fail(400, '請填寫旅行日期。');
@@ -198,6 +221,18 @@ class RateLimiter {
     entry.count++;
   }
   clear(key) { this.entries.delete(key); }
+  // Whole seconds until the key's window ends, rounded up and at least 1 (Req 4.5).
+  retryAfter(key) {
+    const entry = this.entries.get(key);
+    return entry ? Math.max(1, Math.ceil((entry.reset - this.clock()) / 1000)) : 1;
+  }
+  // True the first time it is called for the key's current window, then false until a new window starts.
+  noteOnce(key) {
+    const entry = this.entries.get(key);
+    if (!entry || entry.reset <= this.clock() || entry.noted) return false;
+    entry.noted = true;
+    return true;
+  }
 }
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -225,22 +260,45 @@ const clientKey = info => (typeof info?.ip === 'string' && info.ip ? info.ip.sli
  *   **連線池由呼叫端擁有**：`service.close()` 只停止服務（之後的請求回應 503），不關閉 `db`；
  *   呼叫端在 `service.close()` 之後自行 `await db.close()`。
  * @param {() => number|Date} [options.now] 測試用時鐘
- * @param {object} [options.receiptAi]
+ * @param {object} [options.receiptAi] server/receipt-ai.js `createReceiptAi` 的回傳值
  * @param {object} [options.setup] server/setup-guard.js 的 guard；未提供時視為 loopback 綁定
- * @returns {Promise<{handle: Function, ping: () => Promise<boolean>, close: () => void}>}
+ * @param {object} [options.aiCost] AI_Cost_Config（config.js `parseConfig` 的 `aiCost`）；預設 AI_COST_DEFAULTS
+ * @param {'open'|'closed'} [options.registrationPolicy] 公開註冊政策；'closed' 時 /api/register 回應 403（邀請註冊不受影響）
+ * @param {'all'|'admins'|'off'|null} [options.receiptAiPolicySeed] 收據 AI 政策的啟動種子；只在 settings 沒有儲存值時使用，從不寫入
+ * @param {{maxEvents?: number, maxAlerts?: number}} [options.securityEventLimits] 測試用：降低安全事件與警示的保留上限
+ * @param {(line: string) => void} [options.alertLog] Security_Alert 的日誌輸出（預設 console.error）
+ * @returns {Promise<{handle: Function, ping: Function, needsSetup: Function, createFirstAdmin: Function,
+ *   resetPassword: Function, receiptAiPolicy: Function, registerAlertNotifier: Function, close: () => void}>}
  */
-export async function createAccountService({ db, now, receiptAi = null, setup = null } = {}) {
+export async function createAccountService({
+  db, now, receiptAi = null, setup = null, aiCost = AI_COST_DEFAULTS, registrationPolicy = 'open', receiptAiPolicySeed = null,
+  securityEventLimits = {}, alertLog = console.error
+} = {}) {
   const sql = db?.sql;
   if (typeof sql !== 'function' || typeof sql.begin !== 'function') throw new TypeError('createAccountService 需要 db.sql（Bun.SQL 連線池）');
-  // 及早確認 Schema 已由 Migration_Runner 建立；只回報結構性問題，不含連線設定。
-  try { await sql`SELECT 1 FROM users LIMIT 0`; } catch (error) {
+  if (!REGISTRATION_POLICIES.includes(registrationPolicy)) throw new TypeError('registrationPolicy 必須是 open 或 closed');
+  if (receiptAiPolicySeed !== null && !RECEIPT_AI_POLICIES.includes(receiptAiPolicySeed)) throw new TypeError('receiptAiPolicySeed 必須是 all、admins、off 或 null');
+  // 及早確認 Schema 已由 Migration_Runner 建立（含 0002 的資料表）；只回報結構性問題，不含連線設定。
+  try {
+    await sql`SELECT 1 FROM users LIMIT 0`;
+    await sql`SELECT 1 FROM settings LIMIT 0`;
+  } catch (error) {
     throw new Error(`Database 無法使用或尚未套用遷移（${error?.code || error?.name || 'ERROR'}）`);
   }
   // 未提供 setup guard 時視為 loopback 綁定：Setup_Token 停用，只有 loopback 用戶端能完成首次設定。
   const setupGuard = setup || createSetupGuard({ bindAddress: '127.0.0.1' });
+  // Only an explicit 'closed' locks public registration (Req 10.4); invite registration stays available.
+  const registrationOpen = registrationPolicy !== 'closed';
   const clock = () => { const value = now ? now() : Date.now(); return value instanceof Date ? value.getTime() : Number(value); };
   const iso = () => new Date(clock()).toISOString();
   const limiter = new RateLimiter(clock);
+  // Every Security_Alert goes through this one dispatcher (Req 23.16). securityEventLimits lets tests lower the caps.
+  const securityEvents = createSecurityEventStore(sql, clock, {
+    ...(Number.isSafeInteger(securityEventLimits?.maxEvents) ? { maxEvents: securityEventLimits.maxEvents } : {}),
+    ...(Number.isSafeInteger(securityEventLimits?.maxAlerts) ? { maxAlerts: securityEventLimits.maxAlerts } : {})
+  });
+  const alertDispatcher = createAlertDispatcher({ store: securityEvents, log: alertLog });
+  securityEvents.attachDispatcher(alertDispatcher);
   const aiActive = new Map();
   let closed = false, dummyHash;
   // 每個寫入交易：BEGIN → 全域 advisory lock（等同 SQLite BEGIN IMMEDIATE）→ fn(t) → COMMIT；例外即 ROLLBACK（Req 11.3）。
@@ -249,6 +307,45 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
   const publicUser = u => ({ id: u.id, username: u.username, displayName: u.display_name, role: u.role });
   const audit = async (e, actor, action, target) => { await q.insertAudit(e, clock(), actor, action, target); await q.trimAudit(e, MAX_AUDIT); };
   const needsSetup = async (e = sql) => (await q.userCount(e)) === 0;
+
+  // Read on every call so an admin change applies to the next request without a restart (Req 11.8).
+  // The seed is a read-time fallback only and is never written (Req 11.5-11.7, 11.12).
+  async function receiptAiPolicy(e = sql) {
+    const row = await q.settingByKey(e, RECEIPT_AI_KEY);
+    const { value, source } = resolveReceiptAiPolicy(row?.value ?? null, receiptAiPolicySeed ?? null);
+    return { value, source, updatedAt: row ? new Date(row.updated_at).toISOString() : null, updatedBy: row?.updated_by ?? null };
+  }
+  const settingsBody = async () => ({ receiptAiPolicy: { ...(await receiptAiPolicy()), options: RECEIPT_AI_POLICIES } });
+
+  // Shared by POST /api/setup and the create-admin CLI (Req 8.5, 8.13). The write transaction re-checks the
+  // user count under the advisory lock, so a concurrent creation gets 409 (Req 8.14, 9.11).
+  // The password is only hashed; it is never logged or written to the audit log.
+  async function createFirstAdmin(input, { auditAction = 'setup' } = {}) {
+    const { username: rawUsername, displayName: rawDisplayName, password } = input ?? {};
+    const username = validateUsername(rawUsername), displayName = validateDisplayName(rawDisplayName);
+    const hash = await hashPassword(validatePassword(password));
+    return tx(async t => {
+      if ((await q.userCount(t)) !== 0) fail(409, '管理員已設定完成。');
+      const id = randomUUID();
+      await q.insertUser(t, id, username, displayName, 'admin', hash, clock());
+      await audit(t, username, auditAction, `user:${username}`);
+      return q.userById(t, id);
+    });
+  }
+
+  // Local password reset for the reset-password CLI: replaces the hash and ends every session of the account.
+  async function resetPassword(username, password) {
+    const validUsername = validateUsername(username);
+    const hash = await hashPassword(validatePassword(password));
+    return tx(async t => {
+      const user = await q.userByName(t, validUsername);
+      if (!user || user.deleted_at !== null) fail(404, '找不到這個帳號。');
+      await q.updatePassword(t, hash, user.id);
+      await q.deleteUserSessions(t, user.id);
+      await audit(t, 'local-cli', 'password.reset.cli', `user:${validUsername}`);
+      return validUsername;
+    });
+  }
 
   function sessionToken(request) {
     for (const part of (request.headers.get('cookie') || '').split(';')) {
@@ -272,19 +369,58 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
     return user;
   };
 
-  async function startSession(request, url, user) {
+  async function startSession(request, url, user, extra = {}) {
     const previous = sessionToken(request);
     if (previous) await q.deleteSession(sql, sha256(previous));
     const token = newToken(), at = clock(), tokenHash = sha256(token);
     await q.deleteExpiredSessions(sql, at);
     await q.insertSession(sql, tokenHash, user.id, at, at + SESSION_TTL);
     await q.trimSessions(sql, user.id, tokenHash, MAX_SESSIONS_PER_USER);
-    return json(200, { user: publicUser(user), needsSetup: false }, [['Set-Cookie', cookieHeader(url, token, SESSION_TTL / 1000)]]);
+    return json(200, { user: publicUser(user), needsSetup: false, ...extra }, [['Set-Cookie', cookieHeader(url, token, SESSION_TTL / 1000)]]);
+  }
+
+  // Rate-limit refusal with Retry-After set to the longest remaining window of the blocked keys (Req 4.5).
+  const limited = (keys, message) => fail(429, message, [['Retry-After', String(Math.max(...keys.map(k => limiter.retryAfter(k))))]]);
+
+  // Persistent receipt AI quota (Req 18.3, 18.4, 18.9). The count check and the `pending` row insert run in
+  // one write transaction under the advisory lock, so they are atomic across App_Server processes. A crash
+  // leaves a `pending` row that still counts, which errs toward lower spending.
+  const AI_UNAVAILABLE = 'AI 辨識服務暫時無法使用，請稍後再試。';
+  const USAGE_RETENTION = 400 * DAY;
+  async function reserveAiCall(userId, tripId) {
+    try {
+      return await tx(async t => {
+        const at = clock();
+        const userTimes = await q.usageUserTimes(t, userId, at - PER_USER_WINDOW_MS);
+        const dayCount = await q.usageCountSince(t, utcDayStart(at));
+        const monthCount = await q.usageCountSince(t, utcMonthStart(at));
+        const decision = quotaDecision({ now: at, userTimes, dayCount, monthCount, config: aiCost });
+        if (!decision.ok) fail(429, 'AI 辨識次數已達上限，請稍後再試。', [['Retry-After', String(decision.retryAfter)]]);
+        const id = randomUUID();
+        await q.insertUsage(t, id, at, userId, tripId, aiCost.modelId);
+        await q.trimUsage(t, at - USAGE_RETENTION);
+        return id;
+      });
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      fail(503, AI_UNAVAILABLE);
+    }
+  }
+  // Settles the reserved row. A failed update is logged and does not change the response, because the call happened.
+  async function settleAiCall(id, outcome, usage, request, url) {
+    if (closed) return;
+    const tokens = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
+    try { await q.settleUsage(sql, outcome, tokens(usage?.promptTokens), tokens(usage?.completionTokens), id); }
+    catch (error) { logRequestError({ method: request.method, url, error }); }
+  }
+  const isAiTimeout = error => (error instanceof ReceiptAiError && error.status === 504) || error?.name === 'AbortError' || error?.name === 'TimeoutError';
+  async function usagePeriod(start) {
+    const row = await q.usageTotalsSince(sql, start);
+    return { start: new Date(start).toISOString(), requests: row.requests, promptTokens: row.prompt, completionTokens: row.completion };
   }
 
   async function readJson(request) {
-    const type = (request.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-    if (type !== 'application/json') fail(415, '請以 JSON 格式送出資料。');
+    requireJsonType(request);
     const declared = Number(request.headers.get('content-length'));
     if (Number.isFinite(declared) && declared > BODY_LIMIT) fail(413, '資料太大，上限為 1 MB。');
     const chunks = [];
@@ -307,7 +443,7 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
 
   const capabilities = (row, user, isMember) => {
     const manage = row.owner_id === user.id || user.role === 'admin';
-    return { canEdit: manage || isMember, canDelete: manage, canInvite: manage, canManage: manage };
+    return { canEdit: manage || isMember, canDelete: manage, canInvite: manage || isMember, canManage: manage };
   };
   async function tripAccess(e, user, tripId) {
     const row = ID.test(tripId) ? await q.tripById(e, tripId) : null;
@@ -317,7 +453,8 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
     if (!caps.canEdit) fail(404, '找不到這趟旅行。');
     return { row, personId, ...caps };
   }
-  const requireManager = access => { if (!access.canManage) fail(403, '只有主辦人或管理員可以邀請旅伴。'); return access; };
+  // tripAccess already 404s for accounts outside the trip; this keeps the Inviter rule explicit (Req 16.3).
+  const requireInviter = access => { if (!access.canInvite) fail(404, '找不到這趟旅行。'); return access; };
   function requireRevision(access, revision) {
     if (!Number.isSafeInteger(revision)) fail(400, '缺少版本號 revision。');
     if (revision !== access.row.revision) fail(409, '旅行已被其他人更新，請重新載入後再修改。');
@@ -441,14 +578,37 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
       if (!autoPruned) fail(403, DENY_REMOVAL);
     }
   }
-  async function inviteTrip(e, token) {
-    const invite = TOKEN.test(token) ? await q.inviteByHash(e, sha256(token), clock()) : null;
+  // Returns { invite, row } for an unexpired, unrevoked token whose creator is still an Inviter and whose
+  // trip is live. Used tokens are returned too; callers check invite.used_at.
+  async function resolveInvite(e, token) {
+    const invite = TOKEN.test(token) ? await q.inviteForUse(e, sha256(token), clock()) : null;
     const row = invite ? await q.tripById(e, invite.trip_id) : null;
     if (!row) fail(404, '邀請連結無效或已過期。');
-    return row;
+    return { invite, row };
+  }
+  const inTrip = async (e, row, userId) => row.owner_id === userId || !!(await q.membership(e, row.id, userId));
+  // Valid_Invite: resolvable and not yet used.
+  async function usableInvite(e, token) {
+    const found = await resolveInvite(e, token);
+    if (found.invite.used_at !== null) fail(404, '邀請連結無效或已過期。');
+    return found;
+  }
+  // Must run inside tx with the membership insert; the used_at guard makes a second consumption fail.
+  async function consumeInTx(t, invite, userId) {
+    if ((await q.consumeInvite(t, clock(), userId, invite.token_hash)) !== 1) fail(404, '邀請連結無效或已過期。');
+  }
+  async function addMemberInTx(t, row, userId, name, role) {
+    let added;
+    try { added = addParticipant(JSON.parse(row.state_json), name, role); } catch (error) {
+      fail(/已在小隊|額滿/.test(error.message) ? 409 : 400, error.message);
+    }
+    await q.insertMember(t, row.id, userId, added.person.id, clock());
+    pushEvent(added.state, `${added.person.name} 加入了小隊`, added.person.name);
+    await persist(t, row, added.state);
   }
 
   async function softDeleteTrip(request, tripId, adminOnly) {
+    requireJsonType(request);
     if (adminOnly) await requireAdmin(request); else await requireUser(request);
     const body = await readJson(request);
     if (typeof body.expectedUserId !== 'string') fail(400, '缺少目前登入帳號 expectedUserId。');
@@ -477,7 +637,11 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
     async getSession(request) {
       const user = await currentUser(request);
       const setupPending = await needsSetup();
-      return json(200, { user: user ? publicUser(user) : null, needsSetup: setupPending, setupTokenRequired: setupPending && setupGuard.required });
+      return json(200, {
+        user: user ? publicUser(user) : null, needsSetup: setupPending, setupTokenRequired: setupPending && setupGuard.required,
+        // webSetup stays true: the web first-admin flow (with Setup_Token off loopback) is the only deployment mode.
+        webSetup: true, registrationOpen, inviteRegistration: !setupPending
+      });
     },
 
     async setup(request, url, info) {
@@ -499,28 +663,25 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
         await audit(sql, 'anonymous', 'setup.denied', `reason:${reason} ip:${client}`);
         fail(403, setupGuard.required ? '首次管理員設定需要有效的設定碼。' : '首次管理員設定只能在本機進行。');
       }
-      // 4. 輸入驗證失敗 → 400，Setup_Token 不被消耗（Req 9.10）
+      // 4. 輸入驗證失敗 → 400／415，Setup_Token 不被消耗（Req 9.10）
       if (bodyError) throw bodyError;
-      const username = validateUsername(body.username), displayName = validateDisplayName(body.displayName);
-      const hash = await hashPassword(validatePassword(body.password));
       // 5. 交易內再次檢查使用者數，並行請求只會建立一個管理員（Req 9.11）
-      const user = await tx(async t => {
-        if ((await q.userCount(t)) !== 0) fail(409, '管理員已設定完成。');
-        const id = randomUUID();
-        await q.insertUser(t, id, username, displayName, 'admin', hash, clock());
-        await audit(t, username, 'setup', `user:${username}`);
-        return q.userById(t, id);
-      });
+      const user = await createFirstAdmin(body);
       // 6. Setup_Token 失效（Req 9.5）
       setupGuard.consume();
       return startSession(request, url, user);
     },
 
     async register(request, url, info) {
+      // Checked before the limiter and before the body, so a closed site neither reads input nor spends the bucket.
+      if (!registrationOpen) fail(403, '目前不開放公開註冊，請使用旅行邀請連結建立帳號。');
       const key = `register:${clientKey(info)}`;
-      if (limiter.blocked(key, LIMITS.register)) fail(429, '註冊嘗試太多次，請稍後再試。');
+      if (limiter.blocked(key, LIMITS.register)) limited([key], '註冊嘗試太多次，請稍後再試。');
       limiter.hit(key, LIMITS.register);
+      // needsSetup stays ahead of the 415: the register-bucket property expects 409 for a
+      // body-less request before the first admin exists. No session can exist in that state.
       if (await needsSetup()) fail(409, '請先完成管理員設定。');
+      requireJsonType(request);
       const body = await readJson(request);
       const username = validateUsername(body.username), displayName = validateDisplayName(body.displayName);
       validatePassword(body.password);
@@ -536,19 +697,45 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
       return startSession(request, url, user);
     },
 
+    // Every exit that starts no Session records exactly one Failed_Login_Event (Req 23.1), except that
+    // rate_limited is recorded once per blocked key per window (Req 23.5). The password never reaches record().
     async login(request, url, info) {
-      const body = await readJson(request);
-      if (typeof body.username !== 'string' || typeof body.password !== 'string') fail(400, '請輸入帳號與密碼。');
+      const client = clientKey(info);
+      const record = async (reason, rawUsername) => {
+        try {
+          await securityEvents.recordFailedLogin({ at: clock(), client, username: eventUsername(rawUsername), reason });
+        } catch (error) {
+          // A failed write keeps the login response unchanged (Req 23.15); only the error name is logged.
+          logRequestError({ method: request.method, url, error });
+        }
+      };
+      let body;
+      try { body = await readJson(request); } catch (error) {
+        if (error instanceof HttpError) await record('invalid_input', null);
+        throw error;
+      }
+      if (typeof body?.username !== 'string' || typeof body?.password !== 'string') {
+        await record('invalid_input', body?.username);
+        fail(400, '請輸入帳號與密碼。');
+      }
       const username = body.username.trim().toLowerCase().slice(0, 64);
-      const userKey = `login:user:${username}`, clientLimitKey = `login:client:${clientKey(info)}`;
-      if (limiter.blocked(userKey, LIMITS.loginUser) || limiter.blocked(clientLimitKey, LIMITS.loginClient)) fail(429, '登入失敗次數太多，請 15 分鐘後再試。');
-      const user = await q.userByName(sql, username);
+      const userKey = `login:user:${username}`, clientLimitKey = `login:client:${client}`;
+      const blockedKeys = [[userKey, LIMITS.loginUser], [clientLimitKey, LIMITS.loginClient]].filter(([k, l]) => limiter.blocked(k, l)).map(([k]) => k);
+      if (blockedKeys.length) {
+        // map, not some: every blocked key is marked noted in this window, so each key records at most once.
+        if (blockedKeys.map(k => limiter.noteOnce(k)).includes(true)) await record('rate_limited', body.username);
+        limited(blockedKeys, '登入失敗次數太多，請 15 分鐘後再試。');
+      }
+      // Every stored username matches USERNAME, so anything else (including U+0000, which PostgreSQL TEXT
+      // cannot hold) is an unknown account without a query; the dummy hash below keeps the timing the same.
+      const user = USERNAME.test(username) ? await q.userByName(sql, username) : null;
       const password = body.password.length <= 1024 ? body.password : '';
       dummyHash ||= await hashPassword(newToken());
       const ok = await verifyPassword(password, user?.password_hash || dummyHash);
       if (!ok || !user || user.deleted_at !== null || !password) {
         limiter.hit(userKey, LIMITS.loginUser);
         limiter.hit(clientLimitKey, LIMITS.loginClient);
+        await record(user && user.deleted_at !== null && ok && password ? 'deleted_account' : 'bad_credentials', body.username);
         fail(401, '帳號或密碼不正確。');
       }
       limiter.clear(userKey);
@@ -571,6 +758,7 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
     },
 
     async createTrip(request) {
+      requireJsonType(request);
       const user = await requireUser(request);
       const body = await readJson(request);
       const legacy = body.legacyState !== undefined;
@@ -606,6 +794,7 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
     },
 
     async putTrip(request, url, info, [tripId]) {
+      requireJsonType(request);
       let user = await requireUser(request);
       const body = await readJson(request);
       await tx(async t => {
@@ -644,6 +833,7 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
     },
 
     async patchTrip(request, url, info, [tripId]) {
+      requireJsonType(request);
       let user = await requireUser(request);
       const body = await readJson(request);
       await tx(async t => {
@@ -661,6 +851,7 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
     },
 
     async checkTrip(request, url, info, [tripId]) {
+      requireJsonType(request);
       let user = await requireUser(request);
       const body = await readJson(request);
       if (!['shopping', 'gear', 'depart'].includes(body.kind) || typeof body.checked !== 'boolean') fail(400, '勾選資料不正確。');
@@ -703,45 +894,116 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
     },
 
     async createInvite(request, url, info, [tripId]) {
+      requireJsonType(request);
       let user = await requireUser(request);
       const body = await readJson(request);
-      const token = newToken(), at = clock(), expiresAt = at + INVITE_TTL;
+      const token = newToken(), id = randomUUID(), at = clock(), expiresAt = at + INVITE_TTL;
       await tx(async t => {
         user = await requireExpectedUser(request, body.expectedUserId, t);
-        requireManager(await tripAccess(t, user, tripId));
+        const access = requireInviter(await tripAccess(t, user, tripId));
         if ((await q.activeInvites(t, tripId, at)) >= MAX_ACTIVE_INVITES) fail(409, `每趟旅行最多 ${MAX_ACTIVE_INVITES} 個有效邀請連結。`);
-        await q.insertInvite(t, sha256(token), tripId, user.id, at, expiresAt);
+        if (!access.canManage && (await q.activeInvitesByUser(t, tripId, user.id, at)) >= MAX_MEMBER_INVITES) {
+          fail(409, `每位旅伴在每趟旅行最多 ${MAX_MEMBER_INVITES} 個有效邀請連結。`);
+        }
+        await q.insertInvite(t, id, sha256(token), tripId, user.id, at, expiresAt);
         await audit(t, user.username, 'invite.create', `trip:${tripId}`);
       });
-      return json(201, { token, urlPath: `/invite/${token}`, expiresAt: new Date(expiresAt).toISOString() });
+      return json(201, { id, token, urlPath: `/invite/${token}`, expiresAt: new Date(expiresAt).toISOString() });
+    },
+
+    // Invite_List (Req 19.1–19.7): managers see every Active_Invite, members only their own.
+    async listInvites(request, url, info, [tripId]) {
+      const user = await requireUser(request);
+      const access = requireInviter(await tripAccess(sql, user, tripId));
+      const at = clock();
+      const rows = access.canManage ? await q.listTripInvites(sql, tripId, at) : await q.listTripInvitesBy(sql, tripId, at, user.id);
+      return json(200, { invites: rows.map(r => ({
+        id: r.id, creatorName: r.creator_name,
+        createdAt: new Date(r.created_at).toISOString(), expiresAt: new Date(r.expires_at).toISOString()
+      })) });
     },
 
     async getInvite(request, url, info, [token]) {
       const user = await requireUser(request);
-      const row = await inviteTrip(sql, token);
-      const alreadyMember = row.owner_id === user.id || !!(await q.membership(sql, row.id, user.id));
+      const { invite, row } = await resolveInvite(sql, token);
+      const alreadyMember = await inTrip(sql, row, user.id);
+      if (!alreadyMember && invite.used_at !== null) fail(404, '邀請連結無效或已過期。');
       return json(200, { title: row.title, destination: row.destination, startDate: row.start_date, endDate: row.end_date, alreadyMember });
     },
 
+    // Signed-out preview (Req 15): rate-limited before the lookup, no session read, no writes.
+    async invitePreview(request, url, info, [token]) {
+      const key = `invite-preview:${clientKey(info)}`;
+      if (limiter.blocked(key, LIMITS.invitePreview)) limited([key], '查看邀請的次數太多，請稍後再試。');
+      limiter.hit(key, LIMITS.invitePreview);
+      const { invite, row } = await usableInvite(sql, token);
+      return json(200, { title: row.title, destination: row.destination, startDate: row.start_date, endDate: row.end_date, inviterName: invite.inviter_name });
+    },
+
+    // Per-link revoke by (tripId, inviteId) only (Req 18).
+    async revokeInvite(request, url, info, [tripId, inviteId]) {
+      requireJsonType(request);
+      let user = await requireUser(request);
+      const body = await readJson(request);
+      await tx(async t => {
+        user = await requireExpectedUser(request, body.expectedUserId, t);
+        const access = requireInviter(await tripAccess(t, user, tripId));
+        const invite = ID.test(inviteId) ? await q.activeInviteById(t, inviteId, tripId, clock()) : null;
+        if (!invite) fail(404, '邀請連結無效或已過期。');
+        if (invite.created_by !== user.id && !access.canManage) fail(403, '只有建立連結的人、主辦人或管理員可以撤銷邀請。');
+        await q.revokeInviteById(t, clock(), inviteId, tripId);
+        await audit(t, user.username, 'invite.revoke', `trip:${tripId}`);
+      });
+      return json(200, { revoked: true });
+    },
+
     async joinInvite(request, url, info, [token]) {
+      requireJsonType(request);
       let user = await requireUser(request);
       const body = await readJson(request);
       if (typeof body.name !== 'string' || (body.role !== undefined && typeof body.role !== 'string')) fail(400, '請填寫名字或暱稱。');
       const tripId = await tx(async t => {
         user = await requireUser(request, t);
-        const row = await inviteTrip(t, token);
-        if (await q.membership(t, row.id, user.id)) return row.id;
-        let added;
-        try { added = addParticipant(JSON.parse(row.state_json), body.name, body.role ?? ''); } catch (error) {
-          fail(/已在小隊|額滿/.test(error.message) ? 409 : 400, error.message);
-        }
-        await q.insertMember(t, row.id, user.id, added.person.id, clock());
-        pushEvent(added.state, `${added.person.name} 加入了小隊`, added.person.name);
-        await persist(t, row, added.state);
+        const { invite, row } = await resolveInvite(t, token);
+        if (await inTrip(t, row, user.id)) return row.id;
+        if (invite.used_at !== null) fail(404, '邀請連結無效或已過期。');
+        await addMemberInTx(t, row, user.id, body.name, body.role ?? '');
+        await consumeInTx(t, invite, user.id);
         await audit(t, user.username, 'invite.join', `trip:${row.id}`);
         return row.id;
       });
       return json(200, { tripId });
+    },
+
+    // Signed-out account creation that joins the invite's trip in one transaction (Req 14).
+    // Shares the register bucket; no Registration_Policy check, so it works when public sign-up is closed.
+    async inviteRegister(request, url, info, [token]) {
+      const key = `register:${clientKey(info)}`;
+      if (limiter.blocked(key, LIMITS.register)) limited([key], '註冊嘗試太多次，請稍後再試。');
+      limiter.hit(key, LIMITS.register);
+      requireJsonType(request);
+      if (await needsSetup()) fail(409, '請先完成管理員設定。');
+      const body = await readJson(request);
+      const username = validateUsername(body.username), displayName = validateDisplayName(body.displayName);
+      validatePassword(body.password);
+      const name = body.name ?? displayName, role = body.role ?? '';
+      if (typeof name !== 'string' || typeof role !== 'string') fail(400, '請填寫名字或暱稱。');
+      await usableInvite(sql, token); // cheap 404 before the expensive hash
+      if (await q.userByName(sql, username)) fail(409, '這個帳號名稱已被使用。');
+      const hash = await hashPassword(body.password);
+      const { user, tripId } = await tx(async t => {
+        if (await q.userByName(t, username)) fail(409, '這個帳號名稱已被使用。');
+        // Re-check: the invite may have expired, been used, or its trip deleted while hashing.
+        const { invite, row } = await usableInvite(t, token);
+        const id = randomUUID();
+        await q.insertUser(t, id, username, displayName, 'member', hash, clock());
+        await addMemberInTx(t, row, id, name, role);
+        await consumeInTx(t, invite, id);
+        await audit(t, username, 'register.invite', `user:${username}`);
+        await audit(t, username, 'invite.join', `trip:${row.id}`);
+        return { user: await q.userById(t, id), tripId: row.id };
+      });
+      return startSession(request, url, user, { tripId });
     },
 
     async adminUsers(request) {
@@ -750,6 +1012,7 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
     },
 
     async adminPatchUser(request, url, info, [userId]) {
+      requireJsonType(request);
       await requireAdmin(request);
       const body = await readJson(request);
       const user = await tx(async t => {
@@ -765,6 +1028,8 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
           if ((await q.activeAdmins(t)) <= 1) fail(409, '至少需要保留一位管理員。');
         }
         await q.updateUser(t, displayName, role, target.id);
+        // Demotion: revoke links for trips where the account is neither owner nor member (Req 16.9).
+        if (target.role === 'admin' && role === 'member') await q.revokeInvitesWithoutRights(t, clock(), target.id);
         await audit(t, admin.username, 'user.update', `user:${target.username}`);
         return q.userById(t, target.id);
       });
@@ -772,6 +1037,7 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
     },
 
     async adminDeleteUser(request, url, info, [userId]) {
+      requireJsonType(request);
       await requireAdmin(request);
       const body = await readJson(request);
       await tx(async t => {
@@ -785,6 +1051,7 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
         const at = clock();
         await q.softDelete(t, at, target.id);
         await q.deleteUserSessions(t, target.id);
+        // Every invite the account created is revoked, which covers each trip_members row removed below (Req 16.7).
         await q.revokeInvitesBy(t, at, target.id);
         const touched = new Map();
         const load = async tripId => {
@@ -815,26 +1082,38 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
     },
 
     async getReceiptAi(request, url, info, [tripId]) {
-      const access = await ledgerAccess(sql, await requireUser(request), tripId);
+      const user = await requireUser(request), access = await ledgerAccess(sql, user, tripId);
       if (!access.canEdit) fail(403, '需要旅行編輯權限才能辨識收據。');
-      return json(200, receiptAi?.status || { enabled: false, provider: 'Amazon Bedrock', region: '', modelId: '', maxImageBytes: AI_IMAGE_LIMIT });
+      const keyEnabled = receiptAi?.status?.enabled === true;
+      const decision = receiptAiDecision({ policy: (await receiptAiPolicy()).value, role: user.role, canEdit: true, keyEnabled });
+      if (decision === 'allow') return json(200, receiptAi.status);
+      return json(200, { enabled: false, provider: 'OpenAI', modelId: '', maxImageBytes: AI_IMAGE_LIMIT, disabledReason: decision === 'unconfigured' ? 'unconfigured' : 'policy' });
     },
     async recognizeReceiptAi(request, url, info, [tripId]) {
       const expected = request.headers.get('x-camping-user-id');
       if (!expected) { await requireUser(request); fail(400, '缺少預期登入帳號。'); }
-      const authorize = async () => {
+      // The policy is read fresh each time, so a change made while the upload or recognition
+      // is in flight is honored at the next authorize() call (Req 11.2, 11.3, 11.8).
+      const checkPolicy = async user => {
+        const decision = receiptAiDecision({ policy: (await receiptAiPolicy()).value, role: user.role, canEdit: true, keyEnabled: true });
+        if (decision === 'off') fail(503, 'AI 辨識已由管理員關閉。');
+        if (decision === 'admins-only') fail(403, '目前只有管理員可以使用 AI 辨識。');
+      };
+      const authorize = async ({ policy = true } = {}) => {
         const user = await requireExpectedUser(request, expected), access = await ledgerAccess(sql, user, tripId);
         if (!access.canEdit) fail(403, '需要旅行編輯權限才能辨識收據。');
+        if (policy) await checkPolicy(user);
         return user;
       };
-      const user = await authorize();
-      if (request.headers.get('x-receipt-consent') !== 'bedrock-v1') fail(400, '請先同意將這張收據照片送到 Amazon Bedrock。');
-      if (!receiptAi?.status?.enabled) fail(503, 'AI 辨識尚未設定，請改用本機 OCR 或聯絡管理員。');
+      const user = await authorize({ policy: false });
+      if (request.headers.get('x-receipt-consent') !== 'openai-v1') fail(400, '請先同意將這張收據照片送到 OpenAI。');
+      await checkPolicy(user);
+      if (!receiptAi?.status?.enabled) fail(503, 'AI 辨識尚未設定，請聯絡管理員。');
       const type = (request.headers.get('content-type') || '').split(';')[0].toLowerCase();
       if (!['image/jpeg', 'image/png'].includes(type)) fail(415, '請傳送 JPEG 或 PNG 圖片。');
       if (Number(request.headers.get('content-length')) > AI_IMAGE_LIMIT) fail(413, 'AI 圖片超過 3.5 MiB。');
-      const perUser = { max: 10, window: 15 * 60000 }, daily = { max: 100, window: DAY };
-      if (aiActive.has(user.id) || aiActive.size >= 2 || limiter.blocked(`ai:${user.id}`, perUser) || limiter.blocked('ai:global', daily)) fail(429, 'AI 辨識次數或同時執行數已達上限，請稍後再試。');
+      // Concurrency stays in memory (Req 18.8); the per-user, UTC day, and UTC month counts live in the Database.
+      if (aiActive.has(user.id) || aiActive.size >= 2) fail(429, 'AI 辨識次數或同時執行數已達上限，請稍後再試。');
       const controller = new AbortController();
       aiActive.set(user.id, controller);
       const signal = AbortSignal.any([request.signal, controller.signal, AbortSignal.timeout(70000)]);
@@ -843,10 +1122,18 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
         validateAiImage(bytes, type);
         await authorize();
         if (signal.aborted) fail(408, '已取消這次辨識。');
-        if (limiter.blocked(`ai:${user.id}`, perUser) || limiter.blocked('ai:global', daily)) fail(429, 'AI 辨識次數已達上限，請稍後再試。');
-        limiter.hit(`ai:${user.id}`, perUser); limiter.hit('ai:global', daily);
-        const result = await receiptAi.recognize(bytes, type, { signal });
+        // Counted only after the policy allows and the image passes, right before the OpenAI call (Req 18.3, 18.12).
+        const reservation = await reserveAiCall(user.id, tripId);
+        let usage = null, result;
+        try {
+          result = await receiptAi.recognize(bytes, type, { signal, onUsage: u => { usage = u; } });
+          await settleAiCall(reservation, 'success', usage, request, url);
+        } catch (error) {
+          await settleAiCall(reservation, isAiTimeout(error) ? 'timeout' : 'error', usage, request, url);
+          throw error;
+        }
         if (closed || signal.aborted) fail(408, '已取消這次辨識。');
+        // PBN re-check; a refusal here keeps the settled usage row because the call was made (Req 11.8, 18.13).
         await authorize();
         return json(200, result);
       } finally { aiActive.delete(user.id); }
@@ -858,6 +1145,7 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
     },
 
     async putLedger(request, url, info, [tripId]) {
+      requireJsonType(request);
       await requireUser(request);
       const body = await readJson(request);
       validateLedgerBody(body);
@@ -890,6 +1178,70 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
     async adminAudit(request) {
       await requireAdmin(request);
       return json(200, { events: (await q.listAudit(sql)).map(e => ({ at: new Date(e.at).toISOString(), actor: e.actor, action: e.action, target: e.target })) });
+    },
+
+    async adminSettings(request) {
+      await requireAdmin(request);
+      return json(200, await settingsBody());
+    },
+
+    // Receipt AI usage for the current UTC day and month plus the configured limits (Req 18.6).
+    // `pending` rows count as requests with their recorded tokens (0).
+    async adminReceiptAiUsage(request) {
+      await requireAdmin(request);
+      const at = clock();
+      let day, month;
+      try { day = await usagePeriod(utcDayStart(at)); month = await usagePeriod(utcMonthStart(at)); }
+      catch { fail(503, AI_UNAVAILABLE); }
+      return json(200, {
+        day, month,
+        limits: { perUser: aiCost.perUser, perUserWindowMinutes: PER_USER_WINDOW_MS / 60000, daily: aiCost.daily, monthly: aiCost.monthly },
+        model: { id: aiCost.modelId, imageDetail: aiCost.imageDetail, maxCompletionTokens: aiCost.maxCompletionTokens }
+      });
+    },
+
+    // Unacknowledged Security_Alerts newest first and the 200 most recent Failed_Login_Events (Req 23.8, 23.11, 23.12).
+    async adminSecurity(request) {
+      await requireAdmin(request);
+      const isoAt = ms => new Date(ms).toISOString();
+      const [unacknowledged, alerts, events] = [await securityEvents.unacknowledgedCount(), await securityEvents.listAlerts(), await securityEvents.listEvents()];
+      return json(200, {
+        unacknowledged,
+        alerts: alerts.map(a => ({
+          id: a.id, at: isoAt(a.at), kind: a.kind, username: a.username, client: a.client, count: a.count,
+          windowStart: isoAt(a.windowStart), windowEnd: isoAt(a.windowEnd)
+        })),
+        events: events.map(e => ({ at: isoAt(e.at), username: e.username, client: e.client, reason: e.reason }))
+      });
+    },
+
+    // The UPDATE only matches an unacknowledged alert, so an unknown, malformed, or repeated ID gets 404
+    // and the rollback leaves no audit row (Req 23.10, 23.14).
+    async adminAcknowledgeAlert(request, url, info, [alertId]) {
+      requireJsonType(request);
+      await requireAdmin(request);
+      await readJson(request);
+      const unacknowledged = await tx(async t => {
+        const admin = await requireAdmin(request, t);
+        if (!(await securityEvents.acknowledge(alertId, admin.username, clock(), t))) fail(404, '找不到這個警示，或已經確認過。');
+        await audit(t, admin.username, 'security.alert.ack', `alert:${alertId}`);
+        return securityEvents.unacknowledgedCount(t);
+      });
+      return json(200, { acknowledged: true, unacknowledged });
+    },
+
+    async adminPatchSettings(request) {
+      requireJsonType(request);
+      await requireAdmin(request);
+      const body = await readJson(request);
+      const value = body?.receiptAiPolicy;
+      if (!RECEIPT_AI_POLICIES.includes(value)) fail(400, '收據 AI 政策必須是 all、admins 或 off。');
+      await tx(async t => {
+        const admin = await requireAdmin(request, t);
+        await q.upsertSetting(t, RECEIPT_AI_KEY, value, clock(), admin.username);
+        await audit(t, admin.username, 'settings.receipt-ai', `receiptAiPolicy:${value}`);
+      });
+      return json(200, await settingsBody());
     }
   };
 
@@ -904,15 +1256,22 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
     [/^\/api\/trips\/([^/]+)\/check$/, { POST: routes.checkTrip }],
     [/^\/api\/trips\/([^/]+)\/ledger$/, { GET: routes.getLedger, PUT: routes.putLedger }],
     [/^\/api\/trips\/([^/]+)\/receipt-ai$/, { GET: routes.getReceiptAi, POST: routes.recognizeReceiptAi }],
-    [/^\/api\/trips\/([^/]+)\/invites$/, { POST: routes.createInvite }],
+    [/^\/api\/trips\/([^/]+)\/invites$/, { GET: routes.listInvites, POST: routes.createInvite }],
+    [/^\/api\/trips\/([^/]+)\/invites\/([^/]+)\/revoke$/, { POST: routes.revokeInvite }],
     [/^\/api\/trips\/([^/]+)\/delete$/, { POST: routes.deleteTrip }],
     [/^\/api\/invites\/([^/]+)$/, { GET: routes.getInvite }],
     [/^\/api\/invites\/([^/]+)\/join$/, { POST: routes.joinInvite }],
+    [/^\/api\/invites\/([^/]+)\/preview$/, { GET: routes.invitePreview }],
+    [/^\/api\/invites\/([^/]+)\/register$/, { POST: routes.inviteRegister }],
     [/^\/api\/admin\/users$/, { GET: routes.adminUsers }],
     [/^\/api\/admin\/users\/([^/]+)$/, { PATCH: routes.adminPatchUser }],
     [/^\/api\/admin\/users\/([^/]+)\/delete$/, { POST: routes.adminDeleteUser }],
     [/^\/api\/admin\/trips\/([^/]+)\/delete$/, { POST: routes.adminDeleteTrip }],
-    [/^\/api\/admin\/audit$/, { GET: routes.adminAudit }]
+    [/^\/api\/admin\/audit$/, { GET: routes.adminAudit }],
+    [/^\/api\/admin\/settings$/, { GET: routes.adminSettings, PATCH: routes.adminPatchSettings }],
+    [/^\/api\/admin\/receipt-ai-usage$/, { GET: routes.adminReceiptAiUsage }],
+    [/^\/api\/admin\/security$/, { GET: routes.adminSecurity }],
+    [/^\/api\/admin\/security\/alerts\/([^/]+)\/acknowledge$/, { POST: routes.adminAcknowledgeAlert }]
   ];
 
   async function handle(request, info = {}) {
@@ -924,21 +1283,26 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
     if (url.pathname !== '/api' && !url.pathname.startsWith('/api/')) return null;
     try {
       if (closed) fail(503, '服務已關閉。');
+      // Every OPTIONS to the API, known path or not, gets 405 with no handler and no cookie (Req 12.3, 12.4).
+      if (request.method === 'OPTIONS') return errorResponse(405, '不支援這個操作。');
       for (const [pattern, methods] of table) {
         const match = url.pathname.match(pattern);
         if (!match) continue;
         const route = methods[request.method];
         if (!route) return errorResponse(405, '不支援這個操作。', [['Allow', Object.keys(methods).join(', ')]]);
         if (request.method !== 'GET' && request.headers.get('origin') !== url.origin) fail(403, '請求來源不被允許。');
+        if (request.method !== 'GET' && request.headers.get('sec-fetch-site') === 'cross-site') fail(403, '不接受跨站請求。');
         let params;
         try { params = match.slice(1).map(decodeURIComponent); } catch { fail(400, '網址格式不正確。'); }
         return await route(request, url, info || {}, params);
       }
       fail(404, '找不到這個 API。');
     } catch (error) {
-      if (error instanceof HttpError || error instanceof LedgerError || error instanceof ReceiptAiError) return errorResponse(error.status, error.message);
+      if (error instanceof HttpError || error instanceof LedgerError || error instanceof ReceiptAiError) return errorResponse(error.status, error.message, error.headers);
       if (error?.name === 'AbortError' || error?.name === 'TimeoutError') return errorResponse(408, '辨識已取消或逾時，不會自動重送。');
-      return errorResponse(500, '伺服器暫時無法處理，請稍後再試。');
+      // Unknown errors: one safe log line (time, method, path, error name) and the fixed generic body (Req 19.1, 19.3).
+      logRequestError({ method: request.method, url, error });
+      return errorResponse(500, GENERIC_500);
     }
   }
 
@@ -949,7 +1313,16 @@ export async function createAccountService({ db, now, receiptAi = null, setup = 
       if (closed) return false;
       try { return typeof db.ping === 'function' ? (await db.ping(ms)) === true : await pingSql(sql, ms); } catch { return false; }
     },
+    needsSetup: () => needsSetup(),
+    createFirstAdmin,
+    resetPassword,
+    // { value, source: 'default'|'seed'|'stored', updatedAt, updatedBy }；serve.mjs 啟動摘要使用。
+    receiptAiPolicy: () => receiptAiPolicy(),
+    // A future notifier (for example a LINE webhook) attaches here without touching alert detection (Req 23.16).
+    registerAlertNotifier(notifier) { alertDispatcher.register(notifier); },
     // 只停止服務並中止進行中的 AI 辨識；連線池由呼叫端關閉（見上方 JSDoc）。可重複呼叫。
     close() { if (!closed) { closed = true; for (const controller of aiActive.values()) controller.abort(); aiActive.clear(); } }
   };
 }
+
+export { HttpError, RateLimiter, validateUsername, validateDisplayName, validatePassword, requireJsonType };

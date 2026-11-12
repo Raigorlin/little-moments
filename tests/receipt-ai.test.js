@@ -7,8 +7,8 @@ import {seed} from '../src/model.js';
 
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a/pkAAAAASUVORK5CYII=','base64');
 const model=()=>({currency:'TWD',store:'測試商店',date:'2026-11-04',total:'150',items:[{title:'鮮奶',quantity:'2',unitPrice:'50',amount:'100',category:'食材／蛋奶',uncertain:false,warning:''},{title:'木炭',quantity:'1',unitPrice:'50',amount:'50',category:'露營耗材',uncertain:false,warning:''}],warnings:[]});
-const envelope=data=>({stopReason:'end_turn',output:{message:{role:'assistant',content:[{text:JSON.stringify(data)}]}}});
-const env={CAMPING_BEDROCK_REGION:'ap-northeast-1',CAMPING_BEDROCK_MODEL_ID:'test.model-v1:0',CAMPING_BEDROCK_API_KEY:'test-only-not-real-api-key'};
+const envelope=data=>({choices:[{finish_reason:'stop',message:{content:JSON.stringify(data)}}]});
+const env={CAMPING_OPENAI_MODEL_ID:'gpt-6-luna',CAMPING_OPENAI_API_KEY:'sk-test-only-not-a-real-openai-api-key'};
 const base='http://localhost:5181';
 
 test('expanded categories preserve old values and local suggestions distinguish fuel and food',()=>{
@@ -38,22 +38,38 @@ test('limited streams reject undeclared oversize payload and cancel',async()=>{
  await expect(readLimitedBytes(new Response('12345'),4)).rejects.toThrow();
  const c=new AbortController();c.abort();await expect(readLimitedBytes(new Response('ok'),4,c.signal)).rejects.toThrow();
 });
-test('unconfigured or injected endpoints never invoke provider or leak key',async()=>{
+test('unconfigured or invalid OpenAI credentials never invoke provider or leak key',async()=>{
  let calls=0;const fetchImpl=()=>{calls++;throw Error('must not fetch');};
- for(const config of [{},{...env,CAMPING_BEDROCK_REGION:'localhost/evil'},{...env,CAMPING_BEDROCK_MODEL_ID:'../model'}]){
- const p=createReceiptAi({env:config,fetchImpl});expect(p.status.enabled).toBe(false);expect(JSON.stringify(p.status)).not.toContain(env.CAMPING_BEDROCK_API_KEY);await expect(p.recognize(png,'image/png')).rejects.toThrow('尚未設定');
+ for(const config of [{CAMPING_OPENAI_API_KEY:'not-an-api-key'},{...env,CAMPING_OPENAI_API_KEY:'not-an-api-key'},{...env,CAMPING_OPENAI_MODEL_ID:'../model'}]){
+ const p=createReceiptAi({env:config,fetchImpl});expect(p.status.enabled).toBe(false);expect(JSON.stringify(p.status)).not.toContain(env.CAMPING_OPENAI_API_KEY);await expect(p.recognize(png,'image/png')).rejects.toThrow('尚未設定');
  }expect(calls).toBe(0);
 });
-test('Bedrock contract sends bounded image JSON to fixed AWS endpoint with no tools/retries',async()=>{
+test('default OpenAI model is GPT-6 Luna',()=>{
+ const p=createReceiptAi({env:{CAMPING_OPENAI_API_KEY:env.CAMPING_OPENAI_API_KEY},fetchImpl:async()=>Response.json(envelope(model()))});
+ expect(p.status.modelId).toBe('gpt-6-luna');
+});
+test('OpenAI contract sends bounded image JSON to the fixed API with no tools or retries',async()=>{
  let calls=0;const p=createReceiptAi({env,fetchImpl:async(url,init)=>{
-  calls++;expect(url).toBe('https://bedrock-runtime.ap-northeast-1.amazonaws.com/model/test.model-v1%3A0/converse');expect(init.redirect).toBe('error');expect(init.headers.Authorization).toBe('Bearer '+env.CAMPING_BEDROCK_API_KEY);
-  const b=JSON.parse(init.body);expect(b.messages[0].content[0].image.source.bytes).toBe(png.toString('base64'));expect(b.toolConfig).toBeUndefined();expect(b.system[0].text).toContain('untrusted');expect(b.inferenceConfig.maxTokens).toBe(8192);
+  calls++;expect(url).toBe('https://api.openai.com/v1/chat/completions');expect(init.redirect).toBe('error');expect(init.headers.Authorization).toBe('Bearer '+env.CAMPING_OPENAI_API_KEY);
+  const b=JSON.parse(init.body);expect(b.model).toBe('gpt-6-luna');expect(b.messages[1].content[1].image_url.url).toBe(`data:image/png;base64,${png.toString('base64')}`);expect(b.tools).toBeUndefined();expect(b.messages[0].content).toContain('untrusted');expect(b.response_format).toEqual({type:'json_object'});expect(b.max_completion_tokens).toBe(6000);expect(b.max_tokens).toBeUndefined();expect(b.temperature).toBeUndefined();
   return Response.json(envelope(model()));
  }});expect((await p.recognize(png,'image/png')).items).toHaveLength(2);expect(calls).toBe(1);
 });
+test('configured cost settings reach the OpenAI request body',async()=>{
+ let body;const p=createReceiptAi({env:{CAMPING_OPENAI_API_KEY:env.CAMPING_OPENAI_API_KEY},cost:{modelId:'gpt-test-mini',imageDetail:'low',maxCompletionTokens:1234},fetchImpl:async(url,init)=>{body=JSON.parse(init.body);return Response.json(envelope(model()));}});
+ expect(p.status.modelId).toBe('gpt-test-mini');await p.recognize(png,'image/png');
+ expect(body.model).toBe('gpt-test-mini');expect(body.messages[1].content[1].image_url.detail).toBe('low');expect(body.max_completion_tokens).toBe(1234);
+});
+test('onUsage receives integer token counts, 0 when absent, even for malformed replies',async()=>{
+ for(const [reply,expected] of [[{...envelope(model()),usage:{prompt_tokens:812,completion_tokens:95}},{promptTokens:812,completionTokens:95}],[envelope(model()),{promptTokens:0,completionTokens:0}],[{choices:[{finish_reason:'length',message:{content:'{}'}}],usage:{prompt_tokens:'7',completion_tokens:3.5}},{promptTokens:0,completionTokens:0}],[{choices:[],usage:{prompt_tokens:40,completion_tokens:0}},{promptTokens:40,completionTokens:0}]]){
+  const seen=[];const p=createReceiptAi({env,fetchImpl:async()=>Response.json(reply)});
+  try{await p.recognize(png,'image/png',{onUsage:u=>seen.push(u)});}catch{}
+  expect(seen).toEqual([expected]);
+ }
+});
 test('provider failures, refusals, truncation, huge output and invalid JSON cannot leak body or credentials',async()=>{
- for(const response of [new Response('SECRET',{status:403}),new Response('bad'),Response.json({...envelope(model()),stopReason:'max_tokens'}),Response.json({stopReason:'end_turn',output:{message:{content:[{toolUse:{}}]}}}),new Response('x'.repeat(270000))]){
- let calls=0;const p=createReceiptAi({env,fetchImpl:async()=>{calls++;return response;}});let error;try{await p.recognize(png,'image/png');}catch(e){error=e;}expect(error).toBeTruthy();expect(error.message).not.toContain('SECRET');expect(error.message).not.toContain(env.CAMPING_BEDROCK_API_KEY);expect(calls).toBe(1);
+ for(const response of [new Response('SECRET',{status:403}),new Response('bad'),Response.json({choices:[{finish_reason:'length',message:{content:'{}'}}]}),Response.json({choices:[{finish_reason:'stop',message:{refusal:'no',content:'{}'}}]}),new Response('x'.repeat(270000))]){
+ let calls=0;const p=createReceiptAi({env,fetchImpl:async()=>{calls++;return response;}});let error;try{await p.recognize(png,'image/png');}catch(e){error=e;}expect(error).toBeTruthy();expect(error.message).not.toContain('SECRET');expect(error.message).not.toContain(env.CAMPING_OPENAI_API_KEY);expect(calls).toBe(1);
  }
 });
 test('provider cancellation/timeout aborts network, does not retry or return late candidates',async()=>{
@@ -69,10 +85,10 @@ async function fixture(receiptAi){
  const call=(path,{method='GET',cookie='',body,headers={},signal}={})=>service.handle(new Request(base+path,{method,headers:{...(cookie?{cookie}:{}),...(method!=='GET'?{Origin:base}:{}),...(body&&!Buffer.isBuffer(body)?{'Content-Type':'application/json'}:{}),...headers},body:body===undefined?undefined:Buffer.isBuffer(body)?body:JSON.stringify(body),signal}));
  const setup=await call('/api/setup',{method:'POST',body:{username:'test-admin',displayName:'測試',password:'Only-Test-Password-2026'}});expect(setup.status).toBe(200);const cookie=setup.headers.get('set-cookie').split(';')[0],{user}=await setup.json();
  const tr=await call('/api/trips',{method:'POST',cookie,body:{legacyState:seed()}});expect(tr.status).toBe(201);const {trip}=await tr.json(),path=`/api/trips/${trip.id}/receipt-ai`;
- const headers={'Content-Type':'image/png','x-camping-user-id':user.id,'x-receipt-consent':'bedrock-v1'};
+ const headers={'Content-Type':'image/png','x-camping-user-id':user.id,'x-receipt-consent':'openai-v1'};
  const send=extra=>call(path,{method:'POST',cookie,body:png,headers,...extra});return {service,call,cookie,user,trip,path,headers,send};
 }
-const provider=(recognize=async()=>normalizeAiReceipt(model()))=>({status:{enabled:true,provider:'Amazon Bedrock',region:'test',modelId:'test',maxImageBytes:AI_IMAGE_LIMIT},recognize});
+const provider=(recognize=async()=>normalizeAiReceipt(model()))=>({status:{enabled:true,provider:'OpenAI',modelId:'gpt-6-luna',maxImageBytes:AI_IMAGE_LIMIT},recognize});
 test('receipt API requires auth, matching session, membership, Origin and explicit per-photo consent',async()=>{
  let n=0;const w=await fixture(provider(async()=>{n++;return normalizeAiReceipt(model());}));try{
   for(const [extra,status] of [[{cookie:''},401],[{headers:{...w.headers,Origin:'http://evil.test'}},403],[{headers:{...w.headers,'x-camping-user-id':'other'}},409],[{headers:{...w.headers,'x-receipt-consent':''}},400],[{headers:{...w.headers,'x-camping-user-id':''}},400],[{headers:{...w.headers,'Content-Type':'text/html'}},415],[{body:Buffer.from('bad')},415],[{headers:{...w.headers,'Content-Length':String(AI_IMAGE_LIMIT+1)}},413]])expect((await w.send(extra)).status).toBe(status);

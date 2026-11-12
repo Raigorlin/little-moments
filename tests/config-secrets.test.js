@@ -2,7 +2,7 @@
 // **Validates: Requirements 8.5, 8.7, 9.3**
 import { describe, expect, test } from 'bun:test';
 import fc from 'fast-check';
-import { parseConfig, redactedSummary, MIN_SETUP_TOKEN_LENGTH } from '../server/config.js';
+import { parseConfig, redactedSummary, policySummary, MIN_SETUP_TOKEN_LENGTH } from '../server/config.js';
 import { createSetupGuard } from '../server/setup-guard.js';
 
 const RUNS = { numRuns: 200 };
@@ -41,7 +41,9 @@ const scenarioArb = fc.record({
   dbUser: maybe(fc.constant('lm_app')),
   dbPort: maybe(fc.constantFrom('5432', '0', 'x')),
   sslmode: sslArb,
-  bedrockKey: maybe(secretArb(8, 40)),
+  // OpenAI 金鑰：任意秘密值或符合 server/receipt-ai.js 格式（sk- 開頭）的值；金鑰檔路徑也視為秘密。
+  openaiKey: maybe(fc.oneof(secretArb(8, 40), secretArb(20, 40).map(v => `sk-${v.replace(/[^A-Za-z0-9_-]/g, '_')}`))),
+  openaiKeyFile: maybe(secretArb(8, 40).map(v => `/run/secrets/${v.replace(/[^A-Za-z0-9_.-]/g, '_')}`)),
 });
 
 function buildEnv(s) {
@@ -57,13 +59,15 @@ function buildEnv(s) {
     CAMPING_DATABASE_PASSWORD: s.dbPassword,
     CAMPING_DATABASE_PORT: s.dbPort,
     CAMPING_DATABASE_SSLMODE: s.sslmode,
-    CAMPING_BEDROCK_API_KEY: s.bedrockKey,
+    CAMPING_OPENAI_API_KEY: s.openaiKey,
+    CAMPING_OPENAI_API_KEY_FILE: s.openaiKeyFile,
   };
   for (const k of Object.keys(env)) if (env[k] === undefined) delete env[k];
   return env;
 }
 
-const secretsOf = s => [s.token, s.dbPassword, s.bedrockKey].filter(v => typeof v === 'string');
+const secretsOf = s => [s.token, s.dbPassword, s.openaiKey, s.openaiKeyFile].filter(v => typeof v === 'string');
+const openaiSecretsOf = s => [s.openaiKey, s.openaiKeyFile].filter(v => typeof v === 'string');
 
 function expectNoSecrets(text, secrets) {
   for (const secret of secrets) expect(text.includes(secret)).toBe(false);
@@ -91,6 +95,9 @@ describe('Property 13: 設定錯誤與啟動訊息不洩漏秘密', () => {
       const { config } = result;
       const summary = redactedSummary(config);
       expectNoSecrets(summary, secrets);
+      expectNoSecrets(policySummary(config), secrets);
+      // OpenAI 金鑰只由 server/receipt-ai.js 讀取，不進入 parseConfig 的結果（含 aiCost）。
+      expectNoSecrets(JSON.stringify(config), openaiSecretsOf(s));
       expect(summary).toContain(`bind=${config.bindAddress}`);
       expect(summary).toContain(`port=${config.port}`);
       expect(summary).toContain(`allowedHosts=${config.allowedHosts.join(',')}`);

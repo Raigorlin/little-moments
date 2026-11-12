@@ -5,7 +5,7 @@
 // 認領後以 POST /api/login 登入（成功登入不計入任何限速），回傳 /api/login 的 user 物件。
 import { openSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
-import { expect } from '@playwright/test';
+import { expect, request as playwrightRequest } from '@playwright/test';
 
 function poolConfig(env = process.env) {
   const dir = env.CAMPING_E2E_POOL_DIR, prefix = env.CAMPING_E2E_POOL_PREFIX, size = Number(env.CAMPING_E2E_POOL_SIZE), password = env.CAMPING_E2E_POOL_PASSWORD;
@@ -26,11 +26,37 @@ export function claimPoolAccount(env = process.env) {
   throw new Error(`E2E 帳號池已用盡（${size} 個）；請調高 scripts/check-accounts.mjs 的 POOL_SIZE`);
 }
 
-/** 以全新的 member 帳號登入 `page` 的 request context（與瀏覽器分頁共用 Cookie）。 */
-export async function poolMember(page, baseUrl) {
+/** scripts/check-accounts.mjs 建立的首次管理員（合成帳號，只存在於拋棄式 E2E DATABASE）。 */
+export const E2E_ADMIN = Object.freeze({ username: 'qa-admin', password: 'Local-Only-Test-Pass-2026' });
+
+/**
+ * 以全新的 member 帳號登入 `requestContext`（APIRequestContext；page.request 與瀏覽器分頁共用 Cookie）。
+ * `displayName` 指定時，由管理員以 PATCH /api/admin/users/<id> 改名（取代原本以註冊 API 指定顯示名稱）。
+ */
+export async function poolLogin(requestContext, baseUrl, { displayName } = {}) {
   const { username, password } = claimPoolAccount();
-  const res = await page.request.fetch(new URL('/api/login', baseUrl).href, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: new URL(baseUrl).origin }, data: { username, password } });
+  const origin = new URL(baseUrl).origin;
+  const headers = { 'Content-Type': 'application/json', Origin: origin };
+  const res = await requestContext.fetch(new URL('/api/login', baseUrl).href, { method: 'POST', headers, data: { username, password } });
   expect(res.status(), `pool login ${username}`).toBe(200);
-  const { user } = await res.json();
+  let { user } = await res.json();
+  if (displayName !== undefined && displayName !== user.displayName) {
+    const admin = await playwrightRequest.newContext();
+    try {
+      const login = await admin.fetch(new URL('/api/login', baseUrl).href, { method: 'POST', headers, data: E2E_ADMIN });
+      expect(login.status(), 'admin login for pool display name').toBe(200);
+      const patched = await admin.fetch(new URL(`/api/admin/users/${user.id}`, baseUrl).href, { method: 'PATCH', headers, data: { displayName } });
+      expect(patched.status(), `rename pool account ${username}`).toBe(200);
+      const { user: renamed } = await patched.json();
+      user = { id: renamed.id, username: renamed.username, displayName: renamed.displayName, role: renamed.role };
+    } finally {
+      await admin.dispose();
+    }
+  }
   return { ...user, password };
+}
+
+/** 以全新的 member 帳號登入 `page` 的 request context（與瀏覽器分頁共用 Cookie）。 */
+export function poolMember(page, baseUrl, options) {
+  return poolLogin(page.request, baseUrl, options);
 }

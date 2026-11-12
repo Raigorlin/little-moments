@@ -12,8 +12,10 @@
 
 /** 原 SQLite schema 中所有整數欄位（BIGINT 時間戳記、INTEGER 版本號與計數、COUNT(*) 結果）。 */
 const INT_COLUMNS = new Set([
-  'created_at', 'deleted_at', 'expires_at', 'joined_at', 'revoked_at', 'updated_at', 'at',
+  'created_at', 'deleted_at', 'expires_at', 'joined_at', 'revoked_at', 'updated_at', 'at', 'used_at',
   'revision', 'people_count', 'trip_count', 'n',
+  // receipt_ai_usage（migrations/0002）與其彙總結果
+  'prompt_tokens', 'completion_tokens', 'requests', 'prompt', 'completion',
 ]);
 
 /** 整數欄位轉換：null 保留；其餘須為安全整數。 */
@@ -52,6 +54,8 @@ export const listUsers = async e => all(await e`
 export const updateUser = async (e, displayName, role, id) => changes(await e`
   UPDATE users SET display_name = ${displayName}, role = ${role} WHERE id = ${id} AND deleted_at IS NULL`);
 export const softDelete = async (e, at, id) => changes(await e`UPDATE users SET deleted_at = ${at} WHERE id = ${id} AND deleted_at IS NULL`);
+export const updatePassword = async (e, passwordHash, id) => changes(await e`
+  UPDATE users SET password_hash = ${passwordHash} WHERE id = ${id} AND deleted_at IS NULL`);
 
 // ---- sessions ----
 export const sessionUser = async (e, tokenHash, at) => first(await e`
@@ -116,19 +120,77 @@ export const insertMember = async (e, tripId, userId, personId, joinedAt) => cha
 export const deleteMember = async (e, tripId, userId) => changes(await e`DELETE FROM trip_members WHERE trip_id = ${tripId} AND user_id = ${userId}`);
 
 // ---- invites ----
+// Active_Invite：未撤銷、未使用、未過期（單次使用的邀請連結）。
 export const activeInvites = async (e, tripId, at) => count(await e`
-  SELECT COUNT(*) AS n FROM invites WHERE trip_id = ${tripId} AND revoked_at IS NULL AND expires_at > ${at}`);
-export const insertInvite = async (e, tokenHash, tripId, createdBy, createdAt, expiresAt) => changes(await e`
-  INSERT INTO invites (token_hash, trip_id, created_by, created_at, expires_at)
-  VALUES (${tokenHash}, ${tripId}, ${createdBy}, ${createdAt}, ${expiresAt})`);
-export const inviteByHash = async (e, tokenHash, at) => first(await e`
-  SELECT i.* FROM invites i JOIN users u ON u.id = i.created_by
+  SELECT COUNT(*) AS n FROM invites WHERE trip_id = ${tripId} AND revoked_at IS NULL AND used_at IS NULL AND expires_at > ${at}`);
+export const activeInvitesByUser = async (e, tripId, userId, at) => count(await e`
+  SELECT COUNT(*) AS n FROM invites WHERE trip_id = ${tripId} AND created_by = ${userId}
+    AND revoked_at IS NULL AND used_at IS NULL AND expires_at > ${at}`);
+export const insertInvite = async (e, id, tokenHash, tripId, createdBy, createdAt, expiresAt) => changes(await e`
+  INSERT INTO invites (id, token_hash, trip_id, created_by, created_at, expires_at)
+  VALUES (${id}, ${tokenHash}, ${tripId}, ${createdBy}, ${createdAt}, ${expiresAt})`);
+/**
+ * 可使用的 token 列（不論 used_at，由呼叫端判斷）。建立者必須仍為主辦人、管理員或該行程的旅伴，
+ * 且未被刪除；行程未刪除。附帶 inviter_name 供登出狀態的預覽使用。
+ */
+export const inviteForUse = async (e, tokenHash, at) => first(await e`
+  SELECT i.*, u.display_name AS inviter_name FROM invites i
+  JOIN users u ON u.id = i.created_by JOIN trips t ON t.id = i.trip_id
   WHERE i.token_hash = ${tokenHash} AND i.revoked_at IS NULL AND i.expires_at > ${at} AND u.deleted_at IS NULL
-    AND NOT EXISTS (SELECT 1 FROM trip_deletions d WHERE d.trip_id = i.trip_id)`);
+    AND NOT EXISTS (SELECT 1 FROM trip_deletions d WHERE d.trip_id = i.trip_id)
+    AND (t.owner_id = i.created_by OR u.role = 'admin'
+         OR EXISTS (SELECT 1 FROM trip_members m WHERE m.trip_id = i.trip_id AND m.user_id = i.created_by))`);
+/** 標記為已使用；used_at 條件使第二次使用失敗（回傳 0）。 */
+export const consumeInvite = async (e, at, userId, tokenHash) => changes(await e`
+  UPDATE invites SET used_at = ${at}, used_by = ${userId}
+  WHERE token_hash = ${tokenHash} AND used_at IS NULL AND revoked_at IS NULL`);
+// Invite_List：不選取 token_hash、帳號 id 或 username。
+export const listTripInvites = async (e, tripId, at) => all(await e`
+  SELECT i.id, u.display_name AS creator_name, i.created_at, i.expires_at FROM invites i
+  JOIN users u ON u.id = i.created_by
+  WHERE i.trip_id = ${tripId} AND i.revoked_at IS NULL AND i.used_at IS NULL AND i.expires_at > ${at}
+  ORDER BY i.created_at DESC, i.id`);
+export const listTripInvitesBy = async (e, tripId, at, userId) => all(await e`
+  SELECT i.id, u.display_name AS creator_name, i.created_at, i.expires_at FROM invites i
+  JOIN users u ON u.id = i.created_by
+  WHERE i.trip_id = ${tripId} AND i.revoked_at IS NULL AND i.used_at IS NULL AND i.expires_at > ${at} AND i.created_by = ${userId}
+  ORDER BY i.created_at DESC, i.id`);
+export const activeInviteById = async (e, id, tripId, at) => first(await e`
+  SELECT id, created_by FROM invites
+  WHERE id = ${id} AND trip_id = ${tripId} AND revoked_at IS NULL AND used_at IS NULL AND expires_at > ${at}`);
+export const revokeInviteById = async (e, at, id, tripId) => changes(await e`
+  UPDATE invites SET revoked_at = ${at} WHERE id = ${id} AND trip_id = ${tripId} AND revoked_at IS NULL AND used_at IS NULL`);
 export const revokeTripInvites = async (e, at, tripId) => changes(await e`
   UPDATE invites SET revoked_at = ${at} WHERE trip_id = ${tripId} AND revoked_at IS NULL`);
 export const revokeInvitesBy = async (e, at, userId) => changes(await e`
   UPDATE invites SET revoked_at = ${at} WHERE created_by = ${userId} AND revoked_at IS NULL`);
+/** 降級為 member 時：撤銷該帳號在「既非主辦人也非旅伴」的行程所建立的有效連結。 */
+export const revokeInvitesWithoutRights = async (e, at, userId) => changes(await e`
+  UPDATE invites SET revoked_at = ${at} WHERE created_by = ${userId} AND revoked_at IS NULL AND used_at IS NULL
+    AND trip_id NOT IN (SELECT id FROM trips WHERE owner_id = ${userId})
+    AND trip_id NOT IN (SELECT trip_id FROM trip_members WHERE user_id = ${userId})`);
+
+// ---- settings ----
+export const settingByKey = async (e, key) => first(await e`SELECT value, updated_at, updated_by FROM settings WHERE key = ${key}`);
+export const upsertSetting = async (e, key, value, updatedAt, updatedBy) => changes(await e`
+  INSERT INTO settings (key, value, updated_at, updated_by) VALUES (${key}, ${value}, ${updatedAt}, ${updatedBy})
+  ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`);
+
+// ---- receipt_ai_usage ----
+/** 使用者在 (since, ∞) 內的呼叫時間（遞增）。 */
+export const usageUserTimes = async (e, userId, since) => (await e`
+  SELECT at FROM receipt_ai_usage WHERE user_id = ${userId} AND at > ${since} ORDER BY at`).map(r => toSafeInt(r.at, 'at'));
+export const usageCountSince = async (e, since) => count(await e`SELECT COUNT(*) AS n FROM receipt_ai_usage WHERE at >= ${since}`);
+export const usageTotalsSince = async (e, since) => first(await e`
+  SELECT COUNT(*) AS requests, COALESCE(SUM(prompt_tokens), 0) AS prompt, COALESCE(SUM(completion_tokens), 0) AS completion
+  FROM receipt_ai_usage WHERE at >= ${since}`);
+export const insertUsage = async (e, id, at, userId, tripId, modelId) => changes(await e`
+  INSERT INTO receipt_ai_usage (id, at, user_id, trip_id, model_id, outcome)
+  VALUES (${id}, ${at}, ${userId}, ${tripId}, ${modelId}, 'pending')`);
+export const settleUsage = async (e, outcome, promptTokens, completionTokens, id) => changes(await e`
+  UPDATE receipt_ai_usage SET outcome = ${outcome}, prompt_tokens = ${promptTokens}, completion_tokens = ${completionTokens}
+  WHERE id = ${id}`);
+export const trimUsage = async (e, before) => changes(await e`DELETE FROM receipt_ai_usage WHERE at < ${before}`);
 
 // ---- audit ----
 export const insertAudit = async (e, at, actor, action, target) => changes(await e`

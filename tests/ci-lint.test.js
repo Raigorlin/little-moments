@@ -5,7 +5,7 @@
 //   * .dockerignore 含設計列出的全部排除項目（Req 16.7、15.5）
 //   * Jenkinsfile 無可略過 Release_Gate 的參數、環境變數或選項（Req 23.4）
 //   * deploy/compose 的 db 不發布連接埠（Req 11.10）
-//   * CAMPING_BEDROCK_* 預設為空字串（Req 15.6）
+//   * CAMPING_OPENAI_* 預設為空字串，Jenkins 不定義 OpenAI 憑證（Req 15.6–15.8）
 //
 // 本檔只針對上列需求做彙整檢查；各 Pipeline 的細部結構檢查在 ci-jenkinsfile／ci-build-image-pipeline 等測試中。
 // sha256:<digest> PLACEHOLDER 在這裡視為合格的固定形式：未取代時映像解析失敗（fail closed），
@@ -292,8 +292,11 @@ describe('Compose：db 不發布連接埠（Req 11.10）', () => {
   }
 });
 
-describe('CAMPING_BEDROCK_* 預設為空字串（Req 15.6）', () => {
-  const NAMES = ['CAMPING_BEDROCK_REGION', 'CAMPING_BEDROCK_MODEL_ID', 'CAMPING_BEDROCK_API_KEY'];
+describe('CAMPING_OPENAI_* 預設為空字串（Req 15.6）', () => {
+  // server/receipt-ai.js 與 server/config.js 讀取的全部 OpenAI 變數。
+  const NAMES = ['CAMPING_OPENAI_API_KEY', 'CAMPING_OPENAI_API_KEY_FILE', 'CAMPING_OPENAI_MODEL_ID', 'CAMPING_OPENAI_IMAGE_DETAIL', 'CAMPING_OPENAI_MAX_COMPLETION_TOKENS'];
+  // 金鑰只以金鑰檔提供：CAMPING_OPENAI_API_KEY 在 Compose 中固定為空字串，也不出現在 Compose 變數範本。
+  const KEY = 'CAMPING_OPENAI_API_KEY';
 
   for (const file of COMPOSE_FILES) {
     test(file, () => {
@@ -301,14 +304,14 @@ describe('CAMPING_BEDROCK_* 預設為空字串（Req 15.6）', () => {
       let seen = 0;
       for (const [svc, def] of Object.entries(services)) {
         for (const [key, value] of envEntries(def.environment)) {
-          if (!key.startsWith('CAMPING_BEDROCK_')) continue;
+          if (!key.startsWith('CAMPING_OPENAI_')) continue;
           seen++;
-          // 只接受空字串，或由同名 Compose 變數帶入且預設為空字串的 `${NAME:-}`／`${NAME-}`。
-          const ok = value === '' || value === `\${${key}:-}` || value === `\${${key}-}`;
+          // 只接受空字串，或由同名 Compose 變數帶入且預設為空字串的 `${NAME:-}`／`${NAME-}`；金鑰本身只接受空字串。
+          const ok = value === '' || (key !== KEY && (value === `\${${key}:-}` || value === `\${${key}-}`));
           if (!ok) throw new Error(`${file} services.${svc}.environment.${key} 的預設值不是空字串：${value}`);
         }
       }
-      // 執行 App 的服務都必須明確設定三個變數（不依賴映像或 env_file）。
+      // 執行 App 的服務都必須明確設定全部變數（不依賴映像或 env_file）。
       const appServices = Object.entries(services).filter(([, d]) => !d.entrypoint && d.user === '10001:10001');
       expect(appServices.length).toBeGreaterThan(0);
       for (const [, d] of appServices) {
@@ -319,28 +322,36 @@ describe('CAMPING_BEDROCK_* 預設為空字串（Req 15.6）', () => {
     });
   }
 
-  test('Compose 變數範本（*.env.example）中 CAMPING_BEDROCK_* 為空值', () => {
+  test('Compose 變數範本（*.env.example）中 CAMPING_OPENAI_* 為空值，且不含 API 金鑰變數', () => {
     const dir = 'deploy/compose';
     const files = readdirSync(resolve(root, dir)).filter((f) => f.endsWith('.env.example'));
     expect(files.length).toBeGreaterThan(0);
     for (const f of files) {
       for (const line of read(`${dir}/${f}`).split(/\r?\n/)) {
-        const m = /^\s*(CAMPING_BEDROCK_[A-Z_]+)\s*=(.*)$/.exec(line);
-        if (m) expect([m[1], m[2].trim()]).toEqual([m[1], '']);
+        const m = /^\s*(CAMPING_OPENAI_[A-Z_]+)\s*=(.*)$/.exec(line);
+        if (!m) continue;
+        expect([m[1], m[2].trim()]).toEqual([m[1], '']);
+        expect(m[1]).not.toBe(KEY);
       }
     }
     for (const env of ['staging', 'prod']) {
       const text = read(`${dir}/${env}.env.example`);
-      for (const n of NAMES) expect(text).toMatch(new RegExp(`^${n}=$`, 'm'));
+      for (const n of NAMES.filter((n) => n !== KEY)) expect(text).toMatch(new RegExp(`^${n}=$`, 'm'));
     }
   });
 
-  test('Pipeline 不以非空值設定 CAMPING_BEDROCK_*', () => {
+  test('Pipeline 不以非空值設定 CAMPING_OPENAI_*', () => {
     for (const file of pipelineFiles) {
       const code = stripComments(read(file));
-      for (const m of code.matchAll(/CAMPING_BEDROCK_[A-Z_]+\s*[=:]\s*(\S*)/g)) {
+      for (const m of code.matchAll(/CAMPING_OPENAI_[A-Z_]+\s*[=:]\s*(\S*)/g)) {
         expect(m[1].replace(/^['"]{2}$/, '')).toBe('');
       }
+    }
+  });
+
+  test('Jenkins 不定義任何 OpenAI 憑證（Req 15.7、15.8；release/ 的憑證名稱只記載於 ci/jenkins/README.md）', () => {
+    for (const file of [...pipelineFiles, 'ci/jenkins/jobs.groovy', 'ci/jenkins/casc.yaml']) {
+      expect({ file, openai: /openai/i.test(stripComments(read(file))) }).toEqual({ file, openai: false });
     }
   });
 });

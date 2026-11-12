@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './local-planner-fixture.js';
 import {seed,STORAGE_KEY} from '../src/model.js';
 const base=process.env.CAMPING_BASE_URL;
 const nav=(p,tab)=>p.locator(`.section-tabs [data-tab="${tab}"]`).click();
@@ -26,7 +26,8 @@ test('account menu groups by date then meal time without writing or reordering s
 test('five-slot dropdown saves and moves a card immediately, preserving other meal fields and shopping',async({page})=>{
  const {detail}=await accountFixture(page),before=await detail();await page.getByRole('button',{name:'編輯 營火烤棉花糖',exact:true}).click();const slot=page.getByRole('combobox',{name:'餐次',exact:true});
  expect(await slot.locator('option').allTextContents()).toEqual(['早餐','午餐','下午茶','晚餐','消夜']);await expect(slot).toHaveValue('消夜');
- await slot.focus();await page.keyboard.press('Home');await page.keyboard.press('Enter');await expect(slot).toHaveValue('早餐');await save(page);await expect(page.locator('.sync-status')).toContainText('已儲存至本機伺服器');
+ // 餐次使用 base-select 選擇器（security-harden 統一所有下拉選單）：Space 開啟、Home 移到第一項、Enter 選取。
+ await slot.focus();await page.keyboard.press('Space');await page.keyboard.press('Home');await page.keyboard.press('Enter');await expect(slot).toHaveValue('早餐');await save(page);await expect(page.locator('.sync-status')).toContainText('已儲存至本機伺服器');
  const after=await detail();expect(after.state.meals.find(m=>m.id==='n')).toEqual({...before.state.meals.find(m=>m.id==='n'),slot:'早餐'});expect(after.state.shopping).toEqual(before.state.shopping);
  expect(await page.locator('.meal-card').evaluateAll(es=>es.map(e=>e.dataset.mealId))).toEqual(['prev','n','b','l','l2','t','d']);
  await page.reload();await nav(page,'meals');await page.getByRole('button',{name:'編輯 營火烤棉花糖',exact:true}).click();await expect(slot).toHaveValue('早餐');await page.getByRole('combobox',{name:'日期',exact:true}).selectOption('2026-11-22');await slot.selectOption('消夜');await save(page);await expect(page.locator('.sync-status')).toContainText('已儲存至本機伺服器');
