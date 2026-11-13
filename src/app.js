@@ -379,6 +379,8 @@ document.addEventListener('change',event=>{
 });
 document.addEventListener('keydown',event=>{
   const input=event.target.closest('input[data-shopping-quantity-input]');if(!input)return;
+  // IME∩╝êµ│¿Θƒ│πÇüµï╝Θƒ│∩╝ëΣ╗Ñ Enter τó║Φ¬ìΘü╕σ¡ùπÇüΣ╗Ñ Escape σÅûµ╢êτ╡äσ¡ù∩╝¢τ╡äσ¡ùΣ╕¡Σ╕ìσä▓σ¡ÿΣ╣ƒΣ╕ìσÅûµ╢êπÇéSafari τÜä isComposing Σ╕ìσÅ»Θ¥á∩╝îσÅªµ¬óµƒÑ keyCode 229πÇé
+  if(event.isComposing||event.keyCode===229)return;
   if(event.key==='Enter'){event.preventDefault();input.blur();}
   if(event.key==='Escape'){event.preventDefault();input.dataset.cancel='true';input.blur();}
 });

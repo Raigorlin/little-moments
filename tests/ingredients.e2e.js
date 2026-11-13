@@ -38,6 +38,26 @@ test('[TC-SHOP-001] shopping quantities can be edited in place and save on Enter
   await expect(beef.locator('.quantity-editable')).toHaveText('5 盒');await page.reload();await nav(page,'shopping');
   await expect(row(page,'牛肉片').locator('.quantity-editable')).toHaveText('5 盒');
 });
+test('shopping quantity ignores Enter and Escape while an IME is composing (isComposing or keyCode 229)',async({page})=>{
+  await page.goto('/demo/');await nav(page,'shopping');
+  const beef=row(page,'牛肉片');const original=(await read(page)).shopping.find(item=>item.name==='牛肉片').quantity;
+  await beef.locator('.quantity-editable').click();const input=beef.locator('input[data-shopping-quantity-input]');
+  await input.fill('3 盒');
+  // 組字中的 Enter（確認選字）與 Escape（取消組字）：Chrome／Firefox 設定 isComposing；Safari 只可靠地回報 keyCode 229。
+  for(const [key,mode] of [['Enter','isComposing'],['Enter','keyCode'],['Escape','isComposing'],['Escape','keyCode']]){
+    const prevented=await input.evaluate((el,[key,mode])=>{
+      const e=new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true,isComposing:mode==='isComposing'});
+      if(mode==='keyCode')Object.defineProperty(e,'keyCode',{get:()=>229});
+      el.dispatchEvent(e);return e.defaultPrevented;
+    },[key,mode]);
+    expect({key,mode,prevented}).toEqual({key,mode,prevented:false});
+    await expect(input).toBeFocused();await expect(input).toHaveValue('3 盒');
+  }
+  expect((await read(page)).shopping.find(item=>item.name==='牛肉片').quantity).toBe(original);
+  // 組字結束後的 Enter 照常儲存。
+  await input.press('Enter');await expect(beef.locator('.quantity-editable')).toHaveText('3 盒');
+  expect((await read(page)).shopping.find(item=>item.name==='牛肉片').quantity).toBe('3 盒');
+});
 test('[TC-MEAL-002] new meal quantities can be filled from their placeholder without opening a dialog',async({page})=>{
   await page.goto('/demo/');await addMeal(page,'快速填數量','豬五花');await nav(page,'shopping');
   const pork=row(page,'豬五花');await expect(pork.locator('.quantity-editable')).toHaveText('數量待確認');
