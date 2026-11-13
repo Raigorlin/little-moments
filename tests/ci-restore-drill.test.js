@@ -196,7 +196,7 @@ describe('restore-drill.Jenkinsfile', () => {
       expect(jf).toContain(opt);
     }
     expect(jf).not.toMatch(/StrictHostKeyChecking=(no|accept-new)|ssh-keyscan/);
-    expect(/BUILD_IMAGE = '([^']+)'/.exec(jfCode)?.[1]).toBe('registry.our-littlemoments.com:8443/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f');
+    expect(/BUILD_IMAGE = '([^']+)'/.exec(jfCode)?.[1]).toBe('registry.our-littlemoments.com:8443/little-moments/build-image@sha256:7eb66eee2631f762d0804dc57b59f2b42b6fba740cfabed3317624918397c97e');
     expect(jfCode).toContain('ReplayCause');
   });
 });

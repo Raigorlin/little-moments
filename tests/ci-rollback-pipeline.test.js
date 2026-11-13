@@ -231,7 +231,7 @@ describe('SSH 與憑證', () => {
 
   test('Build_Image 以固定 digest 引用；格式檢查接受 64 位十六進位 digest、拒絕 PLACEHOLDER 與可變 tag（fail closed）', () => {
     const image = /BUILD_IMAGE = '([^']+)'/.exec(code)?.[1];
-    expect(image).toBe('registry.our-littlemoments.com:8443/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f');
+    expect(image).toBe('registry.our-littlemoments.com:8443/little-moments/build-image@sha256:7eb66eee2631f762d0804dc57b59f2b42b6fba740cfabed3317624918397c97e');
     const groovyRe = /ref ==~ \/(.+)\/\)\)/.exec(methodBody('buildImageDigest'))?.[1];
     expect(groovyRe).toBeTruthy();
     const re = new RegExp(groovyRe.replace(/\\\//g, '/'));

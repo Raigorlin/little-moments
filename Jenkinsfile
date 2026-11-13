@@ -24,7 +24,7 @@ import groovy.json.JsonSlurperClassic
 //
 // BUILD_IMAGE：
 //   Build_Image 只以 digest 引用（Req 3.1）。
-//   digest 來源：infra/build-image Job 建置 commit 5e809e4 的輸出（建置描述與 reports/build-image-digest.txt）。
+//   digest 來源：infra/build-image Job 建置 commit a302149 的輸出（建置描述與 reports/build-image-digest.txt）。
 //   更新方式：ci/build-image/Dockerfile 或 ci/toolchain.json 變更後重新執行 infra/build-image，
 //   以新輸出的 digest 在同一個 commit 內取代本檔與 ci/jenkins/pipelines/{rollback,restore-drill,digest-lookup}.Jenkinsfile 的 BUILD_IMAGE。
 //   格式不是 `<registry>/<repo>@sha256:<64 hex>` 時 Init 階段失敗（fail closed），不會退回任何可變 tag。
@@ -128,7 +128,7 @@ pipeline {
 
   environment {
     // 各鍵的說明見 pipeline 之前的註解區塊。
-    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f'
+    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:7eb66eee2631f762d0804dc57b59f2b42b6fba740cfabed3317624918397c97e'
     LM_RECORD = 'reports/build-record.json'
     LM_REGISTRY_PULL_CREDENTIALS = 'lm-registry-pull'
     LM_GIT_CREDENTIALS = 'lm-github-app'

@@ -873,7 +873,7 @@
     - 執行 `bun test tests/ci-lint.test.js tests/ci-jenkinsfile.test.js tests/ci-jenkins-config.test.js tests/ci-production.test.js tests/ci-staging.test.js tests/ci-jenkinsfile-size.test.js tests/ci-jenkinsfile-cps.test.js tests/ci-jenkinsfile-shell-env.test.js tests/ci-record.test.js tests/ci-scrub.test.js`（不存在的檔名在回報中說明），再以明列檔名的方式執行全部 `tests/ci-*.test.js`（Windows 上不依賴 glob 展開）
     - _Requirements: 15.1, 15.2, 15.4, 15.7, 15.8_
 
-  - [ ] 27.2 lm-deploy 與 Compose 的金鑰檔
+  - [x] 27.2 lm-deploy 與 Compose 的金鑰檔
     - 背景與設計見 design.md Components 第 25 節（25.4、25.5、25.8）
     - 開始前重新讀取 `deploy/bin/lm-deploy`（`APP_ENV_KEYS`、`unset` 清單、`load_env_config`、`build_compose`、`stage_app_env`、`install_app_env`、`do_deploy`、`own_like_dir`、`cleanup`、SSH 子命令解析）、`deploy/compose/compose.yaml`、`staging.env.example`、`prod.env.example`、`drill.yaml`、`deploy/tests/lm-deploy.bats`、`deploy/tests/helpers/fake-docker`、`deploy/tests/helpers/test_helper.bash`、`server/receipt-ai.js`
     - `lm-deploy`：`deploy --app-env-stdin` 依 design.md 第 25.4 節的表處理 `LM_RECEIPT_AI` 與 `LM_OPENAI_API_KEY`（`OPENAI_KEY_RE='^sk-[A-Za-z0-9_-]{20,500}$'`），全部驗證在備份與任何 docker 指令之前；Staging 收到 `enabled` 或金鑰為 `receipt_ai_forbidden`；`app-env` 子命令不接受這兩個鍵。控制鍵不寫入 app.env，金鑰暫存檔在 `secrets/`（root 0700，不是符號連結）並列入 `TMP_FILES`；新函式 `install_receipt_ai` 緊接 `install_app_env`：`chown 10001:10001`（非 root 時比照 `own_like_dir` 容忍失敗）→ `chmod 0400` → `mv -f` 到 `secrets/openai-api-key`，`disabled` 時刪除。`app-env` 結果行在 `deploy` 時加上 `receiptAi`，`keys` 不列控制鍵。錯誤訊息、日誌、輸出、指令列與 `export` 的變數都不含金鑰
@@ -898,7 +898,7 @@
     - 以臨時 Ephemeral_Database（`postgres:17.6`，用完即刪）執行完整 `bun test`；以 WSL 執行 `bats deploy/tests`；執行秘密掃描（`bun scripts/scan-secrets.mjs`），確認 repository 中沒有任何秘密值。Ensure all tests pass, ask the user if questions arise.
     - _Requirements: 15.4, 15.7_
 
-- [ ] 28. Bun 1.4.4 升級
+- [x] 28. Bun 1.4.4 升級
   - [x] 28.1 App_Image 改用 oven/bun 1.4.4
     - 背景與設計見 design.md Components 第 26 節（26.1、26.3）：使用者決定所有位置的 Bun 都升級到 1.4.4。Bun 1.3.14 上的 `expect(<Bun.SQL 查詢的 promise>).rejects`／`.resolves` 不送出查詢並使 `afterAll` 卡住；Property 29（`tests/migrations-failure.test.js`）在 `reserved.begin()` 出現 unhandled rejection，這也是正式 Migration_Runner 的路徑（Req 12.4）；Property 20（`tests/setup-concurrency.test.js`）間歇回應 401；Linux 上完整套件 876 秒（目標 600 秒，上限 900 秒）
     - 開始前重新讀取根目錄 `Dockerfile`（含註解中的 digest 取得方式）與 `tests/ci-lint.test.js` 的 `fromLines`、`unpinnedFroms` 與 Bun 版本一致性測試；以 grep 找出 `tests/` 與 `ci/` 中所有斷言 `oven/bun`、`1.3.14`、`e10577f0`、`c28c5128` 的位置
@@ -946,7 +946,7 @@
     - 在回報寫明維運者的下一步（design.md 第 26.4 節）：28.1–28.4 與 28.6 合併到 `main` 後、28.5 合併前，`ci/` 與 `release/` 的建置會在 Toolchain 失敗（預期的 fail closed），這段期間不推送 Release_Tag；對 `infra/build-image` 按 Build Now，再把 `reports/build-image-digest.txt` 的內容、建置編號與 commit 交給開發者以執行 28.5。28.5 合併後的第一次建置以 JUnit 報告確認 Unit Tests 的總時間是否在 600 秒以下，超過時把總時間與最慢的 10 個測試檔交給開發者，由使用者決定處理方式
     - _Requirements: 4.4, 4.7_
 
-  - [ ] 28.5 以 1.4.4 Build_Image 的 digest 重新固定 BUILD_IMAGE
+  - [x] 28.5 以 1.4.4 Build_Image 的 digest 重新固定 BUILD_IMAGE
     - 需要維運者的輸入（design.md 第 26.4 節）：28.1–28.4 合併到 `main` 後，維運者執行 `infra/build-image` 並提供 `reports/build-image-digest.txt` 的內容（`registry.our-littlemoments.com:8443/little-moments/build-image@sha256:<64 個小寫十六進位字元>`）、建置編號與 commit。沒有這個值時不開始本任務，也不使用其他來源的 digest
     - 開始前重新讀取（任務 27 可能已修改這些檔案）`Jenkinsfile`、`ci/jenkins/pipelines/rollback.Jenkinsfile`、`restore-drill.Jenkinsfile`、`digest-lookup.Jenkinsfile` 的 `BUILD_IMAGE` 與其註解，以及 `ci/jenkins/README.md` 的 `BUILD_IMAGE` 一項；以 grep 找出 repository 中所有 `5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f`
     - 在同一個 commit 取代四個檔案的 `BUILD_IMAGE`（目前為 `…/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f`，`infra/build-image` commit `5e809e4` 的輸出），並更新斷言此值的測試：`tests/ci-lint.test.js` 的 `BUILD_IMAGE_REF`（與其註解）、`tests/ci-rollback-pipeline.test.js`、`tests/ci-restore-drill.test.js`、`tests/ci-digest-lookup.test.js`；`ci/jenkins/README.md` 的來源 commit 改為維運者提供的 commit。其他內容不變

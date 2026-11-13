@@ -182,8 +182,8 @@ describe('Build_Image 以 digest 引用（Req 3.1）', () => {
 // ---------------------------------------------------------------------------
 
 const REGISTRY = 'registry.our-littlemoments.com:8443';
-// infra/build-image 第一次成功建置（commit 5e809e4）輸出的 Build_Image（tasks 20.2）。
-const BUILD_IMAGE_REF = `${REGISTRY}/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f`;
+// infra/build-image 以 Bun 1.4.4 建置（commit a302149）輸出的 Build_Image（tasks 28.5）。
+const BUILD_IMAGE_REF = `${REGISTRY}/little-moments/build-image@sha256:7eb66eee2631f762d0804dc57b59f2b42b6fba740cfabed3317624918397c97e`;
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Jenkinsfile 的鏡像映像變數 → deploy/registry/mirror.list 的名稱。
 const MIRROR_VARS = {
@@ -212,7 +212,7 @@ describe('LAN Registry 與映像的實際值（tasks 19.4）', () => {
     expect(envValues(rootCode, 'LM_POSTGRES_IMAGE')).toEqual(['postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3']);
   });
 
-  test('BUILD_IMAGE 固定為 infra/build-image（commit 5e809e4）輸出的 digest，四個 Pipeline 使用同一個值', () => {
+  test('BUILD_IMAGE 固定為 infra/build-image（commit a302149）輸出的 digest，四個 Pipeline 使用同一個值', () => {
     const users = pipelineFiles.filter((f) => !f.endsWith('build-image.Jenkinsfile'));
     expect(users.sort()).toEqual(['Jenkinsfile', ...['digest-lookup', 'restore-drill', 'rollback'].map((f) => `${PIPELINE_DIR}/${f}.Jenkinsfile`)].sort());
     for (const file of users) {

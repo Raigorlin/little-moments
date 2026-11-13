@@ -44,10 +44,10 @@ pipeline {
   }
 
   environment {
-    // Build_Image 只以 digest 引用（Req 3.1）。digest 來源：infra/build-image Job 建置 commit 5e809e4 的輸出。
+    // Build_Image 只以 digest 引用（Req 3.1）。digest 來源：infra/build-image Job 建置 commit a302149 的輸出。
     // 更新方式：重新執行 infra/build-image，以新 digest 在同一個 commit 內取代根目錄 Jenkinsfile 與
     // ci/jenkins/pipelines/{rollback,restore-drill,digest-lookup}.Jenkinsfile 的 BUILD_IMAGE；格式不符時 Init 失敗（fail closed）。
-    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f'
+    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:7eb66eee2631f762d0804dc57b59f2b42b6fba740cfabed3317624918397c97e'
     // Deploy_Host 的 LAN 位址與 SSH 連接埠（非秘密；與根目錄 Jenkinsfile 相同）。known_hosts 憑證
     // （lm-deploy-known-hosts）須含 192.168.1.121 的主機金鑰（連接埠非 22 時為 `[host]:port` 形式）。
     LM_DEPLOY_HOST = '192.168.1.121'

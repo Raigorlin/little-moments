@@ -31,11 +31,11 @@ pipeline {
 
   environment {
     // Build_Image 只以 digest 引用（Req 3.1）。
-    // digest 來源：infra/build-image Job 建置 commit 5e809e4 的輸出（建置描述與 reports/build-image-digest.txt）。
+    // digest 來源：infra/build-image Job 建置 commit a302149 的輸出（建置描述與 reports/build-image-digest.txt）。
     // 更新方式：重新執行 infra/build-image，以新 digest 在同一個 commit 內取代根目錄 Jenkinsfile 與
     // ci/jenkins/pipelines/{rollback,restore-drill,digest-lookup}.Jenkinsfile 的 BUILD_IMAGE。
     // 格式不符時格式檢查會使建置失敗（fail closed），不會退回任何可變 tag。
-    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f'
+    BUILD_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/build-image@sha256:7eb66eee2631f762d0804dc57b59f2b42b6fba740cfabed3317624918397c97e'
     LM_REGISTRY_PULL_CREDENTIALS = 'lm-registry-pull'
     LM_JENKINS_API_CREDENTIALS = 'lm-jenkins-api-readonly'
     LM_LOOKUP_OUT = 'reports/digest-lookup.json'

@@ -2985,6 +2985,37 @@
         "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
         "timestamp": 1794533069261
       }
+    ],
+    "28.5 以 1.4.4 Build_Image 的 digest 重新固定 BUILD_IMAGE": [
+      {
+        "executionId": "a0c72d70-b7a8-4cec-9eb1-84d1bd3e8ceb",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794534076689
+      },
+      {
+        "executionId": "a0c72d70-b7a8-4cec-9eb1-84d1bd3e8ceb",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794536464252
+      }
+    ],
+    "27.2 lm-deploy 與 Compose 的金鑰檔": [
+      {
+        "executionId": "a0c72d70-b7a8-4cec-9eb1-84d1bd3e8ceb",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794534086474
+      },
+      {
+        "executionId": "a0c72d70-b7a8-4cec-9eb1-84d1bd3e8ceb",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794536465364
+      }
+    ],
+    "28. Bun 1.4.4 升級": [
+      {
+        "executionId": "a0c72d70-b7a8-4cec-9eb1-84d1bd3e8ceb",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794536464866
+      }
     ]
   }
 }
