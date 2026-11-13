@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hasDestructiveMarker, loadMigrations, runMigrations, EXIT_OK } from '../server/db/migrations.js';
 import { readMigrationFiles } from '../scripts/migrate.mjs';
-import { createTestDatabase, readTestDatabaseConfig, MIGRATIONS_DIR } from './support/pg.js';
+import { createTestDatabase, readTestDatabaseConfig, rejectionOf, MIGRATIONS_DIR } from './support/pg.js';
 import { analyzeSql } from '../scripts/lint-migrations.mjs';
 
 readTestDatabaseConfig();
@@ -51,7 +51,10 @@ describe('0002_security_harden upgrade', () => {
     await sql`INSERT INTO invites (token_hash, trip_id, created_by, created_at, expires_at) VALUES ('h1', 't1', 'u1', 1, 2), ('h2', 't1', 'u1', 1, 2)`;
     // 0001 already accepts all seven cover kinds.
     for (const kind of ['camp', 'mountain', 'lake', 'night', 'forest', 'beach', 'sunrise']) await sql`UPDATE trips SET cover_kind = ${kind} WHERE id = 't1'`;
-    await expect(sql`UPDATE trips SET cover_kind = 'ocean' WHERE id = 't1'`).rejects.toThrow();
+    // rejectionOf 而不是 expect(…).rejects：Bun 1.3.14 時發現在 expect 內同步等待時查詢可能不被送出；
+    // Bun 1.4.4 上已不重現，保留以防回歸（見 tests/support/pg.js）。
+    // 23514 check_violation、23505 unique_violation、23503 foreign_key_violation。
+    expect(await rejectionOf(sql`UPDATE trips SET cover_kind = 'ocean' WHERE id = 't1'`)).toMatchObject({ errno: '23514' });
     await sql`UPDATE trips SET cover_kind = 'lake' WHERE id = 't1'`;
 
     const result = await runMigrations(sql, loadMigrations(files), { log: () => {} });
@@ -65,9 +68,9 @@ describe('0002_security_harden upgrade', () => {
     expect(new Set(invites.map(i => i.id)).size).toBe(2);
 
     for (const kind of ['camp', 'mountain', 'lake', 'night', 'forest', 'beach', 'sunrise']) await sql`UPDATE trips SET cover_kind = ${kind} WHERE id = 't1'`;
-    await expect(sql`UPDATE trips SET cover_kind = 'ocean' WHERE id = 't1'`).rejects.toThrow();
-    await expect(sql`UPDATE invites SET id = ${invites[0].id} WHERE token_hash = 'h2'`).rejects.toThrow();
-    await expect(sql`UPDATE invites SET used_by = 'ghost' WHERE token_hash = 'h2'`).rejects.toThrow();
+    expect(await rejectionOf(sql`UPDATE trips SET cover_kind = 'ocean' WHERE id = 't1'`)).toMatchObject({ errno: '23514' });
+    expect(await rejectionOf(sql`UPDATE invites SET id = ${invites[0].id} WHERE token_hash = 'h2'`)).toMatchObject({ errno: '23505' });
+    expect(await rejectionOf(sql`UPDATE invites SET used_by = 'ghost' WHERE token_hash = 'h2'`)).toMatchObject({ errno: '23503' });
 
     for (const table of ['settings', 'receipt_ai_usage', 'security_events', 'security_alerts']) {
       const [{ n }] = await sql`SELECT count(*)::int AS n FROM ${sql(table)}`;
@@ -79,5 +82,5 @@ describe('0002_security_harden upgrade', () => {
     }
     const recorded = await sql`SELECT version, destructive FROM schema_migrations ORDER BY version`;
     expect(recorded).toEqual([{ version: 1, destructive: false }, { version: 2, destructive: false }]);
-  });
+  }, 60_000); // 執行真正的遷移：大於測試連線的 lock_timeout（30 秒），等鎖時以 55P03 呈現（design.md §24.3）
 });

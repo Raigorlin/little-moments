@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createAccountService } from '../server/accounts.js';
 import { seed, isValidState } from '../src/model.js';
-import { useTestDatabase, resetTables, serviceDb } from './support/pg.js';
+import { useTestDatabase, resetTables, serviceDb, rejectionOf } from './support/pg.js';
 
 const BASE = 'http://127.0.0.1:5181';
 const PASS = 'correct horse battery';
@@ -733,8 +733,10 @@ describe('service options and local CLI hooks (security-harden, task 18.4)', () 
     const user = await svc.createFirstAdmin({ username: 'cli-admin', displayName: 'CLI 管理員', password: PASS }, { auditAction: 'setup.cli' });
     expect(user).toMatchObject({ username: 'cli-admin', role: 'admin' });
     expect(await svc.needsSetup()).toBe(false);
-    await expect(svc.createFirstAdmin({ username: 'cli-two', displayName: 'x', password: PASS })).rejects.toMatchObject({ status: 409 });
-    await expect(svc.createFirstAdmin({ username: 'Bad Name', displayName: 'x', password: PASS })).rejects.toMatchObject({ status: 400 });
+    // rejectionOf：Bun 1.3.14 時發現 expect(<查詢 Database 的 promise>).rejects 可能等不到查詢；
+    // Bun 1.4.4 上已不重現，保留以防回歸（tests/support/pg.js）。
+    expect(await rejectionOf(svc.createFirstAdmin({ username: 'cli-two', displayName: 'x', password: PASS }))).toMatchObject({ status: 409 });
+    expect(await rejectionOf(svc.createFirstAdmin({ username: 'Bad Name', displayName: 'x', password: PASS }))).toMatchObject({ status: 400 });
     const audit = await db.sql`SELECT actor, action, target FROM audit ORDER BY id`;
     expect(audit.map(r => ({ ...r }))).toEqual([{ actor: 'cli-admin', action: 'setup.cli', target: 'user:cli-admin' }]);
     expect(JSON.stringify(audit)).not.toContain(PASS);
@@ -754,11 +756,11 @@ describe('service options and local CLI hooks (security-harden, task 18.4)', () 
     const audit = await db.sql`SELECT actor, action, target FROM audit WHERE action = 'password.reset.cli'`;
     expect(audit.map(r => ({ ...r }))).toEqual([{ actor: 'local-cli', action: 'password.reset.cli', target: 'user:member-a' }]);
     expect(JSON.stringify(await db.sql`SELECT * FROM audit`)).not.toContain(NEW);
-    await expect(svc.resetPassword('nobody-here', NEW)).rejects.toMatchObject({ status: 404 });
-    await expect(svc.resetPassword('member-a', 'short')).rejects.toMatchObject({ status: 400 });
+    expect(await rejectionOf(svc.resetPassword('nobody-here', NEW))).toMatchObject({ status: 404 });
+    expect(await rejectionOf(svc.resetPassword('member-a', 'short'))).toMatchObject({ status: 400 });
     const admin = await login('admin-one');
     ok(await call('POST', `/api/admin/users/${member.user.id}/delete`, { cookie: admin, body: { confirmUsername: 'member-a' } }));
-    await expect(svc.resetPassword('member-a', NEW)).rejects.toMatchObject({ status: 404 });
+    expect(await rejectionOf(svc.resetPassword('member-a', NEW))).toMatchObject({ status: 404 });
   });
 
   test('OPTIONS is 405 and a cross-site Sec-Fetch-Site mutation is 403 even with the right Origin', async () => {

@@ -317,8 +317,9 @@ describe('Unit Tests 與 Browser Tests 階段（Req 4、5、23.1、23.5）', () 
 
   test('「QA」關卡以 ci/gates.mjs 評估並寫入 Build_Record；階段失敗時記錄為未通過（Req 23.1、23.3、23.5）', () => {
     expect(recordQa).toContain('bun ci/gates.mjs junit --gate QA --commit "$GIT_COMMIT_FULL" --out reports/gate-qa.json');
-    expect(recordQa).toContain('--inventory "$LM_GATE_INVENTORY"');
-    expect(recordQa).toContain('--stage-error "$LM_GATE_STAGE_ERROR"');
+    // Jenkins 不傳空值的環境變數（JENKINS-43632），可能為空的變數以 ${X:-} 展開（Components 第 24.4 節）。
+    expect(recordQa).toContain('--inventory "${LM_GATE_INVENTORY:-}"');
+    expect(recordQa).toContain('--stage-error "${LM_GATE_STAGE_ERROR:-}"');
     expect(recordQa).toContain('bun ci/record.mjs gate --record "$LM_RECORD" --result reports/gate-qa.json');
     expect(recordQa).toContain('bun ci/record.mjs merge --record "$LM_RECORD"');
     // Unit 失敗、Browser 在評估前失敗時，post 以 stage-error 記錄「QA」未通過。
@@ -408,9 +409,12 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
   test('Git 歷史範圍：Untrusted_PR 用 merge base，其他用已驗證的 GIT_PREVIOUS_SUCCESSFUL_COMMIT，否則完整歷史（Req 6.1）', () => {
     expect(prepare).toContain("env.LM_TRIGGER_KIND == 'pull_request'");
     expect(prepare).toContain('validBranchName(target)');
-    expect(prepare).toContain('git merge-base "$LM_SCAN_BASE_REF" "$head"');
+    // 非 PR 建置時兩者皆為空、Jenkins 不傳給 sh（Components 第 24.4 節），以 ${X:-} 展開。
+    expect(prepare).toContain('git merge-base "${LM_SCAN_BASE_REF:-}" "$head"');
     expect(prepare).toContain("'refs/remotes/origin/' + target");
-    expect(prepare).toContain('"+refs/heads/$LM_SCAN_FETCH_TARGET:refs/remotes/origin/$LM_SCAN_FETCH_TARGET"');
+    expect(prepare).toContain('"+refs/heads/${LM_SCAN_FETCH_TARGET:-}:refs/remotes/origin/${LM_SCAN_FETCH_TARGET:-}"');
+    // "LM_SCAN_FETCH_TARGET=${target}" 的空值來自前一行的三元運算，tests/ci-jenkinsfile-shell-env.test.js 的規則 1 無法辨識，在此固定。
+    expect(prepare).toContain('if [ -n "${LM_SCAN_FETCH_TARGET:-}" ]; then');
     expect(prepare).toContain('git fetch --unshallow');
     expect(prepare).toContain("grep -Eqx '[0-9a-f]{40}'");
     expect(prepare).toContain('git merge-base --is-ancestor "$prev" "$head"');
@@ -1336,7 +1340,7 @@ describe('Release_Tag 專用階段：Resolve Digest → Version Tag → Approval
   test('Approval：核准畫面內容、24 小時迴圈、破壞性遷移另行核准、git ls-remote、記錄「正式核准」（Req 12.6、19.2–19.8）', () => {
     inOrder(prepare, [
       'bun ci/rollback.mjs approvers', 'env.LM_APR_SUBMITTERS = ids.join', "prodHost('status', 'status-approval.json')",
-      "releaseRegistry('config')", 'bun ci/production.mjs deployed-commit', 'git ls-tree --name-only "$LM_PRD_BASE_COMMIT" -- migrations/',
+      "releaseRegistry('config')", 'bun ci/production.mjs deployed-commit', 'git ls-tree --name-only "${LM_PRD_BASE_COMMIT:-}" -- migrations/',
       'bun ci/production.mjs destructive --migrations migrations --deployed "$deployed"', 'lmDestructivePending = pending',
       'archiveArtifacts(', 'bun ci/production.mjs approval-message --tag "$TAG_NAME" --commit "$GIT_COMMIT_FULL" --digest "$LM_IMAGE_DIGEST"',
     ]);
@@ -1496,7 +1500,7 @@ describe('收尾 post { always } 與 post { cleanup }（13.8；Req 2.6、15.4、
     const fin = functionBody('void finalizeBuildRecord(Map outcome)');
     inOrder(fin, ['fileExists(env.LM_RECORD)', 'LM_POST_STATUS=${outcome.record}', 'LM_POST_FAILED_STAGE=${outcome.failedStage', 'inBuildImage {', 'bun ci/record.mjs finalize "$@"']);
     expect(fin).toContain('set -- --record "$LM_RECORD" --status "$LM_POST_STATUS"');
-    expect(fin).toContain('--first-failed-stage "$LM_POST_FAILED_STAGE"');
+    expect(fin).toContain('--first-failed-stage "${LM_POST_FAILED_STAGE:-}"');
     // 結果對應：SUCCESS／FAILURE／ABORTED（ci/record.mjs 的 RESULT_STATUSES）與通知的最終狀態。
     expect(outcome).toContain("r == 'SUCCESS' ? 'SUCCESS' : ((r == 'ABORTED' || r == 'NOT_BUILT') ? 'ABORTED' : 'FAILURE')");
     for (const s of ["'success'", "'unstable'", "'aborted'", "'failure'"]) expect(outcome).toContain(s);

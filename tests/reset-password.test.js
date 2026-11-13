@@ -33,7 +33,7 @@ function run({ argv = ['jacklin'], hidden = [], ...rest } = {}) {
   const out = [], err = [];
   const promptHidden = queue([...hidden]);
   const promise = runResetPassword({
-    argv, env: pgEnv(), isTTY: true, promptHidden, poolOptions: { connection: { search_path: db.schema } },
+    argv, env: pgEnv(), isTTY: true, promptHidden, poolOptions: { connection: db.sessionParams },
     readInput: async () => { throw new Error('stdin should not be read'); },
     out: (...args) => out.push(args.join(' ')), err: (...args) => err.push(args.join(' ')), ...rest
   });

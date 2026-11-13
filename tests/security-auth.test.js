@@ -463,7 +463,7 @@ describe('session replacement (Req 3.8, 3.9)', () => {
       expect(tokenOf(ok)).toMatch(/^[0-9a-f]{64}$/);
       expect(tokenOf(ok)).not.toBe(incoming);
     } finally { service.close(); await empty.close(); }
-  });
+  }, 60_000); // migrates a new test schema
 });
 
 describe('password storage (Req 2)', () => {
@@ -497,7 +497,7 @@ describe('password storage (Req 2)', () => {
       const code = await runCreateAdmin({
         argv: [], isTTY: true,
         env: { CAMPING_DATABASE_HOST: c.host, CAMPING_DATABASE_PORT: String(c.port), CAMPING_DATABASE_NAME: c.name, CAMPING_DATABASE_USER: c.user, CAMPING_DATABASE_PASSWORD: c.password, CAMPING_DATABASE_SSLMODE: c.sslmode },
-        poolOptions: { connection: { search_path: cliDb.schema } },
+        poolOptions: { connection: cliDb.sessionParams },
         prompt: queue(['cli-admin', 'CLI 管理員']), promptHidden: queue([PASS, PASS]),
         out: (...a) => out.push(a.join(' ')), err: (...a) => err.push(a.join(' '))
       });

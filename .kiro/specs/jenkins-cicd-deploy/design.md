@@ -14,6 +14,7 @@
 6. **公開註冊政策（Requirement 26）**：Registration_Policy 改為每個請求從 Settings_Store 讀取（管理員儲存值優先，其次 `CAMPING_REGISTRATION`，最後 `open`），管理員在 `/admin` 切換後下一個請求即生效；Deploy_Host 的 `compose.yaml` 未設定時傳入 `closed`。細節見 Components 第 19 節。
 7. **Smoke_Account 佈建（Requirement 27）**：新增維運工具 `scripts/create-smoke-account.mjs`（映像內 `/app/tools/create-smoke-account.js`）與只限 Host_Operator 的 `lm-deploy <env> smoke-account <digest>`。子命令會啟動未執行的 `db`／`proxy`，接著備份、遷移，最後經 stdin 傳入密碼並建立 `smoke-bot` 與 `smoke-fixture`。第一次部署的順序為先建立管理員、再建立 Smoke_Account。部署憑證權限不變（Req 15.9）。細節見 Components 第 21 節。
 8. **Jenkinsfile 方法大小**：根目錄 `Jenkinsfile` 的 `pipeline {}` 區塊超過 JVM 單一方法 64 KB 的限制，建置在任何階段前失敗。各階段內容移到區塊之後的頂層函式，行為不變，並以靜態測試限制區塊與函式的行數。細節見 Components 第 22 節。
+9. **Production 收據 AI（Requirement 15.6–15.8）**：Release_Approver `jacklin` 決定只在 Production_Environment 啟用 OpenAI 收據辨識。金鑰是 `release/` 的 Secret file 憑證 `lm-prod-openai-api-key`，只在 Production Deploy 的 SSH 呼叫內綁定，經 forced command 的 stdin 交給 `lm-deploy prod deploy`，由它寫入只有 App 容器使用者可讀的金鑰檔並唯讀掛載到 `app-blue`／`app-green`。Staging、還原演練與所有 `ci/` 建置維持停用。細節見 Components 第 25 節。
 
 ### 現況盤點（已讀取的程式碼）
 
@@ -45,6 +46,7 @@
 | 公開連接埠例外 | DOCKER-USER 以 `--ctorigdstport` 對宣告的 Public_Port 放行，位於 DNAT DROP 之前；未宣告時規則與原本相同 | 只放行 Edge_Proxy 的 80／443，LM_Proxy 連接埠維持 LAN 限制（Req 8.6、8.8–8.10）。 |
 | Smoke_Account 佈建 | Host_Operator 在 Deploy_Host 上執行 `lm-deploy <env> smoke-account`（不在 SSH forced command 清單內），工具在沒有管理員時拒絕；不由 Pipeline 自動建立 | 部署憑證維持 Req 15.9 的權限、不能建立帳號；`needsSetup` 只看使用者數量，先建立 Smoke_Account 會讓該環境無法再建立管理員（Req 9.6）。 |
 | 註冊政策來源 | 沿用收據 AI 政策的模式：Settings_Store 的 `registrationPolicy` 列優先，`CAMPING_REGISTRATION` 只是讀取時的後備值；本機預設 `open`，Compose 預設 `closed` | 不需重新部署即可切換（Req 26.5）；與既有 `resolveReceiptAiPolicy`、`/api/admin/settings` 同一套儲存、稽核與 UI；本機開發與既有測試維持 `open`。 |
+| Production 收據 AI 金鑰的傳遞 | Pipeline 只在 Production Deploy 綁定 `lm-prod-openai-api-key`，把金鑰與明確的開關 `LM_RECEIPT_AI` 放在既有的 `--app-env-stdin` 串流；`lm-deploy` 寫入 `/srv/lm/prod/secrets/openai-api-key`（10001:10001、0400），Compose 以長語法唯讀掛載，停用時掛載 `/dev/null` | 不新增 SSH 子命令或部署憑證權限（Req 15.9）；金鑰不進入 app.env、指令列或 `docker inspect` 可見的環境變數；開關明確，停用會刪除金鑰檔；同一份 `compose.yaml` 涵蓋啟用與停用（Components 第 25 節）。 |
 
 ### 先前的設計假設與需求對齊狀態
 
@@ -402,7 +404,7 @@ bun scripts/import-sqlite.mjs --source /path/accounts.sqlite   # 目標由 CAMPI
 
 ```
 ci/
-  toolchain.json              # {"bun":"1.3.x 精確版","node":"22.x 精確版","chromium":"<build>"}
+  toolchain.json              # {"bun":"1.4.4","node":"22.x 精確版","chromium":"<build>"}（Bun 版本見 Components 第 26 節）
   build-image/Dockerfile      # FROM mcr.microsoft.com/playwright:v1.56.1-noble@sha256:… + 安裝精確 Bun
   verify-toolchain.mjs        # 比對實際版本與 toolchain.json（Req 3.2, 3.3）
   verify-env.mjs              # CHROME_PATH / CAMPING_BUN 存在且可執行（Req 3.9）
@@ -449,7 +451,7 @@ qa/inventory.json             # QA_Inventory
 
 ```dockerfile
 # syntax=docker/dockerfile:1.10@sha256:<digest>
-FROM oven/bun:1.3.<patch>@sha256:<digest> AS deps
+FROM oven/bun:1.4.4@sha256:<digest> AS deps
 WORKDIR /src
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
@@ -462,12 +464,12 @@ RUN bun run build \
  && bun build scripts/import-sqlite.mjs --target=bun --outfile=/out/tools/import-sqlite.js \
  && cp -r dist /out/dist && cp -r migrations /out/migrations
 
-FROM oven/bun:1.3.<patch>@sha256:<digest> AS prod-deps
+FROM oven/bun:1.4.4@sha256:<digest> AS prod-deps
 WORKDIR /src
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 
-FROM oven/bun:1.3.<patch>-distroless@sha256:<digest> AS runtime
+FROM oven/bun:1.4.4-distroless@sha256:<digest> AS runtime
 ARG REVISION VERSION CREATED
 LABEL org.opencontainers.image.revision=$REVISION \
       org.opencontainers.image.version=$VERSION \
@@ -1270,6 +1272,439 @@ Map readPlan(String path) {
 - `tests/ci-jenkinsfile-size.test.js` 必須仍然通過（`pipeline {}` ≤ 400 行、每個頂層函式 ≤ 250 行）；新增的輔助函式放在 `// ---- 輔助函式` 分隔線之後。
 - 本機沒有 Groovy 或 Jenkins。repository 內的檢查是 23.5 的靜態測試、既有的結構測試與 `bun test tests/ci-*.test.js`（Windows 上明列檔名）。維運者的檢查：合併後對 `release/little-moments » main` 按 Build Now，確認建置通過 Init。如果仍然失敗，主控台在 `ERROR` 之前會有 `readPlan: <類別>`，依 23.3 的判讀表處理。
 
+### 24. 測試隔離與 Unit Tests 不中斷（新增；Req 4.2、4.4、4.7、4.8、11.3、23.1、23.3、23.5）
+
+現況（192.168.1.121，`release/little-moments » main` 建置 #8，commit `b96a2ac`）：Init、Toolchain、Install、Build 通過。Unit Tests 在本建置的 Ephemeral_Database（`postgres:17.6` 容器，網路 `lm-edb-unit-<id>-net`，Build_Image 容器加入同一網路）上執行 `bun test`。主控台的測試檔順序為 `meal-order`、`ci-record`、`pg-reconnect`（4 通過、1 略過；blackhole 測試 6 秒、hard-close 測試、超過 10 秒的無回應測試 14 秒）、`receipt-parser`、`proxy-resolve`、`ci-jenkinsfile-cps`、`config-secrets`、`migrations-0002`。`migrations-0002` 的第一個測試通過，第二個（`upgrading a 0001 database keeps existing rows, backfills invite ids and keeps all cover kinds`）在 5000 ms 的預設逾時失敗。之後從 22:22:38 到 22:37:14 沒有任何輸出，直到 Req 4.7 的 15 分鐘上限以 `ERROR: bun test 超過 15 分鐘，已中止` 結束，沒有產生 JUnit 報告。同一 commit 在 Windows 本機（原生 PostgreSQL 17、不同的檔案順序）全部通過：1651 通過，約 603 秒。
+
+同一建置的第二個缺陷：Unit Tests 的 post 執行 `Release_Gate QA` 時以 `LM_GATE_INVENTORY: parameter not set` 中止，「QA」關卡沒有寫入 Build_Record。建置仍因單元測試而失敗，但失敗原因與缺少的報告沒有記錄。
+
+本節沒有新的 Correctness Property：要驗證的是測試基礎設施的隔離與 shell 腳本的寫法，以回歸測試、靜態檢查與腳本行為測試涵蓋（24.5）。
+
+#### 24.1 bun test 卡住：事實與待驗證的假設
+
+已知事實（已讀取的程式碼）：
+
+- `migrations-0002` 的 `beforeAll` 以 `createTestDatabase({ migrationsDir: <只含 0001 的暫存目錄> })` 建立 schema；第二個測試在同一連線池上再呼叫 `runMigrations`。`runMigrations` 先 `reserve()` 一條連線，再執行 `SELECT pg_advisory_lock(726362)`（session 級，`server/db/migrations.js`）。寫入交易以 `pg_advisory_xact_lock(726361)` 序列化（`server/db/tx.js`）。advisory lock 以 database 為範圍，同一 Ephemeral_Database 中各測試檔的 `t_<random>` schema 不會隔離它們。
+- 測試連線沒有設定 `lock_timeout`、`statement_timeout` 或 `idle_in_transaction_session_timeout`：`tests/support/pg.js` 的啟動參數只有 `search_path`。等待鎖的敘述會無限期等待。
+- bun 的單一測試逾時（預設 5000 ms）只讓該測試失敗，不會取消已送出的查詢。被放棄的 `runMigrations` 仍持有 reserve 的連線、advisory lock 與交易中的 DDL 鎖，而 `afterAll` 的 `DROP SCHEMA … CASCADE` 需要該 schema 中物件的 AccessExclusiveLock。
+- `pg-reconnect` 經測試內的 TCP proxy 連線；blackhole 期間 proxy 保留雙向位元組，伺服器端的 backend 在 proxy 關閉該連線前一直存在。
+
+| 假設 | 內容 | 確認或排除的方式 |
+|---|---|---|
+| H1 | `pg-reconnect` 留下的 backend 持有 726362 或 726361，或留下未結束的交易，之後所有遷移與寫入都在等待 | `pg-reconnect` 結束後立即查詢 `pg_stat_activity` 與 `pg_locks`：有 `locktype = 'advisory'`、`objid` 為 726362 或 726361 的已授予鎖，且 pid 不屬於後續的測試檔 |
+| H2 | 0002 升級在 CI 上本來就超過 5 秒；逾時後 `afterAll` 的 `DROP SCHEMA` 等待被放棄的遷移交易 | 單獨執行 `migrations-0002`，記錄第二個測試的耗時；在 `afterAll` 期間查詢 `granted = false` 的等待者與 `pg_blocking_pids` |
+| H3 | 連線池耗盡（測試池 `max: 4`，或 `createDatabase` 的預設上限），查詢在用戶端排隊而不是等鎖 | 比對 `pg_stat_activity` 中的連線數與 `state`：等待者的 `wait_event_type` 是 `Lock`，或伺服器端根本沒有對應的 backend |
+| H4 | 只有特定的檔案順序會發生 | 以主控台的順序與預設順序各執行一次完整套件 |
+| H5 | Build_Image 中的 bun 1.3.x 沒有在 hook 逾時後結束 `beforeAll`／`afterAll`（`afterAll(fn, 30_000)` 本應在 30 秒後失敗並繼續），所以一個卡住的 hook 讓整個程序沒有輸出 | 以只含一個永不 resolve 的 `afterAll` 的固定測試檔確認 bun 的行為 |
+
+15 分鐘完全沒有輸出，表示卡住的不只是一個測試：H1 或 H2 讓查詢等待，H5 讓等待擴大到整個程序，兩者可能同時成立。24.3 的必做項目對每個假設都有效；調查結論決定是否需要 24.3 的選用項目。
+
+#### 24.2 調查步驟（任務 26.1 先做，結果寫入任務回報）
+
+1. 以 CI 使用的映像（`Jenkinsfile` 中 `LM_POSTGRES_IMAGE` 的 `postgres:17.6-bookworm@sha256:…`）建立臨時 Ephemeral_Database，用完即刪。有 WSL 或 Linux 容器時在 Linux 上執行 bun（與 Build_Image 相同的作業系統）；只能在 Windows 執行時於回報中註明差異。
+2. 對同一個資料庫依序執行：`bun test tests/pg-reconnect.test.js tests/migrations-0002.test.js`；主控台的順序 `bun test tests/meal-order.test.js tests/ci-record.test.js tests/pg-reconnect.test.js tests/receipt-parser.test.js tests/proxy-resolve.test.js tests/ci-jenkinsfile-cps.test.js tests/config-secrets.test.js tests/migrations-0002.test.js`；最後是完整套件。記錄 bun 實際執行的檔案順序（傳入的順序不一定是執行順序）。
+3. 在 `pg-reconnect` 結束後與卡住期間，以另一條管理連線查詢：
+
+   ```sql
+   SELECT pid, application_name, state, wait_event_type, wait_event,
+          now() - xact_start AS xact_age, now() - query_start AS query_age, left(query, 120) AS query
+     FROM pg_stat_activity
+    WHERE datname = current_database() AND pid <> pg_backend_pid();
+   SELECT pid, mode, granted, classid, objid, objsubid
+     FROM pg_locks
+    WHERE locktype = 'advisory'
+      AND database = (SELECT oid FROM pg_database WHERE datname = current_database());
+   SELECT pid, pg_blocking_pids(pid) AS blocked_by
+     FROM pg_stat_activity
+    WHERE wait_event_type = 'Lock';
+   ```
+
+   單一 bigint key 的 advisory lock 在 `pg_locks` 中為 `classid = 0`、`objid = <key>`、`objsubid = 1`。查詢結果只含合成測試資料；寫入回報前移除主機、使用者與密碼等連線設定。
+4. 單獨執行 `migrations-0002` 並記錄第二個測試的耗時；以 H5 的固定測試檔確認 hook 逾時行為。
+5. 依結果判定 H1–H5 何者成立，在回報中附上證據（查詢輸出摘要與耗時）。本機無法重現時仍完成 24.3 的必做項目，並在回報中說明無法重現，以及下一次 Build Now 時要看的資訊。
+
+#### 24.3 修正方向
+
+必做（不論哪個假設成立）：
+
+- **測試連線的 session 參數**（`tests/support/pg.js`）：新增並匯出 `testSessionParams(schema)`，回傳 `{ search_path, application_name: 'lm-test-<schema 的 hex 部分>', lock_timeout: '30s', statement_timeout: '60s', idle_in_transaction_session_timeout: '60s' }`。`createTestDatabase` 的連線池使用全部參數；`adminSql` 與管理連線使用逾時參數，不設 `search_path`。這些值與 `search_path` 一樣以 Bun.SQL 的 `connection` 啟動參數傳入，所以連線池中的每一條連線都會套用。建立後以 `SHOW lock_timeout` 等查詢驗證，與既有的 `current_schema()` 檢查相同，不符即失敗。`createTestDatabase` 的回傳值新增 `sessionParams`，測試檔自行建立的連線池（例如 `pg-reconnect` 的 `createDatabase(…, { connection: … })`）改為傳入它。以 grep 找出 `tests/` 中所有 `new SQL(` 與 `createDatabase(` 的呼叫並逐一處理。
+  - 等待鎖的敘述在 30 秒後以 SQLSTATE `55P03`（lock_not_available）失敗（[PostgreSQL：lock_timeout](https://www.postgresql.org/docs/17/runtime-config-client.html#GUC-LOCK-TIMEOUT)）。`pg_advisory_lock` 經由同一個鎖管理器等待，也受 `lock_timeout` 限制；24.5 回歸測試的第 2 項確認這一點。被放棄的交易在閒置 60 秒後由伺服器結束，transaction 級鎖隨之釋放。
+  - 數值的依據：本機最慢的單一敘述遠低於 30 秒；`statement_timeout` 大於 `lock_timeout`，所以等鎖時先得到明確的鎖逾時錯誤。實作時以 24.2 的量測確認，數值不同時在回報中說明。不設定 `idle_session_timeout`：它會結束連線池中閒置的正常連線。
+- **測試檔結束時清除自己的 session**：`createTestDatabase` 的 `close()` 依序執行：關閉測試連線池（`sql.close({ timeout: 5 })`）→ 以一條新的管理連線執行 `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = $1 AND datname = current_database() AND pid <> pg_backend_pid()`，名稱以參數傳入 → 每 100 ms 檢查一次，最多 5 秒，直到這些 pid 從 `pg_stat_activity` 消失 → `DROP SCHEMA … CASCADE` → 關閉管理連線。先終止再刪除，`DROP SCHEMA` 就不會等待被放棄的交易，而且仍受 `lock_timeout` 限制。CI 的測試帳號是 Ephemeral_Database 的擁有者，可以終止同一角色的 backend。
+- **`pg-reconnect` 的 teardown**：`afterAll` 維持 `proxy.resume()` → `svc.close()` → `appDb.close()` → `proxy.stop()` 的順序，之後由 `useTestDatabase` 的 `close()` 終止所有帶相同 `application_name` 的 backend。App 連線池經 proxy 連線，伺服器端看到的也是這個名稱。另外斷言 teardown 後沒有該名稱的 backend，且 `pg_locks` 中沒有屬於這些 pid 的 advisory lock。
+- **執行真正遷移的測試給明確逾時**：在 `test()` 內呼叫 `runMigrations`、`createTestDatabase` 或大量寫入的測試加上明確的逾時（例如 `60_000`），至少包含 `migrations-0002` 的升級測試；以 grep 找出 `tests/migrations-*.test.js` 與其他類似的測試。逾時大於 `lock_timeout`，卡住的鎖因此以 `55P03` 呈現，而不是 bun 的通用逾時。bun 的全域預設 5 秒不變。
+
+依調查結果選用：
+
+- H1 成立，且清除無法涵蓋所有情況時：`pg-reconnect` 改用自己的 DATABASE（比照 `createE2eDatabase`／`dropE2eDatabase`，以 `DROP DATABASE … WITH (FORCE)` 刪除）。advisory lock 以 database 為範圍，因此可以完全隔離。
+- H5 成立時：`tests/support/pg.js` 的 `close()` 與其他可能卡住的 hook 在內部以 `Promise.race` 加上自己的上限（例如 20 秒），逾時即丟出錯誤，不依賴 bun 的 hook 逾時。
+- `Jenkinsfile` 的 `bun test` 是否加上 `--timeout <ms>`：預設不加。只有量測顯示 CI 上很多資料庫測試在正常情況下超過 5 秒、無法逐一給明確逾時時才加，並保留 `timeout --kill-after=30 900` 與既有的結構測試。任務 26.1 與 26.2 在同一波次執行，所以 26.1 不修改 `Jenkinsfile`；需要修改時，在回報中說明並於 26.2 完成後進行。
+
+不變：`server/db/migrations.js`、`server/db/tx.js`、`server/db/connect.js` 與 `scripts/migrate.mjs` 的行為與鎖鍵（Req 11.3、12）；App 與 Migration_Runner 的連線不設定這些逾時；Req 4.7 的 15 分鐘上限與 Req 4.2 的 120 秒銷毀不變。
+
+**時間預算**：本機完整套件約 603 秒，已是 15 分鐘（900 秒）上限的 67%。任務 26.3 在與 CI 相同的條件（Linux、`postgres:17.6` 容器）下量測總時間，並以 JUnit 的 `time` 列出最慢的 10 個測試檔。目標是 600 秒以下。超過時先在回報中列出最慢的檔案與可行的做法（減少重複建立 schema 與遷移、改用 `resetTables`、縮短等待），由使用者決定。不以拆成多次 `bun test` 或放寬上限的方式繞過 Req 4.7，除非先修改需求。任務 26.1 在 Linux、Bun 1.3.14 上量得 876 秒；之後的量測改在 Bun 1.4.4 上進行，由任務 28.4 執行（取代 26.3，見第 26 節）。
+
+#### 24.4 QA 關卡腳本在缺少報告時不中斷
+
+原因：Jenkins 的 `EnvVars` 會移除值為空字串的環境變數（[JENKINS-43632](https://issues.jenkins.io/browse/JENKINS-43632)；[Jenkins community：空值的環境變數不會傳給程序](https://community.jenkins.io/t/environment-variables-with-empty-values-are-not-passed-to-process-jenkins-exec/9949)）。`recordQa` 以 `withEnv(["LM_GATE_INVENTORY=${args.inventory ?: ''}"])` 傳入路徑，而 `unitTestsPostAlways` 固定傳 `inventory: ''`，所以 `sh` 中沒有這個變數，`set -eu` 在 `[ -n "$LM_GATE_INVENTORY" ]` 中止。Browser Tests 的 post 傳入 inventory 路徑，不會在這一行中止；但 Browser Tests 成功時 `stageError` 為空，`LM_GATE_STAGE_ERROR` 同樣不存在。`env.X = ''` 的效果相同，變數變成未設定。
+
+同一類寫法的盤點（撰寫本節時以 grep 找到，任務 26.2 重新確認）：
+
+| 函式 | 變數 | 何時未設定 | 目前的結果 |
+|---|---|---|---|
+| `recordQa`（Unit／Browser post） | `LM_GATE_INVENTORY`、`LM_GATE_STAGE_ERROR`、`LM_GATE_JUNIT` | Unit post 一律；Browser Tests 成功時 | 建置 #8 的錯誤；關卡沒有寫入 Build_Record |
+| `prepareScanSources` | `LM_SCAN_FETCH_TARGET`、`LM_SCAN_BASE_REF` | 所有非 PR 建置，包括 `main` | Security Scan 在 Gitleaks 之前中止 |
+| `runDast` | `LM_DAST_PROBE_ARGS` | 探測目標清單為空時 | 隔離探測以 shell 錯誤結束，沒有記錄原因 |
+| `recordStagingGate` | `LM_STG_STAGE_ERROR` | Staging 成功時 | 通過的「Staging」關卡無法寫入 |
+| `prepareApproval` | `LM_PRD_BASE_COMMIT` | 讀不到 Production 狀態時 | 「Production 目前版本的遷移檔」步驟中止 |
+| `recordProductionGate` | `LM_PRD_STAGE_ERROR` | Production 成功時 | 通過的「上線後」關卡無法寫入 |
+| `pullImages` | `LM_PULL_IMAGES` | refs 為空時（目前的呼叫端不傳空清單） | 步驟中止 |
+| `finalizeBuildRecord` | `LM_POST_FAILED_STAGE` | 建置成功時 | 成功的建置無法 finalize Build_Record |
+
+修正：
+
+- 上表的腳本中，可能為空的變數一律以 `${X:-}` 展開，例如 `if [ -n "${LM_GATE_INVENTORY:-}" ]; then set -- "$@" --inventory "${LM_GATE_INVENTORY:-}"; fi`、`… "$@" ${LM_GATE_JUNIT:-}`、`for t in ${LM_DAST_PROBE_ARGS:-}; do`。`set -u` 保留，其他必要變數未設定時仍立即失敗。
+- 檢查範圍是 `Jenkinsfile` 與 `ci/jenkins/pipelines/*.Jenkinsfile` 的所有 `sh` 腳本，不只 post 函式：上表多數位置不在 post 中。
+- `ci/gates.mjs junit`：有 `--stage-error` 且 JUnit 摘要缺失或無法解析時，`unmet` 在階段錯誤之後再列出 `JUnit 報告缺失或無法解析`，狀態維持 `error`。建置 #8 這類情況會在 Build_Record 同時記錄「檢查階段執行錯誤：…」與缺少的報告（Req 23.1、23.3、23.5）。沒有 `--stage-error` 時的判定不變，Property 5 不受影響。
+- `unitTestsPostAlways`、`browserTestsPostAlways` 對 `recordQa` 回傳值與 `LM_QA_GATE_RECORDED` 的處理不變。Unit Tests 失敗時建置仍為 FAILURE（Req 4.4），關卡結果為未通過；`ci/record.mjs gate` 失敗（例如沒有產生 gate 檔）時步驟仍然失敗，不會變成通過。
+
+#### 24.5 測試
+
+- **回歸測試**（新增 `tests/pg-isolation.test.js`，需要 Ephemeral_Database）：
+  1. 把 `createTcpProxy` 移到 `tests/support/tcp-proxy.js`，由 `pg-reconnect` 與本測試共用。經 proxy 建立 App 連線池，在 blackhole 期間送出一個寫入交易與數個 ping，再 `refuse` 與 `stop`，執行與 `pg-reconnect` 相同的 teardown。接著在同一資料庫以新的 `createTestDatabase` 套用全部遷移並執行一次 `withWriteTx` 寫入，斷言 10 秒內完成。
+  2. 以另一條連線持有 `pg_advisory_lock(726362)`，在以 `testSessionParams` 建立、`lock_timeout` 覆寫為較短值（例如 `1s`）的連線上呼叫 `runMigrations`：斷言以 `55P03` 失敗、結束碼不是 0、`schema_migrations` 沒有新的紀錄，且測試在 bun 的逾時前結束。
+  3. `close()` 之後 `pg_stat_activity` 中沒有該測試檔 `application_name` 的 backend；一個被放棄的 `BEGIN` 交易不會讓 `close()` 超過 10 秒。
+- **單元測試**（`tests/support` 的既有測試檔，或新增 `tests/test-db-session.test.js`）：`testSessionParams` 的鍵與值；`application_name` 只含 `[a-z0-9_-]` 且不超過 63 位元組；`pg_terminate_backend` 的查詢以參數傳入名稱。
+- **靜態檢查**（新增 `tests/ci-jenkinsfile-shell-env.test.js`，沿用 `tests/support/groovy-scan.js`，需要時擴充以取得字串常值的原文與位置）：檢查 `Jenkinsfile` 與 `ci/jenkins/pipelines/*.Jenkinsfile` 中每個啟用 nounset（`set -u`、`set -eu`、`set -o nounset`）的單引號 `sh` 腳本。
+  1. 可能為空的變數：`withEnv([...])` 中值含 `?:`、三元運算、`''` 或 `.join(` 的項目，以及檔案中任何 `env.X = ''` 或值含上述形式的 `env.X = …`。
+  2. 由 `withEnv` 傳入的可能為空變數，在該 `withEnv` 範圍內的腳本中每次展開都使用 `${X:-…}`、`${X-…}` 或 `${X:+…}`。
+  3. 屬於第 1 點的變數，其空值判斷（`[ -n "$X" ]`、`[ -z "$X" ]`、`test -n`／`test -z`）與 `for v in $X` 清單展開都使用上述預設值形式。`env.X = ''` 的變數在正常流程中於使用前已經設定（例如 `LM_EDB_DIR`），一般位置的 `"$X"` 不受限制，保留 `set -u` 的立即失敗。
+  4. 每條規則都有通過與失敗的固定樣本，失敗樣本包含 `recordQa` 的舊寫法。
+- **腳本行為測試**（有 POSIX `sh` 時執行，沒有時以明確的標題略過；Build_Image 中一定會執行）：從 `recordQa` 取出 `Release_Gate QA` 腳本，以 PATH 中的假 `bun`（記錄參數並回傳指定的結束碼）執行。`LM_GATE_INVENTORY` 與 `LM_GATE_STAGE_ERROR` 未設定時腳本不因 nounset 失敗，參數中沒有 `--inventory`；設定時參數含 `--inventory <路徑>`；假的 `bun ci/gates.mjs` 回傳 1 時腳本結束碼為 1。`finalizeBuildRecord` 的腳本在 `LM_POST_FAILED_STAGE` 未設定時執行一次。
+- **`ci/gates.mjs`**（`tests/ci-junit-gate.test.js`）：`--stage-error` 加上不存在的 JUnit 檔 → 狀態 `error`，`unmet` 依序含階段錯誤與 `JUnit 報告缺失或無法解析`，結束碼 1；`--stage-error` 加上有效 JUnit 的結果不變。
+- **既有測試**：`tests/ci-jenkinsfile.test.js` 中斷言 `--inventory "$LM_GATE_INVENTORY"`、`--stage-error "$LM_GATE_STAGE_ERROR"`、`git merge-base "$LM_SCAN_BASE_REF" "$head"`、`--first-failed-stage "$LM_POST_FAILED_STAGE"` 等字串的斷言改為新寫法，強度不變；不刪除斷言、不放寬比對，有調整的斷言逐項記錄於任務回報。`tests/ci-jenkinsfile-size.test.js` 與 `tests/ci-jenkinsfile-cps.test.js` 仍須通過。
+
+### 25. Production 收據 AI（OpenAI）啟用（新增；Req 2.4、15.1、15.2、15.4、15.6–15.9）
+
+Release_Approver `jacklin` 決定只在 Production_Environment 啟用雲端 AI 收據辨識（Req 15.7）。Staging_Environment、Test_Environment、還原演練與 Untrusted_PR 建置維持停用（Req 15.6、15.8）。金鑰是 `release/` 資料夾的 Secret file 憑證 `lm-prod-openai-api-key`，`ci/` 永遠不定義（Req 2.4、15.8）。
+
+現況（已讀取的程式碼）：
+
+- `server/receipt-ai.js` 在 `createReceiptAi` 建立時讀取一次金鑰：`CAMPING_OPENAI_API_KEY` 非空時使用它，否則讀 `CAMPING_OPENAI_API_KEY_FILE`（未設定或空字串時為專案根目錄的 `.secrets/openai_api_key`；`.dockerignore` 排除 `.secrets/`，所以映像內沒有這個檔案），並去除前後空白。檔案不存在（`ENOENT`）時停用；其他讀取錯誤（`EACCES`、`EISDIR` 等）直接拋出，App 啟動失敗。金鑰須符合 `^sk-[A-Za-z0-9_-]{20,}$`、模型須符合 `^gpt-[A-Za-z0-9._-]{1,80}$`，否則停用。只有 `scripts/serve.mjs` 呼叫 `createReceiptAi`；`/app/server/migrate.js` 與 `/app/tools/*` 不讀金鑰。
+- `server/config.js` 的 `AI_COST_DEFAULTS`：模型 `gpt-6-luna`、圖片細節 `high`、回覆上限 6000 token、每位使用者每 15 分鐘 10 次、每 UTC 日 100 次、每 UTC 月 1000 次。App 不要求設定模型。金鑰不經 `parseConfig`，不出現在啟動摘要。
+- `deploy/compose/compose.yaml` 的 `x-app` 把 `CAMPING_OPENAI_API_KEY` 固定為 `""`，其他 `CAMPING_OPENAI_*` 取自同名 Compose 變數、預設空字串；沒有掛載任何金鑰檔。`migrate` 以 `<<: *app` 繼承同一組設定。
+- `deploy/bin/lm-deploy` 啟動時 `unset` 呼叫端的 `CAMPING_OPENAI_*`；`APP_ENV_KEYS` 只有 Database 與 Setup_Token 的四個鍵，`stage_app_env` 拒絕其他鍵。`deploy --app-env-stdin` 在 `do_backup` 之前驗證 stdin，備份之後才 `install_app_env`。App 容器以 `user: "10001:10001"`、`read_only: true`、`cap_drop: [ALL]` 執行。
+- `Jenkinsfile` 的 `productionDeployCommand` 以四層 `withCredentials`（SSH、known_hosts、Database、Setup_Token）包住同一個 `sh`，app.env 以 shell 內建 `printf` 經 stdin 傳給 `lm_ssh deploy "$LM_IMAGE_DIGEST" --app-env-stdin`。`scrubCredentialSpecs` 依 `LM_STAGES_ENTERED` 列出封存前要重新取得並遮罩的憑證。
+- `ci/jenkins/jobs.groovy` 的 `FOLDER_CREDENTIALS` 在任何秘密檔缺少、不可讀或為空時讓 seed 失敗（fail closed），不建立或更新任何 Job。
+- `tests/ci-lint.test.js` 斷言所有 Pipeline、`jobs.groovy` 與 `casc.yaml` 完全不含 `openai`；`README.md` 寫明 `compose.yaml` 沒有掛載金鑰檔。這兩處描述的是啟用前的狀態，本節改寫它們。
+
+本節沒有新的 Correctness Property：變更在 Groovy、bash 與 Compose 設定，App 程式不變；行為以靜態檢查、bats 與 Compose 設定測試涵蓋（25.8）。`ci/production.mjs` 與 `ci/staging.mjs` 只多一個列舉欄位，以範例測試涵蓋。需求文件不需修改：Req 15.6–15.8 已規定預設停用、由 Release_Approver 針對特定環境啟用且值只來自 Credential_Store。
+
+#### 25.1 範圍與 Req 15.6／15.7 的對應
+
+| 執行環境 | 收據 AI | `CAMPING_OPENAI_API_KEY_FILE` | 金鑰來源 |
+|---|---|---|---|
+| Untrusted_PR、`ci/` 的建置與 Test_Environment | 停用（維持現狀） | 維持現狀（Pipeline 不以非空值設定任何 `CAMPING_OPENAI_*`） | 無；`ci/` 沒有此憑證 |
+| Staging_Environment | 停用（`LM_STAGING_RECEIPT_AI = 'disabled'`） | 空字串（`lm-deploy` 固定） | 無；`lm-deploy staging` 拒絕金鑰 |
+| Production_Environment | 啟用（`LM_PROD_RECEIPT_AI = 'enabled'`） | `/run/secrets/openai-api-key`（`lm-deploy` 只在金鑰檔存在時設定） | `release/` 的 `lm-prod-openai-api-key` |
+| 還原演練 `release/restore-drill` | 停用 | 空字串（`drill.yaml` 固定，不變） | 無 |
+| 手動回滾 `release/rollback` | 不變更主機上的金鑰檔 | 依主機上的金鑰檔（同 Production） | 不使用此憑證 |
+
+Req 15.7「僅從 Credential_Store 取得 `CAMPING_OPENAI_*` 值」在本設計的對應：唯一的秘密值（金鑰內容）只來自 `lm-prod-openai-api-key`。`CAMPING_OPENAI_API_KEY_FILE` 是 `lm-deploy` 內的固定常數（容器內路徑，不是秘密，`<env>.env` 不能改）。`CAMPING_OPENAI_API_KEY` 仍固定為空字串。`CAMPING_OPENAI_MODEL_ID`、`CAMPING_OPENAI_IMAGE_DETAIL`、`CAMPING_OPENAI_MAX_COMPLETION_TOKENS` 維持空字串，App 使用 `AI_COST_DEFAULTS`（`gpt-6-luna`、`high`、6000）；要改模型或上限時另立變更。Production 改回停用時，五個變數全部回到 Req 15.6 的空字串。
+
+#### 25.2 資料流
+
+```mermaid
+sequenceDiagram
+  participant CS as Credential_Store（release/）
+  participant P as Pipeline（Production Deploy）
+  participant H as lm-deploy prod（Deploy_Host）
+  participant C as Compose（app-blue／app-green）
+  participant A as App_Server
+  P->>CS: withCredentials file（lm-prod-openai-api-key）
+  CS-->>P: 暫存檔路徑 LM_PRD_OPENAI_KEY_FILE
+  P->>H: SSH stdin：LM_RECEIPT_AI=enabled、四個 app.env 鍵、LM_OPENAI_API_KEY
+  H->>H: 驗證（備份前）→ 備份 → 寫入 app.env 與 secrets/openai-api-key（10001:10001、0400）
+  H->>C: LM_OPENAI_KEY_SOURCE 與 CAMPING_OPENAI_API_KEY_FILE（只有路徑）
+  C->>A: 唯讀 bind mount，App 啟動時讀取一次金鑰
+  H-->>P: app-env 結果行 receiptAi enabled（不含金鑰）
+```
+
+#### 25.3 Jenkins 憑證與 Pipeline
+
+**`ci/jenkins/jobs.groovy`**：`release` 清單在 `lm-prod-smoke` 之後加入 `[id: 'lm-prod-openai-api-key', type: 'file', fileName: 'openai-api-key', description: 'Production 收據 AI 的 OpenAI API 金鑰（只在 Production Deploy 使用）']`。秘密檔為主機上的 `<controller-dir>/secrets/little-moments/release/lm-prod-openai-api-key`（容器內 `/run/secrets/little-moments/release/lm-prod-openai-api-key`），以 `secretBytes` 讀取，與其他 `file` 憑證相同。`ci`、`infra` 清單不變。缺少任何秘密檔時 seed 失敗，所以維運者必須先放好秘密檔，再複製新的 `jobs.groovy` 並重新載入（25.7）。
+
+**`Jenkinsfile` 的 `environment`**（說明註解放在 `pipeline {` 之前，與其他憑證 ID 相同）：
+
+```groovy
+LM_STAGING_RECEIPT_AI = 'disabled'
+LM_PROD_RECEIPT_AI = 'enabled'
+LM_PROD_OPENAI_CREDENTIALS = 'lm-prod-openai-api-key'
+```
+
+這三個是非秘密的開關與憑證 ID。修改它們就是 Req 15.7 的「於 Pipeline 設定中明確啟用」，須經一般的審查與 Release_Tag 流程。它們不是建置參數，Build Now 時不能覆寫（Req 23.4）。
+
+**設定檢查**（連線 Deploy_Host 之前）：
+
+- `assertStagingConfig()`：`LM_STAGING_RECEIPT_AI` 必須恰為 `disabled`，否則 `error('LM_STAGING_RECEIPT_AI 只能是 disabled（Staging 不啟用收據 AI）')`。要啟用 Staging 須另立變更，`lm-deploy staging` 同樣會拒絕。
+- `assertProductionConfig()`：`LM_PROD_RECEIPT_AI` 必須是 `enabled` 或 `disabled`；為 `enabled` 時 `LM_PROD_OPENAI_CREDENTIALS` 必須恰為 `lm-prod-openai-api-key`。
+
+**`productionDeployCommand()`**：
+
+- `LM_PROD_RECEIPT_AI == 'enabled'` 時，在現有四層 `withCredentials` 的最內層加上 `withCredentials([file(credentialsId: env.LM_PROD_OPENAI_CREDENTIALS, variable: 'LM_PRD_OPENAI_KEY_FILE')])`，包住同一個 `sh(label: 'lm-deploy prod deploy', …)`；`disabled` 時不綁定此憑證，執行同一段腳本。綁定範圍只有這一次 SSH 呼叫（Req 15.2）。Approval、觀察期的 `health` 與 Smoke_Test、`rollback`、`finalize`、`keepProductionBuildLog` 都不綁定它。
+- 腳本在建立管線之前檢查：`enabled` 時 `[ -s "${LM_PRD_OPENAI_KEY_FILE:-}" ]`，不成立就印出固定訊息並 `exit 2`，不連線 Deploy_Host。
+- stdin 第一行是 `LM_RECEIPT_AI=enabled` 或 `LM_RECEIPT_AI=disabled`，接著是原本的四個 app.env 鍵；`enabled` 時最後一行為 `LM_OPENAI_API_KEY=<值>`。腳本以 `IFS= read -r k < "$LM_PRD_OPENAI_KEY_FILE" || [ -n "$k" ]` 把第一行讀入子 shell 的變數（去掉結尾換行），再以內建 `printf 'LM_OPENAI_API_KEY=%s\n' "$k"` 輸出。開關放在第一行，所以讀取在中途失敗時，`lm-deploy` 收到的是「enabled 但沒有金鑰」或缺少必要的 Database 鍵，兩者都會被拒絕，不會變成「未指定開關，不變更」（25.4）。
+- 不以 `readFile`、`sh(returnStdout: true)` 或任何 Groovy 變數取得金鑰：CPS 會把區域變數序列化到建置目錄的 `program.dat`。Credentials Binding 的 `file` 綁定只遮罩暫存檔路徑，不遮罩檔案內容，所以腳本絕不輸出金鑰。腳本維持 `set +x`，`lm_ssh` 的 stdout 只寫入 `reports/production/deploy.jsonl`。
+- 可能未設定的變數以 `${X:-}` 展開（第 24.4 節）；函式仍不超過 250 行（第 22 節），不新增 `@NonCPS`（第 23 節）。
+
+**`stagingDeployCommand()`**：stdin 第一行加上 `LM_RECEIPT_AI=disabled`（`assertStagingConfig` 已確保 `LM_STAGING_RECEIPT_AI` 為 `disabled`），不綁定任何 OpenAI 憑證。
+
+**其他 Job 不變**：`ci/jenkins/pipelines/rollback.Jenkinsfile` 的 `lm-deploy prod rollback` 不讀 stdin，主機上的金鑰檔維持原狀；回滾需要重新建立的槽位依當時的金鑰檔狀態掛載，所以回滾不需要這個憑證。`restore-drill.Jenkinsfile`（`drill.yaml` 固定空字串，演練不掛載金鑰）、`build-image.Jenkinsfile`、`digest-lookup.Jenkinsfile` 都不引用此憑證或開關。
+
+**遮罩（Req 15.4）**：`scrubCredentialSpecs()` 加入 `[id: env.LM_PROD_OPENAI_CREDENTIALS, kind: 'file', trusted: true, stages: ['Production Deploy']]`，只在 `env.LM_PROD_RECEIPT_AI == 'enabled'` 時列入（停用時從未綁定，也不要求 Credential_Store 有此憑證）。進入 Production Deploy 的建置在封存前重新取得金鑰，遮罩原文、Base64 與 URL 編碼形式；`rawSecretEntries` 已去除結尾換行，所以與 stdin 中的值相同。取不到時依既有規則不封存任何報告並使建置失敗。
+
+**Build_Record 與摘要**：`lm-deploy` 在 `deploy` 的 `app-env` 結果行加上 `"receiptAi":"enabled"` 或 `"disabled"`（25.4）。`ci/production.mjs` 的 `classifyDeploy` 只接受這兩個值，`productionRecord` 把它寫入 `deployments[].receiptAi`；沒有 `app-env` 結果行（例如備份前就失敗）或值不是這兩者時為「未執行」。`ci/staging.mjs` 的 `classifyDeploy`／`stagingRecord` 同樣記錄，Staging 必定為 `disabled`。Production Deploy 的建置摘要加一行 `收據 AI（Production）：enabled` 或 `disabled`。紀錄與摘要只有這個列舉值，不含金鑰、金鑰長度或前綴。
+
+#### 25.4 lm-deploy：stdin 中的金鑰與金鑰檔
+
+新常數：
+
+```bash
+readonly OPENAI_KEY_RE='^sk-[A-Za-z0-9_-]{20,500}$'   # 與 server/receipt-ai.js 相同，另加長度上限
+readonly OPENAI_KEY_TARGET=/run/secrets/openai-api-key  # 容器內路徑
+# 主機路徑：$ENV_DIR/secrets/openai-api-key（Production 為 /srv/lm/prod/secrets/openai-api-key）
+```
+
+`deploy <digest> --app-env-stdin` 的 stdin 除了 `APP_ENV_KEYS`，另外接受兩個不寫入 app.env 的控制鍵：
+
+| 環境 | `LM_RECEIPT_AI` | `LM_OPENAI_API_KEY` | 結果 |
+|---|---|---|---|
+| prod | `enabled` | 恰一行且符合 `OPENAI_KEY_RE` | 備份後以原子方式寫入金鑰檔；`receiptAi` 為 `enabled` |
+| prod | `enabled` | 缺少、重複或格式不符 | 結束碼 2（`app_env_invalid`），在備份與任何 docker 指令之前 |
+| prod | `disabled` | 不存在 | 備份後刪除既有金鑰檔；`receiptAi` 為 `disabled` |
+| prod | `disabled` 或未提供 | 存在 | 結束碼 2（`app_env_invalid`） |
+| prod | 未提供 | 不存在 | 金鑰檔不變（相容尚未更新的 Release_Tag Jenkinsfile）；`receiptAi` 依金鑰檔是否存在 |
+| staging | 未提供或 `disabled` | 不存在 | 不建立金鑰檔；`receiptAi` 為 `disabled` |
+| staging | `enabled`，或有任何 `LM_OPENAI_API_KEY` | — | 結束碼 2（`receipt_ai_forbidden`），在備份與任何 docker 指令之前 |
+| 任一 | 其他值或重複的 `LM_RECEIPT_AI` | — | 結束碼 2（`app_env_invalid`） |
+
+- `app-env` 子命令（只寫入 app.env）不接受這兩個鍵，維持「不允許的鍵」：金鑰只在建立新容器時生效，單獨寫入不會改變執行中的 App。`deploy` 沒有 `--app-env-stdin` 時金鑰檔不變。
+- 驗證與 app.env 在 `stage_app_env` 的同一次讀取中完成。控制鍵不寫入暫存的 app.env：以 bash 迴圈逐行寫入暫存檔，不經外部程式處理含金鑰的行。金鑰以內建 `printf '%s\n'` 寫入 `secrets/.openai-api-key.XXXXXX`（列入 `TMP_FILES`，任何結束路徑都刪除）。錯誤訊息只含固定文字與鍵名，不含值；`log`、`die`、`emit` 都不輸出金鑰，金鑰不放入任何 `export` 的變數、指令列參數或狀態檔。
+- `secrets/` 目錄：不存在時以 `mkdir -m 0700` 建立；必須不是符號連結，以 root 執行時必須由 root 擁有且權限為 0700，否則 `config_invalid`。主機上的 uid 10001 無法進入 `/srv/lm/prod`（root 0750）或 `secrets/`（root 0700）。bind mount 的來源路徑由 dockerd（root）解析，容器內的程序只需要能讀檔案本身，所以目錄不必開放給 10001。
+- 寫入（新函式 `install_receipt_ai`，在 `do_deploy` 中緊接 `install_app_env`，位於備份之後、Migration_Runner 之前）：暫存檔 → `chown 10001:10001` → `chmod 0400` → `mv -f` 到 `secrets/openai-api-key`。非 root 執行（bats）時 `chown` 失敗可容忍，比照 `own_like_dir`；以 root 執行時失敗即 `die`。`disabled` 時 `rm -f -- secrets/openai-api-key`。
+- 失敗語意與 app.env 相同：金鑰檔在備份後、遷移與啟動前寫入；之後的步驟失敗時金鑰檔維持新狀態。作用中的舊槽位不受影響：它的單檔 bind mount 仍指向舊 inode，直到該容器被移除。
+- `build_compose`：每次組出 `COMPOSE_CMD` 時依主機狀態決定兩個 Compose 變數，並以 `env` 明確傳入（Compose 以呼叫端環境優先於 `--env-file`）：
+
+  | 條件 | `LM_OPENAI_KEY_SOURCE` | `CAMPING_OPENAI_API_KEY_FILE` |
+  |---|---|---|
+  | prod，`secrets/openai-api-key` 是一般檔案（不是符號連結）、大小 1–512 位元組，以 root 執行時擁有者為 10001 且權限 0400 | `$ENV_DIR/secrets/openai-api-key` | `/run/secrets/openai-api-key` |
+  | prod，金鑰檔不存在 | `/dev/null` | 空字串 |
+  | prod，路徑存在但不符第一列 | — | 結束碼 2（`config_invalid`），不呼叫 docker |
+  | staging，金鑰檔不存在 | `/dev/null` | 空字串 |
+  | staging，金鑰檔存在 | — | 結束碼 2（`config_invalid`：Staging 不得有 OpenAI 金鑰檔） |
+
+  `rollback`、`finalize`、`health`、`smoke-account` 等其他子命令因此依同一狀態組出 Compose 設定，不需要 Pipeline 再傳金鑰。`migrate` 容器會收到同一個 `CAMPING_OPENAI_API_KEY_FILE`，但沒有掛載，也不讀金鑰。
+- `load_env_config`：`<env>.env` 中任何 `CAMPING_OPENAI_*` 或 `LM_OPENAI_KEY_SOURCE` 為非空值時 `config_invalid`，訊息只指出變數名稱。這些值只由 `lm-deploy` 決定，範本保持空白（Req 15.6）。
+- 啟動時的 `unset` 清單加入 `LM_OPENAI_KEY_SOURCE`。
+- `app-env` 結果行：`deploy` 時加上 `"receiptAi":"enabled"|"disabled"`，表示寫入後的實際狀態；`keys` 只列 app.env 的鍵，不列控制鍵。`app-env` 子命令的輸出不變。
+- `drill` 使用 `drill.yaml` 與自己的 `DRILL_CMD`，不加入這兩個變數，演練中的 App 停用收據 AI。`status` 的輸出不變。
+
+#### 25.5 Compose
+
+```yaml
+# 只掛載到 app-blue／app-green（不含 migrate、proxy、db）。來源由 lm-deploy 決定：
+# 金鑰檔存在時為 /srv/lm/prod/secrets/openai-api-key，否則為 /dev/null。
+x-openai-key: &openai_key
+  type: bind
+  source: ${LM_OPENAI_KEY_SOURCE:-/dev/null}
+  target: /run/secrets/openai-api-key
+  read_only: true
+  bind:
+    create_host_path: false
+
+services:
+  app-blue:
+    <<: *app
+    image: ${APP_IMAGE_BLUE:?…}
+    profiles: [blue]
+    volumes: [*openai_key]
+  app-green:
+    <<: *app
+    image: ${APP_IMAGE_GREEN:?…}
+    profiles: [green]
+    volumes: [*openai_key]
+```
+
+- 一律掛載的原因：Compose 沒有依變數決定是否掛載的語法。停用時以 `/dev/null` 佔位，`CAMPING_OPENAI_API_KEY_FILE` 為空字串，App 讀取映像內不存在的預設路徑而停用；即使讀到 `/dev/null`，也只得到空字串而停用。
+- 使用長語法並設 `create_host_path: false` 的原因：短語法在來源不存在時由 Docker 建立一個目錄，App 讀取時得到 `EISDIR` 而啟動失敗，之後 `lm-deploy` 的 `mv` 也會把檔案移進該目錄。`create_host_path: false` 讓來源不存在時 `up` 直接失敗；`lm-deploy` 只在檔案存在時傳入真實路徑，這是第二道保護。
+- 不使用 Compose 頂層的 `secrets:`：它同樣需要來源檔存在，無法用同一份設定涵蓋 Staging 與停用狀態。
+- 單一檔案的 bind mount 停留在建立容器時的 inode（`upstream.caddy` 改用目錄掛載就是這個原因）。App 只在啟動時讀一次金鑰，所以輪替在下一次部署建立的新槽位生效，舊槽位在移除前繼續使用舊金鑰。
+- `x-app.environment` 的鍵與值不變（`CAMPING_OPENAI_API_KEY: ""`、`CAMPING_OPENAI_API_KEY_FILE: ${CAMPING_OPENAI_API_KEY_FILE:-}` 等），只更新註解，說明值由 `lm-deploy` 傳入。
+- `staging.env.example`、`prod.env.example`：四行 `CAMPING_OPENAI_*` 維持空白，註解改為「由 lm-deploy 決定，非空值會被拒絕」；Production 範本另說明金鑰檔的主機路徑與 `deploy/README.md` 的啟用步驟。
+- 以 `docker compose config` 確認展開結果（有 Docker 時執行）：提供必要的 `LM_ENV`、`APP_IMAGE_*` 等變數，`LM_OPENAI_KEY_SOURCE` 未設定時 `app-blue`／`app-green` 各有一個來源為 `/dev/null`、目標為 `/run/secrets/openai-api-key` 的唯讀 bind mount；設定為暫存檔時來源為該檔；`migrate`、`proxy`、`db` 沒有此掛載。
+
+#### 25.6 App 與管理員政策
+
+App 程式不變。
+
+- 啟用後，收據 AI 仍受 Settings_Store 的收據 AI 政策限制：`all`（可編輯該旅行的成員）、`admins`、`off`；沒有儲存值、也沒有 `CAMPING_RECEIPT_AI_POLICY` 時為 `all`。Production 對網際網路公開（第 18 節），建議第一次部署前由管理員在 `/admin` 先設為 `admins`，確認可用後再改為 `all`。
+- 管理員在 `/admin` 改為 `off` 後，下一個請求即生效，不需重新部署；Pipeline 與主機上的金鑰維持原狀。
+- 用量上限沿用 `AI_COST_DEFAULTS`（每位使用者 15 分鐘 10 次、每日 100 次、每月 1000 次）。另建議在 OpenAI 後台為該專案設定每月預算。
+- 確認啟用：管理員在 `/admin` 看到收據 AI 可用，或以已登入帳號查詢收據 AI 狀態 API 得到 `enabled: true`。狀態只檢查金鑰與模型的格式，不呼叫 OpenAI。Smoke_Test 不呼叫 OpenAI，避免每次部署產生費用。
+
+#### 25.7 維運步驟（寫入 `deploy/README.md` 與 `ci/jenkins/README.md`）
+
+第一次啟用（順序重要）：
+
+1. 在 Jenkins controller 主機以隱藏輸入寫入秘密檔，沿用 `ci/jenkins/README.md` 的 `put` 函式（`read -rs` 後經 `install -o 1000 -g 1000 -m 600 /dev/stdin` 寫入，值不出現在終端機、shell 歷史或程序列表）：`put little-moments/release/lm-prod-openai-api-key`。
+2. 在 Deploy_Host 以新版 repository 重新執行 `deploy/host/install.sh`，安裝新的 `lm-deploy` 與 `compose.yaml`。這一步必須在第 4 步之前：舊版 `lm-deploy` 會以「不允許的鍵：LM_RECEIPT_AI」拒絕新 Pipeline 的 Staging 部署（在備份前，Staging 不變）。
+3. 把新的 `jobs.groovy` 複製到 casc 目錄，依「以假秘密測試設定變更」測試，再執行 Reload existing configuration；確認 `release/` 資料夾有 `lm-prod-openai-api-key`。秘密檔缺少時 seed 失敗，不建立或更新任何 Job。
+4. 合併到 `main`：Staging 部署送出 `LM_RECEIPT_AI=disabled`，Staging 維持停用。
+5. 管理員在 `/admin` 把收據 AI 政策設為 `admins`（25.6）。
+6. 以新的 Release_Tag 部署 Production：核准後 Production Deploy 傳送金鑰，`lm-deploy` 寫入金鑰檔，新槽位啟用收據 AI；Build_Record 的 Production 項目 `receiptAi` 為 `enabled`。確認可用後，管理員視需要改為 `all`。
+
+輪替：在 OpenAI 建立新金鑰 → 以同一個 `put` 覆寫秘密檔 → Reload existing configuration → 下一次 Production 部署寫入新金鑰，新槽位使用新金鑰 → finalize 並移除舊槽位後，在 OpenAI 撤銷舊金鑰。
+
+金鑰外洩：先在 OpenAI 撤銷金鑰（App 之後對辨識請求回應 502，其他功能不受影響），管理員在 `/admin` 設為 `off`，再依輪替步驟更換。
+
+停用：
+
+- 暫時停用：管理員在 `/admin` 設為 `off`，立即生效，不需部署。
+- 停止提供金鑰：把 `LM_PROD_RECEIPT_AI` 改為 `'disabled'`，合併後以下一個 Release_Tag 部署。`lm-deploy` 刪除金鑰檔，新槽位的 `CAMPING_OPENAI_API_KEY_FILE` 為空字串（回到 Req 15.6）。憑證可以留在 `release/`；要移除時，先從 `jobs.groovy` 與 `ci/jenkins/README.md` 移除並重新載入，再刪除秘密檔（順序相反時 seed 會失敗）。
+
+#### 25.8 測試
+
+- **`tests/ci-lint.test.js`**：「Jenkins 不定義任何 OpenAI 憑證」改為：
+  - `jobs.groovy` 的 `ci` 與 `infra` 區塊（`// BEGIN credentials <資料夾>` 到 `// END`）不含 `openai`；`release` 區塊恰有一個 `lm-prod-openai-api-key`，類型為 `file`。
+  - `casc.yaml` 與 `ci/jenkins/pipelines/*.Jenkinsfile`（略過註解）不含 `openai`，不區分大小寫。
+  - 根目錄 `Jenkinsfile`：`credentialsId: env.LM_PROD_OPENAI_CREDENTIALS` 恰出現一次，位於 `productionDeployCommand`，且與 `lm_ssh deploy` 在同一個 `withCredentials` 範圍內；`LM_PROD_OPENAI_CREDENTIALS` 只出現在 `environment`、`assertProductionConfig`、`productionDeployCommand` 與 `scrubCredentialSpecs`；`stagingDeployCommand`、Approval、觀察期、回滾與 keepLog 相關函式都不含它。
+  - `environment` 有 `LM_STAGING_RECEIPT_AI = 'disabled'`，`LM_PROD_RECEIPT_AI` 為 `'enabled'` 或 `'disabled'`。`stagingDeployCommand` 的 stdin 含 `LM_RECEIPT_AI=disabled` 且不含 `LM_OPENAI_API_KEY`。`productionDeployCommand` 的 stdin 第一行為 `LM_RECEIPT_AI=`，金鑰只以內建 `read` 與 `printf` 處理，沒有 `readFile`、`returnStdout`、`cat`，也沒有 `echo` 金鑰變數。
+  - 「CAMPING_OPENAI_* 預設為空字串」的 Compose 與範本斷言維持；「Pipeline 不以非空值設定 CAMPING_OPENAI_*」維持（Pipeline 只傳 `LM_` 開頭的控制鍵）。
+- **`tests/ci-jenkinsfile.test.js`**：`scrubCredentialSpecs` 的 OpenAI 項目為 `kind: 'file'`、`stages: ['Production Deploy']`，且只在 `LM_PROD_RECEIPT_AI == 'enabled'` 時列入；`assertStagingConfig`／`assertProductionConfig` 的新檢查與錯誤訊息；建置摘要的 `收據 AI（Production）`。`tests/ci-jenkinsfile-size.test.js`、`tests/ci-jenkinsfile-cps.test.js`、`tests/ci-jenkinsfile-shell-env.test.js` 仍通過。
+- **`tests/ci-jenkins-config.test.js`**：既有的「README 列出每個資料夾憑證 ID」自動涵蓋新 ID，`ci/jenkins/README.md` 的憑證表須與 `jobs.groovy` 同一個任務更新。
+- **`tests/ci-production.test.js`、`tests/ci-staging.test.js`**：`classifyDeploy` 解析 `receiptAi`（`enabled`、`disabled`、缺少、其他值為「未執行」）；`productionRecord`／`stagingRecord` 的部署項目含 `receiptAi`，且通過 `validateRecord`。
+- **bats（`deploy/tests/lm-deploy.bats`）**：測試用的假金鑰在執行時產生（`sk-test-` 加隨機十六進位），repository 中不留下符合金鑰格式的字串。
+  - prod `enabled`：金鑰檔內容等於輸入加一個換行、權限 0400，假 `chown`（PATH 中）記錄 `10001:10001`；`app.env` 不含 `LM_` 控制鍵與金鑰；lm-deploy 的 stdout／stderr、fake docker 的參數與環境紀錄、`state/` 下的檔案都不含金鑰；compose 呼叫的環境含 `LM_OPENAI_KEY_SOURCE=<env 目錄>/secrets/openai-api-key` 與 `CAMPING_OPENAI_API_KEY_FILE=/run/secrets/openai-api-key`；`app-env` 結果行的 `receiptAi` 為 `enabled`，`keys` 不含控制鍵。
+  - prod `disabled`：既有金鑰檔被刪除，`LM_OPENAI_KEY_SOURCE=/dev/null`、`CAMPING_OPENAI_API_KEY_FILE` 為空，`receiptAi` 為 `disabled`。prod 未提供開關：金鑰檔不變。
+  - 拒絕（結束碼 2、fake docker 未被呼叫、沒有備份、金鑰檔不變、沒有殘留暫存檔）：`enabled` 沒有金鑰、兩行金鑰、金鑰含空白、不是 `sk-` 開頭、`sk-` 之後只有 19 個字元或有 501 個字元，`disabled` 加金鑰、未提供開關卻有金鑰、開關值 `on`、重複的開關；staging 的 `enabled` 或任何金鑰為 `receipt_ai_forbidden`；`app-env` 子命令遇到 `LM_RECEIPT_AI` 為 `app_env_invalid`。
+  - `build_compose` 的檢查：prod 的金鑰路徑為符號連結、目錄或空檔，staging 有金鑰檔，`<env>.env` 有 `CAMPING_OPENAI_MODEL_ID=gpt-x` 或 `LM_OPENAI_KEY_SOURCE=/x`，皆為 `config_invalid` 且未呼叫 docker；呼叫端環境中的 `LM_OPENAI_KEY_SOURCE` 被忽略。
+  - 沒有 stdin 的 `rollback` 不改變金鑰檔，compose 環境依金鑰檔；備份失敗時金鑰檔不變。
+- **Compose 設定**（新增 `tests/compose-receipt-ai.test.js`，與 `tests/ci-lint.test.js` 分開以便和 Pipeline 的任務並行）：以 YAML 解析 `compose.yaml`，`app-blue`、`app-green` 的 `volumes` 恰含一個 `type: bind`、`source: ${LM_OPENAI_KEY_SOURCE:-/dev/null}`、`target: /run/secrets/openai-api-key`、`read_only: true`、`bind.create_host_path: false` 的項目；`migrate`、`proxy`、`db` 沒有此目標；`x-app.environment.CAMPING_OPENAI_API_KEY` 仍為 `""`。`lm-deploy` 的 `unset` 清單含 `LM_OPENAI_KEY_SOURCE`，`APP_ENV_KEYS` 不含 `LM_RECEIPT_AI` 與 `LM_OPENAI_API_KEY`。有 Docker 時另以 `docker compose config` 檢查兩種 `LM_OPENAI_KEY_SOURCE` 的展開結果；沒有 Docker 時以明確的標題略過。
+- **還原演練**：`tests/ci-restore-drill.test.js` 對 `drill.yaml` 的斷言不變（仍為空字串、沒有掛載）。
+- **文件（`tests/readme.test.js`）**：`ci/jenkins/README.md` 的憑證表有 `lm-prod-openai-api-key`（`release/`、Secret file、只在 Production Deploy），規則一節不再寫「預設不定義任何憑證」；`deploy/README.md` 有「Production 收據 AI（OpenAI）」一節，依序出現 `lm-prod-openai-api-key`、`install.sh`、`Reload existing configuration`、`/admin`、Release_Tag，並含輪替與停用；`README.md` 不再寫「沒有掛載金鑰檔」，並寫明 Staging 停用、Production 啟用；三份文件不含符合 OpenAI 金鑰格式的字串（沿用秘密掃描）。
+- **秘密掃描**：`bun scripts/scan-secrets.mjs` 沒有發現。
+
+### 26. Bun 1.4.4 升級（新增；Req 3.1、3.2、3.3、3.4、3.5、4.4、4.7、9.11、12.4、16.2、16.3）
+
+使用者決定所有位置的 Bun 都升級到 1.4.4：App_Image 的 `Dockerfile`、Build_Image、`ci/toolchain.json`、Jenkins Pipeline 引用的 `BUILD_IMAGE`，以及本機與文件。Req 3.2、16.2 與 Glossary 的 Build_Image 已改為 Bun 1.4.x（精確版本 1.4.4）。
+
+本節沒有新的 Correctness Property：變更是版本與 digest 的固定值，以既有的靜態檢查涵蓋；Property 20 與 Property 29 的內容不變，只在 Bun 1.4.4 上重新執行（26.5）。
+
+#### 26.1 原因：Bun 1.3.14 上的發現
+
+以下發現來自任務 26.1 的調查與之後在 Linux、Bun 1.3.14、PostgreSQL 17 上的執行：
+
+| 發現 | 影響 | 1.3.14 上的處置 |
+|---|---|---|
+| `expect(<Bun.SQL 查詢的 promise>).rejects`／`.resolves` 不會送出查詢；測試逾時後 `afterAll` 卡住，整個程序沒有輸出 | 建置 #8 的 Unit Tests 15 分鐘沒有輸出，直到 Req 4.7 的上限中止，沒有 JUnit 報告（Req 4.4、4.7） | 任務 26.1 以 `tests/support/pg.js` 的 `rejectionOf()`、`tests/test-db-session.test.js` 的靜態檢查、`TEARDOWN_LIMIT_MS` 與 `pg-isolation` 的 teardown 順序繞過 |
+| Property 29（`tests/migrations-failure.test.js`）失敗：`reserved.begin()` 內出現 unhandled rejection | 這是正式 Migration_Runner（`server/db/migrations.js`）的路徑，Production 的遷移失敗時可能無法保證 Req 12.4（回復失敗的遷移、輸出版本號、非零結束） | 沒有可靠的繞過方式 |
+| Property 20（`tests/setup-concurrency.test.js`）間歇回應 401 | 「QA」關卡的結果不穩定（Req 9.11、23.1） | 沒有 |
+| Linux 上完整 `bun test` 876 秒 | 目標 600 秒，Req 4.7 的上限 900 秒，只剩 24 秒餘裕 | 沒有 |
+
+`docs/security-review.md` 記錄 1.3.14 是 1.3 系列最後一個 patch，1.3 不會再有修正。
+
+#### 26.2 研究：Bun 1.4 的相關變更
+
+來源：[Bun v1.4 release notes](https://bun.com/blog/bun-v1.4)（1.4.0 修正超過 2,900 個 issue）與 [Bun v1.4.4 release](https://github.com/oven-sh/bun/discussions/46493)。Release notes 沒有逐條列出 26.1 的三個 Bun.SQL／bun test 行為，因此修正與否由任務 28.3 實測判定。可能影響本 repository 的變更：
+
+| 變更（版本） | 對本 repository 的影響 | 處理 |
+|---|---|---|
+| 新的 lockfile 寫成 `lockfileVersion: 2`；v0／v1 的 lockfile 仍可載入（1.4.0） | `bun.lock` 目前為 `lockfileVersion: 1`、`configVersion: 1`。改成 v2 時，osv-scanner 與 Trivy 是否能解析未經確認（Req 6.2、6.8；Open Risk 4） | 保留 v1。28.3 確認 Bun 1.4.4 的 `bun install --frozen-lockfile` 通過且 `bun.lock` 沒有差異；只有失敗時才重新產生，且不改變任何相依套件版本，並確認 osv-scanner 解析出的套件數不為 0 |
+| `net.Server`／`tls.Server` 不再自動 resume 接受的 socket（1.4.0） | `tests/support/tcp-proxy.js` 使用 `Bun.listen`／`Bun.connect`，不受影響 | 28.3 以 grep 確認沒有其他 `node:net`／`node:tls` 伺服器 |
+| `toContain()` 改用 `===` 比較（1.4.0） | 只影響 `NaN` 與 `-0` | 28.3 以 grep 確認 |
+| Bun 以 `node` 身分執行時不再載入 `.env`（1.4.0） | Pipeline 與 Compose 不依賴 `.env`，也不以 `bun --bun` 執行 | 不需處理 |
+| `Bun.TOML` 與 `bunfig.toml` 的解析更嚴格（1.4.0） | repository 沒有 `bunfig.toml` | 不需處理 |
+| `beforeAll`／`afterAll` 接受逾時參數（1.3.2、1.4.0） | 既有的 `afterAll(fn, 30_000)` 寫法照常運作 | 不需處理 |
+
+#### 26.3 固定值的變更
+
+| 位置 | 目前 | 改為 | 任務 |
+|---|---|---|---|
+| `Dockerfile` 的 `deps`、`prod-deps` | `oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4` | `oven/bun:1.4.4@sha256:<multi-arch index digest>` | 28.1 |
+| `Dockerfile` 的 `runtime` | `oven/bun:1.3.14-distroless@sha256:c28c51287af70bab8e0b66fc4b6a30cfb92a727ebc88045223adc9f4c9d09307` | `oven/bun:1.4.4-distroless@sha256:<multi-arch index digest>` | 28.1 |
+| `ci/build-image/Dockerfile` | `BUN_VERSION=1.3.14`、`BUN_SHA256=951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f` | `BUN_VERSION=1.4.4`、`bun-v1.4.4` 的 `SHASUMS256.txt` 中 `bun-linux-x64.zip` 的值 | 28.2 |
+| `ci/toolchain.json` | `"bun": "1.3.14"` | `"bun": "1.4.4"` | 28.2 |
+| `ci/jenkins/pipelines/build-image.Jenkinsfile` 的 Validate | `1.3.*) ;;`，錯誤訊息「必須屬於 1.3.x」 | `1.4.*) ;;`，「必須屬於 1.4.x」 | 28.2 |
+| 斷言這些值的測試 | `tests/ci-lint.test.js` 的 `^1\.3\.\d+$`；`tests/ci-build-image-pipeline.test.js` 的 `1\.3\.\*\) ;;` | 1.4 | 28.2 |
+| 文件 | `README.md`、`ci/jenkins/README.md` 的「Bun 1.3.14」 | 「Bun 1.4.4」 | 28.2 |
+| `BUILD_IMAGE`（`Jenkinsfile`、`rollback.Jenkinsfile`、`restore-drill.Jenkinsfile`、`digest-lookup.Jenkinsfile`）與斷言它的測試 | `registry.our-littlemoments.com:8443/little-moments/build-image@sha256:5d06fdee80abcbf8780a92d7cb33bf1d94d099b3d7917aa15125d6ececc2c72f`（`infra/build-image`，commit `5e809e4`） | 維運者以 1.4.4 重建後的 digest | 28.5 |
+
+**App_Image 基底映像的 digest**：沿用目前的取得方式，固定 multi-arch index（`application/vnd.oci.image.index.v1+json`）的 digest，不固定單一平台的 manifest。本機沒有 Docker，以 registry API 取得：
+
+1. Docker Hub API `https://hub.docker.com/v2/repositories/oven/bun/tags/<tag>` 回應頂層的 `digest` 與 `media_type`。以同樣方式查詢 `1.3.14` 得到 `sha256:e10577f0…`，與目前 `Dockerfile` 的固定值相同，表示方法一致。
+2. Registry API：向 `https://auth.docker.io/token?service=registry.docker.io&scope=repository:oven/bun:pull` 取得匿名 token，再以 `HEAD https://registry-1.docker.io/v2/oven/bun/manifests/<tag>`（`Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json`）讀取 `Docker-Content-Digest`。token 只存在該次指令中，不寫入檔案或回報。
+3. 兩者必須相同，且 index 內含 `linux/amd64`。不同時停止並回報，不自行選擇其中一個。
+
+2026-11-12 以第 1 種方式查得的值（任務 28.1 須以兩種方式重新確認）：`oven/bun:1.4.4` 為 `sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d`，`oven/bun:1.4.4-distroless` 為 `sha256:153a951ae40106e125898103e6e990ee0f38e6aee7f561029e26cf9fbed23470`，兩者的 index 都含 `linux/amd64` 與 `linux/arm64`。
+
+**Build_Image 的 Bun 校驗值**：取自 `https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/SHASUMS256.txt` 中 `bun-linux-x64.zip` 的一行，並另外下載 `bun-linux-x64.zip` 自行計算 SHA-256 比對；兩者不同時停止並回報。`ci/build-image/Dockerfile` 的註解改為 `bun-v1.4.4` 的網址。
+
+不變：`# syntax=docker/dockerfile:1.10@sha256:…`、Playwright 基底映像、Node.js 22.20.0 與其校驗值、Chromium 版本、`LM_POSTGRES_IMAGE`、App 程式的行為、Req 4.7 的 15 分鐘與 Req 4.2 的 120 秒。`docs/security-review.md` 是當時的審查紀錄，不修改。
+
+#### 26.4 BUILD_IMAGE 的重新固定順序
+
+`infra/build-image` 只建置 `main`（`jobs.groovy` 的 `mainScript`），且 Validate 要求 `ARG BUN_VERSION` 與 `ci/toolchain.json` 相同。所以 1.4.4 的 Build_Image 只能在 28.1–28.4 合併到 `main` 之後建置，`BUILD_IMAGE` 的新 digest 也只能在那之後寫入：
+
+```mermaid
+sequenceDiagram
+    participant Dev as 開發者
+    participant Main as main
+    participant Op as 維運者
+    participant BI as infra/build-image
+    participant Rel as release/little-moments » main
+    Dev->>Main: 合併 28.1–28.4（Bun 1.4.4、BUILD_IMAGE 仍為 1.3.14 的映像）
+    Main-->>Rel: 建置在 Toolchain 失敗（Req 3.3，fail closed，不建置、不部署）
+    Op->>BI: Build Now
+    BI-->>Op: Validate（1.4.*）→ Build → Verify（映像內 Bun 1.4.4）→ Push，輸出 BUILD_IMAGE = <repo>@sha256:<digest>
+    Op->>Dev: 提供 reports/build-image-digest.txt 的內容
+    Dev->>Main: 合併 28.5（四個 BUILD_IMAGE 與斷言）
+    Main-->>Rel: Toolchain 通過，Unit Tests 在 Bun 1.4.4 上執行
+```
+
+1. 28.1–28.4 完成並合併到 `main`。
+2. 合併之後到 28.5 合併之前（窗口期間），`Jenkinsfile` 仍引用 1.3.14 的 Build_Image，`ci/toolchain.json` 卻是 1.4.4，`ci/` 與 `release/` 的建置都在 Toolchain 階段以版本不一致失敗（Req 3.3）。這是預期的 fail closed 行為：不建置 App_Image，也不部署。這個 PR 本身的 `ci/` 建置同樣在 Toolchain 失敗，所以 PR 的驗證以 28.3、28.4 在本機的結果為準；本設計不新增略過關卡的方式（Req 23.4）。窗口期間不推送 Release_Tag。`rollback`、`restore-drill`、`digest-lookup` 不執行 verify-toolchain，繼續使用 1.3.14 的 Build_Image。
+3. 維運者在 Jenkins 對 `infra/build-image` 按 Build Now。Validate 確認 `1.4.*` 與校驗值格式，Verify 在剛建置的映像內確認 Bun 為 1.4.4，Push 輸出 `reports/build-image-digest.txt` 與建置描述 `BUILD_IMAGE = <repo>@sha256:<digest>`。
+4. 維運者把該值交給開發者。值必須符合 `registry.our-littlemoments.com:8443/little-moments/build-image@sha256:<64 個小寫十六進位字元>`，並附上 `infra/build-image` 的建置編號與 commit。
+5. 任務 28.5 在同一個 commit 取代四個檔案的 `BUILD_IMAGE` 與斷言（`tests/ci-lint.test.js` 的 `BUILD_IMAGE_REF`、`tests/ci-rollback-pipeline.test.js`、`tests/ci-restore-drill.test.js`、`tests/ci-digest-lookup.test.js`），並更新 `ci/jenkins/README.md` 中 `BUILD_IMAGE` 來源的 commit。合併後 `main` 的建置應通過 Toolchain。
+6. repository 以外：preview-deploy Job 引用的 `oven/bun` digest 由維運者改為任務 28.1 固定的 1.4.4 digest（第 26.3 節）。
+
+回復方式：3 失敗（例如 Verify 不一致）或 1.4.4 在 CI 上出現 28.3 沒有發現的問題時，revert 28.1–28.4 的 commit。Registry 關閉刪除，1.3.14 的 Build_Image 仍在，`BUILD_IMAGE` 不需要改動。
+
+#### 26.5 相容性確認（任務 28.3）
+
+- **環境**：可行時在 WSL／Linux 執行 Bun 1.4.4（與 Build_Image 相同的作業系統，使用 28.2 校驗過的 `bun-linux-x64.zip`）；只能在 Windows 執行時在回報中註明。臨時 PostgreSQL 17 Ephemeral_Database（優先使用 `LM_POSTGRES_IMAGE` 的 17.6，或本機原生 PostgreSQL 17），用完即刪；連線設定只經 `CAMPING_TEST_DATABASE_*`，不寫入回報。
+- **`bun.lock`**：以 Bun 1.4.4 在乾淨的 `node_modules` 上執行 `bun install --frozen-lockfile`，結束碼 0 且 `git diff --exit-code bun.lock` 沒有差異（Req 3.4、3.5）。失敗時才以 1.4.4 重新產生，並比對前後每個套件的解析版本完全相同；`lockfileVersion` 改變時，另以 osv-scanner 確認解析出的套件數不為 0，結果寫入回報。
+- **1.4 的行為變更**：依 26.2 的表以 grep 檢查 `node:net`／`node:tls` 伺服器、`toContain(` 與 `NaN`／`-0`、`.simple()`、`bun --bun`；有影響時修正並在回報說明。
+- **Property 29**：執行 `bun test tests/migrations-failure.test.js` 三次，皆通過且沒有 unhandled rejection。仍失敗時視為 Migration_Runner 的缺陷：修正 `server/db/migrations.js`，讓失敗遷移的例外在交易內被捕捉、回復、輸出版本號並以非零結束（Req 12.4）；advisory lock 鍵 726361／726362 與其語意不變，並加上重現該情況的回歸測試。
+- **Property 20**：連續執行 `bun test tests/setup-concurrency.test.js` 十次，沒有任何 401。仍出現 401 時找出原因並修正程式或測試；不以重試、放寬斷言或減少並行數處理。
+- **完整套件**：依 CI 主控台的檔案順序與預設順序各執行一次，記錄總時間與 JUnit `time` 最慢的 10 個測試檔，並與 1.3.14 的 876 秒比較。目標 600 秒以下；超過時依第 24.3 節的時間預算處理；超過 900 秒時停止並回報，不修改 Req 4.7。
+- **28.3 的結果：Property 6（任務 28.6）**：Property 6（`tests/qa-inventory-validate.test.js`）在兩次完整套件都失敗（seed `-296340450`、`405161941`），單獨執行約每 10 次失敗 1 次。原因在測試：產生器先把被破壞的項目標為不合格，之後的重複 ID 步驟把合法的 `id` 複製到該項目，使預期結果與最終資料不符；`validateInventory` 的回報正確，與 Bun 無關。修正只在測試：先產生重複 ID 再套用破壞，並以兩個 seed 與縮減反例作為回歸案例；Property 6 的內容、斷言與 `numRuns` 不變。
+- **28.3 的結果：完整套件時間**：WSL1 上兩次為 665 秒與 647 秒（1.3.14 為 876 秒），高於 600 秒目標、低於 900 秒上限。使用者決定本次不調整測試速度，600 秒目標以 28.5 合併後第一次 Jenkins 建置的 Unit Tests 實際時間確認；Req 4.7 不變。
+- **1.3.14 的繞過方式**：`rejectionOf()`、`tests/test-db-session.test.js`、`TEARDOWN_LIMIT_MS` 與 teardown 順序保留，成本低且能防止回歸。註解改寫為「Bun 1.3.14 時發現」並註明 1.4.4 上的結果；移除它們是另外的變更。
+
+#### 26.6 不採用的方案：維持 Bun 1.3.14 並加上繞過方式
+
+- 繞過方式只能處理測試端。Property 29 的 unhandled rejection 在正式 Migration_Runner 的路徑上，要在 1.3.14 上處理，就得在正式程式碼中繞過 runtime 的問題，而 1.3 系列不會再有上游修正。
+- 876 秒只比 Req 4.7 的上限少 24 秒，CI 稍慢就會中止 Unit Tests。
+- Property 20 的間歇 401 讓「QA」關卡結果不穩定。
+- 升級的成本是一次 Build_Image 重建與一段可預期的 fail closed 窗口（26.4），且可以 revert。
+
+#### 26.7 測試
+
+- **靜態檢查**：`tests/ci-lint.test.js` 的 Bun 版本一致性測試改為 `^1\.4\.\d+$`，`ci/toolchain.json`、`ARG BUN_VERSION` 與 `Dockerfile` 的三個 `oven/bun` 標籤（`1.4.4`、`1.4.4`、`1.4.4-distroless`）一致，且每個 `FROM` 仍以 `@sha256:` 固定；`tests/ci-build-image-pipeline.test.js` 斷言 `1.4.*) ;;`。28.5 之後，四個 `BUILD_IMAGE` 相同且等於 `BUILD_IMAGE_REF`。
+- **實測**：26.5 的 `bun.lock`、Property 29、Property 20 與完整套件。
+- **維運者檢查**：`infra/build-image` 的 Verify 通過；28.5 合併後 `release/little-moments » main` 的 Build_Record `toolchain.bun` 為 `1.4.4`，Unit Tests 在 15 分鐘內結束並產生 JUnit 報告。
+
 ## Data Models
 
 ### PostgreSQL Schema（`migrations/0001_initial.sql`）
@@ -1395,19 +1830,19 @@ type InventoryResult = { id: string; status: 'pass' | 'fail' | 'missing'; detail
   "schema": 1,
   "build": { "job": "release/little-moments/main", "number": 128, "url": "…", "startedAt": "2026-…+08:00", "endedAt": "…" },
   "source": { "commit": "<40 hex>", "trigger": "pull_request|main_push|branch_push|release_tag", "ref": "main|v1.2.3|PR-12" },
-  "toolchain": { "buildImageDigest": "sha256:…", "bun": "1.3.x", "node": "…", "chromium": "…" },
+  "toolchain": { "buildImageDigest": "sha256:…", "bun": "1.4.4", "node": "…", "chromium": "…" },
   "gates": [ { "gate": "QA", "pass": true, "evaluatedAt": "…", "commit": "…", "unmet": [] } ],
   "reports": { "unitJunit": "reports/unit-junit.xml", "e2eJunit": "…", "qaInventory": "…", "gitleaks": "…", "osv": "…", "semgrep": "…", "zap": "…", "trivy": "…", "sbom": "…" },
   "image": { "digest": "sha256:…|不適用", "tags": ["<sha>", "v1.2.3"], "signature": "verified|未執行" },
   "backup": { "id": "…", "env": "prod", "createdAt": "…", "sizeBytes": 0, "sha256": "…" },
-  "deployments": [ { "env": "staging|production", "digest": "…", "at": "…", "result": "…" } ],
+  "deployments": [ { "env": "staging|production", "digest": "…", "at": "…", "result": "…", "receiptAi": "enabled|disabled|未執行" } ],
   "approval": { "approver": "…|不適用", "at": "…", "digest": "…", "unauthorizedAttempts": [] },
   "rollback": { "trigger": "auto|manual|不適用", "by": "…", "from": "…", "to": "…", "reason": "…", "at": "…" },
   "result": { "status": "SUCCESS|FAILURE|ABORTED", "firstFailedStage": "…|不適用" }
 }
 ```
 
-未產生的欄位填入「不適用」或「未執行」而非空值（Req 21.2）。`image-digest.txt`（內容僅 digest 一行）同樣封存並 fingerprint；`release/digest-lookup` 以 MD5(`<digest>\n`) 查詢 Jenkins fingerprint API，回傳對應建置，查無時明確回報（Req 21.7、21.8）。Release_Tag 建置也以同一 fingerprint 找回產生該 digest 的 `main` Build_Record 以確認 SBOM（Components 第 17 節）。封存前所有檔案經 `ci/scrub.mjs` 遮罩並掃描，偵測到秘密任一形式即不封存未遮罩檔案並使建置失敗（Req 15.4、21.9）。
+未產生的欄位填入「不適用」或「未執行」而非空值（Req 21.2）。`deployments[].receiptAi` 是 `lm-deploy` 回報的收據 AI 實際狀態，只有列舉值，不含金鑰（Components 第 25.3 節）。`image-digest.txt`（內容僅 digest 一行）同樣封存並 fingerprint；`release/digest-lookup` 以 MD5(`<digest>\n`) 查詢 Jenkins fingerprint API，回傳對應建置，查無時明確回報（Req 21.7、21.8）。Release_Tag 建置也以同一 fingerprint 找回產生該 digest 的 `main` Build_Record 以確認 SBOM（Components 第 17 節）。封存前所有檔案經 `ci/scrub.mjs` 遮罩並掃描，偵測到秘密任一形式即不封存未遮罩檔案並使建置失敗（Req 15.4、21.9）。
 
 ### Deploy 狀態 `state/active.json`
 
@@ -1827,6 +2262,11 @@ Requirement 27 不新增屬性，原因如下。`provisionSmokeAccount` 的決�
 | 通知失敗 | 重試 3 次，摘要記錄管道名稱，不改結果 | 22.7 |
 | `Jenkinsfile` 編譯失敗（例如 `MethodTooLargeException`） | 建置在 Init 之前失敗，沒有 Build_Record、沒有 pending 通知，也不執行任何部署；合併前由 `tests/ci-jenkinsfile-size.test.js` 限制區塊與函式行數（Components 第 22 節） | 1.1、1.7 |
 | JSON 讀取或解析失敗，或其他例外被 catch 吸收並改為固定結果（例如 `readPlan` 的 `觸發被拒絕：階段規劃輸出無效`） | 固定訊息、回傳值與建置結果不變；另以 echo 輸出 `<函式名稱>: <例外類別>`，不含例外訊息或任何值（Components 第 23 節） | 1.7、15.4 |
+| `bun test` 中的測試等待資料庫鎖（例如前一個測試檔留下的 advisory lock 或被放棄的交易） | 測試連線的 `lock_timeout` 使該敘述在 30 秒後以 `55P03` 失敗，該測試失敗、套件繼續；測試檔結束時終止自己 `application_name` 的 backend；整體仍受 15 分鐘上限（Components 第 24 節） | 4.4、4.7、4.8 |
+| `withEnv` 或 `env.X = ''` 傳入空值（Jenkins 視為未設定），`set -u` 腳本讀取該變數 | 腳本以 `${X:-}` 讀取，不因 nounset 中止；「QA」等關卡照常寫入 Build_Record，缺少的報告記為未通過的條件，建置結果不變（Components 第 24.4 節） | 23.1、23.3、23.5 |
+| `LM_STAGING_RECEIPT_AI` 不是 `disabled`、`LM_PROD_RECEIPT_AI` 不是 `enabled`／`disabled`，或啟用時憑證 ID 不是 `lm-prod-openai-api-key` | `assertStagingConfig`／`assertProductionConfig` 以 `error()` 結束，不連線 Deploy_Host（Components 第 25.3 節） | 15.6、15.7 |
+| 啟用時 `release/` 沒有 `lm-prod-openai-api-key`，或綁定的檔案為空 | `withCredentials` 失敗或腳本在建立管線前以結束碼 2 結束，不連線 Deploy_Host，Production 不變；封存前遮罩取不到該憑證時依既有規則不封存報告、建置失敗 | 15.4、15.7 |
+| `lm-deploy` 拒絕 stdin 中的收據 AI 鍵（結束碼 2） | Production Deploy 在備份前失敗，Production 不變；Build_Record 的 `receiptAi` 為「未執行」 | 15.7 |
 
 ### Deploy_Host 與 Edge_Proxy
 
@@ -1850,6 +2290,11 @@ Requirement 27 不新增屬性，原因如下。`provisionSmokeAccount` 的決�
 | `smoke-account` 時部署鎖被持有／狀態不是 idle | 結束碼 4（`deploy_in_progress`）／3（`invalid_phase`），不呼叫 docker | 27.20 |
 | `db` 5 分鐘內未健康、`proxy` 無法啟動、備份或 Migration_Runner 失敗 | 結束碼 1（`db_start_failed`／`proxy_start_failed`／備份與遷移的既有 reason），不執行 Smoke_Provisioner；已啟動的 `db`／`proxy` 保持執行 | 27.21、27.23 |
 | Smoke_Provisioner 非零結束或逾時 | `smoke_account_failed`，結束碼 1，附上只含安全字元的工具 JSON（否則 `null`）；密碼暫存檔已刪除 | 27.22、27.23 |
+| `deploy --app-env-stdin` 的 `LM_RECEIPT_AI`／`LM_OPENAI_API_KEY` 不符 Components 第 25.4 節的表 | 結束碼 2（`app_env_invalid`），訊息只含鍵名；不備份、不呼叫 docker、金鑰檔不變、暫存檔已刪除 | 15.7 |
+| Staging 收到 `LM_RECEIPT_AI=enabled` 或任何金鑰 | 結束碼 2（`receipt_ai_forbidden`），不備份、不呼叫 docker | 15.6 |
+| Staging 有金鑰檔；Production 的金鑰路徑不是一般檔案、為空、超過 512 位元組或擁有者與權限不符；`<env>.env` 設定非空的 `CAMPING_OPENAI_*` 或 `LM_OPENAI_KEY_SOURCE` | 結束碼 2（`config_invalid`），只指出路徑或變數名稱，不呼叫 docker | 15.6、15.7 |
+| App 無法讀取金鑰檔（例如擁有者錯誤而得到 `EACCES`） | App 啟動失敗，啟動健康檢查未通過，`lm-deploy` 移除新槽位、不切換（既有流程） | 15.7、20.4 |
+| OpenAI 拒絕金鑰（已撤銷或錯誤） | 辨識請求回應 502 與「請管理員檢查 API key 與模型設定」，不重試；其他功能不受影響 | 15.7 |
 
 所有 `post { always }` 區塊執行：封存並 scrub 報告、寫入 Build_Record 的 `result` 與 `firstFailedStage`、清除該建置的容器／網路／卷、`cleanWs()`、通知。
 
@@ -1962,6 +2407,35 @@ test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ 
 - **既有結構測試**：斷言 catch 本體的測試改為新寫法，意圖與強度不變（第 23.6 節）；尺寸測試仍須通過。
 - **維運者檢查**：下一次在 `release/little-moments » main` 按 Build Now，確認建置通過 Init；仍失敗時，依主控台中 `readPlan: <類別>` 與第 23.3 節的判讀表處理。
 
+### 測試隔離與關卡腳本（Components 第 24 節）
+
+不適用 PBT：要驗證的是測試基礎設施在特定故障順序下不會卡住，以及 Groovy 原始碼中 shell 腳本的寫法，輸入不是可隨機產生的資料。測試如下（細節見第 24.5 節）：
+
+- **回歸測試**（新增 `tests/pg-isolation.test.js`，使用 Ephemeral_Database）：斷線情境之後在同一資料庫遷移與寫入可在 10 秒內完成；被另一條連線持有的遷移鎖使 `runMigrations` 以 `55P03` 快速失敗；`close()` 後沒有殘留的 backend。
+- **靜態檢查**（新增 `tests/ci-jenkinsfile-shell-env.test.js`）：nounset 腳本中可能為空的變數使用 `${X:-}`；每條規則有通過與失敗的固定樣本。
+- **腳本行為測試**：有 POSIX `sh` 時以假的 `bun` 執行 `Release_Gate QA` 與 Build_Record finalize 腳本，變數未設定時不中止，關卡結束碼照常傳回。
+- **完整套件**：以臨時 Ephemeral_Database 依 CI 主控台的檔案順序與預設順序各執行一次，記錄總時間與最慢的 10 個測試檔（目標 600 秒以下，Req 4.7 的上限為 900 秒）。
+- **維運者檢查**：合併後在 `release/little-moments » main` 按 Build Now，確認 Unit Tests 在 15 分鐘內結束且產生 JUnit 報告；若仍有測試失敗，Build_Record 的「QA」關卡會列出未符合的條件，主控台沒有 `parameter not set`。
+
+### Production 收據 AI（Components 第 25 節）
+
+不適用 PBT：變更在 Groovy、bash 與 Compose 設定，App 的金鑰讀取與停用邏輯不變（既有 `tests/receipt-ai.test.js` 已涵蓋）。`classifyDeploy` 只多一個列舉欄位，以範例測試涵蓋。測試如下（細節見第 25.8 節）：
+
+- **靜態檢查**（`tests/ci-lint.test.js`、`tests/ci-jenkinsfile.test.js`）：只有 `release/` 定義 `lm-prod-openai-api-key`；只有 `productionDeployCommand` 在 SSH 呼叫的範圍內綁定它；Staging 的開關固定為 `disabled` 且 stdin 不含金鑰；遮罩清單在啟用時包含它；其他 Pipeline 不引用它。原本「所有 Pipeline 都不含 openai」的斷言改為上述較精確的斷言，`ci/`、`infra/`、`casc.yaml` 與 `ci/jenkins/pipelines/*.Jenkinsfile` 仍完全不含。
+- **bats**：Production 接受金鑰並以 10001:10001、0400 原子寫入，`disabled` 刪除金鑰檔，Staging 拒絕；金鑰不出現在 app.env、輸出、fake docker 的參數與環境或狀態檔；不符規則的輸入在備份與 docker 之前被拒絕。
+- **Compose 設定**（新增 `tests/compose-receipt-ai.test.js`）：只有 `app-blue`／`app-green` 掛載 `/run/secrets/openai-api-key`，長語法、唯讀、`create_host_path: false`、預設 `/dev/null`；有 Docker 時以 `docker compose config` 確認展開結果。
+- **Build_Record**（`tests/ci-production.test.js`、`tests/ci-staging.test.js`）：`receiptAi` 只有 `enabled`、`disabled` 或「未執行」。
+- **文件**（`tests/readme.test.js`）：憑證表、啟用、輪替與停用步驟，以及 Staging 停用、Production 啟用的說明；不含金鑰樣式的字串。
+- **維運者檢查**：依第 25.7 節的順序啟用後，Production 的 Build_Record 為 `receiptAi: enabled`，管理員在 `/admin` 看到收據 AI 可用；Staging 的 Build_Record 為 `disabled`；在 Deploy_Host 上 `sudo stat -c '%u:%g %a' /srv/lm/prod/secrets/openai-api-key` 為 `10001:10001 400`，`/srv/lm/staging/secrets/openai-api-key` 不存在。
+
+### Bun 1.4.4 升級（Components 第 26 節）
+
+不新增 PBT：變更是固定的版本與 digest，沒有可隨機產生的輸入。既有的 Property 20 與 Property 29 在 Bun 1.4.4 上重新執行，判定 1.3.14 的問題是否消失。測試如下（細節見第 26.5、26.7 節）：
+
+- **靜態檢查**（`tests/ci-lint.test.js`、`tests/ci-build-image-pipeline.test.js`）：三處 Bun 版本一致且屬於 1.4.x，每個 `FROM` 以 digest 固定，Build_Image 的 Validate 只接受 1.4.x；28.5 之後四個 `BUILD_IMAGE` 一致。
+- **實測**：Bun 1.4.4 的 `bun install --frozen-lockfile` 不修改 `bun.lock`；Property 29 執行三次、Property 20 連續十次皆通過；完整套件依兩種檔案順序各執行一次，目標 600 秒以下。
+- **維運者檢查**：`infra/build-image` 的 Verify 通過；28.5 合併後 Build_Record 的 `toolchain.bun` 為 `1.4.4`，Unit Tests 在 15 分鐘內結束。
+
 ## Open Risks
 
 1. **資料層重寫工作量**：`server/accounts.js` 約 50 個同步 prepared statement、所有路由與 `tx` 呼叫點都要改為 async，測試檔也要全面改寫。這是本功能最大的工作項目，也最容易引入行為差異。緩解：先建立 `queries.js` 一對一轉換、以既有測試作回歸基準、用全域 advisory lock 保留單一寫入者語意；Bun.SQL 若在 BIGINT 型別、錯誤型別或重連上有問題，切換到 `postgres@3.4.7`。
@@ -1981,3 +2455,6 @@ test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ 
 15. **第一次部署需要人工步驟**：`lm-deploy deploy` 不會啟動 `db`／`proxy`（第 21 節現況），全新主機的第一次 `main` 建置一定在 Staging 失敗，須依 `deploy/README.md` 的順序由 Host_Operator 寫入 `app.env`（不存在時）並完成 `smoke-account` → `create-admin` → `smoke-account`，再以新的 commit 觸發新的 `main` 建置（同一個 commit 按 Build Now 會在 Image Push 拒絕覆寫標籤而失敗）。若之後要讓第一次建置直接通過，可另立需求讓 `deploy` 在服務未執行時啟動它們。
 16. **行數只是 bytecode 大小的代理指標**：本機無法執行 Jenkins 的 CPS 編譯，400／250 行的門檻是依 `build-image.Jenkinsfile` 的 377 行區塊可以編譯而訂。`environment` 項目或 `when` 條件增加時，區塊可能在行數內仍超過 64 KB。發生時建置會在 Init 之前失敗，不會部署任何東西；處理方式是降低門檻並再搬移程式碼。重構後真正的確認是維運者下一次的 Build Now。
 17. **CPS 序列化只能在 Jenkins 上確認**：第 23 節的原因是推定的，本機無法重現；靜態檢查只認得 JsonSlurperClassic、`=~`、`.matcher(`、`.iterator(` 等已知寫法，plugin API 回傳的其他不可序列化物件無法以文字判斷。緩解：吸收型 catch 一律輸出例外類別，下一次失敗時可以從主控台判斷原因，不必再猜。`build-image.Jenkinsfile` 的 `readJsonFile` 與 `readPlan` 寫法相同卻能通過，原因未確認，因此不能把「某個 Job 能通過」當作寫法安全的證據。
+18. **bun test 卡住的原因尚未證實**：第 24 節的 H1–H5 要在任務 26.1 以 CI 相同的映像重現後才能判定，本機可能無法重現 Linux 上的時序。測試連線的逾時與結束時終止 backend 讓任何一種原因都只會使個別測試失敗，不會讓整個套件等到 15 分鐘上限；殘留的風險是 `lock_timeout` 在極少數情況下回報逾時但鎖已取得（PostgreSQL 郵件清單有此報告），此時 `close()` 終止 backend 仍會釋放它。另一個風險是套件總時間：本機約 603 秒，Linux 上的 Bun 1.3.14 為 876 秒，接近 900 秒上限；改在 Bun 1.4.4 上量測，由任務 28.4 決定是否需要另外處理（Components 第 26 節）。
+19. **Production 收據 AI 的金鑰與費用**：金鑰以明文存在同一台主機 `192.168.1.121` 的兩個位置：Jenkins controller 的秘密目錄（1000:1000、0600）與 `/srv/lm/prod/secrets/openai-api-key`（root 0700 目錄內、10001:10001、0400）。取得該主機 root 的人都能讀到。Credentials Binding 不遮罩 `file` 憑證的內容，主控台的安全只靠腳本不輸出金鑰與封存前的 scrub。Production 對網際網路公開，政策為 `all` 時每個可編輯旅行的成員都能使用，費用上限只有每位使用者、每日與每月的次數上限，以及 OpenAI 後台的預算。輪替只在下一次部署生效，舊槽位在觀察期內仍使用舊金鑰；金鑰外洩時先在 OpenAI 撤銷，再輪替（Components 第 25.7 節）。照片會送到 OpenAI，README 已提醒使用者確認 OpenAI 的 API 資料政策。
+20. **Bun 1.4.4 升級**：1.4 是 minor 版本升級，release notes 沒有逐條確認 Components 第 26.1 節的三個問題已修正，修正與否只能由任務 28.3 實測判定；本機（WSL 或 Windows）的時序與 CI 的 Build_Image 不同，本機通過不保證 CI 通過。28.1–28.4 合併到 28.5 合併之間，所有 `ci/` 與 `release/` 建置都在 Toolchain 失敗（第 26.4 節，fail closed）；維運者延遲重建 Build_Image 時，這段期間無法發布。`bun.lock` 若被 1.4.4 改為 `lockfileVersion: 2`，osv-scanner 與 Trivy 可能無法解析（Open Risk 4），所以預設保留 v1。preview-deploy Job 不在本 repository，其 `oven/bun` digest 由維運者另外更新，忘記時該 Job 仍以 1.3.14 執行。

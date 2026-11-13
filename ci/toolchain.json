@@ -1,6 +1,6 @@
 {
   "_comment": "Build_Image 工具鏈的精確版本（Req 3.2）。ci/build-image/Dockerfile 安裝這些版本，ci/verify-toolchain.mjs 在安裝階段前比對實際版本（Req 3.3）。更新任一版本時須同步更新 Dockerfile 的 ARG 與 SHA-256，並重建 Build_Image。",
-  "bun": "1.3.14",
+  "bun": "1.4.4",
   "node": "22.20.0",
   "chromium": "141.0.7390.37"
 }

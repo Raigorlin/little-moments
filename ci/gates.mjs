@@ -232,8 +232,10 @@ export function main(argv = process.argv.slice(2), { log = console.log, error = 
     gate: opts.gate,
     check: () => {
       // 檢查階段執行錯誤或逾時 → 關卡未通過（Req 23.3），即使已產生的報告看似通過。
+      // JUnit 摘要同時缺失時，在階段錯誤之後列出缺少的報告（Components 第 24.4 節）；狀態仍為 error。
       if (opts['stage-error']) {
-        return { status: 'error', unmet: [`檢查階段執行錯誤：${opts['stage-error']}`, ...(inventory?.unmet ?? [])], reports };
+        const missing = summary ? [] : ['JUnit 報告缺失或無法解析'];
+        return { status: 'error', unmet: [`檢查階段執行錯誤：${opts['stage-error']}`, ...missing, ...(inventory?.unmet ?? [])], reports };
       }
       if (!summary) return { status: 'missing_report', unmet: ['JUnit 報告缺失或無法解析', ...(inventory?.unmet ?? [])], reports };
       const junit = junitGate(summary);

@@ -6,7 +6,7 @@
 # digest 與 SHA-256 的來源（更新版本時以相同方式重新取得）：
 #   syntax 前端      docker buildx imagetools inspect docker/dockerfile:1.10
 #   基底映像         docker buildx imagetools inspect mcr.microsoft.com/playwright:v1.56.1-noble
-#   BUN_SHA256       https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/SHASUMS256.txt 的 bun-linux-x64.zip
+#   BUN_SHA256       https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/SHASUMS256.txt 的 bun-linux-x64.zip
 #   NODE_SHA256      https://nodejs.org/dist/v22.20.0/SHASUMS256.txt 的 node-v22.20.0-linux-x64.tar.gz
 # 下載內容與 SHA-256 不符時，下方的校驗步驟會使建置失敗（fail closed）。
 # Node.js 使用 .tar.gz 發行檔：基底映像沒有 xz，無法解壓 .tar.xz；改用 gzip 即不必另外安裝套件。
@@ -14,8 +14,8 @@
 # Playwright 1.56.1 隨附 Chromium 141.0.7390.37（chromium-1194）。
 FROM mcr.microsoft.com/playwright:v1.56.1-noble@sha256:f1e7e01021efd65dd1a2c56064be399f3e4de00fd021ac561325f2bfbb2b837a
 
-ARG BUN_VERSION=1.3.14
-ARG BUN_SHA256=951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f
+ARG BUN_VERSION=1.4.4
+ARG BUN_SHA256=bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c
 ARG NODE_VERSION=22.20.0
 ARG NODE_SHA256=eeaccb0378b79406f2208e8b37a62479c70595e20be6b659125eb77dd1ab2a29
 

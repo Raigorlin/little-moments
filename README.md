@@ -92,7 +92,7 @@ JPEG, PNG, and WebP receipt photos are supported. Images over 10 MB or 20 megapi
 
 ## 本機執行
 
-需要 **Bun 1.3.14**（與 `ci/toolchain.json` 及 Build_Image 的工具鏈相同）與一個 PostgreSQL 17 Database。資料改存於 PostgreSQL；`CAMPING_DB`（舊 SQLite 路徑）已不再讀取，設定時只會輸出警告。
+需要 **Bun 1.4.4**（與 `ci/toolchain.json` 及 Build_Image 的工具鏈相同）與一個 PostgreSQL 17 Database。資料改存於 PostgreSQL；`CAMPING_DB`（舊 SQLite 路徑）已不再讀取，設定時只會輸出警告。
 
 1. 安裝與建置前端：
 
@@ -258,7 +258,7 @@ bun scripts/scan-secrets.mjs [--root <dir>] [--allowlist <file>]
 - Jenkins controller 與兩個 Build_Agent（`lm-trusted-1`、在 rootless Docker 上執行的 `lm-untrusted-1`）：[`deploy/jenkins/README.md`](deploy/jenkins/README.md)。
 - LAN Registry（DNS、內部 CA、帳號、`verify-registry.sh`、工具鏡像與 Trivy 資料庫的每日更新）：[`deploy/registry/README.md`](deploy/registry/README.md)。
 
-Build_Image 與本機開發使用相同的工具鏈（Bun 1.3.14，見 `ci/toolchain.json`）。Caddy proxy（`deploy/caddy/`）是唯一發布連接埠的服務；App 容器以 `CAMPING_BIND_ADDRESS=0.0.0.0` 在 internal 網路內監聽，`CAMPING_ALLOWED_HOSTS` 取自 `<env>.env` 的 `ALLOWED_HOSTS`，`CAMPING_TRUSTED_PROXIES` 只設為 proxy 的固定 `/32`；Database 不發布任何連接埠。
+Build_Image 與本機開發使用相同的工具鏈（Bun 1.4.4，見 `ci/toolchain.json`）。Caddy proxy（`deploy/caddy/`）是唯一發布連接埠的服務；App 容器以 `CAMPING_BIND_ADDRESS=0.0.0.0` 在 internal 網路內監聽，`CAMPING_ALLOWED_HOSTS` 取自 `<env>.env` 的 `ALLOWED_HOSTS`，`CAMPING_TRUSTED_PROXIES` 只設為 proxy 的固定 `/32`；Database 不發布任何連接埠。
 
 **存取範圍：**
 

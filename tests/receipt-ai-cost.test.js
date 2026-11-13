@@ -135,7 +135,7 @@ test('Property 23: receipt AI calls follow the persistent quota model', async ()
     expect(stored.every(r => r.outcome === 'success')).toBe(true);
     expect(stored.filter(r => r.user_id === p23.users.member.user.id).map(r => r.at)).toEqual(times.member);
   }), { numRuns: 40 });
-});
+}, 60_000); // 40 runs of up to 20 Database writes each; Bun 1.3.14 時發現 3–5 s on Linux (task 26.1); 0.7–0.8 s on Linux Bun 1.4.4 (task 28.3)
 
 // ---------------------------------------------------------------------------------------------
 // Feature: security-hardening, Property 24: Each OpenAI call leaves exactly one usage record

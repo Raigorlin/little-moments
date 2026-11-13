@@ -22,6 +22,13 @@
 //   或交易占用唯一連線時，其他查詢會互相等待而死結，也無法測試並行行為（Property 20）。
 //   為避免 Bun 版本日後忽略此參數而讓測試靜默寫入 public schema，建立後立即以
 //   `SELECT current_schema()` 驗證，不符即失敗。
+//
+// Session 逾時與清除（design.md Components §24.3）：
+//   測試連線另以同樣的 startup 參數設定 application_name（`lm-test-<schema 的 hex>`）、lock_timeout、
+//   statement_timeout 與 idle_in_transaction_session_timeout（testSessionParams）。等鎖的敘述以 55P03 失敗，
+//   不會無限期等待；被放棄的交易在閒置 60 秒後由伺服器結束。close() 先關閉連線池，再以管理連線終止
+//   同一 application_name 的 backend，最後 DROP SCHEMA，整體以 TEARDOWN_LIMIT_MS 為上限。
+//   App_Server 與 Migration_Runner 的連線（server/db/*.js）不設定這些參數。
 import { afterAll, beforeAll } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -116,6 +123,130 @@ export function quoteSchemaIdentifier(schema) {
   return `"${schema}"`;
 }
 
+/**
+ * 測試連線的 session 逾時（design.md Components §24.3）。statement_timeout 大於 lock_timeout，
+ * 等鎖時先得到明確的 55P03（lock_not_available）。不設定 idle_session_timeout：它會結束連線池中閒置的正常連線。
+ */
+export const TEST_SESSION_TIMEOUTS = Object.freeze({
+  lock_timeout: '30s',
+  statement_timeout: '60s',
+  idle_in_transaction_session_timeout: '60s',
+});
+
+/** 測試連線的 application_name：只含 [a-z0-9_-]，不超過 63 位元組（PostgreSQL NAMEDATALEN - 1）。 */
+export const TEST_APPLICATION_NAME_PATTERN = /^lm-test-[a-z0-9_-]{1,55}$/;
+/** 管理連線（建立／刪除 schema 與 DATABASE、終止測試 backend）的 application_name；不以 `lm-test-` 開頭。 */
+export const ADMIN_APPLICATION_NAME = 'lm-admin';
+
+/**
+ * close() 的整體上限：不依賴 bun 的 hook 逾時。Bun 1.3.14 時發現：Windows 上 hook 逾時後不一定繼續。
+ * Bun 1.4.4 上（任務 28.3，Linux 與 Windows）永不 resolve 的 afterAll 在逾時後即判定失敗並繼續；上限保留以防回歸。
+ */
+export const TEARDOWN_LIMIT_MS = 20_000;
+/** pg_terminate_backend 之後等待 backend 消失的上限與檢查間隔。 */
+export const TERMINATE_WAIT_MS = 5_000;
+const TERMINATE_POLL_MS = 100;
+
+/**
+ * 測試連線池的 startup 參數：search_path、application_name 與 TEST_SESSION_TIMEOUTS。
+ * @param {string} schema 符合 TEST_SCHEMA_PATTERN 的 schema 名稱
+ * @returns {{search_path:string, application_name:string, lock_timeout:string, statement_timeout:string, idle_in_transaction_session_timeout:string}}
+ */
+export function testSessionParams(schema) {
+  quoteSchemaIdentifier(schema); // 格式檢查；不符即 throw
+  return {
+    search_path: schema,
+    application_name: `lm-test-${schema.slice(2, 2 + 55)}`,
+    ...TEST_SESSION_TIMEOUTS,
+  };
+}
+
+/** 管理連線的 startup 參數：逾時與 ADMIN_APPLICATION_NAME，不設 search_path。 */
+export function adminSessionParams() {
+  return { application_name: ADMIN_APPLICATION_NAME, ...TEST_SESSION_TIMEOUTS };
+}
+
+const DURATION_UNITS_MS = { ms: 1, s: 1000, min: 60_000, h: 3_600_000, d: 86_400_000 };
+/** PostgreSQL 時間設定值（`30s`、`1min`、`0`）轉毫秒；無法解析時回傳 NaN。 */
+export function durationMs(value) {
+  if (value === '0') return 0;
+  const m = /^(\d+)(ms|s|min|h|d)$/.exec(String(value));
+  return m ? Number(m[1]) * DURATION_UNITS_MS[m[2]] : NaN;
+}
+
+/**
+ * 以 current_setting（與 SHOW 相同）確認連線實際套用了 startup 參數；不符即 throw。
+ * 時間值比較毫秒數（PostgreSQL 會把 `60s` 顯示為 `1min`）。
+ */
+export async function verifySessionParams(sql, params) {
+  const [row] = await sql`SELECT current_setting('application_name') AS application_name,
+    current_setting('lock_timeout') AS lock_timeout,
+    current_setting('statement_timeout') AS statement_timeout,
+    current_setting('idle_in_transaction_session_timeout') AS idle_in_transaction_session_timeout`;
+  const mismatched = [];
+  if (row.application_name !== params.application_name) mismatched.push('application_name');
+  for (const key of Object.keys(TEST_SESSION_TIMEOUTS)) {
+    if (durationMs(row[key]) !== durationMs(params[key])) mismatched.push(key);
+  }
+  if (mismatched.length) throw new Error(`測試連線的 session 參數未套用：${mismatched.join(', ')}`);
+}
+
+/**
+ * 終止同一資料庫中帶有 applicationName 的 backend（呼叫端自己的 backend 除外）。名稱以參數傳入。
+ * @param {Function} admin Bun.SQL 相容的 tagged template（管理連線）
+ */
+export async function terminateTestSessions(admin, applicationName) {
+  if (typeof applicationName !== 'string' || !TEST_APPLICATION_NAME_PATTERN.test(applicationName)) {
+    throw new Error('測試連線的 application_name 格式無效');
+  }
+  return admin`SELECT pg_terminate_backend(pid) AS terminated FROM pg_stat_activity
+    WHERE application_name = ${applicationName} AND datname = current_database() AND pid <> pg_backend_pid()`;
+}
+
+/** 每 TERMINATE_POLL_MS 檢查一次，直到沒有帶 applicationName 的 backend；超過 limitMs 即 throw。 */
+async function waitSessionsGone(admin, applicationName, limitMs = TERMINATE_WAIT_MS) {
+  const deadline = Date.now() + limitMs;
+  for (;;) {
+    const [{ n }] = await admin`SELECT count(*)::int AS n FROM pg_stat_activity
+      WHERE application_name = ${applicationName} AND datname = current_database() AND pid <> pg_backend_pid()`;
+    if (n === 0) return;
+    if (Date.now() >= deadline) throw new Error(`測試連線未在 ${limitMs} ms 內結束（剩 ${n} 條）`);
+    await Bun.sleep(TERMINATE_POLL_MS);
+  }
+}
+
+/** promise 在 ms 內未完成即以 label 的錯誤 reject（不取消原本的工作）。 */
+export async function withDeadline(promise, ms, label) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}超過 ${ms} ms`)), ms);
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * 等待 promise（例如 Bun.SQL 查詢或會查詢 Database 的服務呼叫）結束，回傳它丟出的錯誤；成功時回傳 null。
+ * 用法：`expect(await rejectionOf(sql`…`)).toMatchObject({ errno: '23514' })`。
+ *
+ * 不要對需要 Database I/O 的 promise 使用 `expect(…).rejects`／`.resolves`。Bun 1.3.14 時發現：在 promise
+ * 尚未完成時於 expect 內同步等待，Bun.SQL 的查詢可能一直不被送出，測試逾時後整個程序停止輸出
+ * （建置 #8 的 Unit Tests；design.md Components §24、任務 26.1 的調查）。Bun 1.4.4 上（任務 28.3）
+ * 以連線池、測試 Database、交易與 reserve() 的查詢直接傳給 expect(…).rejects／.resolves 都會送出並完成；
+ * rejectionOf() 與 tests/test-db-session.test.js 的靜態檢查保留以防回歸。
+ */
+export async function rejectionOf(promise) {
+  try {
+    await promise;
+    return null;
+  } catch (error) {
+    return error;
+  }
+}
+
 /** 將錯誤訊息中可能出現的密碼遮罩。 */
 function redact(text, password) {
   const out = String(text);
@@ -124,37 +255,58 @@ function redact(text, password) {
 }
 
 /**
- * 建立一個隔離的測試 schema 並套用所有遷移。
- * @returns {Promise<{sql:object, schema:string, config:object, close:()=>Promise<void>}>}
- *   config：`{host, port, name, user, password, sslmode, schema}`，可傳給 createAccountService（task 5.12/5.13）。
+ * 以測試設定開啟 Bun.SQL 連線池；`connection` 為 startup 參數（例如 testSessionParams 的結果）。
+ * @param {{host:string, port:number, name:string, user:string, password:string, sslmode:string}} database
  */
-export async function createTestDatabase({ env = process.env, migrationsDir = MIGRATIONS_DIR, log = () => {} } = {}) {
-  const database = readTestDatabaseConfig(env);
-  const schema = randomSchemaName();
-  const ident = quoteSchemaIdentifier(schema);
-
-  const sql = new SQL({
+export function openTestPool(database, connection, { max = 4 } = {}) {
+  return new SQL({
     hostname: database.host,
     port: database.port,
     database: database.name,
     username: database.user,
     password: database.password,
     tls: TLS_BY_SSLMODE[database.sslmode] ?? false,
-    max: 4,
+    max,
     connectionTimeout: 10,
-    // 每條連線的 startup 參數（見檔頭說明）。
-    connection: { search_path: schema },
+    connection: { ...connection },
   });
+}
+
+/**
+ * 建立一個隔離的測試 schema 並套用所有遷移。
+ * @returns {Promise<{sql:object, schema:string, config:object, sessionParams:object, close:()=>Promise<void>}>}
+ *   config：`{host, port, name, user, password, sslmode, schema}`，可傳給 createAccountService（task 5.12/5.13）。
+ *   sessionParams：testSessionParams(schema)；測試自行建立的連線池（例如經 TCP proxy 的 App 連線池）傳入它，
+ *   close() 就會一併終止這些連線。
+ */
+export async function createTestDatabase({ env = process.env, migrationsDir = MIGRATIONS_DIR, log = () => {} } = {}) {
+  const database = readTestDatabaseConfig(env);
+  const schema = randomSchemaName();
+  const ident = quoteSchemaIdentifier(schema);
+  const sessionParams = Object.freeze(testSessionParams(schema));
+
+  // 每條連線的 startup 參數（見檔頭說明）。
+  const sql = openTestPool(database, sessionParams);
 
   let created = false;
-  const dropAndClose = async () => {
+  // 關閉連線池 → 終止同名 backend → 等它們消失 → DROP SCHEMA → 關閉管理連線（design.md Components §24.3）。
+  const teardown = async () => {
+    const errors = [];
+    try { await sql.close({ timeout: 5 }); } catch (e) { errors.push(e); }
+    const admin = adminSql(database);
     try {
+      await terminateTestSessions(admin, sessionParams.application_name);
+      await waitSessionsGone(admin, sessionParams.application_name);
       // 唯一允許的 unsafe：通過 TEST_SCHEMA_PATTERN 檢查的 schema identifier。
-      if (created) await sql.unsafe(`DROP SCHEMA IF EXISTS ${ident} CASCADE`);
+      if (created) await admin.unsafe(`DROP SCHEMA IF EXISTS ${ident} CASCADE`);
+    } catch (e) {
+      errors.push(e);
     } finally {
-      await sql.close({ timeout: 5 });
+      try { await admin.close({ timeout: 5 }); } catch (e) { errors.push(e); }
     }
+    if (errors.length) throw new Error(`測試 Database 清除失敗：${redact(errors[0]?.message ?? errors[0], database.password)}`);
   };
+  const boundedTeardown = () => withDeadline(teardown(), TEARDOWN_LIMIT_MS, '測試 Database 清除');
 
   try {
     // 唯一允許的 unsafe：通過 TEST_SCHEMA_PATTERN 檢查的 schema identifier。
@@ -163,27 +315,45 @@ export async function createTestDatabase({ env = process.env, migrationsDir = MI
 
     const [{ current }] = await sql`SELECT current_schema() AS current`;
     if (current !== schema) throw new Error('search_path 未套用至測試連線（current_schema 與測試 schema 不同）');
+    await verifySessionParams(sql, sessionParams);
 
     const repo = loadMigrations(await readMigrationFiles(migrationsDir));
     const result = await runMigrations(sql, repo, { log });
     if (result.exitCode !== 0) throw new Error(`測試 schema 遷移失敗（結束碼 ${result.exitCode}）：${result.error ?? ''}`);
   } catch (err) {
     const message = redact(err?.message ?? err, database.password);
-    try { await dropAndClose(); } catch { /* 保留原始錯誤 */ }
+    try { await boundedTeardown(); } catch { /* 保留原始錯誤 */ }
     throw new Error(`無法建立測試 Database ${database.host}:${database.port}：${message}`);
   }
 
-  let closed = false;
+  let closing = null;
   return {
     sql,
     schema,
     config: { ...database, schema },
-    async close() {
-      if (closed) return;
-      closed = true;
-      await dropAndClose();
+    sessionParams,
+    close() {
+      closing ??= boundedTeardown();
+      return closing;
     },
   };
+}
+
+/**
+ * 以管理連線列出帶有 applicationName 的 backend 與資料庫中所有 advisory lock（測試的 teardown 斷言用）。
+ * @returns {Promise<{pids:number[], advisoryLocks:{pid:number, objid:number, granted:boolean}[]}>}
+ */
+export async function inspectTestSessions(applicationName, { env = process.env } = {}) {
+  const admin = adminSql(readTestDatabaseConfig(env));
+  try {
+    const backends = await admin`SELECT pid FROM pg_stat_activity
+      WHERE application_name = ${applicationName} AND datname = current_database() AND pid <> pg_backend_pid()`;
+    const locks = await admin`SELECT pid, objid::int AS objid, granted FROM pg_locks
+      WHERE locktype = 'advisory' AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`;
+    return { pids: backends.map(r => r.pid), advisoryLocks: [...locks].map(r => ({ ...r })) };
+  } finally {
+    await admin.close({ timeout: 5 });
+  }
 }
 
 /**
@@ -215,6 +385,8 @@ function adminSql(database) {
     tls: TLS_BY_SSLMODE[database.sslmode] ?? false,
     max: 1,
     connectionTimeout: 10,
+    // 逾時參數與 ADMIN_APPLICATION_NAME；不設 search_path（design.md Components §24.3）。
+    connection: adminSessionParams(),
   });
 }
 
@@ -274,12 +446,13 @@ export function serviceDb(sql) {
 /**
  * 為目前的 bun:test 檔案註冊 beforeAll／afterAll。
  * 設定在註冊時同步驗證：未設定 CAMPING_TEST_DATABASE_* 時，測試檔載入即失敗並列出變數名。
- * @returns {{readonly sql:object, readonly schema:string, readonly config:object}} 於 beforeAll 之後可用。
+ * @returns {{readonly sql:object, readonly schema:string, readonly config:object, readonly sessionParams:object}} 於 beforeAll 之後可用。
  */
 export function useTestDatabase(options = {}) {
   readTestDatabaseConfig(options.env ?? process.env);
   let db = null;
   beforeAll(async () => { db = await createTestDatabase(options); }, 60_000);
+  // close() 自己以 TEARDOWN_LIMIT_MS 為上限，早於 hook 的 30 秒逾時失敗。
   afterAll(async () => { if (db) await db.close(); }, 30_000);
   const get = key => {
     if (!db) throw new Error('測試 Database 尚未建立（只能在 beforeAll 之後使用）');
@@ -289,6 +462,7 @@ export function useTestDatabase(options = {}) {
     get sql() { return get('sql'); },
     get schema() { return get('schema'); },
     get config() { return get('config'); },
+    get sessionParams() { return get('sessionParams'); },
   };
 }
 

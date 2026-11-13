@@ -2071,11 +2071,11 @@ int recordQa(Map args) {
     rc = sh(label: 'Release_Gate QA', returnStatus: true, script: '''
       set -eu
       set --
-      if [ -n "$LM_GATE_INVENTORY" ]; then set -- "$@" --inventory "$LM_GATE_INVENTORY"; fi
-      if [ -n "$LM_GATE_STAGE_ERROR" ]; then set -- "$@" --stage-error "$LM_GATE_STAGE_ERROR"; fi
+      if [ -n "${LM_GATE_INVENTORY:-}" ]; then set -- "$@" --inventory "${LM_GATE_INVENTORY:-}"; fi
+      if [ -n "${LM_GATE_STAGE_ERROR:-}" ]; then set -- "$@" --stage-error "${LM_GATE_STAGE_ERROR:-}"; fi
       rm -f reports/gate-qa.json
       rc=0
-      bun ci/gates.mjs junit --gate QA --commit "$GIT_COMMIT_FULL" --out reports/gate-qa.json "$@" $LM_GATE_JUNIT > /dev/null || rc=$?
+      bun ci/gates.mjs junit --gate QA --commit "$GIT_COMMIT_FULL" --out reports/gate-qa.json "$@" ${LM_GATE_JUNIT:-} > /dev/null || rc=$?
       bun ci/record.mjs gate --record "$LM_RECORD" --result reports/gate-qa.json
       exit "$rc"
     ''')
@@ -2186,8 +2186,8 @@ void prepareScanSources() {
         if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
           git fetch --unshallow --no-tags --quiet origin
         fi
-        if [ -n "$LM_SCAN_FETCH_TARGET" ]; then
-          git fetch --no-tags --quiet origin "+refs/heads/$LM_SCAN_FETCH_TARGET:refs/remotes/origin/$LM_SCAN_FETCH_TARGET"
+        if [ -n "${LM_SCAN_FETCH_TARGET:-}" ]; then
+          git fetch --no-tags --quiet origin "+refs/heads/${LM_SCAN_FETCH_TARGET:-}:refs/remotes/origin/${LM_SCAN_FETCH_TARGET:-}"
         fi
       ''')
     }
@@ -2198,8 +2198,8 @@ void prepareScanSources() {
     range = sh(label: 'Gitleaks history range', returnStdout: true, script: '''
       set -u
       head="$GIT_COMMIT_FULL"
-      if [ -n "$LM_SCAN_BASE_REF" ]; then
-        base="$(git merge-base "$LM_SCAN_BASE_REF" "$head" 2>/dev/null)" || exit 0
+      if [ -n "${LM_SCAN_BASE_REF:-}" ]; then
+        base="$(git merge-base "${LM_SCAN_BASE_REF:-}" "$head" 2>/dev/null)" || exit 0
         printf '%s..%s\\n' "$base" "$head"
         exit 0
       fi
@@ -2802,7 +2802,7 @@ void runDast() {
     set -u
     set -f
     set --
-    for t in $LM_DAST_PROBE_ARGS; do
+    for t in ${LM_DAST_PROBE_ARGS:-}; do
       set -- "$@" --probe "$t"
     done
     rc=0
@@ -3747,8 +3747,8 @@ int recordStagingGate(String stageError) {
         set -- --dir reports/staging --commit "$GIT_COMMIT_FULL" --digest "${LM_IMAGE_DIGEST:-}" \
           --signature "$LM_STG_SIGNATURE" --finalize "$LM_STG_FINALIZE" --attestation "$LM_STG_ATTESTATION" \
           --out-patch reports/staging-record-patch.json --out-gate reports/gate-staging.json
-        if [ -n "$LM_STG_STAGE_ERROR" ]; then
-          set -- "$@" --stage-error "$LM_STG_STAGE_ERROR"
+        if [ -n "${LM_STG_STAGE_ERROR:-}" ]; then
+          set -- "$@" --stage-error "${LM_STG_STAGE_ERROR:-}"
         fi
         rc=0
         bun ci/staging.mjs record "$@" || rc=$?
@@ -4357,8 +4357,8 @@ void prepareApproval() {
   sh(label: 'Production 目前版本的遷移檔', script: '''
     set -u
     rm -f reports/production/deployed-migrations.txt
-    if [ -n "$LM_PRD_BASE_COMMIT" ] && git cat-file -e "$LM_PRD_BASE_COMMIT^{commit}" 2>/dev/null; then
-      git ls-tree --name-only "$LM_PRD_BASE_COMMIT" -- migrations/ > reports/production/deployed-migrations.txt \
+    if [ -n "${LM_PRD_BASE_COMMIT:-}" ] && git cat-file -e "${LM_PRD_BASE_COMMIT:-}^{commit}" 2>/dev/null; then
+      git ls-tree --name-only "${LM_PRD_BASE_COMMIT:-}" -- migrations/ > reports/production/deployed-migrations.txt \
         || rm -f reports/production/deployed-migrations.txt
     fi
   ''')
@@ -5008,8 +5008,8 @@ int recordProductionGate(String stageError) {
         set -- --dir reports/production --commit "$GIT_COMMIT_FULL" --digest "${LM_IMAGE_DIGEST:-}" --tag "$TAG_NAME" \
           --signature "$LM_PRD_SIGNATURE" --finalize "$LM_PRD_FINALIZE" \
           --out-patch reports/production-record-patch.json --out-gate reports/gate-post-deploy.json
-        if [ -n "$LM_PRD_STAGE_ERROR" ]; then
-          set -- "$@" --stage-error "$LM_PRD_STAGE_ERROR"
+        if [ -n "${LM_PRD_STAGE_ERROR:-}" ]; then
+          set -- "$@" --stage-error "${LM_PRD_STAGE_ERROR:-}"
         fi
         rc=0
         bun ci/production.mjs record "$@" || rc=$?
@@ -5083,7 +5083,7 @@ void pullImages(List refs) {
         trap 'rm -rf "$DOCKER_CONFIG"' EXIT
         registry="${BUILD_IMAGE%%/*}"
         printf '%s' "$LM_REG_PASSWORD" | docker login --username "$LM_REG_USER" --password-stdin "$registry" >/dev/null
-        for ref in $LM_PULL_IMAGES; do
+        for ref in ${LM_PULL_IMAGES:-}; do
           case "$ref" in
             "$registry"/*@sha256:*) ;;
             # 只允許 App_Image repository 的 Release_Tag 版本標籤（不覆寫；拉取後由呼叫端解析為 digest）。
@@ -5201,7 +5201,7 @@ void finalizeBuildRecord(Map outcome) {
         sh(label: 'Build_Record finalize', script: '''
           set -eu
           set -- --record "$LM_RECORD" --status "$LM_POST_STATUS"
-          if [ -n "$LM_POST_FAILED_STAGE" ]; then set -- "$@" --first-failed-stage "$LM_POST_FAILED_STAGE"; fi
+          if [ -n "${LM_POST_FAILED_STAGE:-}" ]; then set -- "$@" --first-failed-stage "${LM_POST_FAILED_STAGE:-}"; fi
           bun ci/record.mjs finalize "$@"
         ''')
       }

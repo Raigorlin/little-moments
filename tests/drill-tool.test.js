@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { useTestDatabase } from './support/pg.js';
+import { rejectionOf, useTestDatabase } from './support/pg.js';
 import { createAccountService, hashPassword, verifyPassword } from '../server/accounts.js';
 import { pingSql } from '../server/db/connect.js';
 import { createHttpHandler } from '../server/http.js';
@@ -115,7 +115,9 @@ test('還原後的 Database：插入臨時合成管理員 → smoke-fixture → 
 
 test('合成帳號已存在時不覆寫並在 seed-admin 失敗', async () => {
   const before = await db.sql`SELECT password_hash FROM users WHERE username = ${'lm-drill-89abcdef'}`;
-  await expect(seedAdmin(db.sql, { username: 'lm-drill-89abcdef', password: 'another-placeholder-password-'.padEnd(40, '1') })).rejects.toMatchObject({ code: 'exists' });
+  // rejectionOf：Bun 1.3.14 時發現 expect(<查詢 Database 的 promise>).rejects 可能等不到查詢；
+  // Bun 1.4.4 上已不重現，保留以防回歸（tests/support/pg.js）。
+  expect(await rejectionOf(seedAdmin(db.sql, { username: 'lm-drill-89abcdef', password: 'another-placeholder-password-'.padEnd(40, '1') }))).toMatchObject({ code: 'exists' });
   const after = await db.sql`SELECT password_hash FROM users WHERE username = ${'lm-drill-89abcdef'}`;
   expect(after[0].password_hash).toBe(before[0].password_hash);
 

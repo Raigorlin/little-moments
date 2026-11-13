@@ -56,7 +56,7 @@ function run({ argv = [], env = pgEnv(), isTTY = false, input = `${PASS}\n`, hid
   const promptHidden = queue([...hidden]);
   const readInput = mock(async () => (Buffer.isBuffer(input) ? input : Buffer.from(input)));
   const promise = runCreateSmokeAccount({
-    argv, env, isTTY, promptHidden, readInput, poolOptions: { connection: { search_path: db.schema } },
+    argv, env, isTTY, promptHidden, readInput, poolOptions: { connection: db.sessionParams },
     out: (...a) => out.push(a.join(' ')), err: (...a) => err.push(a.join(' ')), ...rest
   });
   return { promise, out, err, promptHidden, readInput };

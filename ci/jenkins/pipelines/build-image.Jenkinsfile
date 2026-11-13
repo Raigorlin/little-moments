@@ -5,7 +5,7 @@
 //              LM_BI_REPO 與 LM_CRANE_IMAGE（只以 digest 引用）格式檢查
 //   Validate   ci/build-image/Dockerfile 不得殘留 `sha256:<digest>` 或 `ARG ...=<...>` PLACEHOLDER；每個 FROM 都以
 //              `@sha256:<64 hex>` 固定；BUN_SHA256／NODE_SHA256 為 64 hex；ARG BUN_VERSION／NODE_VERSION 與
-//              ci/toolchain.json 相同，且 Bun 屬於 1.3.x（fail closed，未通過即不建置）
+//              ci/toolchain.json 相同，且 Bun 屬於 1.4.x（fail closed，未通過即不建置）
 //   Build      以只含 Dockerfile 的空 context（不送出工作區）`docker build --no-cache`，標籤為不可變的
 //              `<LM_BI_REPO>:<完整 Commit SHA>`，並加上 commit／版本／工具鏈 OCI 標籤；記錄本機 image ID
 //   Verify     在剛建置的映像（以 image ID 指定）內執行 ci/verify-toolchain.mjs 與 ci/verify-env.mjs：
@@ -150,8 +150,8 @@ pipeline {
               fi
             done
             case "$bun_v" in
-              1.3.*) ;;
-              *) fail "ci/toolchain.json 的 bun 必須屬於 1.3.x" ;;
+              1.4.*) ;;
+              *) fail "ci/toolchain.json 的 bun 必須屬於 1.4.x" ;;
             esac
             if [ "$(arg_value BUN_VERSION)" != "$bun_v" ]; then
               fail "ARG BUN_VERSION 與 ci/toolchain.json 的 bun（$bun_v）不一致"

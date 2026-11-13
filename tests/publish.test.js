@@ -113,7 +113,7 @@ describe('registration policy', () => {
     const res = await direct(handler, 'POST', '/api/register', { body });
     expect(res.status).toBe(200);
     expect((await res.json()).user.username).toBe('new-person');
-  });
+  }, 60_000); // open({ empty: true }) migrates a new test schema
 
   test('CAMPING_REGISTRATION=closed refuses valid, malformed, and empty bodies without spending the register bucket', async () => {
     const handler = await open(CLOSED);
@@ -145,7 +145,7 @@ describe('registration policy', () => {
     expect(await flags(await direct(await open(), 'GET', '/api/session'))).toEqual({ needsSetup: false, webSetup: true, registrationOpen: true, inviteRegistration: true });
     expect(await flags(await direct(await open(CLOSED), 'GET', '/api/session'))).toEqual({ needsSetup: false, webSetup: true, registrationOpen: false, inviteRegistration: true });
     expect(await flags(await direct(await open({ ...CLOSED, empty: true }), 'GET', '/api/session'))).toEqual({ needsSetup: true, webSetup: true, registrationOpen: false, inviteRegistration: false });
-  });
+  }, 60_000); // two new test schemas
 
   // jenkins-cicd-deploy Requirement 26: the Settings_Store value set by an admin, read on every request.
   test('an admin closes then reopens registration on one running service; the next register and session follow each save', async () => {
@@ -347,7 +347,7 @@ describe('origin check properties', () => {
         expect(await res.json()).toEqual({ error: '請求來源不被允許。' });
       }
     }), { numRuns: 150 });
-  });
+  }, 60_000); // a new test schema plus 150 runs
 });
 
 describe('rate-limit isolation properties', () => {
@@ -608,7 +608,7 @@ describe('invite registration', () => {
     const res = await registerVia(send, 'd'.repeat(64), regBody(unique()));
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: '請先完成管理員設定。' });
-  });
+  }, 60_000); // open({ empty: true }) migrates a new test schema
 
   // Feature: publish-behind-nginx, Property 11: Invite registration is atomic
   // numRuns stays at 100: only valid, conflict, and lateInvalid attempts reach scrypt (weight 5 of 13), and at

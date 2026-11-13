@@ -214,7 +214,7 @@ describe('PBN orderings kept (Req 10.4)', () => {
       const res = await send(handler, 'local', 'POST', '/api/register', { contentType: null });
       expect(res.status).toBe(409);
     }, true);
-  });
+  }, 60_000); // withService(…, true) migrates a new test schema
 
   test('the setup loopback 403 answers before the 415', async () => {
     await withService('local', async (handler, accounts) => {
@@ -225,7 +225,7 @@ describe('PBN orderings kept (Req 10.4)', () => {
       const local = await send(handler, 'local', 'POST', '/api/setup', { contentType: 'text/plain' });
       expect(local.status).toBe(415);
     }, true);
-  });
+  }, 60_000); // withService(…, true) migrates a new test schema
 });
 
 describe('OPTIONS preflight (Req 12.3, 12.4, 12.8)', () => {

@@ -12,15 +12,21 @@
 //     - refuse：立即關閉所有既有連線，新連線一接受即關閉，對應 DB 重啟。
 //   CI 模式：設定 CAMPING_TEST_DB_CONTAINER（Ephemeral_Database 容器名稱）時，另以 `docker pause/unpause`
 //   真正暫停該容器；未設定時該測試會以明確的名稱標示為略過。
+//
+// 隔離（design.md Components §24.3）：App 連線池傳入測試 Database 的 sessionParams，伺服器端看到的
+// application_name 與測試連線池相同。afterAll 依序 resume → svc.close → appDb.close → proxy.stop →
+// 測試 Database 的 close()（終止所有同名 backend 並 DROP SCHEMA），之後斷言沒有殘留的 backend 與 advisory lock。
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { useTestDatabase } from './support/pg.js';
+import { createTestDatabase, inspectTestSessions, readTestDatabaseConfig } from './support/pg.js';
+import { createTcpProxy } from './support/tcp-proxy.js';
 import { createDatabase } from '../server/db/connect.js';
 import { createAccountService } from '../server/accounts.js';
 import { createHttpHandler } from '../server/http.js';
 
-const db = useTestDatabase();
+// 未設定 CAMPING_TEST_DATABASE_* 時載入即失敗（不靜默略過）。
+readTestDatabaseConfig();
 const ROOT = fileURLToPath(new URL('../dist/', import.meta.url));
 const BASE = 'http://127.0.0.1:5173';
 const FAKE_SERVER = { requestIP: () => ({ address: '127.0.0.1' }) };
@@ -28,100 +34,32 @@ const OUTAGE_LIMIT_MS = 5000;
 const RECOVERY_LIMIT_MS = 30000;
 const CONTAINER = process.env.CAMPING_TEST_DB_CONTAINER || '';
 
-/**
- * 最小 TCP proxy。mode：
- *   'forward'   正常雙向轉送
- *   'blackhole' 不轉送任何位元組（保留於佇列，恢復後送出）、新連線照常接受
- *   'refuse'    新連線一接受即關閉
- */
-function createTcpProxy({ targetHost, targetPort }) {
-  let mode = 'forward';
-  const pairs = new Set();
-  const side = () => ({ socket: null, out: [] });
-
-  const flush = s => {
-    if (mode !== 'forward' || !s.socket) return;
-    while (s.out.length) {
-      const chunk = s.out[0];
-      const n = s.socket.write(chunk);
-      if (n < chunk.length) { s.out[0] = chunk.subarray(Math.max(0, n)); return; } // 背壓：等待 drain
-      s.out.shift();
-    }
-  };
-  const closePair = (pair, hard = false) => {
-    if (!pair || pair.closed) return;
-    pair.closed = true;
-    pairs.delete(pair);
-    for (const s of [pair.client, pair.upstream]) {
-      try { hard && s.socket?.terminate ? s.socket.terminate() : s.socket?.end(); } catch { /* 已關閉 */ }
-    }
-  };
-
-  const server = Bun.listen({
-    hostname: '127.0.0.1',
-    port: 0,
-    socket: {
-      open(client) {
-        if (mode === 'refuse') { client.end(); return; }
-        const pair = { client: side(), upstream: side(), closed: false };
-        pair.client.socket = client;
-        client.data = pair;
-        pairs.add(pair);
-        Bun.connect({
-          hostname: targetHost,
-          port: targetPort,
-          socket: {
-            open(up) {
-              if (pair.closed) { up.end(); return; }
-              pair.upstream.socket = up;
-              flush(pair.upstream);
-            },
-            data(_up, chunk) { pair.client.out.push(Buffer.from(chunk)); flush(pair.client); },
-            drain() { flush(pair.upstream); },
-            close() { closePair(pair); },
-            error() { closePair(pair); },
-            connectError() { closePair(pair); },
-          },
-        }).catch(() => closePair(pair));
-      },
-      data(client, chunk) {
-        const pair = client.data;
-        if (!pair) return;
-        pair.upstream.out.push(Buffer.from(chunk));
-        flush(pair.upstream);
-      },
-      drain(client) { if (client.data) flush(client.data.client); },
-      close(client) { closePair(client.data); },
-      error(client) { closePair(client.data); },
-    },
-  });
-
-  return {
-    port: server.port,
-    get connections() { return pairs.size; },
-    blackhole() { mode = 'blackhole'; },
-    refuse() { mode = 'refuse'; for (const p of [...pairs]) closePair(p, true); },
-    resume() { mode = 'forward'; for (const p of pairs) { flush(p.upstream); flush(p.client); } },
-    stop() { mode = 'refuse'; for (const p of [...pairs]) closePair(p, true); server.stop(true); },
-  };
-}
-
-let proxy, appDb, svc, handler;
+let db, proxy, appDb, svc, handler;
 
 beforeAll(async () => {
-  const { host, port, schema } = db.config;
+  db = await createTestDatabase();
+  const { host, port } = db.config;
   proxy = createTcpProxy({ targetHost: host, targetPort: port });
-  // App 的連線池經由 proxy 連到測試 schema；與 serve.mjs 相同使用 createDatabase 的預設連線池選項。
-  appDb = createDatabase({ ...db.config, host: '127.0.0.1', port: proxy.port }, { connection: { search_path: schema } });
+  // App 的連線池經由 proxy 連到測試 schema；與 serve.mjs 相同使用 createDatabase 的預設連線池選項，
+  // startup 參數為測試 Database 的 sessionParams（search_path、application_name 與逾時）。
+  appDb = createDatabase({ ...db.config, host: '127.0.0.1', port: proxy.port }, { connection: db.sessionParams });
   svc = await createAccountService({ db: appDb });
   handler = createHttpHandler({ root: ROOT, accounts: svc, allowedHosts: ['127.0.0.1'], health: () => appDb.ping(2000) });
 }, 60_000);
 
 afterAll(async () => {
+  if (!db) return;
+  const name = db.sessionParams.application_name;
+  // teardown 前屬於本測試檔的 backend（測試連線池與經 proxy 的 App 連線池）。
+  const { pids: before } = await inspectTestSessions(name);
   proxy?.resume();
   svc?.close();
   await appDb?.close();
   proxy?.stop();
+  await db.close();
+  const after = await inspectTestSessions(name);
+  expect(after.pids).toEqual([]);
+  expect(after.advisoryLocks.filter(l => before.includes(l.pid))).toEqual([]);
 }, 30_000);
 
 const healthz = async () => {

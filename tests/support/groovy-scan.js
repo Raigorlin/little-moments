@@ -8,7 +8,9 @@ const FUNCTION_RE = new RegExp(String.raw`^(?:(?:public|private|protected|static
 /**
  * 保留換行的 Groovy 掃描器。略過 `//`、`/* *\/` 註解與 `'…'`、`"…"`、`'''…'''`、`"""…"""` 字串的內容（處理 `\` 跳脫），
  * 以 `(`、`[`、`{` 配對找出深度 0 的 `{ … }` 區塊：`pipeline {` 與頂層函式宣告。
- * 回傳 { blocks: [{ name, kind, start, end, lines }], masked }；masked 與原文等長，註解與字串內容換成空白（保留換行）。
+ * 回傳 { blocks: [{ name, kind, start, end, lines }], masked, strings }；masked 與原文等長，註解與字串內容換成空白（保留換行）。
+ * strings 依出現順序列出字串常值：{ quote, start, end, raw }（start／end 為含引號的字元位置，raw 為未處理跳脫的原文；
+ * 供 tests/ci-jenkinsfile-shell-env.test.js 使用，Components 第 24.5 節）。
  * 未結束的字串、註解或括號、括號不配對、深度 0 區塊的結束 `}` 不是單獨位於一行的第 0 欄、無法辨識的頂層區塊，皆拋出例外。
  */
 export function scanGroovy(text) {
@@ -17,6 +19,7 @@ export function scanGroovy(text) {
   const blank = (from, to) => { for (let k = from; k < to; k++) if (masked[k] !== '\n') masked[k] = ' '; };
   const stack = [];
   const blocks = [];
+  const strings = [];
   let stmtStart = -1;
   let i = 0;
   while (i < text.length) {
@@ -45,6 +48,7 @@ export function scanGroovy(text) {
         j++;
       }
       if (j >= text.length) throw new Error(`第 ${lineOf(i)} 行的字串未結束`);
+      strings.push({ quote, start: i, end: j + quote.length, raw: text.slice(i + quote.length, j) });
       blank(i + quote.length, j);
       i = j + quote.length;
       continue;
@@ -89,5 +93,5 @@ export function scanGroovy(text) {
     i++;
   }
   if (stack.length) throw new Error(`括號未結束（${stack.map((s) => s.ch).join('')}）`);
-  return { blocks, masked: masked.join('') };
+  return { blocks, masked: masked.join(''), strings };
 }

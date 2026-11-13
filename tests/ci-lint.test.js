@@ -254,7 +254,7 @@ describe('LAN Registry 與映像的實際值（tasks 19.4）', () => {
 
   test('Bun 版本：ci/toolchain.json、Build_Image 的 ARG BUN_VERSION 與 App_Image 的 oven/bun 標籤一致', () => {
     const bun = JSON.parse(read('ci/toolchain.json')).bun;
-    expect(bun).toMatch(/^1\.3\.\d+$/);
+    expect(bun).toMatch(/^1\.4\.\d+$/);
     const bi = read('ci/build-image/Dockerfile');
     expect([...bi.matchAll(/^ARG BUN_VERSION=(\S*)\s*$/gm)].map((m) => m[1])).toEqual([bun]);
     const app = read('Dockerfile');

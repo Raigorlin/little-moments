@@ -230,6 +230,23 @@ describe('gates CLI', () => {
     expect(main(['junit', '--gate', 'QA', '--stage-error', 'a\nb', ok], quiet)).toBe(2);
     expect(main(['junit', '--gate', 'QA', '--stage-error', '', ok], quiet)).toBe(2);
   });
+
+  test('--stage-error 且 JUnit 報告缺失：unmet 依序為階段錯誤與報告缺失，狀態 error（Components 第 24.4 節）', () => {
+    const run = (args) => { const lines = []; const code = main(args, { log: (l) => lines.push(l), error: () => {} }); return { code, out: JSON.parse(lines[0]) }; };
+    const missing = run(['junit', '--gate', 'QA', '--stage-error', 'Unit Tests 失敗', join(dir, 'stage-missing.xml')]);
+    expect(missing.code).toBe(1);
+    expect(missing.out.status).toBe('error');
+    expect(missing.out.pass).toBe(false);
+    expect(missing.out.unmet).toEqual(['檢查階段執行錯誤：Unit Tests 失敗', 'JUnit 報告缺失或無法解析']);
+
+    // 有效 JUnit 時結果不變：只有階段錯誤。
+    const ok = join(dir, 'stage-valid.xml');
+    writeFileSync(ok, '<testsuites tests="2" failures="0" errors="0"></testsuites>');
+    const valid = run(['junit', '--gate', 'QA', '--stage-error', 'Unit Tests 失敗', ok]);
+    expect(valid.code).toBe(1);
+    expect(valid.out.status).toBe('error');
+    expect(valid.out.unmet).toEqual(['檢查階段執行錯誤：Unit Tests 失敗']);
+  });
 });
 
 describe('inventoryGate', () => {

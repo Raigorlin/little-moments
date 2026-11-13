@@ -23,7 +23,7 @@
 - **Pipeline**：定義於 repository 根目錄 `Jenkinsfile`、由 Jenkins Multibranch Pipeline 執行的 CI/CD 流程。
 - **Jenkins**：執行 Pipeline 的 CI/CD 伺服器。
 - **Build_Agent**：Jenkins 的 Linux 執行節點；Pipeline 各階段在 Build_Image 容器內執行。
-- **Build_Image**：以版本與 digest 固定、包含 Bun 1.3.x、Node.js 與 Chromium 的 Docker 映像，供建置與測試使用。
+- **Build_Image**：以版本與 digest 固定、包含 Bun 1.4.x（精確版本 1.4.4）、Node.js 與 Chromium 的 Docker 映像，供建置與測試使用。
 - **Trusted_Ref**：`main` 分支，或符合 `v<major>.<minor>.<patch>` 格式且指向 `main` 歷史中 commit 的 Git Tag。
 - **Untrusted_PR**：任何 Pull Request 的建置，包含來自 fork 的 PR。
 - **Release_Tag**：符合 `v<major>.<minor>.<patch>` 格式的 Git Tag。
@@ -112,8 +112,8 @@
 
 #### Acceptance Criteria
 
-1. THE Pipeline SHALL 在 Build_Image 容器內執行安裝、建置與測試階段，且 `Jenkinsfile` 中對 Build_Image 的引用 SHALL 包含以 `sha256:` 開頭的 digest；僅以可變 tag（例如 `latest` 或 `1.3`）引用 Build_Image 的設定視為不符合。
-2. THE Build_Image SHALL 包含單一精確 patch 版本的 Bun（屬於 1.3.x 系列）、單一精確版本的 Node.js 與單一精確版本的 Chromium，且這三項工具的精確版本號 SHALL 記錄於 repository 中受版本控制的檔案。
+1. THE Pipeline SHALL 在 Build_Image 容器內執行安裝、建置與測試階段，且 `Jenkinsfile` 中對 Build_Image 的引用 SHALL 包含以 `sha256:` 開頭的 digest；僅以可變 tag（例如 `latest` 或 `1.4`）引用 Build_Image 的設定視為不符合。
+2. THE Build_Image SHALL 包含單一精確 patch 版本的 Bun（屬於 1.4.x 系列，精確版本為 1.4.4）、單一精確版本的 Node.js 與單一精確版本的 Chromium，且這三項工具的精確版本號 SHALL 記錄於 repository 中受版本控制的檔案。
 3. WHEN Pipeline 在 Build_Image 容器內開始安裝階段之前，THE Pipeline SHALL 將 Bun、Node.js 與 Chromium 的實際版本號寫入 Build_Record；IF 任一實際版本號與 repository 中記錄的版本號不一致，THEN THE Pipeline SHALL 在執行安裝之前使該次執行失敗，並在 Build_Record 中標示不一致的工具名稱、預期版本與實際版本。
 4. WHEN 安裝相依套件，THE Pipeline SHALL 執行 `bun install --frozen-lockfile`，且 SHALL NOT 執行任何會建立或修改 `bun.lock` 的安裝指令。
 5. IF `bun.lock` 不存在，或 `bun.lock` 與 `package.json` 宣告的相依套件不一致，THEN THE Pipeline SHALL 使安裝階段以非零結束碼失敗、將該次執行標示為失敗、不執行後續的建置、測試、App_Image 建置與部署階段，且不修改或提交 `bun.lock`。
@@ -329,7 +329,7 @@
 #### Acceptance Criteria
 
 1. WHEN 一次 `main` 建置的「QA」與「安全」Release_Gate 皆回報通過，THE Pipeline SHALL 以 repository 根目錄的 `Dockerfile` 建置 App_Image，且建置來源為該次事件指定的確切 Commit SHA；Release_Tag 建置 SHALL 不重新建置 App_Image，而沿用 Requirement 1 第 4 條查得的 Image_Digest。
-2. THE `Dockerfile` SHALL 使用至少兩個階段的 multi-stage build，且最終階段僅包含 Bun 1.3.x 執行環境（與 Build_Image 相同的 minor 版本）、伺服器打包成品（建置時將 `scripts/serve.mjs`、`server/` 及其自 `src/` 匯入的模組打包成的單一檔案）、Migration_Runner 與遷移檔、`dist/` 前端建置成品，以及 `package.json` 中 `dependencies` 所列的正式相依套件；最終階段 SHALL 不包含 `src/` 下的任何原始檔、`devDependencies`、`tests/`、Playwright、Chromium 或建置工具。
+2. THE `Dockerfile` SHALL 使用至少兩個階段的 multi-stage build，且最終階段僅包含 Bun 1.4.x 執行環境（精確版本 1.4.4，與 Build_Image 的 Bun 為相同的精確版本）、伺服器打包成品（建置時將 `scripts/serve.mjs`、`server/` 及其自 `src/` 匯入的模組打包成的單一檔案）、Migration_Runner 與遷移檔、`dist/` 前端建置成品，以及 `package.json` 中 `dependencies` 所列的正式相依套件；最終階段 SHALL 不包含 `src/` 下的任何原始檔、`devDependencies`、`tests/`、Playwright、Chromium 或建置工具。
 3. THE `Dockerfile` SHALL 在每一個 `FROM` 指令中以 `@sha256:` digest 固定基底映像，並以 `bun install --frozen-lockfile` 安裝相依套件；IF `bun.lock` 與 `package.json` 不一致，THEN 映像建置 SHALL 失敗。
 4. THE App_Image SHALL 以 UID 與 GID 皆不為 0 的非 root 使用者執行 App_Server，且該使用者對伺服器打包成品、`dist/` 與遷移檔不具寫入權限。
 5. THE App_Image SHALL 以 OCI 標籤 `org.opencontainers.image.revision` 記錄 40 字元完整 Commit SHA、以 `org.opencontainers.image.version` 記錄 `main-` 加上 7 字元短 Commit SHA，並以 `org.opencontainers.image.created` 記錄 RFC 3339 UTC 格式的建置時間；Release_Tag 名稱 SHALL 透過 Requirement 16 第 6 條的 Registry 版本標籤與該 Release_Tag 建置的 Build_Record 記錄，而不改變 Image_Digest。

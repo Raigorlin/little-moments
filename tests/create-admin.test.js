@@ -42,7 +42,7 @@ function run({ lines = [], hidden = [], env = pgEnv(), ...rest } = {}) {
   const prompt = queue([...lines]), promptHidden = queue([...hidden]);
   const readInput = mock(async () => { throw new Error('stdin should not be read'); });
   const promise = runCreateAdmin({
-    argv: [], env, isTTY: true, prompt, promptHidden, readInput, poolOptions: { connection: { search_path: db.schema } },
+    argv: [], env, isTTY: true, prompt, promptHidden, readInput, poolOptions: { connection: db.sessionParams },
     out: (...a) => out.push(a.join(' ')), err: (...a) => err.push(a.join(' ')), ...rest
   });
   return { promise, out, err, prompt, promptHidden, readInput };

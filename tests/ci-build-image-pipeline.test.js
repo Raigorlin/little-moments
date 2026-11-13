@@ -166,7 +166,7 @@ describe('PLACEHOLDER 與版本檢查（fail closed）', () => {
     expect(v).toContain('for name in BUN_SHA256 NODE_SHA256; do');
     expect(v).toContain('"$(arg_value BUN_VERSION)" != "$bun_v"');
     expect(v).toContain('"$(arg_value NODE_VERSION)" != "$node_v"');
-    expect(v).toMatch(/1\.3\.\*\) ;;/);
+    expect(v).toMatch(/1\.4\.\*\) ;;/);
     expect(v).toMatch(/if \(rc != 0\) \{[\s\S]*error\(/);
   });
 
