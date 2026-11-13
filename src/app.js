@@ -379,7 +379,7 @@ document.addEventListener('change',event=>{
 });
 document.addEventListener('keydown',event=>{
   const input=event.target.closest('input[data-shopping-quantity-input]');if(!input)return;
-  // IME∩╝êµ│¿Θƒ│πÇüµï╝Θƒ│∩╝ëΣ╗Ñ Enter τó║Φ¬ìΘü╕σ¡ùπÇüΣ╗Ñ Escape σÅûµ╢êτ╡äσ¡ù∩╝¢τ╡äσ¡ùΣ╕¡Σ╕ìσä▓σ¡ÿΣ╣ƒΣ╕ìσÅûµ╢êπÇéSafari τÜä isComposing Σ╕ìσÅ»Θ¥á∩╝îσÅªµ¬óµƒÑ keyCode 229πÇé
+  // IME（注音、拼音）以 Enter 確認選字、以 Escape 取消組字；組字中不儲存也不取消。Safari 的 isComposing 不可靠，另檢查 keyCode 229。
   if(event.isComposing||event.keyCode===229)return;
   if(event.key==='Enter'){event.preventDefault();input.blur();}
   if(event.key==='Escape'){event.preventDefault();input.dataset.cancel='true';input.blur();}
@@ -451,7 +451,8 @@ document.addEventListener('input',event=>{
 });
 document.addEventListener('compositionend',event=>{if(event.target.closest('#edit-form')?.dataset.kind==='meal'){if(event.target.name==='ingredients')document.querySelector('#ingredient-preview').innerHTML=ingredientPreview(event.target.value);updateMealForm();}});
 dialog.addEventListener('cancel',event=>{if(dialogDirty){event.preventDefault();closeDialog();}});
-dialog.addEventListener('click',event=>{if(event.target===dialog){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)closeDialog();}});
+// 點擊背景關閉：支援 closedby 的瀏覽器由 index.html 的 closedby="any" 處理（經 cancel 事件，未儲存時同樣先確認）；其他瀏覽器（Safari）使用以下後備。
+dialog.addEventListener('click',event=>{if(!('closedBy' in HTMLDialogElement.prototype)&&event.target===dialog){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)closeDialog();}});
 document.addEventListener('keydown',event=>{
   if(event.key!=='Escape'||!tripMenuOpen||dialog.open)return;
   event.preventDefault();closeTripMenu();

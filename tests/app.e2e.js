@@ -167,6 +167,19 @@ test('discard prompt preserves an unsaved dialog when declined',async({page})=>{
   page.once('dialog',d=>d.dismiss());await page.keyboard.press('Escape');await expect(page.getByLabel('活動名稱')).toHaveValue('不要弄丟我的草稿');
   page.once('dialog',d=>d.accept());await page.keyboard.press('Escape');await expect(page.locator('#dialog')).not.toBeVisible();
 });
+test('edit dialog: tapping the backdrop closes it, asks once when there are unsaved changes, and contains page scrolling',async({page})=>{
+  await page.goto('/demo/');const dialog=page.locator('#dialog');
+  let prompts=0;page.on('dialog',d=>{prompts++;void (prompts===1?d.dismiss():d.accept());});
+  await page.getByRole('button',{name:'新增一站',exact:true}).click();await expect(dialog).toBeVisible();
+  // 樣式：背景與對話框都阻止捲動傳到下方頁面（prevent-page-scroll-under-modal-dialog）。
+  expect(await dialog.evaluate(el=>[getComputedStyle(el).overscrollBehaviorY,getComputedStyle(el,'::backdrop').overflow,getComputedStyle(el,'::backdrop').overscrollBehaviorY])).toEqual(['contain','hidden','contain']);
+  // 沒有修改：點背景直接關閉，不詢問。
+  await page.mouse.click(4,4);await expect(dialog).not.toBeVisible();expect(prompts).toBe(0);
+  // 有修改：點背景只詢問一次；拒絕時保留草稿，同意時關閉。
+  await page.getByRole('button',{name:'新增一站',exact:true}).click();await page.getByLabel('活動名稱').fill('點背景也不會弄丟');
+  await page.mouse.click(4,4);await expect.poll(()=>prompts).toBe(1);await expect(page.getByLabel('活動名稱')).toHaveValue('點背景也不會弄丟');
+  await page.mouse.click(4,4);await expect(dialog).not.toBeVisible();expect(prompts).toBe(2);
+});
 test('another tab cannot silently overwrite an open edit draft',async({page,context})=>{
   await page.goto('/demo/');const other=await context.newPage();await other.goto('/demo/');
   await page.getByRole('button',{name:'新增一站',exact:true}).click();await page.getByLabel('活動名稱').fill('這個分頁的草稿');

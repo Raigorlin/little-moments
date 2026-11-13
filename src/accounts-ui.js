@@ -239,7 +239,8 @@ function setupChrome() {
   });
   dialog.addEventListener('cancel', event => { event.preventDefault(); requestClose(); });
   dialog.addEventListener('click', event => {
-    if (event.target === dialog || event.target.closest('[data-modal-close]')) requestClose();
+    // 點擊背景：支援 closedby="any" 的瀏覽器經 cancel 事件呼叫 requestClose()，這裡只處理不支援的瀏覽器，避免重複詢問。
+    if ((event.target === dialog && !('closedBy' in HTMLDialogElement.prototype)) || event.target.closest('[data-modal-close]')) requestClose();
   });
   const markDirty = event => { if (!event.target.closest('[data-no-dirty]')) modal.dirty = true; };
   dialog.addEventListener('input', markDirty);
