@@ -114,6 +114,16 @@ import groovy.json.JsonSlurperClassic
 //   收尾的建置保留（Req 21.6；只定義於 release/ 資料夾範圍，只在 keepProductionBuildLog 的 withCredentials 內提供）：
 //     lm-jenkins-api-retention  Username with password：Jenkins 帳號 + API token，僅 release/little-moments 的
 //                               Job/Read 與 Run/Update（設定 keepLog=true；沒有 Run/Delete，因此無法解除保留或刪除建置）
+// LM_STAGING_RECEIPT_AI、LM_PROD_RECEIPT_AI、LM_PROD_OPENAI_CREDENTIALS（Req 15.6–15.8；design.md Components 第 25 節）：
+//   收據 AI（OpenAI）的非秘密開關與憑證 ID。修改它們就是 Req 15.7 的「於 Pipeline 設定中明確啟用」，須經一般審查與
+//   Release_Tag 流程；不是建置參數，Build Now 時不能覆寫（Req 23.4）。
+//   LM_STAGING_RECEIPT_AI  只能是 disabled：Staging 部署的 stdin 送出 LM_RECEIPT_AI=disabled，不綁定任何 OpenAI 憑證
+//                          （lm-deploy staging 同樣拒絕 enabled 與金鑰）。
+//   LM_PROD_RECEIPT_AI     enabled｜disabled：enabled 時 Production Deploy 只在 `lm-deploy prod deploy` 那一次 SSH 呼叫綁定
+//                          金鑰，經 stdin 交給 lm-deploy（寫成 Deploy_Host 上的金鑰檔）；disabled 時送出 LM_RECEIPT_AI=disabled，
+//                          lm-deploy 刪除金鑰檔。
+//     lm-prod-openai-api-key  Secret file：Production 收據 AI 的 OpenAI API 金鑰（只定義於 release/ 資料夾範圍；ci/ 永遠不定義，
+//                             Req 15.8）。值不經 Groovy 變數、readFile 或 returnStdout，只以 shell 內建 read／printf 寫入 stdin。
 
 pipeline {
   // 標籤由 ci/jenkins/（13.9）設定。真正的隔離邊界是 Jenkins 資料夾範圍的憑證與 agent 限制，
@@ -169,6 +179,9 @@ pipeline {
     LM_PROD_SETUP_TOKEN_CREDENTIALS = 'lm-prod-setup-token'
     LM_PROD_SMOKE_CREDENTIALS = 'lm-prod-smoke'
     LM_JENKINS_RETENTION_CREDENTIALS = 'lm-jenkins-api-retention'
+    LM_STAGING_RECEIPT_AI = 'disabled'
+    LM_PROD_RECEIPT_AI = 'enabled'
+    LM_PROD_OPENAI_CREDENTIALS = 'lm-prod-openai-api-key'
   }
 
   stages {
@@ -3300,6 +3313,9 @@ void assertStagingConfig() {
   if (env.LM_STAGING_PREDICATE_TYPE != 'https://little-moments.lan/attestations/staging-verified/v1') {
     error('LM_STAGING_PREDICATE_TYPE 必須與 ci/resolve-digest.mjs 的 STAGING_PREDICATE_TYPE 相同')
   }
+  if (env.LM_STAGING_RECEIPT_AI != 'disabled') {
+    error('LM_STAGING_RECEIPT_AI 只能是 disabled（Staging 不啟用收據 AI）')
+  }
   String ca = env.LM_SCAN_CA_BUNDLE ?: ''
   if (!(ca ==~ /^\/[A-Za-z0-9._\/-]+$/) || ca.contains('..')) {
     error('LM_SCAN_CA_BUNDLE 必須是絕對路徑')
@@ -3529,10 +3545,12 @@ int stagingDeployCommand() {
       withCredentials([usernamePassword(credentialsId: env.LM_STAGING_DB_CREDENTIALS, usernameVariable: 'LM_STG_DB_USER', passwordVariable: 'LM_STG_DB_PASSWORD')]) {
         withCredentials([string(credentialsId: env.LM_STAGING_SETUP_TOKEN_CREDENTIALS, variable: 'LM_STG_SETUP_TOKEN')]) {
           // app.env 只經 stdin 交給 lm-deploy（Deploy_Host 驗證鍵名後以 0600 寫入）；printf 為 shell 內建指令，
-          // 值不出現在任何程序的命令列、主控台或檔案（Req 15.1、15.2）。
+          // 值不出現在任何程序的命令列、主控台或檔案（Req 15.1、15.2）。第一行的 LM_RECEIPT_AI=disabled 是控制鍵
+          // （不寫入 app.env）：Staging 不啟用收據 AI，不綁定任何 OpenAI 憑證（assertStagingConfig；Components 第 25.3 節）。
           rc = sh(label: 'lm-deploy staging deploy', returnStatus: true, script: stagingSshPrelude() + '''
             rm -f reports/staging/deploy.jsonl
             {
+              printf 'LM_RECEIPT_AI=disabled\\n'
               printf 'CAMPING_DATABASE_NAME=%s\\n' "$LM_STAGING_DB_NAME"
               printf 'CAMPING_DATABASE_USER=%s\\n' "$LM_STG_DB_USER"
               printf 'CAMPING_DATABASE_PASSWORD=%s\\n' "$LM_STG_DB_PASSWORD"
@@ -4303,6 +4321,12 @@ void assertProductionConfig() {
   if (!((env.LM_PROD_DB_NAME ?: '') ==~ /^[A-Za-z_][A-Za-z0-9_]{0,62}$/)) {
     error('LM_PROD_DB_NAME 格式無效')
   }
+  if (env.LM_PROD_RECEIPT_AI != 'enabled' && env.LM_PROD_RECEIPT_AI != 'disabled') {
+    error('LM_PROD_RECEIPT_AI 只能是 enabled 或 disabled')
+  }
+  if (env.LM_PROD_RECEIPT_AI == 'enabled' && env.LM_PROD_OPENAI_CREDENTIALS != 'lm-prod-openai-api-key') {
+    error('LM_PROD_RECEIPT_AI 為 enabled 時，LM_PROD_OPENAI_CREDENTIALS 必須是 lm-prod-openai-api-key')
+  }
 }
 
 /**
@@ -4722,6 +4746,9 @@ void deployProduction() {
       --digest "$LM_IMAGE_DIGEST" --out reports/production/deploy-verdict.json
   ''')
   Map c = readJsonFile('reports/production/deploy-verdict.json')
+  // lm-deploy 寫入後的收據 AI 狀態（app-env 結果行的 receiptAi）；只有列舉值，不含金鑰（Components 第 25.3 節）。
+  String receiptAi = (c.receiptAi == 'enabled' || c.receiptAi == 'disabled') ? c.receiptAi : '未執行'
+  appendSummary("收據 AI（Production）：${receiptAi}".toString())
   if (interrupted == null && c.outcome == 'refused') {
     prdStep('')
     recordProductionGate('')
@@ -4943,15 +4970,46 @@ int productionDeployCommand() {
         withCredentials([string(credentialsId: env.LM_PROD_SETUP_TOKEN_CREDENTIALS, variable: 'LM_PRD_SETUP_TOKEN')]) {
           // app.env 只經 stdin 交給 lm-deploy（Deploy_Host 驗證鍵名後以 0600 寫入）；printf 為 shell 內建指令，
           // 值不出現在任何程序的命令列、主控台或檔案（Req 15.1、15.2）。
-          rc = sh(label: 'lm-deploy prod deploy', returnStatus: true, script: productionSshPrelude() + '''
+          // 收據 AI（Components 第 25.3 節）：第一行是控制鍵 LM_RECEIPT_AI（不寫入 app.env）；enabled 時最後一行為
+          // LM_OPENAI_API_KEY，金鑰只以內建 read 讀入子 shell 的變數、以內建 printf 寫入 stdin，不經 Groovy 變數、
+          // readFile 或 returnStdout，也不輸出到主控台。開關在第一行，讀取中途失敗時 lm-deploy 收到的是「enabled 但
+          // 沒有金鑰」或缺少必要的鍵，兩者都在備份前被拒絕。
+          String script = productionSshPrelude() + '''
             rm -f reports/production/deploy.jsonl
+            case "${LM_PROD_RECEIPT_AI:-}" in
+              enabled)
+                if [ ! -s "${LM_PRD_OPENAI_KEY_FILE:-}" ]; then
+                  echo 'lm-prod-openai-api-key 的金鑰檔不存在或為空，未連線 Deploy_Host' >&2
+                  exit 2
+                fi
+                ;;
+              disabled) ;;
+              *)
+                echo 'LM_PROD_RECEIPT_AI 只能是 enabled 或 disabled，未連線 Deploy_Host' >&2
+                exit 2
+                ;;
+            esac
             {
+              printf 'LM_RECEIPT_AI=%s\\n' "$LM_PROD_RECEIPT_AI"
               printf 'CAMPING_DATABASE_NAME=%s\\n' "$LM_PROD_DB_NAME"
               printf 'CAMPING_DATABASE_USER=%s\\n' "$LM_PRD_DB_USER"
               printf 'CAMPING_DATABASE_PASSWORD=%s\\n' "$LM_PRD_DB_PASSWORD"
               printf 'CAMPING_SETUP_TOKEN=%s\\n' "$LM_PRD_SETUP_TOKEN"
+              if [ "$LM_PROD_RECEIPT_AI" = enabled ]; then
+                k=''
+                IFS= read -r k < "$LM_PRD_OPENAI_KEY_FILE" || [ -n "$k" ]
+                printf 'LM_OPENAI_API_KEY=%s\\n' "$k"
+              fi
             } | lm_ssh deploy "$LM_IMAGE_DIGEST" --app-env-stdin > reports/production/deploy.jsonl
-          ''')
+          '''
+          if (env.LM_PROD_RECEIPT_AI == 'enabled') {
+            // 金鑰的綁定範圍只有這一次 SSH 呼叫（Req 15.2）；Approval、觀察期、回滾、finalize 與 keepLog 都不綁定。
+            withCredentials([file(credentialsId: env.LM_PROD_OPENAI_CREDENTIALS, variable: 'LM_PRD_OPENAI_KEY_FILE')]) {
+              rc = sh(label: 'lm-deploy prod deploy', returnStatus: true, script: script)
+            }
+          } else {
+            rc = sh(label: 'lm-deploy prod deploy', returnStatus: true, script: script)
+          }
         }
       }
     }
@@ -5233,6 +5291,10 @@ List scrubCredentialSpecs() {
     [id: env.LM_PROD_SETUP_TOKEN_CREDENTIALS, kind: 'secret', trusted: true, stages: ['Production Deploy']],
     [id: env.LM_PROD_SMOKE_CREDENTIALS, kind: 'file', trusted: true, stages: ['Production Deploy']],
   ]
+  // 收據 AI 的金鑰只在啟用時綁定（productionDeployCommand）；停用時從未綁定，也不要求 Credential_Store 有此憑證。
+  if (env.LM_PROD_RECEIPT_AI == 'enabled') {
+    all << [id: env.LM_PROD_OPENAI_CREDENTIALS, kind: 'file', trusted: true, stages: ['Production Deploy']]
+  }
   List out = []
   for (Map s : all) {
     if (s.trusted && !trusted) { continue }

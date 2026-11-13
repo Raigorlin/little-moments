@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # 測試用的假 docker（deploy/tests/lm-deploy.bats）。不連線任何 daemon。
 #
-# 每次呼叫在 $FAKE_DOCKER_LOG 追加一行：參數以空白連接；compose 呼叫另附 [new=<APP_IMAGE_NEW>]。
+# 每次呼叫在 $FAKE_DOCKER_LOG 追加一行：參數以空白連接；compose 呼叫另附 [new=<APP_IMAGE_NEW>] 與
+# [openai=<LM_OPENAI_KEY_SOURCE>|<CAMPING_OPENAI_API_KEY_FILE>]（未設定時為 unset；只有路徑，不含金鑰）。
 # 以環境變數控制行為（未設定 = 成功）：
 #   FAKE_PG_DUMP_FAIL=1          exec -T db pg_dump 以結束碼 1 失敗（不輸出內容）
 #   FAKE_PG_DUMP_EMPTY=1         pg_dump 成功但不輸出任何位元組
@@ -27,7 +28,8 @@ log=${FAKE_DOCKER_LOG:?FAKE_DOCKER_LOG 未設定}
 args=" $* "
 
 if [[ ${1:-} == compose ]]; then
-  printf '%s [new=%s]\n' "$*" "${APP_IMAGE_NEW:-}" >>"$log"
+  printf '%s [new=%s] [openai=%s|%s]\n' "$*" "${APP_IMAGE_NEW:-}" \
+    "${LM_OPENAI_KEY_SOURCE-unset}" "${CAMPING_OPENAI_API_KEY_FILE-unset}" >>"$log"
 else
   printf '%s\n' "$*" >>"$log"
 fi

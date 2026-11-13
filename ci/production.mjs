@@ -135,6 +135,11 @@ const REFUSED = Object.freeze({
   locked: '已有部署進行中（Deploy_Host 的 lm-prod 鎖已被持有）；未變更 Production',
 });
 
+/** app-env 結果行的收據 AI 狀態（lm-deploy 寫入後的實際狀態；Components 第 25.3 節）：只接受 enabled／disabled。 */
+function receiptAiOf(line) {
+  return line?.receiptAi === 'enabled' || line?.receiptAi === 'disabled' ? line.receiptAi : null;
+}
+
 /**
  * 判讀 `lm-deploy prod deploy <digest> --app-env-stdin`（backup → app-env → migrate → start → health --wait → switch）。
  * outcome：switched | failed | refused | unknown（意義與 ci/staging.mjs classifyDeploy 相同）。
@@ -169,6 +174,7 @@ export function classifyDeploy(exitCode, text, digest) {
     healthy,
     cadenceOk,
     previous: sw ? slotOf(sw.from) : null,
+    receiptAi: receiptAiOf(ok('app-env')),
   };
   if (!isDigest(digest)) return { ...base, outcome: 'refused', failedStep: 'input', message: 'digest 格式無效' };
   if (exitCode === 0) {
@@ -391,6 +397,8 @@ export function productionRecord({
     result,
     signature,
     migrationsRun: !!deploy?.migrated,
+    // 沒有 app-env 結果行（例如備份前就失敗）或值不是 enabled／disabled 時為「未執行」。
+    receiptAi: receiptAiOf(deploy) ?? NOT_RUN,
   };
   if (deploy) {
     entry.outcome = deploy.outcome;

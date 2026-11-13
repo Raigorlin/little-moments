@@ -214,6 +214,8 @@ describe('deploy/compose', () => {
         const pair = { name: m[1], value: m[2].trim() };
         if (!pair.value || !SECRET_NAME.test(pair.name) || /_FILE$/i.test(pair.name)) return;
         if (/^\$\{[A-Za-z_][A-Za-z0-9_]*(?::?-)?\}$/.test(pair.value)) return; // ${VAR} or ${VAR:-} with an empty default
+        // A bare YAML anchor (`x-openai-key: &openai_key`) is not a value; the mapping's own lines are checked separately.
+        if (/^&[A-Za-z0-9_-]+$/.test(pair.value)) return;
         bad.push(`${file}:${i + 1} ${pair.name}`);
       });
     }

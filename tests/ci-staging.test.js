@@ -25,12 +25,15 @@ const j = (o) => JSON.stringify(o);
 const healthy10 = [{ t: 0, ok: true, durationMs: 12 }, { t: 10, ok: true, durationMs: 9 }, { t: 20, ok: true, durationMs: 11 }];
 
 /** 與 deploy/bin/lm-deploy do_deploy 相同形狀的輸出（每行一個 JSON）。 */
-function deployOutput({ results = healthy10, color = 'green', digest = D, upTo = 'switch', failure = null } = {}) {
+function deployOutput({ results = healthy10, color = 'green', digest = D, upTo = 'switch', failure = null, receiptAi = undefined } = {}) {
   const lines = [];
   const add = (step, line) => { lines.push(j(line)); return step === upTo; };
   const stop = () => (failure ? [...lines, j({ ok: false, env: 'staging', ...failure })] : lines).join('\n') + '\n';
   if (add('backup', { ok: true, command: 'backup', id: BACKUP_ID, env: 'staging', createdAt: '2026-01-01T00:00:00+00:00', sizeBytes: 4096, sha256: SHA, tables: 9, emptyDatabase: false, pruned: [] })) return stop();
-  if (add('app-env', { ok: true, command: 'app-env', env: 'staging', keys: ['CAMPING_DATABASE_NAME'] })) return stop();
+  // deploy 的 app-env 結果行帶有寫入後的收據 AI 狀態（deploy/bin/lm-deploy emit_app_env；Components 第 25.4 節）。
+  const appEnv = { ok: true, command: 'app-env', env: 'staging', keys: ['CAMPING_DATABASE_NAME'] };
+  if (receiptAi !== undefined) appEnv.receiptAi = receiptAi;
+  if (add('app-env', appEnv)) return stop();
   if (add('migrate', { ok: true, command: 'migrate', env: 'staging', digest, backupId: BACKUP_ID })) return stop();
   if (add('start', { ok: true, command: 'start', env: 'staging', color, digest, image: `${REPO}@${digest}` })) return stop();
   if (add('health', { ok: true, command: 'health', env: 'staging', color, healthy: true, results })) return stop();
@@ -198,6 +201,28 @@ describe('stagingRecord：Build_Record 與「Staging」關卡（Req 14.8、18.4�
     expect(stagingRecord({ commit: COMMIT, digest: D, signature: 'fail' })).toMatchObject({ gate: { pass: false, status: 'fail' }, patch: { deployments: [{ result: 'signature_failed' }] } });
     expect(stagingRecord({ commit: COMMIT, digest: D, deploy, verdict, signature: 'ok', finalize: 'ok', attestation: 'ok', stageError: '逾時' }).gate.status).toBe('error');
     expect(() => stagingRecord({ commit: COMMIT, digest: D, signature: 'yes' })).toThrow();
+  });
+
+  test('收據 AI：app-env 結果行的 receiptAi 寫入 deployments[].receiptAi；缺少或其他值為「未執行」（Components 第 25.3 節）', () => {
+    // Staging 由 lm-deploy 固定為 disabled；判讀只接受 enabled／disabled，與 Production 相同。
+    const cases = [['disabled', 'disabled'], ['enabled', 'enabled'], [undefined, '未執行'], ['off', '未執行'], [false, '未執行']];
+    for (const [value, expected] of cases) {
+      const d = classifyDeploy(0, deployOutput({ receiptAi: value }), D);
+      expect(d.outcome).toBe('switched');
+      expect(d.receiptAi).toBe(expected === '未執行' ? null : expected);
+      const v = stagingVerdict({ deploy: d, smokeExit: 0, smokeText: smokeText() });
+      const { patch, gate } = stagingRecord({ commit: COMMIT, digest: D, deploy: d, verdict: v, signature: 'ok', finalize: 'ok', attestation: 'ok' });
+      expect(patch.deployments[0].receiptAi).toBe(expected);
+      expect(gate.pass).toBe(true);
+      expect(validateRecord(addGateResult(mergeRecord(base(), patch), gate)).ok).toBe(true);
+    }
+    // lm-deploy 在備份前拒絕（receipt_ai_forbidden，沒有 app-env 結果行）與未部署：「未執行」。
+    const refused = classifyDeploy(2, j({ ok: false, command: 'deploy', env: 'staging', reason: 'receipt_ai_forbidden' }) + '\n', D);
+    expect(refused).toMatchObject({ outcome: 'refused', receiptAi: null });
+    expect(stagingRecord({ commit: COMMIT, digest: D, deploy: refused, signature: 'ok' }).patch.deployments[0].receiptAi).toBe('未執行');
+    const none = stagingRecord({ commit: COMMIT, digest: D, signature: 'fail' });
+    expect(none.patch.deployments[0].receiptAi).toBe('未執行');
+    expect(validateRecord(mergeRecord(base(), none.patch)).ok).toBe(true);
   });
 });
 

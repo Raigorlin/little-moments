@@ -160,7 +160,7 @@ App_Server（`scripts/serve.mjs`，映像中為 `/app/server/serve.js`）啟動�
 | `CAMPING_RECEIPT_AI_USER_LIMIT` | 每位使用者在滾動 15 分鐘內的收據 AI 請求上限，1–100 的整數 | 否 | `10` | 使用 10（空字串視同未設定）。超出範圍或不是整數時拒絕啟動 |
 | `CAMPING_RECEIPT_AI_DAILY_LIMIT` | 全伺服器每個 UTC 日的收據 AI 請求上限，1–10000 的整數，且不得小於 `CAMPING_RECEIPT_AI_USER_LIMIT` | 否 | `100` | 使用 100（空字串視同未設定）。超出範圍、不是整數或小於每位使用者上限時拒絕啟動 |
 | `CAMPING_RECEIPT_AI_MONTHLY_LIMIT` | 全伺服器每個 UTC 月的收據 AI 請求上限，1–100000 的整數，且不得小於 `CAMPING_RECEIPT_AI_DAILY_LIMIT` | 否 | `1000` | 使用 1000（空字串視同未設定）。超出範圍、不是整數或小於每日上限時拒絕啟動 |
-| `CAMPING_OPENAI_API_KEY_FILE` | OpenAI API 金鑰檔路徑（檔案內容為一行金鑰）。只由 `server/receipt-ai.js` 讀取；金鑰不出現在啟動訊息、日誌或瀏覽器 | 否 | 專案根目錄的 `.secrets/openai_api_key` | 讀取預設路徑；檔案不存在或沒有有效金鑰時收據 AI 停用，App 照常啟動。Deploy_Host 預設為空字串（停用），只有 `release/` 可啟用 |
+| `CAMPING_OPENAI_API_KEY_FILE` | OpenAI API 金鑰檔路徑（檔案內容為一行金鑰）。只由 `server/receipt-ai.js` 讀取；金鑰不出現在啟動訊息、日誌或瀏覽器 | 否 | 專案根目錄的 `.secrets/openai_api_key` | 讀取預設路徑；檔案不存在或沒有有效金鑰時收據 AI 停用，App 照常啟動。Deploy_Host 上由 `lm-deploy` 決定（`<env>.env` 的非空值會被拒絕）：Staging 為空字串（停用）；Production 在金鑰檔 `/srv/lm/prod/secrets/openai-api-key` 存在時設為 `/run/secrets/openai-api-key`，否則為空字串 |
 | `CAMPING_OPENAI_API_KEY` | 以環境變數直接提供 OpenAI API 金鑰（設定時優先於金鑰檔；`docker inspect` 與程序列表看得到，不建議使用） | 否 | 空 | 改讀 `CAMPING_OPENAI_API_KEY_FILE`。**Compose 中固定為空字串**，Deploy_Host 上的金鑰只能以金鑰檔提供 |
 <!-- env-table:end -->
 
@@ -223,7 +223,7 @@ sudo env LM_ENV=<env> APP_IMAGE_BLUE=<image> APP_IMAGE_GREEN=<image> APP_IMAGE_N
 - 每個回應都帶有安全標頭（Content-Security-Policy、禁止被嵌入框架等）。未預期的錯誤只回應固定的通用訊息，日誌只記錄時間、方法、不含查詢字串的路徑與錯誤名稱，不含請求內容、cookie、密碼、邀請碼或金鑰。
 - 帳號 API 回應不會被快取供離線使用。`/demo/` 的本機規劃使用獨立的瀏覽器本機儲存，不上傳也不同步。
 - App 不保存收據影像或辨識原始文字。選擇收據照片並使用收據 AI 時，照片會送到 OpenAI；使用前請先確認 OpenAI 的 API 資料政策。瀏覽器端 OCR 已移除。
-- 雲端 AI 收據辨識（OpenAI）在 Deploy_Host **預設停用，只有 `release/` 可啟用**：Compose 把 `CAMPING_OPENAI_API_KEY` 固定為空字串，`CAMPING_OPENAI_API_KEY_FILE` 等 `CAMPING_OPENAI_*` 預設空白，`ci/` 不定義任何 OpenAI 憑證。若 Release_Approver 決定為特定環境啟用，金鑰檔只能來自 `release/` 資料夾的 Credential_Store（見 [`ci/jenkins/README.md`](ci/jenkins/README.md)）。
+- 雲端 AI 收據辨識（OpenAI）在 Deploy_Host **只有 Production 啟用，Staging 停用**（Release_Approver 的決定；`Jenkinsfile` 的 `LM_PROD_RECEIPT_AI` 與 `LM_STAGING_RECEIPT_AI`）。金鑰只來自 `release/` 資料夾的 Credential_Store `lm-prod-openai-api-key`，`ci/` 不定義任何 OpenAI 憑證；Test_Environment、還原演練與 PR 建置也停用。Compose 把 `CAMPING_OPENAI_API_KEY` 固定為空字串，模型、圖片細節與回覆上限的 `CAMPING_OPENAI_*` 維持空白（App 使用預設值）。管理員可隨時在 `/admin` 把收據 AI 政策設為 `off`。啟用、輪替與停用步驟見 [`deploy/README.md`](deploy/README.md#production-收據-aiopenai)。
 - 首頁 JSON 匯入控制項仍隱藏；本機規劃的匯入只接受 1 MiB 以下的檔案。行程匯出與費用匯出各自獨立，都不能取代完整的 Database 備份。
 
 ### 憑證來源
@@ -236,7 +236,7 @@ sudo env LM_ENV=<env> APP_IMAGE_BLUE=<image> APP_IMAGE_GREEN=<image> APP_IMAGE_N
 
 - **金鑰。** `server/receipt-ai.js` 先讀 `CAMPING_OPENAI_API_KEY`，沒有值時讀 `CAMPING_OPENAI_API_KEY_FILE`（預設專案根目錄的 `.secrets/openai_api_key`），並去除前後空白。金鑰格式必須是 `sk-` 開頭；沒有有效金鑰時收據 AI 停用，App 照常啟動。更換金鑰檔內容後重新啟動 App 即生效。金鑰只在伺服器端使用，從不送到瀏覽器。
 - **成本設定。** 模型、圖片細節、回覆 token 上限與三個用量上限見[環境變數](#環境變數)表；用量上限須符合「每位使用者上限 ≤ 每日上限 ≤ 每月上限」。建議另在 OpenAI 後台為專案設定每月預算與用量上限。
-- **Deploy_Host。** 預設停用、只有 `release/` 可啟用。目前的 `deploy/compose/compose.yaml` 沒有掛載金鑰檔；啟用需要 Release_Approver 決定，並同時修改 Pipeline、Compose 設定與 `ci/jenkins/README.md` 的憑證表。
+- **Deploy_Host。** 只有 Production 啟用，Staging 停用，`ci/` 不定義任何 OpenAI 憑證。Production Deploy 把 `release/` 的 `lm-prod-openai-api-key` 經 stdin 交給 `lm-deploy`，由它寫成 `/srv/lm/prod/secrets/openai-api-key`（`10001:10001`、`0400`），並以唯讀方式掛載到 `app-blue`／`app-green` 的 `/run/secrets/openai-api-key`；Staging 一律掛載 `/dev/null`，`CAMPING_OPENAI_API_KEY_FILE` 為空字串。管理員可隨時在 `/admin` 把政策設為 `off`，立即生效。第一次啟用的順序、輪替、金鑰外洩時的處理與停用見 [`deploy/README.md` 的「Production 收據 AI（OpenAI）」](deploy/README.md#production-收據-aiopenai)。
 
 ## 秘密掃描
 

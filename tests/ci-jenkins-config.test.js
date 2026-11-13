@@ -22,11 +22,11 @@ const ADMIN_USER = 'jacklin';
 const RETENTION_USER = 'lm-retention-bot';
 const JENKINS_URL = 'https://jenkins.our-littlemoments.com/';
 
-// 部署、簽章、資料庫、Setup_Token、smoke 與 Jenkins API 憑證：只能在 release/（Req 2.4）。
+// 部署、簽章、資料庫、Setup_Token、smoke、OpenAI 金鑰與 Jenkins API 憑證：只能在 release/（Req 2.4、15.8）。
 const RELEASE_ONLY = [
   'lm-cosign-key', 'lm-cosign-passphrase', 'lm-cosign-pub', 'lm-deploy-known-hosts',
   'lm-ssh-staging', 'lm-staging-db', 'lm-staging-setup-token', 'lm-staging-smoke',
-  'lm-ssh-prod', 'lm-prod-db', 'lm-prod-setup-token', 'lm-prod-smoke',
+  'lm-ssh-prod', 'lm-prod-db', 'lm-prod-setup-token', 'lm-prod-smoke', 'lm-prod-openai-api-key',
   'lm-jenkins-api-readonly', 'lm-jenkins-api-retention',
 ];
 

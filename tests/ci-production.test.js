@@ -30,12 +30,15 @@ const tmp = mkdtempSync(join(tmpdir(), 'lm-production-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 /** 與 deploy/bin/lm-deploy do_deploy 相同形狀的輸出（每行一個 JSON）。 */
-function deployOutput({ results = healthy5, color = 'green', digest = D, upTo = 'switch', failure = null } = {}) {
+function deployOutput({ results = healthy5, color = 'green', digest = D, upTo = 'switch', failure = null, receiptAi = undefined } = {}) {
   const lines = [];
   const add = (step, line) => { lines.push(j(line)); return step === upTo; };
   const stop = () => (failure ? [...lines, j({ ok: false, env: 'prod', ...failure })] : lines).join('\n') + '\n';
   if (add('backup', { ok: true, command: 'backup', id: BACKUP_ID, env: 'prod', createdAt: '2026-01-01T00:00:00+00:00', sizeBytes: 4096, sha256: SHA, tables: 9, emptyDatabase: false, pruned: [] })) return stop();
-  if (add('app-env', { ok: true, command: 'app-env', env: 'prod', keys: ['CAMPING_DATABASE_NAME'] })) return stop();
+  // deploy 的 app-env 結果行帶有寫入後的收據 AI 狀態（deploy/bin/lm-deploy emit_app_env；Components 第 25.4 節）。
+  const appEnv = { ok: true, command: 'app-env', env: 'prod', keys: ['CAMPING_DATABASE_NAME'] };
+  if (receiptAi !== undefined) appEnv.receiptAi = receiptAi;
+  if (add('app-env', appEnv)) return stop();
   if (add('migrate', { ok: true, command: 'migrate', env: 'prod', digest, backupId: BACKUP_ID })) return stop();
   if (add('start', { ok: true, command: 'start', env: 'prod', color, digest, image: `${REPO}@${digest}` })) return stop();
   if (add('health', { ok: true, command: 'health', env: 'prod', color, healthy: true, results })) return stop();
@@ -221,6 +224,30 @@ describe('productionRecord：Build_Record 與「上線後」關卡（Req 14.8、
     const err = productionRecord({ commit: COMMIT, digest: D, tag: TAG, deploy, observations: fullObservation(), signature: 'ok', finalize: 'ok', stageError: '觀察期逾時或被中止' });
     expect(err.gate).toMatchObject({ pass: false, status: 'error' });
     expect(productionRecord({ commit: COMMIT, digest: D, tag: TAG, deploy, observations: fullObservation(), signature: 'ok', finalize: 'fail' }).gate.unmet).toContain('lm-deploy prod finalize 未完成');
+  });
+
+  test('收據 AI：app-env 結果行的 receiptAi 寫入 deployments[].receiptAi；缺少或其他值為「未執行」（Components 第 25.3 節）', () => {
+    const cases = [['enabled', 'enabled'], ['disabled', 'disabled'], [undefined, '未執行'], ['on', '未執行'], [true, '未執行'], ['ENABLED', '未執行']];
+    for (const [value, expected] of cases) {
+      const d = classifyDeploy(0, deployOutput({ receiptAi: value }), D);
+      expect(d.outcome).toBe('switched');
+      expect(d.receiptAi).toBe(expected === '未執行' ? null : expected);
+      const { patch, gate } = productionRecord({ commit: COMMIT, digest: D, tag: TAG, deploy: d, observations: fullObservation(), signature: 'ok', finalize: 'ok' });
+      expect(patch.deployments[0].receiptAi).toBe(expected);
+      expect(gate.pass).toBe(true);
+      expect(validateRecord(addGateResult(mergeRecord(tagRecord(), patch), gate)).ok).toBe(true);
+    }
+    // 備份前就失敗（沒有 app-env 結果行）、沒有部署：「未執行」。
+    const early = classifyDeploy(1, j({ ok: false, command: 'backup', env: 'prod', reason: 'backup_create_failed' }) + '\n', D);
+    expect(early.outcome).toBe('failed');
+    expect(early.receiptAi).toBeNull();
+    expect(productionRecord({ commit: COMMIT, digest: D, tag: TAG, deploy: early, signature: 'ok' }).patch.deployments[0].receiptAi).toBe('未執行');
+    const none = productionRecord({ commit: COMMIT, digest: D, tag: TAG, signature: 'fail' });
+    expect(none.patch.deployments[0].receiptAi).toBe('未執行');
+    expect(validateRecord(mergeRecord(tagRecord(), none.patch)).ok).toBe(true);
+    // 失敗的 app-env 行（ok:false）不算寫入後的狀態。
+    const bad = classifyDeploy(2, j({ ok: false, command: 'app-env', env: 'prod', reason: 'app_env_invalid', receiptAi: 'enabled' }) + '\n', D);
+    expect(bad.receiptAi).toBeNull();
   });
 });
 

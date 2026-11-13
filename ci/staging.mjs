@@ -47,7 +47,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { healthyWithin } from './health.mjs';
-import { NOT_APPLICABLE, validateRecord } from './record.mjs';
+import { NOT_APPLICABLE, NOT_RUN, validateRecord } from './record.mjs';
 import { STAGING_PREDICATE_TYPE, checkStagingAttestation } from './resolve-digest.mjs';
 
 export { STAGING_PREDICATE_TYPE };
@@ -152,6 +152,14 @@ const REFUSED = Object.freeze({
 });
 
 /**
+ * app-env 結果行的收據 AI 狀態（lm-deploy 寫入後的實際狀態；Components 第 25.3 節）：只接受 enabled／disabled。
+ * Staging 由 lm-deploy 固定為 disabled（enabled 或金鑰在備份前即被拒絕）。
+ */
+function receiptAiOf(line) {
+  return line?.receiptAi === 'enabled' || line?.receiptAi === 'disabled' ? line.receiptAi : null;
+}
+
+/**
  * 判讀 `lm-deploy staging deploy <digest>` 的結束碼與輸出（backup → app-env → migrate → start → health --wait → switch）。
  * outcome：
  *   switched  備份已驗證、遷移完成、新版容器以該 digest 啟動、120 秒內每 10 秒一次且連續 3 次健康、已切換
@@ -188,6 +196,7 @@ export function classifyDeploy(exitCode, text, digest) {
     healthy,
     cadenceOk,
     previous: sw ? slotOf(sw.from) : null,
+    receiptAi: receiptAiOf(ok('app-env')),
   };
   if (!isDigest(digest)) return { ...base, outcome: 'refused', failedStep: 'input', message: 'digest 格式無效' };
 
@@ -414,6 +423,8 @@ export function stagingRecord({
     result,
     stagingVerified: pass,
     signature,
+    // 沒有 app-env 結果行（例如備份前就失敗）或值不是 enabled／disabled 時為「未執行」。
+    receiptAi: receiptAiOf(deploy) ?? NOT_RUN,
   };
   if (pass) entry.verifiedAt = at;
   if (deploy) {

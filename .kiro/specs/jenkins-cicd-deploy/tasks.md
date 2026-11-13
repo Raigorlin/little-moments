@@ -857,8 +857,8 @@
     - 改在 Bun 1.4.4 上執行（design.md Components 第 26 節）：本檢查點併入 28.4，28.4 完成時一併將本任務標記為完成，不另外執行
     - _Requirements: 4.7_
 
-- [ ] 27. Production 收據 AI（OpenAI）
-  - [ ] 27.1 Jenkins 憑證與 Pipeline 傳遞
+- [x] 27. Production 收據 AI（OpenAI）
+  - [x] 27.1 Jenkins 憑證與 Pipeline 傳遞
     - 背景與設計見 design.md Components 第 25 節（25.1–25.3、25.8）：Release_Approver `jacklin` 決定只在 Production_Environment 啟用收據 AI；金鑰是 `release/` 的 Secret file `lm-prod-openai-api-key`（秘密檔 `<controller-dir>/secrets/little-moments/release/lm-prod-openai-api-key`），`ci/` 永遠不定義（Req 15.8）。Staging 維持停用
     - 開始前重新讀取（任務 26 可能已修改這些檔案）`Jenkinsfile` 的 `environment`、`assertStagingConfig`、`assertProductionConfig`、`stagingDeployCommand`、`productionDeployCommand`、`productionSshPrelude`、`scrubCredentialSpecs`、`stageScrubSecret(s)`、Production Deploy 的建置摘要與 Build_Record 寫入處；`ci/jenkins/jobs.groovy`；`ci/production.mjs` 與 `ci/staging.mjs` 的 `classifyDeploy`、`productionRecord`、`stagingRecord`；`ci/record.mjs`；`ci/jenkins/README.md` 的憑證表與規則；以 grep 找出 `tests/` 中所有斷言 `openai`、`CAMPING_OPENAI`、`lm-prod-` 的測試
     - `ci/jenkins/jobs.groovy`：`release` 清單在 `lm-prod-smoke` 之後加入 `[id: 'lm-prod-openai-api-key', type: 'file', fileName: 'openai-api-key', description: …]`；`ci`、`infra` 清單不變
@@ -884,7 +884,7 @@
     - 執行 `bun test tests/compose-receipt-ai.test.js tests/ci-lint.test.js tests/ci-restore-drill.test.js tests/deploy-host-config.test.js tests/security-config.test.js`（不存在的檔名在回報中說明）；以 WSL 執行 `bats deploy/tests`（沿用先前的方式），無法執行時在回報中說明並列出維運者要執行的指令
     - _Requirements: 15.6, 15.7, 15.9_
 
-  - [ ] 27.3 文件
+  - [x] 27.3 文件
     - 背景與設計見 design.md Components 第 25.6、25.7 節
     - `deploy/README.md`：新增「Production 收據 AI（OpenAI）」一節，以編號步驟說明第一次啟用的順序（放入秘密檔，以 `put` 隱藏輸入、`install -o 1000 -g 1000 -m 600`、不 echo → 在 Deploy_Host 重新執行 `install.sh` → 複製 `jobs.groovy`、以假秘密測試、Reload existing configuration → 合併到 `main`（Staging 仍停用）→ 管理員在 `/admin` 先設為 `admins` → 新的 Release_Tag 部署 Production、確認 Build_Record 的 `receiptAi`）、輪替、金鑰外洩時的處理、兩種停用方式（`/admin` 設為 `off` 立即生效；`LM_PROD_RECEIPT_AI = 'disabled'` 並部署會刪除金鑰檔），以及主機上的確認指令（`stat` 金鑰檔為 `10001:10001 400`、Staging 沒有金鑰檔）
     - `ci/jenkins/README.md`：在憑證表之後加入金鑰秘密檔的放置與輪替說明，並連結 `deploy/README.md` 的新章節（憑證表的列已在 27.1 加入）
@@ -894,7 +894,7 @@
     - 執行 `bun test tests/readme.test.js tests/ci-jenkins-config.test.js` 與秘密掃描（`bun scripts/scan-secrets.mjs`）
     - _Requirements: 15.7, 24.9_
 
-  - [ ] 27.4 Checkpoint - Production 收據 AI 變更後確認所有測試通過
+  - [x] 27.4 Checkpoint - Production 收據 AI 變更後確認所有測試通過
     - 以臨時 Ephemeral_Database（`postgres:17.6`，用完即刪）執行完整 `bun test`；以 WSL 執行 `bats deploy/tests`；執行秘密掃描（`bun scripts/scan-secrets.mjs`），確認 repository 中沒有任何秘密值。Ensure all tests pass, ask the user if questions arise.
     - _Requirements: 15.4, 15.7_
 

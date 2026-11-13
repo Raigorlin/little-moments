@@ -1441,6 +1441,35 @@ describe('Release_Tag 專用階段：Resolve Digest → Version Tag → Approval
     expect(lmDeploy).toMatch(/health\)\n\s+local color="" wait=0[\s\S]*?load_state\n\s+load_env_config/);
   });
 
+  test('收據 AI（Components 第 25.3 節；Req 15.6–15.8）：設定檢查、Production 的金鑰綁定範圍與建置摘要', () => {
+    const value = (name) => new RegExp(`^    ${name} = '([^']*)'$`, 'm').exec(code)?.[1];
+    expect(value('LM_STAGING_RECEIPT_AI')).toBe('disabled');
+    expect(['enabled', 'disabled']).toContain(value('LM_PROD_RECEIPT_AI'));
+    expect(value('LM_PROD_OPENAI_CREDENTIALS')).toBe('lm-prod-openai-api-key');
+    // 設定檢查在連線 Deploy_Host 之前（Staging Deploy 與 Approval／Production Deploy 都先呼叫）。
+    const stgCfg = functionBody('void assertStagingConfig()');
+    expect(stgCfg).toMatch(/if \(env\.LM_STAGING_RECEIPT_AI != 'disabled'\) \{\s*error\('LM_STAGING_RECEIPT_AI 只能是 disabled（Staging 不啟用收據 AI）'\)/);
+    const prdCfg = functionBody('void assertProductionConfig()');
+    expect(prdCfg).toMatch(/if \(env\.LM_PROD_RECEIPT_AI != 'enabled' && env\.LM_PROD_RECEIPT_AI != 'disabled'\) \{\s*error\(/);
+    expect(prdCfg).toMatch(/if \(env\.LM_PROD_RECEIPT_AI == 'enabled' && env\.LM_PROD_OPENAI_CREDENTIALS != 'lm-prod-openai-api-key'\) \{\s*error\(/);
+    // 啟用時金鑰檔只綁定在 deploy 那一次 sh；停用時執行同一段腳本、不綁定。
+    expect(deployCmd).toMatch(/if \(env\.LM_PROD_RECEIPT_AI == 'enabled'\) \{[^{}]*withCredentials\(\[file\(credentialsId: env\.LM_PROD_OPENAI_CREDENTIALS, variable: 'LM_PRD_OPENAI_KEY_FILE'\)\]\) \{\s*rc = sh\(label: 'lm-deploy prod deploy', returnStatus: true, script: script\)\s*\}\s*\} else \{\s*rc = sh\(label: 'lm-deploy prod deploy', returnStatus: true, script: script\)\s*\}/);
+    expect(deployCmd.match(/String script = productionSshPrelude\(\) \+ '''/g)?.length).toBe(1);
+    // 啟用時金鑰檔必須非空，否則不連線（exit 2）；stdin 第一行是開關，金鑰在最後一行。
+    inOrder(deployCmd, [
+      'rm -f reports/production/deploy.jsonl', 'case "${LM_PROD_RECEIPT_AI:-}" in', 'if [ ! -s "${LM_PRD_OPENAI_KEY_FILE:-}" ]; then', 'exit 2',
+      "printf 'LM_RECEIPT_AI=%s\\\\n' \"$LM_PROD_RECEIPT_AI\"", "printf 'CAMPING_DATABASE_NAME=%s\\\\n'", "printf 'CAMPING_SETUP_TOKEN=%s\\\\n'",
+      'if [ "$LM_PROD_RECEIPT_AI" = enabled ]; then', 'IFS= read -r k < "$LM_PRD_OPENAI_KEY_FILE" || [ -n "$k" ]',
+      "printf 'LM_OPENAI_API_KEY=%s\\\\n' \"$k\"", '} | lm_ssh deploy "$LM_IMAGE_DIGEST" --app-env-stdin > reports/production/deploy.jsonl',
+    ]);
+    // 建置摘要只有列舉值（不含金鑰、長度或前綴），在 classify 之後、拒絕判斷之前。
+    inOrder(deploy, [
+      'bun ci/production.mjs classify --exit "$LM_PRD_EXIT"', "Map c = readJsonFile('reports/production/deploy-verdict.json')",
+      "String receiptAi = (c.receiptAi == 'enabled' || c.receiptAi == 'disabled') ? c.receiptAi : '未執行'",
+      'appendSummary("收據 AI（Production）：${receiptAi}".toString())', "c.outcome == 'refused'",
+    ]);
+  });
+
   test('Jenkinsfile 呼叫的 ci/production.mjs 子命令皆存在', () => {
     const used = [...new Set([...code.matchAll(/bun ci\/production\.mjs ([a-z-]+)/g)].map((m) => m[1]))].sort();
     expect(used).toEqual(['active', 'approval-message', 'approval-record', 'classify', 'deployed-commit', 'destructive', 'observe', 'record', 'restore', 'rollback-needed', 'summary', 'tag-remote']);
@@ -1547,7 +1576,12 @@ describe('收尾 post { always } 與 post { cleanup }（13.8；Req 2.6、15.4、
 
   test('遮罩用秘密：只取本建置進入過的階段用過的憑證，Untrusted 只有拉取帳號與 Git 憑證；值只寫入 0600 檔（Req 2.4、15.2）', () => {
     const entries = [...specs.matchAll(/\[id: env\.(LM_[A-Z_]+_CREDENTIALS), kind: '(password|secret|file|ssh)', trusted: (true|false), stages: \[([^\]]*)\]\]/g)];
-    expect(entries.length).toBe(14);
+    // 14 個固定項目 + 收據 AI 啟用時才列入的 OpenAI 金鑰（Components 第 25.3 節）。
+    expect(entries.length).toBe(15);
+    // OpenAI 金鑰：file、只在 Production Deploy，且只在 LM_PROD_RECEIPT_AI == 'enabled' 時加入清單。
+    expect(entries.filter((m) => m[1] === 'LM_PROD_OPENAI_CREDENTIALS').map((m) => [m[2], m[3], m[4]])).toEqual([['file', 'true', "'Production Deploy'"]]);
+    expect(specs).toMatch(/if \(env\.LM_PROD_RECEIPT_AI == 'enabled'\) \{\s*all << \[id: env\.LM_PROD_OPENAI_CREDENTIALS, kind: 'file', trusted: true, stages: \['Production Deploy'\]\]\s*\}/);
+    expect(specs.slice(0, specs.indexOf('List out = []')).match(/LM_PROD_OPENAI_CREDENTIALS/g)?.length).toBe(1);
     expect(entries.filter((m) => m[3] === 'false').map((m) => m[1])).toEqual(['LM_REGISTRY_PULL_CREDENTIALS', 'LM_GIT_CREDENTIALS']);
     // 每個 trusted 憑證都以其使用階段限制；階段名稱屬於 ci/stages.mjs。
     const known = new Set(Object.values(STAGE));

@@ -5,7 +5,7 @@
 //   * .dockerignore 含設計列出的全部排除項目（Req 16.7、15.5）
 //   * Jenkinsfile 無可略過 Release_Gate 的參數、環境變數或選項（Req 23.4）
 //   * deploy/compose 的 db 不發布連接埠（Req 11.10）
-//   * CAMPING_OPENAI_* 預設為空字串，Jenkins 不定義 OpenAI 憑證（Req 15.6–15.8）
+//   * CAMPING_OPENAI_* 預設為空字串；Jenkins 只在 release/ 定義 Production 的 OpenAI 憑證，只在 Production Deploy 綁定（Req 15.6–15.8）
 //
 // 本檔只針對上列需求做彙整檢查；各 Pipeline 的細部結構檢查在 ci-jenkinsfile／ci-build-image-pipeline 等測試中。
 // Dockerfile FROM 解析器與 Compose db 的檢查把 sha256:<digest> PLACEHOLDER 視為合格的固定形式：未取代時映像解析失敗
@@ -437,9 +437,138 @@ describe('CAMPING_OPENAI_* 預設為空字串（Req 15.6）', () => {
     }
   });
 
-  test('Jenkins 不定義任何 OpenAI 憑證（Req 15.7、15.8；release/ 的憑證名稱只記載於 ci/jenkins/README.md）', () => {
-    for (const file of [...pipelineFiles, 'ci/jenkins/jobs.groovy', 'ci/jenkins/casc.yaml']) {
+});
+
+// Production 收據 AI（design.md Components 第 25.3、25.8 節；Req 15.7、15.8）：唯一的 OpenAI 憑證是 release/ 的
+// Secret file lm-prod-openai-api-key，只在根目錄 Jenkinsfile 的 productionDeployCommand 綁定。
+describe('Jenkins 只在 release/ 定義 Production 的 OpenAI 憑證（Req 15.7、15.8）', () => {
+  const jobs = read('ci/jenkins/jobs.groovy').replace(/\r\n/g, '\n');
+  const jenkinsfile = read('Jenkinsfile').replace(/\r\n/g, '\n');
+  const jfCode = stripComments(jenkinsfile);
+
+  /** jobs.groovy 中 `// BEGIN credentials <資料夾>` 到 `// END credentials <資料夾>` 的原文。 */
+  const credentialBlock = (folder) => {
+    const m = new RegExp(`// BEGIN credentials ${folder}\\n([\\s\\S]*?)// END credentials ${folder}\\n`).exec(jobs);
+    expect(m).not.toBeNull();
+    return m[1];
+  };
+
+  /** 頂層函式（第 0 欄宣告、到第 0 欄的 `}` 為止）與 pipeline 的 environment 區塊：[{ name, start, end }]。 */
+  const regions = (() => {
+    const out = [];
+    for (const m of jfCode.matchAll(/^(?:void|int|long|boolean|String|Map|List|Object|def) (\w+)\(/gm)) {
+      const end = jfCode.indexOf('\n}\n', m.index);
+      out.push({ name: m[1], start: m.index, end: end < 0 ? jfCode.length : end });
+    }
+    const env = jfCode.indexOf('\n  environment {\n');
+    expect(env).toBeGreaterThan(-1);
+    out.push({ name: 'environment', start: env, end: jfCode.indexOf('\n  }\n', env) });
+    return out;
+  })();
+  const regionAt = (i) => regions.find((r) => r.start <= i && i < r.end)?.name ?? '(其他)';
+  // `{` … `} | lm_ssh deploy` 之間的 stdin 內容（不跨越其他以 `{` 結尾的行）。
+  const STDIN_RE = /\{\n((?:(?!\{\n)[\s\S])*?)\n\s*\} \| lm_ssh deploy/;
+  const fn = (name) => {
+    const r = regions.find((x) => x.name === name);
+    expect(r).toBeDefined();
+    return jfCode.slice(r.start, r.end);
+  };
+  /** text 中自 `open` 開始的區塊（`open` 須以 `{` 結尾），以大括號配對。 */
+  const blockFrom = (text, open) => {
+    const s = text.indexOf(open);
+    expect(s).toBeGreaterThan(-1);
+    let depth = 0;
+    for (let i = s + open.length - 1; i < text.length; i++) {
+      if (text[i] === '{') depth++;
+      else if (text[i] === '}' && --depth === 0) return text.slice(s, i + 1);
+    }
+    throw new Error(`${open} 的大括號不成對`);
+  };
+
+  test('jobs.groovy：ci、infra 區塊不含 openai；release 區塊恰有一個 file 類型的 lm-prod-openai-api-key', () => {
+    for (const folder of ['ci', 'infra']) {
+      expect({ folder, openai: /openai/i.test(credentialBlock(folder)) }).toEqual({ folder, openai: false });
+    }
+    const release = credentialBlock('release');
+    const specs = [...release.matchAll(/\[id: '([^']+)', type: '([^']+)'(?:, fileName: '([^']+)')?/g)].filter((m) => /openai/i.test(m[0]));
+    expect(specs.map((m) => [m[1], m[2], m[3]])).toEqual([['lm-prod-openai-api-key', 'file', 'openai-api-key']]);
+    // 憑證區塊以外的程式碼（seed 邏輯、Job 定義）不引用 OpenAI。
+    const outside = stripComments(jobs.replace(/\/\/ BEGIN credentials release\n[\s\S]*?\/\/ END credentials release\n/, ''));
+    expect(/openai/i.test(outside)).toBe(false);
+  });
+
+  test('casc.yaml 與 ci/jenkins/pipelines/*.Jenkinsfile 不含 openai（略過註解，不區分大小寫）', () => {
+    const files = ['ci/jenkins/casc.yaml', ...pipelineFiles.filter((f) => f !== 'Jenkinsfile')];
+    expect(files.length).toBeGreaterThan(4);
+    for (const file of files) {
       expect({ file, openai: /openai/i.test(stripComments(read(file))) }).toEqual({ file, openai: false });
     }
+  });
+
+  test('Jenkinsfile：LM_PROD_OPENAI_CREDENTIALS 只出現在 environment、assertProductionConfig、productionDeployCommand 與 scrubCredentialSpecs', () => {
+    const where = [...jfCode.matchAll(/LM_PROD_OPENAI_CREDENTIALS/g)].map((m) => regionAt(m.index));
+    expect([...new Set(where)].sort()).toEqual(['assertProductionConfig', 'environment', 'productionDeployCommand', 'scrubCredentialSpecs']);
+    // 綁定恰一次，位於 productionDeployCommand。
+    const bindings = [...jfCode.matchAll(/credentialsId: env\.LM_PROD_OPENAI_CREDENTIALS/g)].map((m) => regionAt(m.index));
+    expect(bindings).toEqual(['productionDeployCommand']);
+    // 金鑰檔變數只在 productionDeployCommand。
+    expect([...new Set([...jfCode.matchAll(/LM_PRD_OPENAI_KEY_FILE/g)].map((m) => regionAt(m.index)))]).toEqual(['productionDeployCommand']);
+    // Staging、Approval、觀察期、回滾與 keepLog 相關函式都不引用 OpenAI。
+    for (const name of ['stagingDeployCommand', 'stagingHost', 'prepareApproval', 'waitForApproval', 'prodHost', 'observeProduction',
+      'runProductionSmoke', 'restoreProduction', 'keepProductionBuildLog']) {
+      expect({ name, openai: /openai/i.test(fn(name)) }).toEqual({ name, openai: false });
+    }
+  });
+
+  test('Jenkinsfile：OpenAI 金鑰與 lm_ssh deploy 在同一個 withCredentials 範圍內（四層之內，只包住 deploy 的 sh）', () => {
+    const cmd = fn('productionDeployCommand');
+    const inner = blockFrom(cmd, "withCredentials([string(credentialsId: env.LM_PROD_SETUP_TOKEN_CREDENTIALS, variable: 'LM_PRD_SETUP_TOKEN')]) {");
+    // 腳本（含唯一的 lm_ssh deploy）定義在最內層的 Setup_Token 範圍內，OpenAI 的 withCredentials 只包住執行它的 sh。
+    expect(cmd.match(/lm_ssh deploy/g)?.length).toBe(1);
+    expect(inner).toContain('String script = productionSshPrelude() + \'\'\'');
+    expect(inner.indexOf('lm_ssh deploy "$LM_IMAGE_DIGEST" --app-env-stdin')).toBeGreaterThan(-1);
+    const openai = blockFrom(inner, "withCredentials([file(credentialsId: env.LM_PROD_OPENAI_CREDENTIALS, variable: 'LM_PRD_OPENAI_KEY_FILE')]) {");
+    expect(openai.replace(/\s+/g, ' ')).toBe("withCredentials([file(credentialsId: env.LM_PROD_OPENAI_CREDENTIALS, variable: 'LM_PRD_OPENAI_KEY_FILE')]) { rc = sh(label: 'lm-deploy prod deploy', returnStatus: true, script: script) }");
+    expect(inner).toMatch(/if \(env\.LM_PROD_RECEIPT_AI == 'enabled'\) \{/);
+  });
+
+  test("Jenkinsfile：environment 的開關；Staging 的 stdin 為 LM_RECEIPT_AI=disabled 且沒有金鑰", () => {
+    const env = jfCode.slice(regions.find((r) => r.name === 'environment').start, regions.find((r) => r.name === 'environment').end);
+    expect(env).toMatch(/^    LM_STAGING_RECEIPT_AI = 'disabled'$/m);
+    expect(env).toMatch(/^    LM_PROD_RECEIPT_AI = '(enabled|disabled)'$/m);
+    expect(env).toMatch(/^    LM_PROD_OPENAI_CREDENTIALS = 'lm-prod-openai-api-key'$/m);
+    const stg = fn('stagingDeployCommand');
+    const stdin = STDIN_RE.exec(stg)?.[1].trim().split('\n').map((l) => l.trim());
+    expect(stdin?.[0]).toBe("printf 'LM_RECEIPT_AI=disabled\\\\n'");
+    expect(stg).not.toContain('LM_OPENAI_API_KEY');
+    expect(/openai/i.test(stg)).toBe(false);
+  });
+
+  test('Jenkinsfile：Production 的 stdin 第一行為開關；金鑰只經內建 read／printf，沒有 readFile、returnStdout、cat 或 echo', () => {
+    const cmd = fn('productionDeployCommand');
+    const stdin = STDIN_RE.exec(cmd)?.[1].trim().split('\n').map((l) => l.trim());
+    expect(stdin?.[0]).toBe('printf \'LM_RECEIPT_AI=%s\\\\n\' "$LM_PROD_RECEIPT_AI"');
+    // 金鑰只在最後：read 讀入子 shell 的變數 k、printf 輸出 LM_OPENAI_API_KEY 行。
+    expect(stdin.slice(-5)).toEqual([
+      'if [ "$LM_PROD_RECEIPT_AI" = enabled ]; then',
+      "k=''",
+      'IFS= read -r k < "$LM_PRD_OPENAI_KEY_FILE" || [ -n "$k" ]',
+      'printf \'LM_OPENAI_API_KEY=%s\\\\n\' "$k"',
+      'fi',
+    ]);
+    // 金鑰檔與 k 只出現在 -s 檢查、read 與 printf。
+    const keyUses = [...cmd.matchAll(/^.*(?:LM_PRD_OPENAI_KEY_FILE|\$k\b|\$\{k\b).*$/gm)].map((m) => m[0].trim());
+    expect(keyUses).toEqual([
+      'if [ ! -s "${LM_PRD_OPENAI_KEY_FILE:-}" ]; then',
+      'IFS= read -r k < "$LM_PRD_OPENAI_KEY_FILE" || [ -n "$k" ]',
+      'printf \'LM_OPENAI_API_KEY=%s\\\\n\' "$k"',
+      "withCredentials([file(credentialsId: env.LM_PROD_OPENAI_CREDENTIALS, variable: 'LM_PRD_OPENAI_KEY_FILE')]) {",
+    ]);
+    for (const bad of [/readFile/, /returnStdout/, /\bcat\b/, /set -x/, /echo[^\n]*\$\{?k\b/, /echo[^\n]*LM_PRD_OPENAI_KEY_FILE/]) {
+      expect({ bad: String(bad), found: bad.test(cmd) }).toEqual({ bad: String(bad), found: false });
+    }
+    // 腳本由 productionSshPrelude()（set +x）開始；金鑰檔不存在或為空時不連線（exit 2）。
+    expect(fn('stagingSshPrelude')).toMatch(/return '''\n\s*set \+x\n/);
+    expect(cmd).toMatch(/if \[ ! -s "\$\{LM_PRD_OPENAI_KEY_FILE:-\}" \]; then\n\s*echo '[^'$]*' >&2\n\s*exit 2\n/);
   });
 });

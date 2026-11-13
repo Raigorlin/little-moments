@@ -11,7 +11,7 @@
 
 本文件中的 `<...>` 是佔位符。Cloudflare 範圍與 Edge_Proxy 的實際來源位址只寫在主機的 `/srv/lm/prod/prod.env`，不寫入 repository。
 
-Staging 與 Production 第一次部署的順序（建立第一個管理員與 Smoke_Test 的 smoke-bot 帳號）見最後一節[首次部署與 smoke-bot](#首次部署與-smoke-bot)。
+Staging 與 Production 第一次部署的順序（建立第一個管理員與 Smoke_Test 的 smoke-bot 帳號）見[首次部署與 smoke-bot](#首次部署與-smoke-bot)。Production 收據 AI 的啟用、輪替與停用見最後一節 [Production 收據 AI（OpenAI）](#production-收據-aiopenai)。
 
 ## 主機配置
 
@@ -408,3 +408,124 @@ sudo -v
 
   之後在 Jenkins 執行「Reload existing configuration」（見 [`../ci/jenkins/README.md`](../ci/jenkins/README.md)）。`reset-password` 會登出 smoke-bot 的所有 session。兩者更新完成之前的 Smoke_Test 會失敗。
 - Smoke_Fixture：`smoke-fixture` 行程由 smoke-bot 擁有，只有 smoke-bot 與管理員看得到（管理員的行程清單列出全部行程，所以 Production 的管理員也會看到它）。不要改名、刪除或邀請其他人加入。刪除或改名後下一次 Smoke_Test 會失敗；以同一個 `smoke-account` 指令重建（既有帳號保留，只建立缺少的行程）。
+
+## Production 收據 AI（OpenAI）
+
+Release_Approver `jacklin` 決定只在 Production 啟用雲端 AI 收據辨識（Requirement 15.6–15.8；design.md Components §25）。Staging、Test_Environment、還原演練與 `ci/` 的建置維持停用。
+
+| 環境 | `Jenkinsfile` 的開關 | 金鑰來源 | Deploy_Host 上的金鑰檔 | App 的 `CAMPING_OPENAI_API_KEY_FILE` |
+|---|---|---|---|---|
+| Staging | `LM_STAGING_RECEIPT_AI = 'disabled'`（只能是 `disabled`） | 無；`lm-deploy staging` 以 `receipt_ai_forbidden` 拒絕任何金鑰 | 不存在；存在時 `lm-deploy staging` 以 `config_invalid` 拒絕 | 空字串（停用） |
+| Production | `LM_PROD_RECEIPT_AI = 'enabled'` | `release/` 的 Secret file `lm-prod-openai-api-key` | `/srv/lm/prod/secrets/openai-api-key`（`10001:10001`、`0400`；`secrets/` 為 root `0700`） | 金鑰檔存在時為 `/run/secrets/openai-api-key`，否則為空字串 |
+
+Production Deploy 只在 `lm-deploy prod deploy` 那一次 SSH 呼叫綁定 `lm-prod-openai-api-key`。stdin 第一行為 `LM_RECEIPT_AI=enabled`，最後一行為 `LM_OPENAI_API_KEY=<金鑰>`。`lm-deploy` 在備份與任何 docker 指令之前驗證金鑰格式（`sk-` 後接 20–500 個英文字母、數字、`_` 或 `-`），備份後寫入金鑰檔，再啟動新槽位。`app-blue`／`app-green` 以唯讀 bind mount 把金鑰檔掛載到 `/run/secrets/openai-api-key`，App 啟動時讀取一次。金鑰不出現在主控台、Build_Record、`lm-deploy` 的輸出或任何指令列。
+
+金鑰檔由 `lm-deploy` 管理，不要手動修改、改權限或刪除。擁有者或權限不符時，`lm-deploy prod` 所有使用 Compose 的子命令（`deploy`、`rollback`、`finalize`、`health`、`smoke-account` 等）都以 `config_invalid` 拒絕。
+
+### 第一次啟用
+
+順序重要：第 1 步必須在第 3 步之前，第 2 步必須在第 4 步之前。Jenkins controller 與 Deploy_Host 都是 `192.168.1.121`，以下指令都在這台主機上以維運者的帳號執行。
+
+1. **放入秘密檔（Jenkins controller）**。在 `<controller-dir>`（本主機為 `~/docker/jenkins`）以 [`ci/jenkins/README.md`](../ci/jenkins/README.md#秘密目錄) 的 `put` 函式寫入。金鑰以隱藏輸入讀入，再經 `install -o 1000 -g 1000 -m 600 /dev/stdin` 寫入，不出現在終端機、shell 歷史或程序列表。不要以 `echo`、`cat` 或編輯器處理金鑰：
+
+   ```sh
+   cd ~/docker/jenkins
+   put() { read -rsp "$1: " S; echo; printf '%s\n' "$S" | sudo install -o 1000 -g 1000 -m 600 /dev/stdin "secrets/$1"; unset S; }
+   put little-moments/release/lm-prod-openai-api-key
+   ```
+
+   在提示後貼上 OpenAI 後台建立的金鑰並按 Enter。`put` 結束時執行 `unset S`，也會清除[首次部署與 smoke-bot](#首次部署與-smoke-bot) 一節設定的 `S`，之後要用該變數時重新設定。
+
+   金鑰已經以其他檔名放在 `secrets/` 下時，不要顯示內容，以相同的擁有者與權限把它搬到這個路徑，再刪除原檔（`<現有檔名>` 為該檔在 `secrets/` 下的名稱）：
+
+   ```sh
+   cd ~/docker/jenkins
+   sudo install -o 1000 -g 1000 -m 600 secrets/<現有檔名> secrets/little-moments/release/lm-prod-openai-api-key
+   sudo shred -u secrets/<現有檔名>
+   ```
+
+   確認擁有者、權限與格式。以下指令只輸出計數，不輸出內容：
+
+   ```sh
+   f=secrets/little-moments/release/lm-prod-openai-api-key
+   sudo stat -c '%u:%g %a' "$f"                       # 1000:1000 600
+   sudo grep -cxE 'sk-[A-Za-z0-9_-]{20,500}' "$f"     # 1
+   sudo grep -cvxE 'sk-[A-Za-z0-9_-]{20,500}' "$f"    # 0
+   ```
+
+   第二個指令不是 `1`，或第三個不是 `0`（例如含空白、CR 或多行）時，以 `put` 重新寫入。格式不符的金鑰會讓 Production Deploy 在備份前以 `app_env_invalid` 失敗。
+
+2. **在 Deploy_Host 重新執行 `install.sh`**。把 Deploy_Host 的 repository checkout 更新到包含本變更的 commit，以第 2 節的參數重新執行 `deploy/host/install.sh`，安裝新的 `lm-deploy` 與 `compose.yaml`（只更新檔案時可省略 `--agent-from`、`--staging-key`、`--prod-key`）：
+
+   ```sh
+   LAN=192.168.1.0/24,172.17.0.0/16,172.20.0.0/16,172.21.0.0/16,172.22.0.0/16
+   sudo deploy/host/install.sh --lan-cidr "$LAN" --public-port 80,443
+   sudo cmp deploy/bin/lm-deploy /opt/lm/bin/lm-deploy && echo lm-deploy-ok
+   sudo cmp deploy/compose/compose.yaml /srv/lm/staging/compose.yaml && sudo cmp deploy/compose/compose.yaml /srv/lm/prod/compose.yaml && echo compose-ok
+   sudo /opt/lm/bin/lm-deploy staging status >/dev/null && sudo /opt/lm/bin/lm-deploy prod status >/dev/null && echo status-ok
+   ```
+
+   預期輸出 `lm-deploy-ok`、`compose-ok` 與 `status-ok`。這一步必須在第 4 步之前：舊版 `lm-deploy` 會以「不允許的鍵：LM_RECEIPT_AI」拒絕新 Pipeline 的 Staging 部署（在備份前拒絕，Staging 不變）。新版 `lm-deploy` 也接受舊版 Pipeline 的部署（stdin 沒有 `LM_RECEIPT_AI` 時金鑰檔不變），所以可以先安裝。`status` 以結束碼 2（`config_invalid`）結束且訊息指出 `CAMPING_OPENAI_*` 或 `LM_OPENAI_KEY_SOURCE` 時，把 `/srv/lm/<env>/<env>.env` 中該行的值清空：這些值只由 `lm-deploy` 決定。
+
+3. **載入新的 `jobs.groovy`（Jenkins controller）**。依 [`ci/jenkins/README.md`](../ci/jenkins/README.md#設定載入與更新) 的步驟 1 把三個檔案複製到 `casc/`，再依[以假秘密測試設定變更](../ci/jenkins/README.md#以假秘密測試設定變更)測試。假秘密目錄依正式秘密目錄的檔名產生，所以會包含第 1 步的檔案。測試通過後才對正式 controller 執行「Manage Jenkins → Configuration as Code → Reload existing configuration」，並確認 `release/` 資料夾的 Credentials 有 `lm-prod-openai-api-key`（Secret file；`release/` 共 18 個憑證）。秘密檔缺少或為空時 seed 失敗，不建立或更新任何 Job；先完成第 1 步再重新載入。
+
+4. **合併到 `main`**。合併包含本變更的 PR 後，`release/little-moments » main` 的 Staging Deploy 送出 `LM_RECEIPT_AI=disabled`，Staging 維持停用。確認該建置的 Build_Record（Build Artifacts 的 `reports/build-record.json`）中，`deployments[]` 的 Staging 項目（`"env":"staging"`）為 `"receiptAi":"disabled"`。Staging Deploy 以 `app_env_invalid`「不允許的鍵：LM_RECEIPT_AI」被拒絕時，表示第 2 步尚未完成。
+
+5. **管理員先限制使用者**。Production 對網際網路公開。第一次部署前，管理員在 `https://www.our-littlemoments.com/admin` 把收據 AI 政策設為 `admins`（只有管理員可用）。政策存在 Database，部署後仍然有效。
+
+6. **以新的 Release_Tag 部署 Production**。依一般流程在已通過 Staging 驗證的 commit 建立並推送 Release_Tag，再核准部署。Production Deploy 傳送金鑰，`lm-deploy` 在備份後寫入金鑰檔，新槽位啟用收據 AI。部署完成後確認：
+   - 建置摘要有一行 `收據 AI（Production）：enabled`。
+   - Build_Record 中 `deployments[]` 的 Production 項目（`"env":"production"`）為 `"receiptAi":"enabled"`。
+   - Deploy_Host 上依[主機上的確認](#主機上的確認)檢查。
+   - 以管理員帳號開啟一個可編輯的行程，「分帳記帳」可以選擇收據照片辨識；或以同一帳號 `GET /api/trips/<trip-id>/receipt-ai`，回應 `"enabled":true`。這只檢查金鑰與模型的格式，不呼叫 OpenAI；Smoke_Test 也不呼叫 OpenAI。
+
+   確認可用後，管理員視需要在 `/admin` 改為 `all`。用量上限沿用預設：每位使用者 15 分鐘 10 次、每 UTC 日 100 次、每 UTC 月 1000 次。另建議在 OpenAI 後台為該專案設定每月預算。
+
+   部署失敗時：
+
+   | 結果 | 原因 | 處理 |
+   |---|---|---|
+   | 主控台顯示 `lm-prod-openai-api-key 的金鑰檔不存在或為空，未連線 Deploy_Host` | 秘密檔為空 | 依第 1 步重新寫入，再 Reload existing configuration |
+   | `lm-deploy` 的 `reason` 為 `app_env_invalid`（`LM_OPENAI_API_KEY 格式無效`） | 秘密檔不是一行 `sk-` 開頭的金鑰 | 同上；在備份前拒絕，Production 不變 |
+   | 摘要為 `收據 AI（Production）：未執行` | 部署在寫入 `app.env` 之前就失敗（例如備份失敗） | 依建置訊息處理部署失敗 |
+
+### 輪替
+
+1. 在 OpenAI 後台建立新金鑰。舊金鑰先不要撤銷。
+2. 在 controller 主機以第一次啟用第 1 步的 `put little-moments/release/lm-prod-openai-api-key` 覆寫秘密檔，並以同一組 `stat`、`grep -c` 指令確認。秘密目錄的結構沒有改變，不需要以假秘密測試。
+3. 執行 Reload existing configuration。不要在 Release_Tag 建置進行中更換：封存報告前的遮罩會重新取得憑證，取得的是新值，遮不到該建置使用的舊值。
+4. 以下一個 Release_Tag 部署 Production。`lm-deploy` 寫入新金鑰，新槽位使用新金鑰。作用中的舊槽位在移除前仍使用舊金鑰，因為單檔 bind mount 停留在建立容器時的檔案。
+5. 觀察期結束、finalize 移除舊槽位後，在 OpenAI 後台撤銷舊金鑰。
+
+### 金鑰外洩
+
+1. 先在 OpenAI 後台撤銷外洩的金鑰。之後 App 對辨識請求回應 502，其他功能不受影響。
+2. 管理員在 `/admin` 把收據 AI 政策設為 `off`。辨識請求改為回應「AI 辨識已由管理員關閉」，不再送到 OpenAI。
+3. 依「輪替」第 1–4 步換上新金鑰。舊金鑰已在本節第 1 步撤銷。
+4. 新的 Production 部署完成並確認可用後，管理員把政策改回 `admins` 或 `all`。
+
+### 停用
+
+- **立即停用**：管理員在 `/admin` 把收據 AI 政策設為 `off`。下一個請求即生效，不需部署；Pipeline 與主機上的金鑰檔維持原狀。改回 `admins` 或 `all` 即恢復。
+- **停止提供金鑰**：以 PR 把 `Jenkinsfile` 的 `LM_PROD_RECEIPT_AI` 改為 `'disabled'`，合併後以下一個 Release_Tag 部署 Production。Production Deploy 不再綁定 `lm-prod-openai-api-key`，改送出 `LM_RECEIPT_AI=disabled`。`lm-deploy` 在備份後刪除 `/srv/lm/prod/secrets/openai-api-key`，新槽位的 `CAMPING_OPENAI_API_KEY_FILE` 為空字串，Build_Record 的 Production 項目為 `"receiptAi":"disabled"`。舊槽位在 finalize 移除前仍讀得到舊金鑰；移除後在 OpenAI 後台撤銷該金鑰。
+- 停止提供金鑰後，憑證可以留在 `release/`。要移除時，依 [`ci/jenkins/README.md`](../ci/jenkins/README.md) 的規則同時修改 `jobs.groovy`、Pipeline 與憑證表並重新載入，之後才刪除秘密檔。順序相反時 seed 會失敗。
+
+### 主機上的確認
+
+在 Deploy_Host 執行。以下指令只輸出擁有者、權限、路徑與狀態，不輸出金鑰：
+
+```sh
+sudo stat -c '%n %u:%g %a' /srv/lm/prod/secrets /srv/lm/prod/secrets/openai-api-key
+sudo test -e /srv/lm/staging/secrets/openai-api-key && echo staging-key-present || echo staging-key-absent
+```
+
+啟用時預期 `/srv/lm/prod/secrets 0:0 700`、`/srv/lm/prod/secrets/openai-api-key 10001:10001 400` 與 `staging-key-absent`。以 `LM_PROD_RECEIPT_AI = 'disabled'` 部署之後，第一個指令對金鑰檔回報 `No such file or directory`。
+
+作用中槽位的掛載與環境變數（`<color>` 為 `sudo /opt/lm/bin/lm-deploy prod status` 輸出中 `active` 的 `color`）：
+
+```sh
+sudo docker inspect -f '{{range .Mounts}}{{if eq .Destination "/run/secrets/openai-api-key"}}{{.Source}} rw={{.RW}}{{end}}{{end}}' lm-prod-app-<color>-1
+sudo docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' lm-prod-app-<color>-1 | grep ^CAMPING_OPENAI_API_KEY_FILE=
+```
+
+啟用時預期 `/srv/lm/prod/secrets/openai-api-key rw=false` 與 `CAMPING_OPENAI_API_KEY_FILE=/run/secrets/openai-api-key`；停用時來源為 `/dev/null`，環境變數為 `CAMPING_OPENAI_API_KEY_FILE=`。Staging 的槽位（`lm-staging-app-<color>-1`）一律是停用時的結果。

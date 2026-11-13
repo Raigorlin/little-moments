@@ -3,6 +3,7 @@
 //    且預設值、必填與未設定時行為與 server/config.js 實作一致。
 // 2. README 不含任何符合秘密模式的字串；範例值只用佔位符。
 // 3. deploy/README.md 的「首次部署與 smoke-bot」與 README 帳號維運章節（Requirement 27.25、27.26）。
+// 4. Production 收據 AI（OpenAI）的憑證表、啟用、輪替與停用步驟（Requirement 15.7、24.9；design.md Components §25.8）。
 import { describe, test, expect } from 'bun:test';
 import fc from 'fast-check';
 import { readFileSync } from 'node:fs';
@@ -14,6 +15,7 @@ import {
 import { createReceiptAi } from '../server/receipt-ai.js';
 import { resolveRegistrationPolicy } from '../server/settings.js';
 import { findLeaks } from '../ci/scrub.mjs';
+import { scanText } from '../scripts/secret-rules.mjs';
 
 const read = rel => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const readme = read('../README.md');
@@ -316,29 +318,30 @@ describe('公開範圍與 Edge_Proxy runbook（Req 24.3、25.12、25.13）', () 
   });
 });
 
+/** `## <title>` 到下一個 `## ` 標題（或檔尾）之間的內容。 */
+const sectionOf = (text, title) => {
+  const start = text.indexOf(`\n## ${title}\n`);
+  if (start < 0) return '';
+  const body = text.slice(start + title.length + 5);
+  const next = body.search(/^## /m);
+  return next < 0 ? body : body.slice(0, next);
+};
+/** GitHub 標題錨點：小寫、移除標點（保留字母、數字、空白、`-`、`_`）、空白改為 `-`。 */
+const slug = title => title.toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, '').replace(/ /g, '-');
+/** 依序尋找每個片段，回傳各自的位置（找不到為 -1，之後的片段也不再尋找）。 */
+const positions = (text, parts) => {
+  let from = 0;
+  return parts.map(p => {
+    if (from < 0) return -1;
+    const i = text.indexOf(p, from);
+    from = i < 0 ? -1 : i + p.length;
+    return i;
+  });
+};
+
 describe('首次部署與 smoke-bot（Req 27.25、27.26、24.9、24.10）', () => {
   const runbook = read('../deploy/README.md');
   const jenkinsReadme = read('../ci/jenkins/README.md');
-  /** `## <title>` 到下一個 `## ` 標題（或檔尾）之間的內容。 */
-  const sectionOf = (text, title) => {
-    const start = text.indexOf(`\n## ${title}\n`);
-    if (start < 0) return '';
-    const body = text.slice(start + title.length + 5);
-    const next = body.search(/^## /m);
-    return next < 0 ? body : body.slice(0, next);
-  };
-  /** GitHub 標題錨點：小寫、移除標點（保留字母、數字、空白、`-`、`_`）、空白改為 `-`。 */
-  const slug = title => title.toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, '').replace(/ /g, '-');
-  /** 依序尋找每個片段，回傳各自的位置（找不到為 -1，之後的片段也不再尋找）。 */
-  const positions = (text, parts) => {
-    let from = 0;
-    return parts.map(p => {
-      if (from < 0) return -1;
-      const i = text.indexOf(p, from);
-      from = i < 0 ? -1 : i + p.length;
-      return i;
-    });
-  };
   const first = sectionOf(runbook, '首次部署與 smoke-bot');
   const staging = first.slice(first.indexOf('### Staging'), first.indexOf('### Production'));
   const production = first.slice(first.indexOf('### Production'));
@@ -440,5 +443,116 @@ describe('首次部署與 smoke-bot（Req 27.25、27.26、24.9、24.10）', () =
     }
     expect(first).not.toMatch(/sha256:[0-9a-f]{8,}/);
     expect(first).not.toMatch(/-----BEGIN [A-Z ]*PRIVATE KEY-----/);
+  });
+});
+
+describe('Production 收據 AI（OpenAI）文件（Req 15.7、24.9；design.md Components §25.8）', () => {
+  const runbook = read('../deploy/README.md');
+  const jenkinsReadme = read('../ci/jenkins/README.md');
+  const TITLE = 'Production 收據 AI（OpenAI）';
+  const ANCHOR = 'production-收據-aiopenai';
+  const section = sectionOf(runbook, TITLE);
+  const sub = name => {
+    const start = section.indexOf(`\n### ${name}\n`);
+    if (start < 0) return '';
+    const rest = section.slice(start + name.length + 6);
+    const next = rest.search(/^### /m);
+    return next < 0 ? rest : rest.slice(0, next);
+  };
+  const enable = sub('第一次啟用');
+
+  test('ci/jenkins/README.md：憑證表恰有一列 release/ 的 lm-prod-openai-api-key（Secret file、只在 Production Deploy），其他資料夾沒有 OpenAI 憑證', () => {
+    const rows = jenkinsReadme.split('\n').filter(l => l.startsWith('| `') && l.includes('`lm-prod-openai-api-key`'));
+    expect(rows.length).toBe(1);
+    expect(rows[0].startsWith('| `release/` | `lm-prod-openai-api-key` | Secret file')).toBe(true);
+    expect(rows[0]).toContain('只在 Production Deploy');
+    const others = jenkinsReadme.split('\n').filter(l => /^\| `(ci|infra)\/` \|/.test(l));
+    expect(others.length).toBeGreaterThan(0);
+    for (const row of others) expect(row.toLowerCase()).not.toContain('openai');
+  });
+
+  test('ci/jenkins/README.md：規則改寫為目前狀態，憑證表之後有放置與輪替說明並連結 deploy/README.md 的新章節', () => {
+    expect(jenkinsReadme).not.toContain('預設不定義任何憑證');
+    const rule = jenkinsReadme.split('\n').find(l => l.startsWith('- 收據 AI（`CAMPING_OPENAI_*`'));
+    expect(rule).toBeDefined();
+    for (const s of ['只在 Production 啟用', '`lm-prod-openai-api-key`', '`ci/` 永遠不得定義']) expect(rule).toContain(s);
+    const tableEnd = jenkinsReadme.indexOf('| `infra/` | `lm-registry-push` |');
+    const rules = jenkinsReadme.indexOf('規則（Req 2.4、2.5、15.1）');
+    const notes = jenkinsReadme.slice(tableEnd, rules);
+    for (const s of ['put little-moments/release/lm-prod-openai-api-key', '輪替', 'Reload existing configuration',
+      `(../../deploy/README.md#${ANCHOR})`]) expect(notes).toContain(s);
+    expect(jenkinsReadme).toContain('`release/` 顯示上表 18 個');
+  });
+
+  test('deploy/README.md 有該章節，錨點與各處連結一致', () => {
+    expect(section).not.toBe('');
+    expect(slug(TITLE)).toBe(ANCHOR);
+    expect(runbook).toContain(`(#${ANCHOR})`);
+    expect(readme).toContain(`(deploy/README.md#${ANCHOR})`);
+  });
+
+  test('第一次啟用依序為：put 秘密檔 → install.sh → jobs.groovy 假秘密測試與 Reload → 合併 main（Staging 停用）→ /admin 設為 admins → Release_Tag 與 receiptAi', () => {
+    const order = positions(enable, [
+      'install -o 1000 -g 1000 -m 600', 'put little-moments/release/lm-prod-openai-api-key',
+      'deploy/host/install.sh', 'jobs.groovy', '以假秘密測試設定變更', 'Reload existing configuration', '`lm-prod-openai-api-key`',
+      '合併到 `main`', 'LM_RECEIPT_AI=disabled', '"receiptAi":"disabled"',
+      '/admin', '`admins`', 'Release_Tag', '收據 AI（Production）：enabled', '"receiptAi":"enabled"',
+    ]);
+    expect(order.every(i => i >= 0)).toBe(true);
+    // 秘密檔的路徑與既有檔案的搬移：同樣的擁有者與權限，不顯示內容。
+    expect(enable).toContain('~/docker/jenkins');
+    expect(enable).toContain('sudo install -o 1000 -g 1000 -m 600 secrets/<現有檔名> secrets/little-moments/release/lm-prod-openai-api-key');
+    // install.sh 必須在合併之前：舊版 lm-deploy 拒絕 LM_RECEIPT_AI。
+    expect(enable).toContain('不允許的鍵：LM_RECEIPT_AI');
+  });
+
+  test('輪替、金鑰外洩與兩種停用方式', () => {
+    const rotate = sub('輪替');
+    expect(positions(rotate, ['建立新金鑰', 'put little-moments/release/lm-prod-openai-api-key', 'Reload existing configuration',
+      'Release_Tag', '撤銷舊金鑰']).every(i => i >= 0)).toBe(true);
+    const leak = sub('金鑰外洩');
+    expect(positions(leak, ['撤銷', '`off`', '輪替']).every(i => i >= 0)).toBe(true);
+    const disable = sub('停用');
+    expect(disable).toContain('`off`');
+    expect(disable).toContain('立即');
+    expect(disable).toContain("`LM_PROD_RECEIPT_AI` 改為 `'disabled'`");
+    expect(disable).toContain('刪除 `/srv/lm/prod/secrets/openai-api-key`');
+  });
+
+  test('主機上的確認：Production 金鑰檔為 10001:10001 400、Staging 沒有金鑰檔', () => {
+    const host = sub('主機上的確認');
+    expect(host).toContain("sudo stat -c '%n %u:%g %a' /srv/lm/prod/secrets /srv/lm/prod/secrets/openai-api-key");
+    expect(host).toContain('/srv/lm/prod/secrets/openai-api-key 10001:10001 400');
+    expect(host).toContain('sudo test -e /srv/lm/staging/secrets/openai-api-key');
+    expect(host).toContain('staging-key-absent');
+  });
+
+  test('章節的指令不輸出金鑰：沒有 cat，echo 不帶任何變數', () => {
+    const code = [...section.matchAll(/^ *```sh\n([\s\S]*?)^ *```$/gm)].map(m => m[1]).join('\n');
+    expect(code).toContain('put little-moments/release/lm-prod-openai-api-key');
+    for (const line of code.split('\n')) {
+      expect({ line, cat: /\bcat\b/.test(line) }).toEqual({ line, cat: false });
+      expect({ line, echo: /\becho\s+[^;|&\n]*\$/.test(line) }).toEqual({ line, echo: false });
+    }
+  });
+
+  test('README.md：不再寫「沒有掛載金鑰檔」，寫明 Staging 停用、Production 啟用與 lm-deploy 決定的 CAMPING_OPENAI_API_KEY_FILE', () => {
+    expect(readme).not.toContain('沒有掛載金鑰檔');
+    expect(readme).not.toContain('預設停用，只有 `release/` 可啟用');
+    const ai = sectionOf(readme, '收據 AI（OpenAI）');
+    const host = ai.split('\n').find(l => l.startsWith('- **Deploy_Host。**'));
+    for (const s of ['只有 Production 啟用', 'Staging 停用', '`ci/` 不定義', '`/admin`', '`off`', `(deploy/README.md#${ANCHOR})`]) {
+      expect(host).toContain(s);
+    }
+    expect(readme).toContain('**只有 Production 啟用，Staging 停用**');
+    const fileRow = rowOf('CAMPING_OPENAI_API_KEY_FILE');
+    for (const s of ['`lm-deploy`', 'Staging 為空字串', '`/run/secrets/openai-api-key`']) expect(fileRow.behavior).toContain(s);
+  });
+
+  test('三份文件不含符合 OpenAI 金鑰格式的字串（Req 24.9）', () => {
+    for (const [path, text] of [['README.md', readme], ['deploy/README.md', runbook], ['ci/jenkins/README.md', jenkinsReadme]]) {
+      expect({ path, findings: scanText(text, { path }).filter(f => f.rule === 'openai-key') }).toEqual({ path, findings: [] });
+      expect({ path, match: /sk-(?:proj-)?[A-Za-z0-9_-]{20,}/.test(text) }).toEqual({ path, match: false });
+    }
   });
 });

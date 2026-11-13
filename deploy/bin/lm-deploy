@@ -27,7 +27,12 @@
 #   prune                    依保留規則修剪備份（14 份）與本機映像（3 個），並清除殘留 .partial
 #   app-env                  由 stdin 讀取 app.env 內容，驗證鍵名後以 0600 原子寫入（不輸出任何值）
 #   deploy <digest> [--app-env-stdin]
-#                            backup → (app.env) → migrate → start → health --wait → switch；任一步失敗即停止
+#                            backup → (app.env、收據 AI 金鑰檔) → migrate → start → health --wait → switch；任一步失敗即停止。
+#                            --app-env-stdin 的 stdin 另接受兩個不寫入 app.env 的控制鍵（design.md Components §25.4）：
+#                            LM_RECEIPT_AI=enabled|disabled 與（只在 prod 的 enabled）LM_OPENAI_API_KEY=<金鑰>。
+#                            全部在備份與任何 docker 指令前驗證；staging 收到 enabled 或金鑰為 receipt_ai_forbidden。
+#                            備份後 enabled 以原子方式寫入 secrets/openai-api-key（10001:10001、0400），disabled 刪除它，
+#                            未提供開關時不變。金鑰不出現在輸出、日誌、指令列、export 的變數或狀態檔。
 #   drill                    還原演練（Req 14.6、14.7）：取最新已驗證備份並重算 sha256 → 以 <env>/drill.yaml 建立獨立
 #                            Compose 專案 lm-drill-<env>-<8 hex>（只有 internal 網路與匿名卷）→ pg_restore → 以映像的
 #                            Migration_Runner 補齊遷移 → 以目前作用中 digest 啟動 App → /app/tools/drill.js 插入臨時合成
@@ -52,8 +57,13 @@
 #   無效（1–8 個逗號分隔的 IPv4 網路位址/8–/32）；失敗以結束碼 2（config_invalid）結束，只輸出無效項目
 #   （Req 25.7、25.8；design.md Components §18.4）。
 #
+# 收據 AI（Req 15.6、15.7；design.md Components §25.4）：<env>.env 中非空的 CAMPING_OPENAI_* 或 LM_OPENAI_KEY_SOURCE 為
+#   config_invalid（這些值只由 lm-deploy 決定）。每次組出 Compose 指令時依金鑰檔決定 LM_OPENAI_KEY_SOURCE 與
+#   CAMPING_OPENAI_API_KEY_FILE：prod 的金鑰檔存在（一般檔案、1–512 位元組；以 root 執行時擁有者 10001、0400）時為
+#   該檔與 /run/secrets/openai-api-key，不存在時為 /dev/null 與空字串；其他狀態與 staging 有金鑰檔皆為 config_invalid。
+#
 # 檔案（<LM_ROOT>/<env>/）：compose.yaml、<env>.env（含 LM_IMAGE_REPO、LM_HEALTH_HOST、LM_EDGE_TRUSTED_PROXIES、
-#   LM_LAN_CIDR）、app.env、db.env、
+#   LM_LAN_CIDR）、app.env、db.env、secrets/openai-api-key（只有 prod；secrets/ 為 root 0700）、
 #   caddy/{Caddyfile,upstream.caddy.tmpl,upstream.caddy}、state/lm.state（唯一狀態來源，key=value，
 #   讀取時逐項驗證、從不 source）與 state/active.json（每次寫入狀態時產生的 JSON 快照）。
 #
@@ -93,6 +103,11 @@ readonly ZERO_DIGEST="sha256:000000000000000000000000000000000000000000000000000
 readonly APP_ENV_KEYS=" CAMPING_DATABASE_NAME CAMPING_DATABASE_USER CAMPING_DATABASE_PASSWORD CAMPING_SETUP_TOKEN "
 readonly APP_ENV_REQUIRED="CAMPING_DATABASE_NAME CAMPING_DATABASE_USER CAMPING_DATABASE_PASSWORD"
 readonly APP_ENV_MAX_BYTES=65536
+# 收據 AI（design.md Components §25.4）：deploy --app-env-stdin 的控制鍵（不寫入 app.env）與金鑰檔。
+readonly OPENAI_KEY_RE='^sk-[A-Za-z0-9_-]{20,500}$'   # 與 server/receipt-ai.js 相同，另加長度上限
+readonly OPENAI_KEY_TARGET=/run/secrets/openai-api-key  # 容器內路徑
+readonly OPENAI_KEY_MAX_BYTES=512
+readonly APP_UID=10001
 # SSH forced command（$SSH_ORIGINAL_COMMAND）只接受這些子命令（Req 27.18）。smoke-account 刻意不在清單內：
 # 部署憑證只能經 forced command 執行 lm-deploy <env>，因此無法建立帳號（Req 15.9）。
 readonly SSH_SUBCOMMANDS="backup migrate start health switch rollback finalize status prune app-env deploy drill"
@@ -118,7 +133,8 @@ fi
 # 呼叫端環境中的這些值會覆寫 <env>.env，一律移除，讓 Compose 專案設定只來自 Deploy_Host 上的檔案。
 unset CAMPING_OPENAI_API_KEY CAMPING_OPENAI_API_KEY_FILE CAMPING_OPENAI_MODEL_ID \
   CAMPING_OPENAI_IMAGE_DETAIL CAMPING_OPENAI_MAX_COMPLETION_TOKENS CAMPING_REGISTRATION \
-  COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_PROFILES COMPOSE_ENV_FILES APP_IMAGE_BLUE APP_IMAGE_GREEN APP_IMAGE_NEW
+  COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_PROFILES COMPOSE_ENV_FILES APP_IMAGE_BLUE APP_IMAGE_GREEN APP_IMAGE_NEW \
+  LM_OPENAI_KEY_SOURCE
 
 CMD=""
 ENVN=""
@@ -249,6 +265,9 @@ init_env() {
   BACKUP_DIR="$LM_BACKUP_ROOT/$ENVN"
   LOCK_FILE="$LM_LOCK_DIR/lm-$ENVN.lock"
   CADDY_DIR="$ENV_DIR/caddy"
+  # 收據 AI 金鑰檔的主機路徑（prod 為 /srv/lm/prod/secrets/openai-api-key）。
+  SECRETS_DIR="$ENV_DIR/secrets"
+  OPENAI_KEY_FILE="$SECRETS_DIR/openai-api-key"
   IMAGE_REPO=""
   HEALTH_HOST=""
   if [[ $HEALTH_INTERVAL_OVERRIDE == 0 ]]; then
@@ -279,7 +298,60 @@ load_env_config() {
   [[ $v =~ ^(\./)?[A-Za-z0-9._/-]+$|^/[A-Za-z0-9._/-]+$ && $v != *..* ]] || die "$EX_USAGE" config_invalid "LM_CADDY_DIR 格式無效"
   if [[ $v == /* ]]; then CADDY_DIR=$v; else CADDY_DIR="$ENV_DIR/${v#./}"; fi
   CADDY_DIR=${CADDY_DIR%/}
+  check_openai_env "$envfile"
   check_edge_proxies "$envfile"
+}
+
+# check_openai_env <envfile>：CAMPING_OPENAI_* 與 LM_OPENAI_KEY_SOURCE 只由 lm-deploy 決定（Req 15.6、15.7；
+# design.md Components §25.4）。任何一行為非空值即 config_invalid；訊息只含變數名稱，不含值。
+check_openai_env() {
+  local envfile=$1 line name v
+  [[ -f $envfile && -r $envfile ]] || return 0
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=${line%$'\r'}
+    [[ $line =~ ^[[:space:]]*(export[[:space:]]+)?(CAMPING_OPENAI_[A-Za-z0-9_]*|LM_OPENAI_KEY_SOURCE)[[:space:]]*=(.*)$ ]] || continue
+    name=${BASH_REMATCH[2]}
+    v=${BASH_REMATCH[3]}
+    v=${v#"${v%%[![:space:]]*}"}
+    v=${v%"${v##*[![:space:]]}"}
+    [[ $v == '""' || $v == "''" ]] && v=""
+    [[ -z $v ]] || die "$EX_USAGE" config_invalid \
+      "$ENVN.env 的 $name 必須保持空白（收據 AI 的設定只由 lm-deploy 決定）" "\"field\":$(jstr "$name")"
+  done <"$envfile"
+}
+
+# ---------------------------------------------------------------------------------------------
+# 收據 AI 金鑰檔（Req 15.6、15.7；design.md Components §25.4）
+# ---------------------------------------------------------------------------------------------
+
+# secrets/ 必須是目錄且不是符號連結；以 root 執行時必須由 root 擁有且權限為 0700。
+check_secrets_dir() {
+  [[ -d $SECRETS_DIR && ! -L $SECRETS_DIR ]] || die "$EX_USAGE" config_invalid "secrets/ 必須是目錄且不是符號連結"
+  if [[ ${EUID} -eq 0 && $(stat -c '%u %a' -- "$SECRETS_DIR") != "0 700" ]]; then
+    die "$EX_USAGE" config_invalid "secrets/ 必須由 root 擁有且權限為 0700"
+  fi
+  return 0
+}
+
+# openai_key_state：依主機上的金鑰檔決定 Compose 變數 OPENAI_SOURCE（LM_OPENAI_KEY_SOURCE）與
+# OPENAI_FILE_ENV（CAMPING_OPENAI_API_KEY_FILE）。不符合條件時以 config_invalid 結束（不呼叫 docker）。
+openai_key_state() {
+  local f=$OPENAI_KEY_FILE size st
+  OPENAI_SOURCE=/dev/null
+  OPENAI_FILE_ENV=""
+  if [[ -e $SECRETS_DIR || -L $SECRETS_DIR ]]; then check_secrets_dir; fi
+  [[ -e $f || -L $f ]] || return 0
+  [[ $ENVN == prod ]] || die "$EX_USAGE" config_invalid "Staging 不得有 OpenAI 金鑰檔（secrets/openai-api-key）"
+  [[ -f $f && ! -L $f ]] || die "$EX_USAGE" config_invalid "secrets/openai-api-key 必須是一般檔案（不是符號連結）"
+  size=$(stat -c %s -- "$f")
+  ((size >= 1 && size <= OPENAI_KEY_MAX_BYTES)) ||
+    die "$EX_USAGE" config_invalid "secrets/openai-api-key 的大小必須為 1–$OPENAI_KEY_MAX_BYTES 位元組"
+  if [[ ${EUID} -eq 0 ]]; then
+    st=$(stat -c '%u %a' -- "$f")
+    [[ $st == "$APP_UID 400" ]] || die "$EX_USAGE" config_invalid "secrets/openai-api-key 必須由 $APP_UID 擁有且權限為 0400"
+  fi
+  OPENAI_SOURCE=$f
+  OPENAI_FILE_ENV=$OPENAI_KEY_TARGET
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -610,8 +682,11 @@ build_compose() {
   [[ -n $S_CANDIDATE_COLOR ]] && slot[$S_CANDIDATE_COLOR]=$S_CANDIDATE_DIGEST
   local blue=${slot[blue]:-$fb} green=${slot[green]:-$fb} nimg=${new:-$fb} d
   for d in "$blue" "$green" "$nimg"; do [[ $d =~ $DIGEST_RE ]] || die "$EX_FAIL" internal "digest 驗證失敗"; done
+  # 收據 AI：只傳路徑（不是金鑰）；Compose 以呼叫端環境優先於 --env-file（design.md Components §25.4、§25.5）。
+  openai_key_state
   COMPOSE_CMD=(env "LM_ENV=$ENVN"
     "APP_IMAGE_BLUE=$IMAGE_REPO@$blue" "APP_IMAGE_GREEN=$IMAGE_REPO@$green" "APP_IMAGE_NEW=$IMAGE_REPO@$nimg"
+    "LM_OPENAI_KEY_SOURCE=$OPENAI_SOURCE" "CAMPING_OPENAI_API_KEY_FILE=$OPENAI_FILE_ENV"
     docker compose --project-directory "$ENV_DIR" -f "$ENV_DIR/compose.yaml" --env-file "$ENV_DIR/$ENVN.env")
 }
 
@@ -854,32 +929,90 @@ do_backup() {
 # app.env
 # ---------------------------------------------------------------------------------------------
 
-# 由 stdin 讀入並驗證，放在 ENV_DIR 的 0600 暫存檔（APP_ENV_STAGED）；不輸出任何值。
+# stage_app_env [deploy]：由 stdin 讀入並驗證，放在 ENV_DIR 的 0600 暫存檔（APP_ENV_STAGED）；不輸出任何值。
+# 參數為 deploy 時另接受收據 AI 的控制鍵（design.md Components §25.4）：LM_RECEIPT_AI 決定 RECEIPT_AI_MODE
+# （enabled｜disabled｜空字串 = 未提供，不變更）；prod 的 enabled 時 LM_OPENAI_API_KEY 以內建 printf 寫入
+# secrets/.openai-api-key.XXXXXX（RECEIPT_AI_STAGED）。控制鍵不寫入 app.env；app.env 以 bash 迴圈逐行寫入，
+# 含金鑰的行不經任何外部程式。錯誤訊息只含固定文字與鍵名。
 stage_app_env() {
+  local mode=${1:-} raw tmp size line key val seen=" " k ai="" ai_seen=0 has_key=0 openai_key="" ktmp nul=""
   [[ -d $ENV_DIR ]] || die "$EX_USAGE" config_missing "環境目錄不存在"
-  local tmp size line key seen=" " k
+  RECEIPT_AI_MODE=""
+  RECEIPT_AI_STAGED=""
+  raw=$(mktemp "$ENV_DIR/.app-env-in.XXXXXX")
+  TMP_FILES+=("$raw")
   tmp=$(mktemp "$ENV_DIR/.app.env.XXXXXX")
   TMP_FILES+=("$tmp")
-  head -c "$((APP_ENV_MAX_BYTES + 1))" >"$tmp"
-  size=$(stat -c %s -- "$tmp")
+  chmod 0600 -- "$raw" "$tmp"
+  head -c "$((APP_ENV_MAX_BYTES + 1))" >"$raw"
+  size=$(stat -c %s -- "$raw")
   ((size > 0)) || die "$EX_USAGE" app_env_invalid "stdin 沒有內容"
   ((size <= APP_ENV_MAX_BYTES)) || die "$EX_USAGE" app_env_invalid "內容超過 $APP_ENV_MAX_BYTES 位元組"
-  [[ $(tr -d '\000\r' <"$tmp" | wc -c) -eq $size ]] || die "$EX_USAGE" app_env_invalid "內容不得包含 NUL 或 CR"
+  # read -d '' 只在讀到 NUL 時成功；CR 於下方逐行檢查。
+  if IFS= read -r -d '' nul <"$raw"; then die "$EX_USAGE" app_env_invalid "內容不得包含 NUL 或 CR"; fi
+  nul=""
   APP_ENV_KEYS_SEEN=()
   while IFS= read -r line || [[ -n $line ]]; do
-    [[ -z $line || $line == \#* ]] && continue
+    [[ $line != *$'\r'* ]] || die "$EX_USAGE" app_env_invalid "內容不得包含 NUL 或 CR"
+    if [[ -z $line || $line == \#* ]]; then printf '%s\n' "$line" >>"$tmp"; continue; fi
     [[ $line =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]] || die "$EX_USAGE" app_env_invalid "每行必須為 KEY=VALUE"
     key=${BASH_REMATCH[1]}
+    val=${BASH_REMATCH[2]}
+    case $key in
+      LM_RECEIPT_AI)
+        [[ $mode == deploy ]] || die "$EX_USAGE" app_env_invalid "不允許的鍵：$key"
+        ((ai_seen == 0)) || die "$EX_USAGE" app_env_invalid "重複的鍵：$key"
+        [[ $val == enabled || $val == disabled ]] || die "$EX_USAGE" app_env_invalid "LM_RECEIPT_AI 只接受 enabled 或 disabled"
+        ai_seen=1
+        ai=$val
+        continue
+        ;;
+      LM_OPENAI_API_KEY)
+        [[ $mode == deploy ]] || die "$EX_USAGE" app_env_invalid "不允許的鍵：$key"
+        [[ $ENVN == prod ]] || die "$EX_USAGE" receipt_ai_forbidden "Staging 不啟用收據 AI，不得提供 LM_OPENAI_API_KEY"
+        ((has_key == 0)) || die "$EX_USAGE" app_env_invalid "重複的鍵：$key"
+        [[ $val =~ $OPENAI_KEY_RE ]] || die "$EX_USAGE" app_env_invalid "LM_OPENAI_API_KEY 格式無效"
+        has_key=1
+        openai_key=$val
+        val=""
+        continue
+        ;;
+    esac
     [[ $APP_ENV_KEYS == *" $key "* ]] || die "$EX_USAGE" app_env_invalid "不允許的鍵：$key"
     [[ $seen != *" $key "* ]] || die "$EX_USAGE" app_env_invalid "重複的鍵：$key"
-    [[ -n ${BASH_REMATCH[2]} ]] || die "$EX_USAGE" app_env_invalid "鍵 $key 的值為空"
+    [[ -n $val ]] || die "$EX_USAGE" app_env_invalid "鍵 $key 的值為空"
     seen+="$key "
     APP_ENV_KEYS_SEEN+=("$key")
-  done <"$tmp"
+    printf '%s\n' "$line" >>"$tmp"
+  done <"$raw"
+  line=""
+  rm -f -- "$raw"
+  untrack "$raw"
+  if [[ $ENVN != prod && $ai == enabled ]]; then
+    die "$EX_USAGE" receipt_ai_forbidden "Staging 不啟用收據 AI（LM_RECEIPT_AI 只能是 disabled）"
+  fi
+  if [[ $ai == enabled ]] && ((has_key == 0)); then
+    die "$EX_USAGE" app_env_invalid "LM_RECEIPT_AI=enabled 需要恰一行 LM_OPENAI_API_KEY"
+  fi
+  if [[ $ai != enabled ]] && ((has_key == 1)); then
+    die "$EX_USAGE" app_env_invalid "只有 LM_RECEIPT_AI=enabled 時可以提供 LM_OPENAI_API_KEY"
+  fi
   for k in $APP_ENV_REQUIRED; do
     [[ $seen == *" $k "* ]] || die "$EX_USAGE" app_env_invalid "缺少必要的鍵：$k"
   done
-  chmod 0600 -- "$tmp"
+  if [[ $ENVN == prod ]]; then RECEIPT_AI_MODE=$ai; fi
+  if ((has_key == 1)); then
+    if [[ ! -e $SECRETS_DIR && ! -L $SECRETS_DIR ]]; then
+      mkdir -m 0700 -- "$SECRETS_DIR" || die "$EX_FAIL" receipt_ai_install_failed "無法建立 secrets/"
+    fi
+    check_secrets_dir
+    ktmp=$(mktemp "$SECRETS_DIR/.openai-api-key.XXXXXX") || die "$EX_FAIL" receipt_ai_install_failed "無法建立金鑰暫存檔"
+    TMP_FILES+=("$ktmp")
+    chmod 0600 -- "$ktmp"
+    printf '%s\n' "$openai_key" >"$ktmp"
+    openai_key=""
+    RECEIPT_AI_STAGED=$ktmp
+  fi
   APP_ENV_STAGED=$tmp
 }
 
@@ -887,7 +1020,38 @@ install_app_env() {
   mv -f -- "$APP_ENV_STAGED" "$ENV_DIR/app.env"
   untrack "$APP_ENV_STAGED"
   chmod 0600 -- "$ENV_DIR/app.env"
-  emit "{\"ok\":true,\"command\":\"app-env\",\"env\":$(jstr "$ENVN"),\"keys\":$(jarr "${APP_ENV_KEYS_SEEN[@]}")}"
+}
+
+# emit_app_env [receiptAi]：app-env 結果行；deploy 時加上寫入後的收據 AI 狀態。keys 只列 app.env 的鍵。
+emit_app_env() {
+  local extra=""
+  [[ -z ${1:-} ]] || extra=",\"receiptAi\":$(jstr "$1")"
+  emit "{\"ok\":true,\"command\":\"app-env\",\"env\":$(jstr "$ENVN"),\"keys\":$(jarr "${APP_ENV_KEYS_SEEN[@]}")$extra}"
+}
+
+# install_receipt_ai：在 do_deploy 中緊接 install_app_env（備份之後、Migration_Runner 之前）。
+# enabled：暫存檔 → chown 10001:10001（非 root 時比照 own_like_dir 容忍失敗）→ chmod 0400 → mv -f 到金鑰檔；
+# disabled：刪除金鑰檔；未提供開關：不變。RECEIPT_AI_STATE 為寫入後的實際狀態（enabled｜disabled）。
+install_receipt_ai() {
+  case $RECEIPT_AI_MODE in
+    enabled)
+      if ! chown "$APP_UID:$APP_UID" -- "$RECEIPT_AI_STAGED" 2>/dev/null; then
+        [[ ${EUID} -ne 0 ]] || die "$EX_FAIL" receipt_ai_install_failed "無法設定金鑰檔擁有者"
+      fi
+      chmod 0400 -- "$RECEIPT_AI_STAGED"
+      mv -f -- "$RECEIPT_AI_STAGED" "$OPENAI_KEY_FILE"
+      untrack "$RECEIPT_AI_STAGED"
+      RECEIPT_AI_STAGED=""
+      ;;
+    disabled)
+      rm -f -- "$OPENAI_KEY_FILE"
+      ;;
+  esac
+  if [[ $ENVN == prod && -f $OPENAI_KEY_FILE && ! -L $OPENAI_KEY_FILE ]]; then
+    RECEIPT_AI_STATE=enabled
+  else
+    RECEIPT_AI_STATE=disabled
+  fi
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -1075,9 +1239,15 @@ do_deploy() {
   local digest=$1 with_env=$2
   CMD=deploy
   require_phase idle
-  if [[ $with_env == 1 ]]; then CMD=app-env; stage_app_env; fi
+  # stdin（app.env 與收據 AI 控制鍵）全部在備份與任何 docker 指令之前驗證。
+  if [[ $with_env == 1 ]]; then CMD=app-env; stage_app_env deploy; fi
   do_backup
-  if [[ $with_env == 1 ]]; then CMD=app-env; install_app_env; fi
+  if [[ $with_env == 1 ]]; then
+    CMD=app-env
+    install_app_env
+    install_receipt_ai
+    emit_app_env "$RECEIPT_AI_STATE"
+  fi
   do_migrate "$digest"
   do_start "$digest"
   CMD=health
@@ -1519,8 +1689,10 @@ main() {
     app-env)
       (($# == 0)) || usage "app-env 不接受參數"
       acquire_lock
+      # 只寫入 app.env；收據 AI 的控制鍵在此為「不允許的鍵」（金鑰只在 deploy 建立新容器時生效）。
       stage_app_env
       install_app_env
+      emit_app_env
       ;;
     deploy)
       local with_env=0 d=""

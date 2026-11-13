@@ -89,6 +89,7 @@ import groovy.transform.Field
     [id: 'lm-prod-db', type: 'usernamePassword', description: 'Production Database 帳號（與 Staging 不同）'],
     [id: 'lm-prod-setup-token', type: 'string', description: 'Production 的 Setup_Token'],
     [id: 'lm-prod-smoke', type: 'file', fileName: 'smoke-password', description: 'Production 合成帳號 smoke-bot 的密碼'],
+    [id: 'lm-prod-openai-api-key', type: 'file', fileName: 'openai-api-key', description: 'Production 收據 AI 的 OpenAI API 金鑰（只在 Production Deploy 使用）'],
     [id: 'lm-jenkins-api-readonly', type: 'usernamePassword', description: 'Jenkins API 唯讀帳號（Overall/Read、Job/Read）'],
     [id: 'lm-jenkins-api-retention', type: 'usernamePassword', description: 'Jenkins API 帳號 lm-retention-bot（release/little-moments 的 Run/Update，僅設定 keepLog）'],
   ],

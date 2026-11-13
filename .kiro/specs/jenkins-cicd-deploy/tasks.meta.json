@@ -3016,6 +3016,49 @@
         "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
         "timestamp": 1794536464866
       }
+    ],
+    "27.1 Jenkins 憑證與 Pipeline 傳遞": [
+      {
+        "executionId": "a0c72d70-b7a8-4cec-9eb1-84d1bd3e8ceb",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794536651067
+      },
+      {
+        "executionId": "a0c72d70-b7a8-4cec-9eb1-84d1bd3e8ceb",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794538063082
+      }
+    ],
+    "27.3 文件": [
+      {
+        "executionId": "a0c72d70-b7a8-4cec-9eb1-84d1bd3e8ceb",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794538063912
+      },
+      {
+        "executionId": "a0c72d70-b7a8-4cec-9eb1-84d1bd3e8ceb",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794539179503
+      }
+    ],
+    "27.4 Checkpoint - Production 收據 AI 變更後確認所有測試通過": [
+      {
+        "executionId": "a0c72d70-b7a8-4cec-9eb1-84d1bd3e8ceb",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794539180228
+      },
+      {
+        "executionId": "a0c72d70-b7a8-4cec-9eb1-84d1bd3e8ceb",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794540735290
+      }
+    ],
+    "27. Production 收據 AI（OpenAI）": [
+      {
+        "executionId": "a0c72d70-b7a8-4cec-9eb1-84d1bd3e8ceb",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794540735485
+      }
     ]
   }
 }

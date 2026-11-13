@@ -141,15 +141,22 @@ secrets/
 | `release/` | `lm-prod-db` | Username with password | `.username`、`.password` | Production Database |
 | `release/` | `lm-prod-setup-token` | Secret text | `lm-prod-setup-token` | Production Setup_Token |
 | `release/` | `lm-prod-smoke` | Secret file | `lm-prod-smoke` | Production smoke-bot 密碼；帳號由 `lm-deploy prod smoke-account` 建立，見 [`deploy/README.md`](../../deploy/README.md#首次部署與-smoke-bot) |
+| `release/` | `lm-prod-openai-api-key` | Secret file（`openai-api-key`） | `lm-prod-openai-api-key` | Production 收據 AI 的 OpenAI 金鑰，只在 Production Deploy 綁定 |
 | `release/` | `lm-jenkins-api-readonly` | Username with password | `.username`（`lm-api-readonly`）、`.password`（API token） | fingerprint 查詢 main 的 Build_Record、`release/digest-lookup` |
 | `release/` | `lm-jenkins-api-retention` | Username with password | `.username`（`lm-retention-bot`）、`.password`（API token） | `ci/keep-log.mjs` 設定 keepLog（Req 21.6） |
 | `infra/` | `lm-github-app` | GitHub App | 同上 | checkout |
 | `infra/` | `lm-registry-push` | Username with password | `.username`、`.password` | 推送 Build_Image（與 `release/` 同一個 `lm-push` 帳號與密碼） |
 
+`lm-prod-openai-api-key` 的秘密檔是 `secrets/little-moments/release/lm-prod-openai-api-key`，內容為一行 OpenAI API 金鑰（`sk-` 開頭，不得含空白或 CR）：
+
+- 放置：在 `<controller-dir>` 以上方的 `put little-moments/release/lm-prod-openai-api-key` 隱藏輸入寫入，不要以 `echo`、`cat` 或編輯器處理金鑰。第一次放入必須在複製新的 `jobs.groovy` 並重新載入之前完成，缺少時 seed 失敗。
+- 輪替：在 OpenAI 後台建立新金鑰，以同一個 `put` 覆寫後執行「Reload existing configuration」（不要在 Release_Tag 建置進行中更換）。新金鑰在下一次 Production 部署建立的新槽位生效；finalize 移除舊槽位後，才在 OpenAI 撤銷舊金鑰。
+- 第一次啟用的完整順序（含 Deploy_Host 的 `install.sh` 與 `/admin` 政策）、金鑰外洩時的處理與停用方式見 [`deploy/README.md` 的「Production 收據 AI（OpenAI）」](../../deploy/README.md#production-收據-aiopenai)。
+
 規則（Req 2.4、2.5、15.1）：
 
 - 沒有任何 GLOBAL 範圍的系統憑證。PR 建置位於 `ci/`，請求表中任何 `release/` 專屬憑證時 `withCredentials` 直接失敗。
-- `CAMPING_OPENAI_*` 預設不定義任何憑證（Req 15.6、15.8）。若 Release_Approver 決定為某一環境啟用（Req 15.7），只能在 `release/` 新增憑證（例如 Secret file `lm-prod-openai-api-key`，部署時以金鑰檔提供並設定 `CAMPING_OPENAI_API_KEY_FILE`），並同時修改 Pipeline 與本表；`ci/` 永遠不得定義。
+- 收據 AI（`CAMPING_OPENAI_*`，Req 15.6–15.8）：Release_Approver 決定只在 Production 啟用，唯一的 OpenAI 憑證是 `release/` 的 Secret file `lm-prod-openai-api-key`，只在 Production Deploy 的 `lm-deploy prod deploy` 綁定，金鑰經 SSH stdin 交給 `lm-deploy`，由它寫成 Deploy_Host 上的金鑰檔並設定 `CAMPING_OPENAI_API_KEY_FILE`。Staging、Test_Environment、還原演練與 `ci/` 的建置不使用任何 OpenAI 憑證；`ci/` 永遠不得定義。新增或移除此憑證時，同時修改 `jobs.groovy`、Pipeline 與本表。
 - `lm-jenkins-api-readonly` 的帳號只有 Overall/Read 與 Job/Read（全域 `authenticated`）。
 - `release/` 與 `infra/` 的 `lm-registry-push.password` 必須相同（Registry 只有一個 `lm-push`）：`sudo cmp secrets/little-moments/release/lm-registry-push.password secrets/little-moments/infra/lm-registry-push.password` 沒有輸出即相同。
 
@@ -347,7 +354,7 @@ Multibranch 掃描或 checkout 出現 `Couldn't authenticate with GitHub app ID 
 ### 設定載入
 
 1. 「Manage Jenkins → Configuration as Code」顯示無錯誤；`ci/`、`release/`、`infra/` 與 6 個 Job 皆已建立（Job DSL 的 `buildRetention is deprecated` 警告是預期的）。
-2. `ci/` 資料夾的 Credentials 只顯示 `lm-github-app` 與 `lm-registry-pull`；`release/` 顯示上表 17 個；`infra/` 顯示 2 個；「System」只有 `lm-github-webhook-secret`（SYSTEM 範圍）。
+2. `ci/` 資料夾的 Credentials 只顯示 `lm-github-app` 與 `lm-registry-pull`；`release/` 顯示上表 18 個；`infra/` 顯示 2 個；「System」只有 `lm-github-webhook-secret`（SYSTEM 範圍）。
 3. 非管理員沒有建置權限：以 `lm-api-readonly` 的 API token（放在 0600 的 curl 設定檔，內容 `user = "lm-api-readonly:<api-token>"`）執行 `curl -s -o /dev/null -w '%{http_code}\n' -K <curl-config> -X POST https://jenkins.our-littlemoments.com/job/release/job/rollback/build` → 403。日後改用外部 security realm 時，再以 `lm-developers` 成員登入確認：`ci/little-moments` 的建置頁沒有 Replay、Delete build、Edit Build Information、Configure；`release/little-moments` 沒有 Build Now。
 4. Lockable Resources 頁面顯示 `lm-staging` 與 `lm-prod`。
 5. 「Manage Jenkins → Nodes」中 `lm-trusted-1` 與 `lm-untrusted-1` 皆為上線狀態。
