@@ -1016,7 +1016,7 @@
     - 既有的 SBOM `inOrder` 測試與映像工具容器測試不修改並通過；不刪除斷言、不放寬比對，有調整的斷言逐項記錄於任務回報
     - _Requirements: 17.4, 17.9_
 
-  - [ ] 30.3 Checkpoint - Syft 修正後確認所有測試通過
+  - [x] 30.3 Checkpoint - Syft 修正後確認所有測試通過
     - 執行 `bun test tests/ci-jenkinsfile.test.js tests/ci-jenkinsfile-size.test.js tests/ci-jenkinsfile-cps.test.js tests/ci-jenkinsfile-shell-env.test.js tests/ci-lint.test.js`（明列檔名，Windows 上不依賴 glob 展開），再以 Bun 1.4.4 與臨時 Ephemeral_Database（PostgreSQL 17，用完即刪）執行完整單元測試套件；全部通過。Ensure all tests pass, ask the user if questions arise.
     - 在回報寫明維運者的下一步：合併到 `main` 後對 `release/little-moments » main` 按 Build Now，預期 SBOM 階段通過並封存 `reports/sbom.cdx.json`；之後的階段失敗時提供失敗的階段與主控台訊息
     - _Requirements: 17.4, 17.9_
