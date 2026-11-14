@@ -1,5 +1,69 @@
 {
   "$comment": "Approved_Exception 清單（Requirement 6.5、6.6、6.9、7.8、17.2；design.md Data Models「Finding 與 Approved_Exception」）。每個項目：{ \"id\": 漏洞或規則識別碼, \"location\": 套件名稱或檔案路徑（須與正規化後的 Finding 完全相同）, \"reason\": 理由, \"approver\": 核准人, \"expires\": \"YYYY-MM-DD\"（當日仍有效） }。缺少任一欄位或日期無效的例外不會套用。秘密（kind=secret）與安全測試套件（scanner=security-suite）的結果永遠不可豁免。由 ci/policy/evaluate.mjs 讀取。",
   "version": 1,
-  "exceptions": []
+  "exceptions": [
+    {
+      "id": "CVE-2026-84243",
+      "location": "libc6",
+      "reason": "oven/bun:1.4.4-distroless（Debian 13 trixie）的 libc6 2.41-12+deb13u4；Debian security tracker 2026-11-14 顯示 trixie 尚無修正版本（vulnerable, no DSA），重建映像無法消除。gettext 系列函式。由 Release_Approver 核准至到期日；到期後 Image Scan 重新阻擋，須重新檢查 Debian 修正或更換基底映像。",
+      "approver": "jacklin",
+      "expires": "2027-11-14"
+    },
+    {
+      "id": "CVE-2026-86805",
+      "location": "libc6",
+      "reason": "oven/bun:1.4.4-distroless（Debian 13 trixie）的 libc6 2.41-12+deb13u4；Debian security tracker 2026-11-14 顯示 trixie 尚無修正版本（vulnerable, no DSA），重建映像無法消除。動態載入器（ld.so）的 TOCTOU 競爭。由 Release_Approver 核准至到期日；到期後 Image Scan 重新阻擋，須重新檢查 Debian 修正或更換基底映像。",
+      "approver": "jacklin",
+      "expires": "2027-11-14"
+    },
+    {
+      "id": "CVE-2026-95818",
+      "location": "libc6",
+      "reason": "oven/bun:1.4.4-distroless（Debian 13 trixie）的 libc6 2.41-12+deb13u4；Debian security tracker 2026-11-14 顯示 trixie 尚無修正版本（vulnerable, no DSA），重建映像無法消除。動態載入器（ld.so）堆疊緩衝區溢位。由 Release_Approver 核准至到期日；到期後 Image Scan 重新阻擋，須重新檢查 Debian 修正或更換基底映像。",
+      "approver": "jacklin",
+      "expires": "2027-11-14"
+    },
+    {
+      "id": "CVE-2026-100290",
+      "location": "libc6",
+      "reason": "oven/bun:1.4.4-distroless（Debian 13 trixie）的 libc6 2.41-12+deb13u4；Debian security tracker 2026-11-14 顯示 trixie 尚無修正版本（vulnerable, no DSA），重建映像無法消除。regcomp／regexec。由 Release_Approver 核准至到期日；到期後 Image Scan 重新阻擋，須重新檢查 Debian 修正或更換基底映像。",
+      "approver": "jacklin",
+      "expires": "2027-11-14"
+    },
+    {
+      "id": "CVE-2026-115819",
+      "location": "libc6",
+      "reason": "oven/bun:1.4.4-distroless（Debian 13 trixie）的 libc6 2.41-12+deb13u4；Debian security tracker 2026-11-14 顯示 trixie 尚無修正版本（vulnerable, no DSA），重建映像無法消除。寬字元 scanf 系列（swscanf、fwscanf、wscanf）。由 Release_Approver 核准至到期日；到期後 Image Scan 重新阻擋，須重新檢查 Debian 修正或更換基底映像。",
+      "approver": "jacklin",
+      "expires": "2027-11-14"
+    },
+    {
+      "id": "CVE-2018-20796",
+      "location": "libc6",
+      "reason": "oven/bun:1.4.4-distroless（Debian 13 trixie）的 libc6 2.41-12+deb13u4；Debian security tracker 2026-11-14 顯示 trixie 尚無修正版本（vulnerable, no DSA），重建映像無法消除。regexec 遞迴（Debian 長期未修正的舊 CVE）。由 Release_Approver 核准至到期日；到期後 Image Scan 重新阻擋，須重新檢查 Debian 修正或更換基底映像。",
+      "approver": "jacklin",
+      "expires": "2027-11-14"
+    },
+    {
+      "id": "CVE-2019-1010022",
+      "location": "libc6",
+      "reason": "oven/bun:1.4.4-distroless（Debian 13 trixie）的 libc6 2.41-12+deb13u4；Debian security tracker 2026-11-14 顯示 trixie 尚無修正版本（vulnerable, no DSA），重建映像無法消除。堆疊保護繞過（上游有爭議，Debian 長期未修正）。由 Release_Approver 核准至到期日；到期後 Image Scan 重新阻擋，須重新檢查 Debian 修正或更換基底映像。",
+      "approver": "jacklin",
+      "expires": "2027-11-14"
+    },
+    {
+      "id": "CVE-2019-1010023",
+      "location": "libc6",
+      "reason": "oven/bun:1.4.4-distroless（Debian 13 trixie）的 libc6 2.41-12+deb13u4；Debian security tracker 2026-11-14 顯示 trixie 尚無修正版本（vulnerable, no DSA），重建映像無法消除。ldd 處理惡意 ELF（上游有爭議，Debian 長期未修正）。由 Release_Approver 核准至到期日；到期後 Image Scan 重新阻擋，須重新檢查 Debian 修正或更換基底映像。",
+      "approver": "jacklin",
+      "expires": "2027-11-14"
+    },
+    {
+      "id": "CVE-2019-9192",
+      "location": "libc6",
+      "reason": "oven/bun:1.4.4-distroless（Debian 13 trixie）的 libc6 2.41-12+deb13u4；Debian security tracker 2026-11-14 顯示 trixie 尚無修正版本（vulnerable, no DSA），重建映像無法消除。regexec 遞迴（上游有爭議，Debian 長期未修正）。由 Release_Approver 核准至到期日；到期後 Image Scan 重新阻擋，須重新檢查 Debian 修正或更換基底映像。",
+      "approver": "jacklin",
+      "expires": "2027-11-14"
+    }
+  ]
 }
