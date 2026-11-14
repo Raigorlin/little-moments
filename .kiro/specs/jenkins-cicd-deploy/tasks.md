@@ -1021,6 +1021,21 @@
     - 在回報寫明維運者的下一步：合併到 `main` 後對 `release/little-moments » main` 按 Build Now，預期 SBOM 階段通過並封存 `reports/sbom.cdx.json`；之後的階段失敗時提供失敗的階段與主控台訊息
     - _Requirements: 17.4, 17.9_
 
+- [x] 31. Property 17 測試產生器的保留帳號名稱
+  - [x] 31.1 第一次設定的帳號名稱排除保留名稱
+    - 背景與設計見 design.md Components 第 29 節：建置 #16（commit `cc406a4e8a01d57fce9f0db70b336b77a7a8ec5e`）的 Unit Tests 只有 Property 17（任務 3.6，`tests/setup-single-use.test.js`）失敗。fast-check 反例（seed `1236998821`）的管理員帳號名稱是保留名稱 `api`，`validateUsername` 正確地回應 400，測試卻預期 200。原因在測試的 `usernameArb` 沒有排除保留名稱，不在 `server/`
+    - 開始前重新讀取 `tests/setup-single-use.test.js`、`server/accounts.js` 的 `RESERVED`、`validateUsername` 與 `/api/setup` 路由（`needsSetup` 在讀取 body 之前回應 409），以及 `tests/setup-concurrency.test.js`、`tests/setup-validation.test.js` 排除保留名稱的寫法；暫時在 `fc.assert` 傳入 `seed: 1236998821` 在修正前重現失敗（不提交；無法重現時在回報說明，並以範例 (a) 確認原因）
+    - `tests/setup-single-use.test.js`：宣告與 `server/accounts.js` 相同的 `RESERVED` 常數，新增 `adminNameArb = usernameArb.filter(u => !RESERVED.has(u))`，只用於 property 的 `adminName` 參數；`followUpArb.username` 維持 `usernameArb`
+    - 新增範例測試：(a) 以 `api` 作為第一次設定的帳號名稱時回應 400、不建立使用者，且 `guard.verify(token)` 仍為 `true`；(b) 設定完成後，以 `api` 為帳號名稱、附原 token 的設定請求回應 409，使用者集合不變；(c) 以 seed `1236998821` 執行一次 Property 17 並通過
+    - 不變：Property 17 的斷言、`numRuns: 100`、300 秒逾時、`server/` 的任何檔案；不以重試、降低 `numRuns` 或固定 seed 處理
+    - 盤點其他會建立使用者的測試（設定、註冊、邀請註冊、`create-admin`、`reset-password`、Smoke_Account）中以產生器產生帳號名稱者，確認都排除保留名稱；需要修改時同樣只加上排除，並在回報逐項列出
+    - _Requirements: 9.5, 9.6_
+
+  - [x] 31.2 Checkpoint - 建置 #16 修正後確認所有測試通過
+    - 以 Bun 1.4.4 連續執行 `bun test tests/setup-single-use.test.js tests/setup-concurrency.test.js tests/setup-validation.test.js` 5 次（明列檔名），全部通過；再以臨時 Ephemeral_Database（PostgreSQL 17，用完即刪）執行 `bun run build` 與完整單元測試套件，全部通過。Ensure all tests pass, ask the user if questions arise.
+    - 在回報寫明維運者的下一步：合併到 `main` 後對 `release/little-moments » main` 按 Build Now，預期 Unit Tests 通過，之後 SBOM 階段通過並封存 `reports/sbom.cdx.json`；之後的階段失敗時提供失敗的階段與主控台訊息
+    - _Requirements: 9.5, 9.6, 17.4_
+
 ## Notes
 
 - 標記 `*` 的子任務為選用（property test、整合測試與額外檢查），可為加快 MVP 而略過。
@@ -1039,6 +1054,7 @@
 - 任務 28 來自使用者的決定：所有位置的 Bun 升級到 1.4.4。原因是 Bun 1.3.14 上 `expect(<Bun.SQL 查詢的 promise>).rejects`／`.resolves` 不送出查詢並使 `afterAll` 卡住、Property 29 在 `reserved.begin()` 出現 unhandled rejection（影響正式遷移，Req 12.4）、Property 20 間歇回應 401，以及 Linux 上完整套件 876 秒。Req 3.2、16.2 與 Glossary 的 Build_Image 已改為 Bun 1.4.x（精確版本 1.4.4）；沒有新的 Correctness Property。28.1 與 28.2 都會影響 `tests/ci-lint.test.js` 的 Bun 版本一致性測試，所以分在不同波次。28.4 取代 26.3，26.3 排在 28.4 之後只為標記完成。28.5 需要維運者在 28.1–28.4 合併後以 `infra/build-image` 重建 Build_Image 並提供 digest，期間 `ci/` 與 `release/` 的建置在 Toolchain 失敗（design.md Components 第 26.4 節），所以排在最後；28.5 與 27.1 都修改 `Jenkinsfile`，放在不同波次。28.6 來自 28.3 的結果：Property 6 的測試產生器先把項目標為不合格，之後的重複 ID 步驟又讓它變回合法，預期結果因此錯誤；只修正測試，`validateInventory` 與 `ci/` 不變，排在 28.3 之後、28.4 之前（編號接在 28.5 之後，既有任務 ID 不變）。28.3 在 WSL1 上的完整套件為 665 秒與 647 秒，使用者決定本次不調整測試速度，600 秒目標以 28.5 合併後的 Jenkins 建置量測。
 - 任務 29 來自 192.168.1.121 上建置 #11（commit `c084474`）：第一次通過 Toolchain 到 Browser Tests，在 Security Scan 以 9 筆阻擋結果失敗，全部是測試假值或已審查的例外。29.1 改寫兩個符合 Gitleaks 規則的測試假值（秘密仍不可豁免）；29.2 依使用者的決定以 `LM_GITLEAKS_HISTORY_BASE`（Secret_History_Baseline，Req 6.1、6.10 與 Glossary）作為非 PR 建置 Git 歷史掃描的固定起點，起點無效時歷史掃描未完成（fail closed），不再有完整歷史的分支；29.3 讓 Semgrep 1.185.0 套用三個已審查的排除路徑，沒有規則層級的寫法可行時停止詢問使用者。沒有新的 Correctness Property。29.1 與 29.2 修改不同的檔案，放在同一波次；29.3 也可能修改 `Jenkinsfile` 與 `tests/ci-jenkinsfile.test.js`（Semgrep 版本步驟），所以排在 29.2 之後；29.4 需要 29.1–29.3 的結果。
 - 任務 30 來自 192.168.1.121 上建置 #14（commit `8da0868`）：第一次通過 Image Scan，在 SBOM 以 `Syft 無法產生 SBOM（結束碼 1）` 失敗。Trusted Agent 上的手動重現顯示 Syft 無法在 `/tmp` 建立目錄（`--tmpfs` 複製了 Syft 映像 `/tmp` 的權限模式），`oci-archive:` 也相同；加上 `mode=1777` 後產生 348 KB 的 SBOM。依 design.md Components 第 28 節，只修改 Syft 的 tmpfs，並移除 `--quiet`、把 stderr 寫入 `$LM_IMG_DIR` 下的檔案，失敗時印出最後 20 行（Requirement 17.9）。沒有新的 Correctness Property。30.2 測試 30.1 的結果，排在 30.1 之後。
+- 任務 31 來自 192.168.1.121 上建置 #16（commit `cc406a4`）：Init 到 Build 通過，Unit Tests 只有 Property 17 失敗，之後的階段被略過，所以任務 30 的 Syft 修正尚未在 Jenkins 上確認。fast-check 產生了保留帳號名稱 `api` 作為第一次設定的管理員名稱，`validateUsername` 正確地回應 400。依 design.md Components 第 29 節只修正測試的產生器並加上範例與 seed 回歸案例，`server/` 不變；沒有新的需求或 Correctness Property。同一次建置的完整 `bun test` 為 282 秒，任務 28.4 的 600 秒目標已在 Jenkins 上確認。31.2 需要 31.1 的結果。
 - 任務 18 合併 security-harden：兩分支沒有共同歷史，以 main 的 `cd06606` 作為合成共同基底進行三方合併；應用程式功能採用 security-harden，部署、設定模型、Setup_Token 與 PostgreSQL 資料層採用 main；收據 AI 改為 OpenAI（`CAMPING_OPENAI_*`）。
 
 ## Task Dependency Graph
@@ -1114,7 +1130,9 @@
     { "id": 65, "tasks": ["29.5"] },
     { "id": 66, "tasks": ["30.1"] },
     { "id": 67, "tasks": ["30.2"] },
-    { "id": 68, "tasks": ["30.3"] }
+    { "id": 68, "tasks": ["30.3"] },
+    { "id": 69, "tasks": ["31.1"] },
+    { "id": 70, "tasks": ["31.2"] }
   ]
 }
 ```

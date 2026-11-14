@@ -1921,6 +1921,32 @@ Groovy 端不變：`syftRc != 0` 時 `lmImageErrors` 的訊息與 `error(...)` �
 - **`tests/ci-jenkinsfile-size.test.js`、`tests/ci-jenkinsfile-cps.test.js`、`tests/ci-jenkinsfile-shell-env.test.js`** 與映像工具容器規則的既有斷言不變且通過（函式 ≤ 250 行、CPS 規則、`${X:-}` 規則、非 root、`--read-only`、`--cap-drop ALL`、`no-new-privileges`）。
 - **維運者檢查**：合併後對 `release/little-moments » main` 按 Build Now，SBOM 階段通過，`reports/sbom.cdx.json` 與 `reports/sbom-summary.json` 已封存；之後的 Syft 失敗會在主控台顯示 `Syft 錯誤輸出（最後 20 行）：` 與 Syft 的錯誤訊息。
 
+### 29. Property 17 的測試產生器產生保留帳號名稱（新增；Req 9.5、9.6）
+
+`release/little-moments » main` 建置 #16（commit `cc406a4e8a01d57fce9f0db70b336b77a7a8ec5e`）通過 Init 到 Build，Unit Tests 以 1 個失敗結束：Property 17（任務 3.6，`tests/setup-single-use.test.js`）。之後的階段都被略過，第 28 節的 Syft 修正尚未在 Jenkins 上確認。同一次建置的完整 `bun test` 為 282 秒（1775 個測試、3 個略過），低於第 26.5 節的 600 秒目標，這一項已確認。
+
+#### 29.1 原因
+
+fast-check 的反例（seed `1236998821`）中，管理員帳號名稱 `adminName` 是 `api`。第一次 `POST /api/setup` 回應 400，測試預期 200。`server/accounts.js` 的 `validateUsername` 拒絕保留名稱（`RESERVED`：`api`、`admin`、`setup`、`login`、`register`、`logout`、`demo`、`assets`），回應「這個帳號名稱已保留，請換一個。」，這是正確的行為。測試的 `usernameArb`（`/^[a-z][a-z0-9-]{2,15}$/`）沒有排除這些名稱；fast-check 偏好短字串，三個字母的 `api` 偶爾會被產生。同類的 `tests/setup-concurrency.test.js` 與 `tests/setup-validation.test.js` 已以 `.filter(u => !RESERVED.has(u))` 排除，只有本檔案漏掉。失敗取決於 seed，所以任務 30.3 的本機完整套件沒有遇到。
+
+#### 29.2 修正（只在測試）
+
+- `tests/setup-single-use.test.js` 宣告與 `server/accounts.js` 相同的 `RESERVED` 常數（與另外兩個測試檔的寫法相同），新增 `adminNameArb = usernameArb.filter(u => !RESERVED.has(u))`，只用於 property 的 `adminName` 參數（第一次設定）。
+- 後續請求的 `followUpArb.username` 維持 `usernameArb`：管理員設定完成後，`/api/setup` 在讀取 body 之前就以 409 回應（`needsSetup` 檢查），保留名稱仍應得到 409，保留這種輸入可以涵蓋檢查順序。
+- 新增範例測試：(a) 以 `api` 作為第一次設定的帳號名稱時回應 400、不建立使用者，且 `guard.verify(token)` 仍為 `true`；(b) 設定完成後，以 `api` 為帳號名稱、附原 token 的設定請求回應 409，使用者集合不變。
+- 以 seed `1236998821` 執行一次 Property 17 作為回歸案例（修正後的產生器在相同 seed 下產生的值不同，此案例只確認該 seed 通過）。
+- Property 17 的斷言、`numRuns: 100` 與 300 秒逾時不變；`server/` 不變。
+
+#### 29.3 不採用的做法
+
+- 讓伺服器接受保留名稱：保留名稱避免帳號名稱與路由混淆，是既有的行為。
+- 以重試、降低 `numRuns` 或固定 seed 處理：只會隱藏產生器的錯誤。
+
+#### 29.4 測試
+
+- **`tests/setup-single-use.test.js`**：第 29.2 節的修正與範例。修正前以 seed `1236998821` 重現失敗（暫時加入，不提交）。
+- **盤點**：其他會建立使用者的測試（設定、註冊、邀請註冊、`create-admin`、`reset-password`、Smoke_Account）中，以產生器產生帳號名稱者都排除保留名稱；任務 31.1 確認並在回報列出。
+- **維運者檢查**：合併後對 `release/little-moments » main` 按 Build Now，Unit Tests 通過，之後 SBOM 階段通過並封存 `reports/sbom.cdx.json`。
 ## Data Models
 
 ### PostgreSQL Schema（`migrations/0001_initial.sql`）
@@ -2669,6 +2695,14 @@ test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ 
 - **實測**：Trusted Agent 上以相同參數加 `mode=1777` 執行 Syft，結束碼為 0，產生 348 KB 的 CycloneDX SBOM。
 - **維運者檢查**：合併後的建置通過 SBOM 階段。
 
+### Property 17 的保留帳號名稱（Components 第 29 節）
+
+不新增 PBT：修正的是既有 Property 17 的產生器，Property 的內容與斷言不變。測試如下（細節見第 29.4 節）：
+
+- **產生器**：第一次設定的帳號名稱排除保留名稱；後續請求的帳號名稱不排除，仍預期 409。
+- **範例**：保留名稱作為第一次設定的帳號名稱時回應 400 且 Setup_Token 仍有效；設定完成後回應 409。
+- **回歸**：seed `1236998821` 通過。
+- **維運者檢查**：合併後的建置通過 Unit Tests 與 SBOM 階段。
 ## Open Risks
 
 1. **資料層重寫工作量**：`server/accounts.js` 約 50 個同步 prepared statement、所有路由與 `tx` 呼叫點都要改為 async，測試檔也要全面改寫。這是本功能最大的工作項目，也最容易引入行為差異。緩解：先建立 `queries.js` 一對一轉換、以既有測試作回歸基準、用全域 advisory lock 保留單一寫入者語意；Bun.SQL 若在 BIGINT 型別、錯誤型別或重連上有問題，切換到 `postgres@3.4.7`。

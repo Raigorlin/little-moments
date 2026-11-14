@@ -3204,6 +3204,52 @@
         "chatSessionId": "sess_371c63d7-234f-4666-bb61-6354b599d250",
         "timestamp": 1794623057597
       }
+    ],
+    "31.1 第一次設定的帳號名稱排除保留名稱": [
+      {
+        "executionId": "c8b9ec31-8449-4c07-803e-1044abc51553",
+        "chatSessionId": "sess_81f698d9-655f-4934-a573-c2be20e5d9ab",
+        "timestamp": 1794628079984
+      },
+      {
+        "executionId": "c8b9ec31-8449-4c07-803e-1044abc51553",
+        "chatSessionId": "sess_81f698d9-655f-4934-a573-c2be20e5d9ab",
+        "timestamp": 1794628086693
+      },
+      {
+        "executionId": "c8b9ec31-8449-4c07-803e-1044abc51553",
+        "chatSessionId": "sess_81f698d9-655f-4934-a573-c2be20e5d9ab",
+        "timestamp": 1794628549191
+      }
+    ],
+    "31.2 Checkpoint - 建置 #16 修正後確認所有測試通過": [
+      {
+        "executionId": "c8b9ec31-8449-4c07-803e-1044abc51553",
+        "chatSessionId": "sess_81f698d9-655f-4934-a573-c2be20e5d9ab",
+        "timestamp": 1794628080247
+      },
+      {
+        "executionId": "c8b9ec31-8449-4c07-803e-1044abc51553",
+        "chatSessionId": "sess_81f698d9-655f-4934-a573-c2be20e5d9ab",
+        "timestamp": 1794628549571
+      },
+      {
+        "executionId": "66082c3f-a80f-4baa-a18b-8b8ae2e3727c",
+        "chatSessionId": "sess_81f698d9-655f-4934-a573-c2be20e5d9ab",
+        "timestamp": 1794629248421
+      },
+      {
+        "executionId": "66082c3f-a80f-4baa-a18b-8b8ae2e3727c",
+        "chatSessionId": "sess_81f698d9-655f-4934-a573-c2be20e5d9ab",
+        "timestamp": 1794630755157
+      }
+    ],
+    "31. Property 17 測試產生器的保留帳號名稱": [
+      {
+        "executionId": "66082c3f-a80f-4baa-a18b-8b8ae2e3727c",
+        "chatSessionId": "sess_81f698d9-655f-4934-a573-c2be20e5d9ab",
+        "timestamp": 1794630755417
+      }
     ]
   }
 }
