@@ -1001,6 +1001,26 @@
     - 在回報寫明維運者的下一步（design.md 第 27.7 節）：合併到 `main` 後對 `release/little-moments » main` 按 Build Now，預期主控台顯示 `Gitleaks Git 歷史範圍：c08447436cb3db000b577a3de28f8be8acbee540..<sha>`、Semgrep 版本步驟沒有 `Killed`、Security Scan 通過並進入之後的階段；請維運者回報 Unit Tests 的實際時間（JUnit 報告的總時間）以確認 28.4 的 600 秒目標，之後的階段失敗時提供失敗的階段與主控台訊息
     - _Requirements: 6.1, 6.3, 6.8, 23.1_
 
+- [x] 30. SBOM 階段的 Syft 暫存目錄修正
+  - [x] 30.1 Syft 的 tmpfs 與錯誤輸出
+    - 背景與設計見 design.md Components 第 28 節：建置 #14（commit `8da08682efa830160671066d288cfa3f0b2a38bc`）通過 Image Scan，在 SBOM 以 `Syft 無法產生 SBOM（結束碼 1），不推送 App_Image` 失敗。原因是 `--tmpfs` 複製 Syft 映像 `/tmp` 的權限模式，非 root uid 無法在 `/tmp` 建立 stereoscope 目錄；`--quiet` 隱藏了錯誤訊息
+    - 開始前重新讀取 `Jenkinsfile` 的 `runSbomStage()`、`imageToolImages()` 與其他映像工具（Trivy、crane、cosign）的 `docker run`，以及 `tests/ci-jenkinsfile.test.js` 的 SBOM 與映像工具容器測試、`tests/ci-jenkinsfile-size.test.js`、`tests/ci-jenkinsfile-cps.test.js`、`tests/ci-jenkinsfile-shell-env.test.js`
+    - `Jenkinsfile` 的 `runSbomStage()`（第 28.1、28.2 節）：Syft 的 tmpfs 改為 `--tmpfs /tmp:rw,nosuid,nodev,size=4g,mode=1777`；移除 `--quiet`；`docker run` 的 stderr 導向 `"$LM_IMG_DIR/syft.log"`，開始時與其他輸出檔一起 `rm -f`；`rc` 非 0（含 `rc=3`）時先 `echo` 一行說明，再 `tail -n 20 "$LM_IMG_DIR/syft.log"`；不論結果都在 `exit "$rc"` 之前 `rm -f "$LM_IMG_DIR/syft.log"`。更新 `runSbomStage()` 上方的註解
+    - 不變：Trivy、crane 與 cosign 的 `docker run`；Syft 的非 root uid／gid、`--read-only`、`--cap-drop ALL`、`no-new-privileges`、`--network none`、`size=4g`、唯讀的 `/scan` 掛載、`SYFT_CHECK_FOR_APP_UPDATE=false`、逾時；`scan docker-archive:/scan/image.tar --output cyclonedx-json=/out/sbom.cdx.json` 字串（既有 SBOM `inOrder` 測試的第一個字串）；Groovy 端 `syftRc != 0` 的訊息與 `error(...)`；`ci/sbom-check.mjs` 與 Build_Record 的寫入
+    - 符合既有的 Jenkinsfile 測試限制：函式 ≤ 250 行、`pipeline {}` ≤ 400 行、CPS 規則、可能未設定的變數以 `${X:-}` 展開、映像工具容器規則
+    - _Requirements: 17.4, 17.9_
+
+  - [x] 30.2 Syft 的靜態測試
+    - 背景與設計見 design.md Components 第 28.4 節
+    - `tests/ci-jenkinsfile.test.js`：Syft 的 `docker run` 的 tmpfs 含 `mode=1777`；Syft 的指令不含 `--quiet`；stderr 導向 `"$LM_IMG_DIR/syft.log"`（不在 `reports/` 下）；失敗路徑含 `tail -n 20 "$LM_IMG_DIR/syft.log"`，之後有 `rm -f "$LM_IMG_DIR/syft.log"` 與 `exit "$rc"`；Trivy、crane 與 cosign 的 tmpfs 不含 `mode=1777`
+    - 既有的 SBOM `inOrder` 測試與映像工具容器測試不修改並通過；不刪除斷言、不放寬比對，有調整的斷言逐項記錄於任務回報
+    - _Requirements: 17.4, 17.9_
+
+  - [ ] 30.3 Checkpoint - Syft 修正後確認所有測試通過
+    - 執行 `bun test tests/ci-jenkinsfile.test.js tests/ci-jenkinsfile-size.test.js tests/ci-jenkinsfile-cps.test.js tests/ci-jenkinsfile-shell-env.test.js tests/ci-lint.test.js`（明列檔名，Windows 上不依賴 glob 展開），再以 Bun 1.4.4 與臨時 Ephemeral_Database（PostgreSQL 17，用完即刪）執行完整單元測試套件；全部通過。Ensure all tests pass, ask the user if questions arise.
+    - 在回報寫明維運者的下一步：合併到 `main` 後對 `release/little-moments » main` 按 Build Now，預期 SBOM 階段通過並封存 `reports/sbom.cdx.json`；之後的階段失敗時提供失敗的階段與主控台訊息
+    - _Requirements: 17.4, 17.9_
+
 ## Notes
 
 - 標記 `*` 的子任務為選用（property test、整合測試與額外檢查），可為加快 MVP 而略過。
@@ -1018,6 +1038,7 @@
 - 任務 27 來自 Release_Approver `jacklin` 的決定：只在 Production_Environment 啟用 OpenAI 收據辨識，Staging、還原演練與 `ci/` 的建置維持停用。金鑰是 `release/` 的 Secret file `lm-prod-openai-api-key`，只在 Production Deploy 的 SSH 呼叫內綁定，經既有的 `--app-env-stdin` 串流（明確的開關 `LM_RECEIPT_AI` 加上 `LM_OPENAI_API_KEY`）交給 `lm-deploy prod deploy`，由它寫入 `/srv/lm/prod/secrets/openai-api-key`（10001:10001、0400），Compose 以長語法唯讀掛載到 `app-blue`／`app-green`，停用時掛載 `/dev/null`。Requirement 15.6–15.8 已涵蓋此情境，需求文件不需修改；沒有新的 Correctness Property（變更在 Groovy、bash 與 Compose 設定），以靜態檢查、bats、Compose 設定測試與文件測試驗證。27.1 與 27.2 修改不同的檔案（Compose 的測試放在新的 `tests/compose-receipt-ai.test.js`），放在同一波次；兩者都在任務 26 之後，因為 27.1 也修改 `Jenkinsfile`。主機與 Jenkins 的實際啟用順序（秘密檔 → `install.sh` → 重新載入 CasC → `main` → Release_Tag）由維運者依 `deploy/README.md` 執行。
 - 任務 28 來自使用者的決定：所有位置的 Bun 升級到 1.4.4。原因是 Bun 1.3.14 上 `expect(<Bun.SQL 查詢的 promise>).rejects`／`.resolves` 不送出查詢並使 `afterAll` 卡住、Property 29 在 `reserved.begin()` 出現 unhandled rejection（影響正式遷移，Req 12.4）、Property 20 間歇回應 401，以及 Linux 上完整套件 876 秒。Req 3.2、16.2 與 Glossary 的 Build_Image 已改為 Bun 1.4.x（精確版本 1.4.4）；沒有新的 Correctness Property。28.1 與 28.2 都會影響 `tests/ci-lint.test.js` 的 Bun 版本一致性測試，所以分在不同波次。28.4 取代 26.3，26.3 排在 28.4 之後只為標記完成。28.5 需要維運者在 28.1–28.4 合併後以 `infra/build-image` 重建 Build_Image 並提供 digest，期間 `ci/` 與 `release/` 的建置在 Toolchain 失敗（design.md Components 第 26.4 節），所以排在最後；28.5 與 27.1 都修改 `Jenkinsfile`，放在不同波次。28.6 來自 28.3 的結果：Property 6 的測試產生器先把項目標為不合格，之後的重複 ID 步驟又讓它變回合法，預期結果因此錯誤；只修正測試，`validateInventory` 與 `ci/` 不變，排在 28.3 之後、28.4 之前（編號接在 28.5 之後，既有任務 ID 不變）。28.3 在 WSL1 上的完整套件為 665 秒與 647 秒，使用者決定本次不調整測試速度，600 秒目標以 28.5 合併後的 Jenkins 建置量測。
 - 任務 29 來自 192.168.1.121 上建置 #11（commit `c084474`）：第一次通過 Toolchain 到 Browser Tests，在 Security Scan 以 9 筆阻擋結果失敗，全部是測試假值或已審查的例外。29.1 改寫兩個符合 Gitleaks 規則的測試假值（秘密仍不可豁免）；29.2 依使用者的決定以 `LM_GITLEAKS_HISTORY_BASE`（Secret_History_Baseline，Req 6.1、6.10 與 Glossary）作為非 PR 建置 Git 歷史掃描的固定起點，起點無效時歷史掃描未完成（fail closed），不再有完整歷史的分支；29.3 讓 Semgrep 1.185.0 套用三個已審查的排除路徑，沒有規則層級的寫法可行時停止詢問使用者。沒有新的 Correctness Property。29.1 與 29.2 修改不同的檔案，放在同一波次；29.3 也可能修改 `Jenkinsfile` 與 `tests/ci-jenkinsfile.test.js`（Semgrep 版本步驟），所以排在 29.2 之後；29.4 需要 29.1–29.3 的結果。
+- 任務 30 來自 192.168.1.121 上建置 #14（commit `8da0868`）：第一次通過 Image Scan，在 SBOM 以 `Syft 無法產生 SBOM（結束碼 1）` 失敗。Trusted Agent 上的手動重現顯示 Syft 無法在 `/tmp` 建立目錄（`--tmpfs` 複製了 Syft 映像 `/tmp` 的權限模式），`oci-archive:` 也相同；加上 `mode=1777` 後產生 348 KB 的 SBOM。依 design.md Components 第 28 節，只修改 Syft 的 tmpfs，並移除 `--quiet`、把 stderr 寫入 `$LM_IMG_DIR` 下的檔案，失敗時印出最後 20 行（Requirement 17.9）。沒有新的 Correctness Property。30.2 測試 30.1 的結果，排在 30.1 之後。
 - 任務 18 合併 security-harden：兩分支沒有共同歷史，以 main 的 `cd06606` 作為合成共同基底進行三方合併；應用程式功能採用 security-harden，部署、設定模型、Setup_Token 與 PostgreSQL 資料層採用 main；收據 AI 改為 OpenAI（`CAMPING_OPENAI_*`）。
 
 ## Task Dependency Graph
@@ -1090,7 +1111,10 @@
     { "id": 62, "tasks": ["29.1", "29.2"] },
     { "id": 63, "tasks": ["29.3"] },
     { "id": 64, "tasks": ["29.4"] },
-    { "id": 65, "tasks": ["29.5"] }
+    { "id": 65, "tasks": ["29.5"] },
+    { "id": 66, "tasks": ["30.1"] },
+    { "id": 67, "tasks": ["30.2"] },
+    { "id": 68, "tasks": ["30.3"] }
   ]
 }
 ```

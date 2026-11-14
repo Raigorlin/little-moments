@@ -1046,6 +1046,41 @@ describe('main 專用的映像階段：Image Build → Image Scan → SBOM → I
     expect(sbom).toMatch(/recordImageGate\('prepush', '', true\) != 0\)\s*\{\s*error\(/);
   });
 
+  test('SBOM：Syft 的 /tmp tmpfs 為 mode=1777、不使用 --quiet；stderr 寫入 $LM_IMG_DIR/syft.log，失敗時印出最後 20 行後刪除（Design Components 第 28 節、Req 17.4、17.9）', () => {
+    const script = /label: 'Syft SBOM', returnStatus: true, script: '''([\s\S]*?)'''/.exec(sbom)?.[1];
+    expect(script).toBeDefined();
+    const runs = dockerRunsIn(script);
+    expect(runs.length).toBe(1);
+    const [syft] = runs;
+    expect(syft).toContain('"$LM_SYFT_IMAGE"');
+    // tmpfs 加上 mode=1777，其餘隔離參數不變（第 28.1 節）。
+    expect(syft).toContain('--tmpfs /tmp:rw,nosuid,nodev,size=4g,mode=1777 -e HOME=/tmp -e TMPDIR=/tmp');
+    for (const flag of ['--user "$(id -u):$(id -g)"', '--read-only', '--cap-drop ALL', '--security-opt no-new-privileges:true', '--network none', '--mount "type=bind,src=$LM_IMG_DIR/scan,dst=/scan,readonly"']) {
+      expect(syft).toContain(flag);
+    }
+    // 不使用 --quiet；stderr 導向映像工作目錄下的 syft.log（不在 reports/ 下，第 28.2 節）。
+    expect(script).not.toContain('--quiet');
+    expect(syft).toMatch(/scan docker-archive:\/scan\/image\.tar --output cyclonedx-json=\/out\/sbom\.cdx\.json 2> "\$LM_IMG_DIR\/syft\.log" \|\| rc=\$\?$/);
+    expect(script).not.toMatch(/reports\/[^\s"]*syft\.log/);
+    expect(script).toMatch(/^\s*rm -f "\$LM_IMG_DIR\/out\/sbom\.cdx\.json" reports\/sbom\.cdx\.json reports\/sbom-summary\.json "\$LM_IMG_DIR\/syft\.log"$/m);
+    // 失敗（含 rc=3）時印出最後 20 行，之後不論成敗都刪除 syft.log，最後以 rc 結束。
+    inOrder(script, [
+      '2> "$LM_IMG_DIR/syft.log" || rc=$?', 'rc=3', 'if [ "$rc" -ne 0 ]; then', "echo 'Syft 錯誤輸出（最後 20 行）：'",
+      'tail -n 20 "$LM_IMG_DIR/syft.log"', 'rm -f "$LM_IMG_DIR/syft.log"\n', 'exit "$rc"',
+    ]);
+    expect(script).toMatch(/if \[ "\$rc" -ne 0 \]; then\n\s*echo 'Syft 錯誤輸出（最後 20 行）：'\n\s*tail -n 20 "\$LM_IMG_DIR\/syft\.log" 2>\/dev\/null \|\| true\n\s*fi\n\s*rm -f "\$LM_IMG_DIR\/syft\.log"\n\s*exit "\$rc"\n/);
+    // 只修改 Syft：Trivy、crane 與 cosign（以及其他所有 docker run）的 tmpfs 不含 mode=1777（第 28.1 節）。
+    const imageRuns = IMAGE_STAGES.flatMap((n) => dockerRunsIn(blocks[n]));
+    for (const name of ['LM_TRIVY_IMAGE', 'LM_CRANE_IMAGE', 'LM_COSIGN_IMAGE']) {
+      const found = imageRuns.filter((cmd) => cmd.includes(`"$${name}"`));
+      expect(found.length).toBe(1);
+      expect(found[0]).toMatch(/--tmpfs \/tmp:/);
+      expect(found[0]).not.toContain('mode=1777');
+    }
+    const withMode = dockerRunsIn(code).filter((cmd) => cmd.includes('mode=1777'));
+    expect(withMode).toEqual([syft]);
+  });
+
   test('Image Push：拒絕覆寫既有標籤 → docker push → 三方 digest 比對 → image-digest.txt 封存並 fingerprint（Req 16.10、17.5、17.6、21.7）', () => {
     inOrder(push, [
       "env.LM_SBOM_OK != 'true'", 'credentialsId: env.LM_REGISTRY_PUSH_CREDENTIALS',

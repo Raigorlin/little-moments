@@ -355,6 +355,7 @@
 6. IF App_Image 推送失敗、簽章失敗，或 Registry 回報的 Image_Digest 與 Pipeline 建置的 Image_Digest 不一致，THEN THE Pipeline SHALL 將建置標記為失敗並不執行任何部署階段。
 7. WHEN Pipeline 準備將 App_Image 部署至 Deploy_Host，THE Pipeline SHALL 在 Deploy_Host 拉取或啟動 App_Image 之前，以對應映像簽章金鑰的公鑰驗證待部署 Image_Digest 的簽章，並以 Image_Digest 而非標籤指定要部署的 App_Image。
 8. IF 待部署 Image_Digest 在 Registry 中沒有簽章、簽章無法以設定的公鑰驗證，或簽章對象與待部署 Image_Digest 不符，THEN THE Pipeline SHALL 中止部署、讓 Deploy_Host 上目前執行中的 App_Image 維持不變，並將建置標記為失敗。
+9. IF SBOM 產生工具以非零結束碼結束或未輸出 SBOM，THEN THE Pipeline SHALL 將建置標記為失敗、不推送 App_Image 至 Registry，並在 Jenkins 主控台日誌顯示 SBOM 產生工具錯誤輸出的最後 20 行。
 
 ### Requirement 18: Staging 部署與驗證
 

@@ -1854,6 +1854,73 @@ printf '%s..%s\n' "$start" "$head"
 3. 把 Unit Tests 的實際時間（JUnit 報告的總時間）交給開發者，確認 28.4 的 600 秒目標。
 4. 這次建置成功後，`GIT_PREVIOUS_SUCCESSFUL_COMMIT` 會有值，之後的建置從上一次成功建置的 commit 開始掃描。
 
+### 28. SBOM 階段的 Syft 暫存目錄（新增；Req 17.4、17.9）
+
+`release/little-moments » main` 建置 #14（commit `8da08682efa830160671066d288cfa3f0b2a38bc`）通過 Image Scan，在 SBOM 以 `Syft 無法產生 SBOM（結束碼 1），不推送 App_Image` 失敗。`runSbomStage()` 以 `--quiet` 執行 Syft，錯誤輸出被隱藏，主控台只有結束碼。本節修正原因，並讓之後的 Syft 失敗可以從主控台診斷（Req 17.9）。行為以外的部分不變：SBOM 的格式、檢查（`ci/sbom-check.mjs`）、Build_Record 的 `reports.sbom` 與「映像」關卡的評估都不修改。
+
+本節沒有新的 Correctness Property：變更是 `docker run` 的參數與 shell 的錯誤輸出處理，以靜態檢查與 Trusted Agent 上的實測驗證。
+
+**原因**：維運者在 Trusted Agent 上以與 `runSbomStage()` 相同的參數（`--user "$(id -u):$(id -g)" --read-only --tmpfs /tmp:rw,nosuid,nodev,size=4g -e HOME=/tmp -e TMPDIR=/tmp`，映像為 `LM_SYFT_IMAGE`，即 LAN Registry 鏡像的 `docker.io/anchore/syft:v1.57.1`）手動執行 Syft，但不加 `--quiet`。Syft 輸出：
+
+- `WARN unable to get filesystem cache at /tmp/.cache/syft: ... mkdir /tmp/.cache: permission denied`
+- `ERROR could not determine source: ... docker-archive: mkdir /tmp/stereoscope-…: permission denied`
+
+改用 `oci-archive:` 結果相同，所以原因不是映像封存的格式。
+
+原因：Docker 的 `--tmpfs` 會把映像本身 `/tmp` 的權限模式複製到掛載點（tmpcopyup）。Syft 映像的 `/tmp` 對非 root 的 uid 不可寫入，所以 Syft 無法在 `/tmp` 建立 stereoscope 的解壓目錄。Trivy 映像的 `/tmp` 是所有人可寫入（1777），所以 Trivy 以相同的參數可以執行。
+
+確認的修正：Syft 的 tmpfs 加上 `mode=1777`（`--tmpfs /tmp:rw,nosuid,nodev,size=4g,mode=1777`）後結束碼為 0，產生 348 KB 的 CycloneDX SBOM。
+
+#### 28.1 Syft 的 tmpfs 加上 `mode=1777`
+
+只修改 Syft 的 `docker run`。Trivy、crane 與 cosign 的 tmpfs 不變，因為它們目前可以執行。Syft 的其他隔離參數不變：仍以 Trusted Agent 的非 root uid／gid 執行、`--read-only` 根檔案系統、`--cap-drop ALL`、`--security-opt no-new-privileges:true`、`--network none`、tmpfs 大小 4g 且 `nosuid,nodev`、掃描輸入 `/scan` 唯讀掛載。`1777` 含 sticky bit，容器內只有 Syft 一個非 root 程序，tmpfs 隨容器結束而消失，不影響主機。
+
+#### 28.2 Syft 的錯誤輸出寫入檔案，失敗時印出最後 20 行
+
+- 移除 `--quiet`。`--quiet` 會連錯誤訊息一起隱藏，建置 #14 因此只看得到結束碼。SBOM 寫入 `--output cyclonedx-json=/out/sbom.cdx.json`，stdout 沒有內容。
+- `docker run` 的 stderr 導向 `"$LM_IMG_DIR/syft.log"`。這個檔案不在 `reports/` 下，不封存，也不寫入 Build_Record。
+- Syft 結束碼非 0，或結束碼為 0 但沒有輸出 SBOM（`rc=3`）時，先印出一行說明，再以 `tail -n 20` 印出 `syft.log` 的最後 20 行。不論成功或失敗，印出後都刪除 `syft.log`。
+- 輸出內容：Syft 與 docker CLI 關於這個 App_Image 的日誌訊息與路徑。App_Image 在 Image Scan 已通過秘密掃描（Req 17.1、17.2）；Syft 執行時沒有任何憑證（沒有 `DOCKER_CONFIG`、沒有 Registry 登入、`--network none`），所以輸出不含憑證。主控台日誌仍經 Req 2.4 的遮罩與掃描。
+
+修改後的腳本（只列 Syft 的部分；`docker run` 的其他參數與現在相同）：
+
+```sh
+set -u
+rm -f "$LM_IMG_DIR/out/sbom.cdx.json" reports/sbom.cdx.json reports/sbom-summary.json "$LM_IMG_DIR/syft.log"
+rc=0
+timeout --kill-after=30 900 docker run --rm --name "$LM_IMG_RUN-syft" \
+  ... \
+  --user "$(id -u):$(id -g)" --read-only --tmpfs /tmp:rw,nosuid,nodev,size=4g,mode=1777 -e HOME=/tmp -e TMPDIR=/tmp \
+  ... \
+  "$LM_SYFT_IMAGE" \
+  scan docker-archive:/scan/image.tar --output cyclonedx-json=/out/sbom.cdx.json 2> "$LM_IMG_DIR/syft.log" || rc=$?
+if [ "$rc" -eq 0 ] && [ -s "$LM_IMG_DIR/out/sbom.cdx.json" ]; then
+  cp "$LM_IMG_DIR/out/sbom.cdx.json" reports/sbom.cdx.json
+elif [ "$rc" -eq 0 ]; then
+  rc=3
+fi
+if [ "$rc" -ne 0 ]; then
+  echo 'Syft 錯誤輸出（最後 20 行）：'
+  tail -n 20 "$LM_IMG_DIR/syft.log" 2>/dev/null || true
+fi
+rm -f "$LM_IMG_DIR/syft.log"
+exit "$rc"
+```
+
+Groovy 端不變：`syftRc != 0` 時 `lmImageErrors` 的訊息與 `error(...)` 的文字相同，不推送 App_Image（Req 17.3、17.9）。
+
+#### 28.3 不採用的做法
+
+- `--tmpfs /tmp:...,uid=<uid>,gid=<gid>`：tmpfs 的 `uid`／`gid` 選項是否可用取決於核心與 Docker 版本，`mode=1777` 在所有版本都可用且已實測。
+- 以 root 執行 Syft：違反映像工具容器以非 root 執行的規則，只為了一個暫存目錄而擴大權限。
+- 移除 `--read-only`：讓整個根檔案系統可寫入，範圍大於所需。
+
+#### 28.4 測試
+
+- **`tests/ci-jenkinsfile.test.js`**：Syft 的 `docker run` 的 tmpfs 含 `mode=1777`；stderr 導向 `"$LM_IMG_DIR/syft.log"`（不在 `reports/` 下）；Syft 的指令不含 `--quiet`；失敗路徑含 `tail -n 20 "$LM_IMG_DIR/syft.log"`，之後有 `rm -f "$LM_IMG_DIR/syft.log"`。既有的 SBOM `inOrder` 測試（第一個字串 `scan docker-archive:/scan/image.tar --output cyclonedx-json=/out/sbom.cdx.json`）不修改並通過；Trivy、crane 與 cosign 的 tmpfs 不含 `mode=1777`。
+- **`tests/ci-jenkinsfile-size.test.js`、`tests/ci-jenkinsfile-cps.test.js`、`tests/ci-jenkinsfile-shell-env.test.js`** 與映像工具容器規則的既有斷言不變且通過（函式 ≤ 250 行、CPS 規則、`${X:-}` 規則、非 root、`--read-only`、`--cap-drop ALL`、`no-new-privileges`）。
+- **維運者檢查**：合併後對 `release/little-moments » main` 按 Build Now，SBOM 階段通過，`reports/sbom.cdx.json` 與 `reports/sbom-summary.json` 已封存；之後的 Syft 失敗會在主控台顯示 `Syft 錯誤輸出（最後 20 行）：` 與 Syft 的錯誤訊息。
+
 ## Data Models
 
 ### PostgreSQL Schema（`migrations/0001_initial.sql`）
@@ -2593,6 +2660,14 @@ test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ 
 - **腳本行為**：以臨時 Git repository 執行範圍腳本，涵蓋起點有效／無效、`GIT_PREVIOUS_SUCCESSFUL_COMMIT` 為空、較新、較舊、分岔與等於建置 commit 的情況。
 - **實際掃描器**：Gitleaks 8.30.1 的 dir 與 git 掃描為 0 筆；Semgrep 1.185.0 在 CI 形式的匯出與 checkout 上都為 0 筆阻擋、38 筆非阻擋結果，掃描 56 個檔案，沒有警告；`ci/semgrep/run.sh test` 通過。
 - **維運者檢查**：合併後的建置通過 Security Scan，主控台的 Gitleaks 範圍以 `c08447436cb3db000b577a3de28f8be8acbee540..` 開頭。
+
+### SBOM 階段的 Syft 暫存目錄（Components 第 28 節）
+
+不新增 PBT：變更是固定的 `docker run` 參數與錯誤輸出處理，沒有可隨機產生的輸入。測試如下（細節見第 28.4 節）：
+
+- **靜態檢查**（`tests/ci-jenkinsfile.test.js`）：Syft 的 tmpfs 含 `mode=1777`、沒有 `--quiet`、stderr 導向 `"$LM_IMG_DIR/syft.log"`，失敗時印出 `tail -n 20` 後刪除檔案；其他映像工具的 tmpfs 不變。
+- **實測**：Trusted Agent 上以相同參數加 `mode=1777` 執行 Syft，結束碼為 0，產生 348 KB 的 CycloneDX SBOM。
+- **維運者檢查**：合併後的建置通過 SBOM 階段。
 
 ## Open Risks
 

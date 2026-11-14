@@ -1378,6 +1378,9 @@ void runImageScanStage() {
 
 // SBOM（Req 17.4、21.2）：掃描通過後以 Syft 產生 CycloneDX JSON（無網路），ci/sbom-check.mjs 確認含套件與 npm 相依，
 // 寫入 Build_Record 的 reports.sbom（Image_Digest 於推送後寫入同一份 Build_Record）。接著評估「映像」關卡推送前部分。
+// Syft 的 /tmp tmpfs 加上 mode=1777（Design Components 第 28.1 節）：--tmpfs 會複製 Syft 映像 /tmp 的權限模式，
+// 非 root uid 無法在其中建立 stereoscope 目錄（建置 #14）。不使用 --quiet；stderr 寫入 $LM_IMG_DIR/syft.log
+// （不在 reports/ 下、不封存），失敗（含 rc=3：結束碼 0 但沒有 SBOM）時印出最後 20 行，之後一律刪除（第 28.2 節、Req 17.9）。
 void runSbomStage() {
   enterStage('SBOM')
   imgStep('Syft 無法產生 SBOM')
@@ -1385,22 +1388,27 @@ void runSbomStage() {
   timeout(time: 17, unit: 'MINUTES') {
     syftRc = sh(label: 'Syft SBOM', returnStatus: true, script: '''
       set -u
-      rm -f "$LM_IMG_DIR/out/sbom.cdx.json" reports/sbom.cdx.json reports/sbom-summary.json
+      rm -f "$LM_IMG_DIR/out/sbom.cdx.json" reports/sbom.cdx.json reports/sbom-summary.json "$LM_IMG_DIR/syft.log"
       rc=0
       timeout --kill-after=30 900 docker run --rm --name "$LM_IMG_RUN-syft" \
         --label "lm.ci.build=$BUILD_TAG" --label "lm.ci.image=$LM_IMG_RUN" \
-        --user "$(id -u):$(id -g)" --read-only --tmpfs /tmp:rw,nosuid,nodev,size=4g -e HOME=/tmp -e TMPDIR=/tmp \
+        --user "$(id -u):$(id -g)" --read-only --tmpfs /tmp:rw,nosuid,nodev,size=4g,mode=1777 -e HOME=/tmp -e TMPDIR=/tmp \
         --security-opt no-new-privileges:true --cap-drop ALL --network none \
         -e SYFT_CHECK_FOR_APP_UPDATE=false \
         --mount "type=bind,src=$LM_IMG_DIR/scan,dst=/scan,readonly" \
         --mount "type=bind,src=$LM_IMG_DIR/out,dst=/out" \
         "$LM_SYFT_IMAGE" \
-        scan docker-archive:/scan/image.tar --output cyclonedx-json=/out/sbom.cdx.json --quiet || rc=$?
+        scan docker-archive:/scan/image.tar --output cyclonedx-json=/out/sbom.cdx.json 2> "$LM_IMG_DIR/syft.log" || rc=$?
       if [ "$rc" -eq 0 ] && [ -s "$LM_IMG_DIR/out/sbom.cdx.json" ]; then
         cp "$LM_IMG_DIR/out/sbom.cdx.json" reports/sbom.cdx.json
       elif [ "$rc" -eq 0 ]; then
         rc=3
       fi
+      if [ "$rc" -ne 0 ]; then
+        echo 'Syft 錯誤輸出（最後 20 行）：'
+        tail -n 20 "$LM_IMG_DIR/syft.log" 2>/dev/null || true
+      fi
+      rm -f "$LM_IMG_DIR/syft.log"
       exit "$rc"
     ''')
   }
