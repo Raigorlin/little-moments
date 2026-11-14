@@ -43,6 +43,11 @@ import groovy.json.JsonSlurperClassic
 //   上游（linux/amd64 單一平台鏡像）：ghcr.io/gitleaks/gitleaks:v8.30.1、ghcr.io/google/osv-scanner:v2.7.1、
 //   docker.io/aquasec/trivy:0.76.2、docker.io/semgrep/semgrep:1.185.0。
 //   更新版本：修改 deploy/registry/mirror.list 後執行 deploy/registry/mirror.sh，再以其輸出的 digest 取代下列值。
+// LM_GITLEAKS_HISTORY_BASE（Secret_History_Baseline；Req 6.1、6.10；design.md Components 第 27.3 節）：
+//   非 PR 建置的 Gitleaks Git 歷史掃描起點（範圍為 `<起點或上次成功建置>..<sha>`）。2026-11-13 審查：
+//   Gitleaks 8.30.1 以預設規則掃描 c084474 的完整歷史只有 4 筆已確認的測試假值，c084474 與其祖先不含真實秘密。
+//   只在以 Gitleaks 掃描新起點的完整歷史、確認每筆結果並記錄於 design.md 之後，以經審查的 commit 修改。
+//   不是建置參數，也不從 params.* 或 Job 設定讀取（Req 23.4）；起點無效或不是建置 commit 的祖先時歷史掃描未完成。
 // LM_TRIVY_DB_REPOSITORY：
 //   Trivy 漏洞資料庫的 LAN 鏡像（OCI artifact，每日更新故以 tag 引用）；以唯讀拉取帳號存取。
 //   Registry 主機的 lm-mirror-trivy-db.timer 每日 04:30 自 mirror.gcr.io/aquasec/trivy-db:2 複製（deploy/registry/）。
@@ -146,6 +151,7 @@ pipeline {
     LM_EDB_NAME = 'lm_test'
     LM_EDB_USER = 'lm_test'
     LM_GITLEAKS_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/gitleaks@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb'
+    LM_GITLEAKS_HISTORY_BASE = 'c08447436cb3db000b577a3de28f8be8acbee540'
     LM_OSV_SCANNER_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/osv-scanner@sha256:bc10cae80da100d32572aea48cfc48e592be9adc4a8b0820fd5d2c2db71f9446'
     LM_TRIVY_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/trivy@sha256:6fa071ef8daa2e58b90cbf1710bedca91adbb3bf98693533226f442035b836a6'
     LM_SEMGREP_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/semgrep@sha256:f83a64e8a7d985eaa51ee3978c9c882be946964c68633fba5d2817cf297a3912'
@@ -840,7 +846,8 @@ void runSecurityScanStage() {
     exit "$rc"
   ''')
 
-  // Gitleaks：Git 歷史範圍（Untrusted_PR：merge base..HEAD；Trusted_Ref：上次成功建置..HEAD，無則完整歷史）。
+  // Gitleaks：Git 歷史範圍（Untrusted_PR：merge base..HEAD；其他：上次成功建置或 LM_GITLEAKS_HISTORY_BASE..HEAD）。
+  // 範圍無法決定時 LM_GITLEAKS_LOG_OPTS 為空，不執行歷史掃描，prepareScanSources 已記錄為掃描未完成（Req 6.8）。
   if (env.LM_GITLEAKS_LOG_OPTS) {
     runScan('Gitleaks（Git 歷史）', 'gitleaks-git.json', '''
       set -u
@@ -2171,7 +2178,10 @@ List scannerImages() {
  *   * history.git：只含建置 commit 可達物件的 bare repository（沒有工作樹，repo 內的 Gitleaks 設定不生效）。
  *   * Git 歷史範圍（LM_GITLEAKS_LOG_OPTS）：
  *       Untrusted_PR → `<merge-base origin/$CHANGE_TARGET HEAD>..<sha>`；無法取得 merge base 時歷史掃描視為未完成。
- *       其他建置    → `$GIT_PREVIOUS_SUCCESSFUL_COMMIT..<sha>`（須為 40 hex、存在且為建置 commit 的祖先），否則完整歷史 `<sha>`。
+ *       其他建置    → 起點 LM_GITLEAKS_HISTORY_BASE（Secret_History_Baseline）須為 40 hex、存在且為建置 commit 的祖先，
+ *                     否則不輸出範圍，歷史掃描視為未完成（Req 6.8、6.10）；沒有完整歷史的分支。
+ *                     `$GIT_PREVIOUS_SUCCESSFUL_COMMIT..<sha>`：須為 40 hex、存在、為建置 commit 的祖先且為起點的後代（含相同）；
+ *                     否則 `<LM_GITLEAKS_HISTORY_BASE>..<sha>`。
  *     所有 SHA 與 ref 名稱先以正規表示式驗證，只經環境變數傳給 sh。
  */
 void prepareScanSources() {
@@ -2216,14 +2226,20 @@ void prepareScanSources() {
         printf '%s..%s\\n' "$base" "$head"
         exit 0
       fi
+      # Secret_History_Baseline（Req 6.1、6.10）：無效或不是建置 commit 的祖先時不輸出 → 歷史掃描未完成。
+      floor="${LM_GITLEAKS_HISTORY_BASE:-}"
+      printf '%s\\n' "$floor" | grep -Eqx '[0-9a-f]{40}' || exit 0
+      git cat-file -e "$floor^{commit}" 2>/dev/null || exit 0
+      git merge-base --is-ancestor "$floor" "$head" 2>/dev/null || exit 0
+      start="$floor"
       prev="${GIT_PREVIOUS_SUCCESSFUL_COMMIT:-}"
       if printf '%s\\n' "$prev" | grep -Eqx '[0-9a-f]{40}' \
         && git cat-file -e "$prev^{commit}" 2>/dev/null \
-        && git merge-base --is-ancestor "$prev" "$head" 2>/dev/null; then
-        printf '%s..%s\\n' "$prev" "$head"
-      else
-        printf '%s\\n' "$head"
+        && git merge-base --is-ancestor "$prev" "$head" 2>/dev/null \
+        && git merge-base --is-ancestor "$floor" "$prev" 2>/dev/null; then
+        start="$prev"
       fi
+      printf '%s..%s\\n' "$start" "$head"
     ''').trim()
   }
   String sha = env.GIT_COMMIT_FULL
@@ -2233,7 +2249,7 @@ void prepareScanSources() {
     echo "Gitleaks Git 歷史範圍：${range}"
   } else {
     env.LM_GITLEAKS_LOG_OPTS = ''
-    lmScanErrors << (pr ? 'Gitleaks（Git 歷史）無法取得 PR 與目標分支的 merge base，歷史掃描未完成' : 'Gitleaks（Git 歷史）無法決定掃描範圍，歷史掃描未完成')
+    lmScanErrors << (pr ? 'Gitleaks（Git 歷史）無法取得 PR 與目標分支的 merge base，歷史掃描未完成' : 'Gitleaks（Git 歷史）無法決定掃描範圍（LM_GITLEAKS_HISTORY_BASE 無效或不是建置 commit 的祖先），歷史掃描未完成')
   }
 
   sh(label: 'export scan sources', script: '''
@@ -2258,7 +2274,11 @@ boolean validBranchName(String name) {
   return (name ==~ /^[A-Za-z0-9][A-Za-z0-9._\/\-]{0,254}$/) && !name.contains('..') && !name.endsWith('/') && !name.endsWith('.lock')
 }
 
-/** 各掃描工具版本（Req 6.7），寫入 $LM_SCAN_DIR/out/<tool>.version；取不到時報告的 toolVersion 為 null。 */
+/**
+ * 各掃描工具版本（Req 6.7），寫入 $LM_SCAN_DIR/out/<tool>.version；取不到時報告的 toolVersion 為 null。
+ * Semgrep 以 SEMGREP_ENABLE_VERSION_CHECK=0 關閉版本檢查：沒有網路時 `semgrep --version` 印出版本後會等待
+ * 版本檢查逾時（本機實測約 106 秒，超過 60 秒的 timeout；design.md Components 第 27.4 節）。
+ */
 void scannerVersions() {
   sh(label: 'scanner versions', script: '''
     set -u
@@ -2271,7 +2291,7 @@ void scannerVersions() {
     v gitleaks "$LM_GITLEAKS_IMAGE" version
     v osv-scanner "$LM_OSV_SCANNER_IMAGE" --version
     v trivy "$LM_TRIVY_IMAGE" --version
-    v semgrep --entrypoint semgrep "$LM_SEMGREP_IMAGE" --version
+    v semgrep -e SEMGREP_ENABLE_VERSION_CHECK=0 --entrypoint semgrep "$LM_SEMGREP_IMAGE" --version
     exit 0
   ''')
 }

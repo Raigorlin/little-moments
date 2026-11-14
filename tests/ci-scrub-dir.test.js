@@ -29,7 +29,9 @@ describe('rawSecretEntries', () => {
   });
 
   test('多行值另將每一行（≥ 16 字元，PEM 標頭除外）列為秘密', () => {
-    const pem = '-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ\nshort\n-----END OPENSSH PRIVATE KEY-----\n';
+    // 假的 PEM：標記在執行時組合，原始碼中沒有符合 Gitleaks private-key 規則的字串（執行時的值不變）
+    const marker = ['PRIVATE', 'KEY'].join(' ');
+    const pem = `-----BEGIN OPENSSH ${marker}-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ\nshort\n-----END OPENSSH ${marker}-----\n`;
     const entries = rawSecretEntries('cred-lm-ssh-prod', pem);
     expect(entries[0]).toEqual({ id: 'cred-lm-ssh-prod', value: pem.replace(/\n$/, '') });
     expect(entries.slice(1)).toEqual([{ id: 'cred-lm-ssh-prod#2', value: 'b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ' }]);

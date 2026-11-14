@@ -33,9 +33,11 @@ rules:
     # 已審查的例外：server/db/connect.js 的 TLS_BY_SSLMODE.require 依 libpq `sslmode=require` 語意
     # 「加密但不驗證憑證」，僅在維運者明確設定 CAMPING_DATABASE_SSLMODE=require 時使用；
     # 需要驗證時應設定 verify-full。
+    # 排除樣式採 Semgrepignore v2 的 anchored 寫法（開頭 `/`），相對於 run.sh 以 --project-root . 指定的
+    # repository 根目錄；未加 `/` 的 `server/db/connect.js` 會產生警告，且 CI 匯出沒有 .git 時比對不到（Design §27.4）。
     paths:
       exclude:
-        - server/db/connect.js
+        - /server/db/connect.js
     pattern-either:
       - pattern: '{..., rejectUnauthorized: false, ...}'
       - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = $X
@@ -90,10 +92,12 @@ rules:
       requirements: ["6.3"]
       source: little-moments（自行撰寫）
     # src/ 為瀏覽器端程式碼，其中的 token 比較是請求序號或「確認密碼」欄位比對，不涉及伺服器秘密，
-    # 回報只會產生雜訊，因此排除。
+    # 回報只會產生雜訊，因此排除。`/src/` 為 anchored 寫法，只排除 repository 根目錄的 src/
+    # （相對於 run.sh 的 --project-root .）。原本的 `src/` 在未指定 project root 的 CI 匯出（沒有 .git）
+    # 實測沒有生效，建置 #11 因此多出 13 筆本規則的結果（Design §27.4）。
     paths:
       exclude:
-        - src/
+        - /src/
     patterns:
       - pattern-either:
           - pattern: $SECRET === $OTHER

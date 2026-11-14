@@ -3059,6 +3059,98 @@
         "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
         "timestamp": 1794540735485
       }
+    ],
+    "29.1 改寫符合 Gitleaks 規則的測試假值": [
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794587493857
+      },
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794587507099
+      },
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794588091772
+      }
+    ],
+    "29.2 Gitleaks 歷史掃描的固定起點": [
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794587494038
+      },
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794587507790
+      },
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794588092224
+      }
+    ],
+    "29.3 Semgrep 排除路徑在 1.185.0 生效": [
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794587494248
+      },
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794588099955
+      },
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794610656773
+      }
+    ],
+    "29.4 以 Gitleaks 8.30.1 與 Semgrep 1.185.0 在本機驗證": [
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794587494476
+      },
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794610783395
+      },
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794612269694
+      }
+    ],
+    "29.5 Checkpoint - Security Scan 修正後確認所有測試通過": [
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794587494699
+      },
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794612276096
+      },
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794616294613
+      }
+    ],
+    "29. Security Scan 的誤判修正": [
+      {
+        "executionId": "962d8c15-756e-4147-ab1f-648b4b43700b",
+        "chatSessionId": "sess_14b47670-db53-46bd-917f-29808afeb229",
+        "timestamp": 1794616294893
+      }
     ]
   }
 }

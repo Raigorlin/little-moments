@@ -45,6 +45,7 @@
 - **Trusted_Proxies**：App_Server 的 IP 位址或 CIDR 設定清單；僅來自清單內 TCP 來源的 `X-Forwarded-For` 與 `X-Forwarded-Proto` 標頭會被採用。
 - **QA_Inventory**：存放於 repository、受版本控制的有限清單，逐項列出頁面、控制項或功能 ID、角色、情境、預期結果與對應測試案例 ID。
 - **Security_Scanner**：Pipeline 中執行秘密掃描、相依套件漏洞掃描與靜態程式碼安全分析（SAST）的階段集合。
+- **Secret_History_Baseline**：固定於 `Jenkinsfile`、經 code review 的 commit SHA；該 commit 與其所有祖先的 Git 歷史已以秘密掃描完整審查，每筆結果皆已判定為測試用的假值而不是真實秘密，審查紀錄保存在設計文件。Secret_History_Baseline 只能以經審查的 commit 修改，不是建置參數，也不能由建置覆寫（Requirement 23 第 4 條）；它只決定 Git 歷史秘密掃描的範圍，建置 commit 的所有受版本控制檔案每次建置仍完整掃描（Requirement 6 第 1 條）。
 - **DAST_Scanner**：對 Test_Environment 執行主動式動態安全測試的階段。
 - **Target_Allowlist**：DAST_Scanner 允許存取的目標位址清單。
 - **Credential_Store**：Jenkins 的憑證管理機制。
@@ -159,7 +160,7 @@
 
 #### Acceptance Criteria
 
-1. WHEN Pipeline 執行，THE Security_Scanner SHALL 掃描建置 commit 的 repository 所有受版本控制檔案；Untrusted_PR 建置另須掃描自目標分支 merge base 至 PR head 的所有 commit 差異，Trusted_Ref 建置另須掃描自前一次成功建置 commit（無則為完整 Git 歷史）至建置 commit 的所有 commit 差異中的秘密。
+1. WHEN Pipeline 執行，THE Security_Scanner SHALL 掃描建置 commit 的 repository 所有受版本控制檔案；Untrusted_PR 建置另須掃描自目標分支 merge base 至 PR head 的所有 commit 差異，Trusted_Ref 建置另須掃描自起點至建置 commit 的所有 commit 差異中的秘密；起點為前一次成功建置 commit，但該 commit 不存在、無效、不是建置 commit 的祖先或不是 Secret_History_Baseline 的後代（含相同）時，起點為 Secret_History_Baseline。
 2. WHEN Pipeline 執行，THE Security_Scanner SHALL 依 `bun.lock` 掃描所有直接與間接相依套件的已知漏洞，並於報告中列出每筆結果的套件名稱、版本、漏洞識別碼與嚴重度。
 3. WHEN Pipeline 執行，THE Security_Scanner SHALL 對 `src/`、`server/` 與 `scripts/` 下所有 JavaScript 原始檔（`.js`、`.mjs`）執行 SAST，並於報告中列出每筆結果的規則識別碼、檔案路徑、行號與嚴重度。
 4. IF Security_Scanner 偵測到秘密，THEN THE Pipeline SHALL 不論嚴重度或是否有 Approved_Exception，將建置標記為失敗並停止後續發布階段，且報告與建置日誌中每個偵測到的秘密值皆完全以遮罩字元取代（不顯示任何原文字元），僅保留規則識別碼、檔案路徑、行號與 commit SHA 以供定位。
@@ -168,6 +169,7 @@
 7. WHEN Security_Scanner 任一掃描階段完成（不論通過或失敗），THE Security_Scanner SHALL 以機器可讀格式保存該階段的掃描報告至 Build_Record，報告包含掃描工具版本、掃描 commit SHA、所有結果及每筆結果是否套用 Approved_Exception。
 8. IF Security_Scanner 任一掃描無法完成（工具執行錯誤、逾時超過 15 分鐘或漏洞資料庫無法取得），THEN THE Pipeline SHALL 將建置標記為失敗並停止後續發布階段，且不將該掃描視為通過。
 9. IF 一個 Approved_Exception 缺少理由、核准人或到期日任一欄位，或其對應的結果識別碼（漏洞識別碼或規則識別碼）與位置（套件名稱或檔案路徑）未與掃描結果完全相符，THEN THE Pipeline SHALL 不套用該例外，並將對應的掃描結果視為未處理的 Critical_High_Finding。
+10. IF Secret_History_Baseline 不是 40 個小寫十六進位字元的 commit SHA、不存在於 repository，或不是 Trusted_Ref 建置 commit 的祖先（含相同），THEN THE Pipeline SHALL 將該建置的 Git 歷史秘密掃描視為未完成，依第 8 條將建置標記為失敗並停止後續發布階段，且不以完整 Git 歷史或略過歷史掃描取代。
 
 ### Requirement 7: 動態安全測試與安全邊界
 

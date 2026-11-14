@@ -1,8 +1,10 @@
 // Jenkinsfile 骨架的靜態檢查（Req 1.1、1.6、3.1、3.3、3.4、3.6、22.1、23.4）。
 // 本機沒有 Jenkins／Groovy，這裡只檢查結構與關鍵字，不能取代 Jenkins 的實際語法驗證。
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 import { STAGE } from '../ci/stages.mjs';
 import { recordPatch, toolchainRecord } from '../ci/verify-toolchain.mjs';
@@ -184,6 +186,76 @@ function stageCode(name) {
 
 /** 所有 ''' 多行 sh 腳本（含以位置參數傳給 runScan 的腳本）。 */
 const tripleScripts = [...source.matchAll(/(?:script: |, )'''([\s\S]*?)'''/g)].map((m) => m[1]);
+
+/** Groovy 單引號字串的跳脫：`\` + 換行為續行，其餘 `\x` 依 Groovy 規則轉換（與 ci-jenkinsfile-shell-env.test.js 相同）。 */
+function groovyUnescape(raw) {
+  const map = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f' };
+  return raw.replace(/\\(\n|.)/g, (_, c) => (c === '\n' ? '' : (map[c] ?? c)));
+}
+
+/** 有 git 的 POSIX sh：Linux 優先 dash；Windows 經 WSL（同樣優先 dash）。回傳 { prefix, sh, toPath, label } 或 null。 */
+function findPosixShell() {
+  const ok = (cmd, args) => spawnSync(cmd, args, { timeout: 60_000, encoding: 'utf8' }).status === 0;
+  const probe = 'command -v git >/dev/null 2>&1';
+  if (process.platform === 'win32') {
+    for (const sh of ['dash', 'sh']) {
+      if (!ok('wsl.exe', ['-e', sh, '-c', probe])) continue;
+      const toPath = (p) => {
+        const r = spawnSync('wsl.exe', ['-e', 'wslpath', '-a', p.replace(/\\/g, '/')], { encoding: 'utf8', timeout: 60_000 });
+        if (r.status !== 0) throw new Error(`wslpath 失敗：${r.stderr}`);
+        return r.stdout.trim();
+      };
+      return { prefix: ['wsl.exe', '-e'], sh, toPath, label: `WSL ${sh}` };
+    }
+    return null;
+  }
+  for (const sh of ['dash', 'sh']) if (ok(sh, ['-c', probe])) return { prefix: [], sh, toPath: (p) => p, label: sh };
+  return null;
+}
+
+/**
+ * 「Gitleaks history range」腳本的測試驅動（POSIX sh）：參數為 <sh> <腳本> 之後每三個一組
+ * （LM_SCAN_BASE_REF、LM_GITLEAKS_HISTORY_BASE、GIT_PREVIOUS_SUCCESSFUL_COMMIT）。在臨時 repository 建立
+ * A–B–C–D（refs/heads/main）與自 A 分岔的 X（refs/heads/side），以 env -i 只傳入指定變數執行腳本（-e，cwd 為 repository），
+ * 每組輸出一行 `out=<stdout>`。符號：A–D、X 為 SHA；EMPTY 為空字串（LM_SCAN_BASE_REF 為 EMPTY 時不設定）；
+ * UNSET 為不設定；SHORT 不是 40 hex；UPPER 為 B 的大寫；MISSING 為不存在的 40 hex。
+ */
+const RANGE_DRIVER = `set -eu
+sh_bin="$1"; script="$2"; shift 2
+t="$(mktemp -d)"
+trap 'rm -rf "$t"' EXIT
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
+git init -q "$t/repo"
+cd "$t/repo"
+tree="$(git mktree </dev/null)"
+A="$(git commit-tree -m A "$tree")"
+B="$(git commit-tree -p "$A" -m B "$tree")"
+C="$(git commit-tree -p "$B" -m C "$tree")"
+D="$(git commit-tree -p "$C" -m D "$tree")"
+X="$(git commit-tree -p "$A" -m X "$tree")"
+git update-ref refs/heads/main "$D"
+git update-ref refs/heads/side "$X"
+printf 'A=%s\\nB=%s\\nC=%s\\nD=%s\\nX=%s\\n' "$A" "$B" "$C" "$D" "$X"
+val() {
+  case "$1" in
+    A) printf '%s' "$A" ;; B) printf '%s' "$B" ;; C) printf '%s' "$C" ;; D) printf '%s' "$D" ;; X) printf '%s' "$X" ;;
+    EMPTY) ;;
+    SHORT) printf '%s' abc123 ;;
+    UPPER) printf '%s' "$B" | tr a-f A-F ;;
+    MISSING) printf '%s' 0123456789abcdef0123456789abcdef01234567 ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+while [ $# -ge 3 ]; do
+  ref="$1"; base="$2"; prev="$3"; shift 3
+  vars="GIT_COMMIT_FULL=$D"
+  [ "$ref" = EMPTY ] || vars="$vars LM_SCAN_BASE_REF=$ref"
+  [ "$base" = UNSET ] || vars="$vars LM_GITLEAKS_HISTORY_BASE=$(val "$base")"
+  [ "$prev" = UNSET ] || vars="$vars GIT_PREVIOUS_SUCCESSFUL_COMMIT=$(val "$prev")"
+  out="$(env -i PATH="$PATH" HOME="$t" $vars "$sh_bin" -e "$script")" || { echo "script failed: $ref $base $prev" >&2; exit 1; }
+  printf 'out=%s\\n' "$out"
+done
+`;
 
 /** 文字中所有 docker run／create 指令（含以 `\` 續行的參數）。 */
 function dockerRunsIn(text) {
@@ -406,7 +478,22 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
     expect(sec).toContain('rm -f "$LM_SCAN_DIR/out/gitleaks-dir.json" "$LM_SCAN_DIR/out/gitleaks-git.json"');
   });
 
-  test('Git 歷史範圍：Untrusted_PR 用 merge base，其他用已驗證的 GIT_PREVIOUS_SUCCESSFUL_COMMIT，否則完整歷史（Req 6.1）', () => {
+  test('Git 歷史範圍：Untrusted_PR 用 merge base，其他從 LM_GITLEAKS_HISTORY_BASE 或其後已驗證的 GIT_PREVIOUS_SUCCESSFUL_COMMIT 開始，沒有完整歷史（Req 6.1、6.10）', () => {
+    // Secret_History_Baseline：environment 恰有一個 40 個小寫十六進位字元的常數，不是建置參數、不經 params.* 或 withEnv 覆寫（Req 23.4）。
+    const environment = functionBody('  environment {');
+    expect(environment.match(/^\s*LM_GITLEAKS_HISTORY_BASE\s*=\s*'[0-9a-f]{40}'\s*$/gm)?.length).toBe(1);
+    expect(code.match(/\bLM_GITLEAKS_HISTORY_BASE\s*=\s*'/g)?.length).toBe(1);
+    expect(/LM_GITLEAKS_HISTORY_BASE\s*=\s*'([^']+)'/.exec(environment)?.[1]).toBe('c08447436cb3db000b577a3de28f8be8acbee540');
+    expect(structure).not.toMatch(/\bparameters\s*[{(]/);
+    expect(code).not.toMatch(/params\.[\w.?]*LM_GITLEAKS_HISTORY_BASE|params\[\s*['"]LM_GITLEAKS_HISTORY_BASE/);
+    expect(code).not.toMatch(/LM_GITLEAKS_HISTORY_BASE=|env\.LM_GITLEAKS_HISTORY_BASE\s*=/);
+    expect(prepare).toContain('floor="${LM_GITLEAKS_HISTORY_BASE:-}"');
+    expect(prepare).toContain('git merge-base --is-ancestor "$floor" "$head"');
+    expect(prepare).toContain('git merge-base --is-ancestor "$floor" "$prev"');
+    // 不再有只輸出 $head 的完整歷史分支（Jenkinsfile 原文的 '%s\\n'）。
+    expect(prepare).not.toContain(String.raw`printf '%s\\n' "$head"`);
+    // 非 PR 失敗時的固定訊息（不含任何 SHA 或其他值）。
+    expect(prepare).toContain("'Gitleaks（Git 歷史）無法決定掃描範圍（LM_GITLEAKS_HISTORY_BASE 無效或不是建置 commit 的祖先），歷史掃描未完成'");
     expect(prepare).toContain("env.LM_TRIGGER_KIND == 'pull_request'");
     expect(prepare).toContain('validBranchName(target)');
     // 非 PR 建置時兩者皆為空、Jenkins 不傳給 sh（Components 第 24.4 節），以 ${X:-} 展開。
@@ -426,6 +513,76 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
     // 無法決定範圍 → 歷史掃描未完成（記錄原因），關卡未通過。
     expect(prepare).toMatch(/LM_GITLEAKS_LOG_OPTS = ''\s*\n\s*lmScanErrors << /);
     expect(functionBody('boolean validBranchName(String name)')).toContain("!name.contains('..')");
+  });
+
+  // 腳本行為（design.md Components 第 27.6 節）：在臨時 repository 建立 A–B–C–D 與自 A 分岔的 X，
+  // 執行 Jenkinsfile 的「Gitleaks history range」腳本。Windows 經 WSL 的 dash／sh；沒有 POSIX sh 時略過。
+  const SH = findPosixShell();
+  const describeSh = SH ? describe : describe.skip;
+  describeSh(SH ? `Gitleaks history range 腳本（${SH.label}、git）` : 'Gitleaks history range 腳本（略過：找不到 POSIX sh 與 git）', () => {
+    const m = /label: 'Gitleaks history range', returnStdout: true, script: '''([\s\S]*?)'''/.exec(prepare);
+    const rangeScript = groovyUnescape(m?.[1] ?? '').replace(/\r/g, '');
+    // 每個案例：名稱、LM_SCAN_BASE_REF、LM_GITLEAKS_HISTORY_BASE、GIT_PREVIOUS_SUCCESSFUL_COMMIT（符號在 WSL 端換成 SHA；UNSET 表示不設定）。
+    const cases = {
+      'prev 為空': ['', 'B', 'UNSET'],
+      'prev 為空字串': ['', 'B', ''],
+      'prev 為起點的後代': ['', 'B', 'C'],
+      'prev 等於起點': ['', 'B', 'B'],
+      'prev 比起點舊': ['', 'B', 'A'],
+      'prev 不是 head 的祖先': ['', 'B', 'X'],
+      'prev 不是 40 hex': ['', 'B', 'SHORT'],
+      'prev 不存在': ['', 'B', 'MISSING'],
+      '起點不是 40 hex': ['', 'SHORT', 'C'],
+      '起點為大寫十六進位': ['', 'UPPER', 'C'],
+      '起點未設定': ['', 'UNSET', 'C'],
+      '起點不存在': ['', 'MISSING', 'C'],
+      '起點不是 head 的祖先': ['', 'X', 'C'],
+      '起點等於 head（空範圍）': ['', 'D', 'UNSET'],
+      'PR：merge base 分支不變': ['refs/heads/side', 'MISSING', 'C'],
+      'PR：取不到 merge base': ['refs/heads/nope', 'B', 'C'],
+    };
+    const expected = {
+      'prev 為空': 'B..D', 'prev 為空字串': 'B..D', 'prev 為起點的後代': 'C..D', 'prev 等於起點': 'B..D',
+      'prev 比起點舊': 'B..D', 'prev 不是 head 的祖先': 'B..D', 'prev 不是 40 hex': 'B..D', 'prev 不存在': 'B..D',
+      '起點不是 40 hex': '', '起點為大寫十六進位': '', '起點未設定': '', '起點不存在': '', '起點不是 head 的祖先': '',
+      '起點等於 head（空範圍）': 'D..D', 'PR：merge base 分支不變': 'A..D', 'PR：取不到 merge base': '',
+    };
+    let results = null;
+    let shas = null;
+    function runAll() {
+      if (results) return;
+      const dir = mkdtempSync(join(tmpdir(), 'lm-gitleaks-range-'));
+      try {
+        writeFileSync(join(dir, 'range.sh'), rangeScript);
+        writeFileSync(join(dir, 'driver.sh'), RANGE_DRIVER);
+        const names = Object.keys(cases);
+        const args = names.flatMap((n) => cases[n]);
+        const argv = [...SH.prefix, SH.sh, SH.toPath(join(dir, 'driver.sh')), SH.sh, SH.toPath(join(dir, 'range.sh')),
+          ...args.map((a) => (a === '' ? 'EMPTY' : a))];
+        const r = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8', timeout: 120_000 });
+        expect({ status: r.status, stderr: r.stderr ?? '' }).toEqual({ status: 0, stderr: '' });
+        const lines = r.stdout.replace(/\r/g, '').split('\n');
+        shas = Object.fromEntries(lines.filter((l) => /^[ABCDX]=/.test(l)).map((l) => l.split('=')));
+        const outs = lines.filter((l) => l.startsWith('out=')).map((l) => l.slice(4));
+        expect(outs.length).toBe(names.length);
+        results = Object.fromEntries(names.map((n, i) => [n, outs[i]]));
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+    const sub = (s) => s.replace(/\b[ABCDX]\b/g, (c) => shas[c]);
+
+    test('腳本取出成功且含起點的檢查', () => {
+      expect(rangeScript).toContain('floor="${LM_GITLEAKS_HISTORY_BASE:-}"');
+      expect(rangeScript).not.toMatch(/printf '%s\\n' "\$head"/);
+    });
+    for (const name of Object.keys(cases)) {
+      test(`${name} → ${expected[name] || '沒有輸出（歷史掃描未完成）'}`, () => {
+        runAll();
+        expect(Object.keys(shas).sort()).toEqual(['A', 'B', 'C', 'D', 'X']);
+        expect(results[name]).toBe(expected[name] ? sub(expected[name]) : '');
+      });
+    }
   });
 
   test('osv-scanner v2（bun.lock、--all-packages）、Trivy node_modules 交叉掃描、Semgrep（ci/semgrep/run.sh）（Req 6.2、6.3）', () => {
@@ -450,6 +607,24 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
     expect([...sec.matchAll(/if \[ "\$rc" -eq 1 \]; then rc=0; fi/g)].length).toBe(2);
     // 評估無法執行（結束碼 2）也記錄為未完成。
     expect(sec).toMatch(/evalRc != 0 && evalRc != 1\)\s*\{\s*lmScanErrors << /);
+  });
+
+  test('工具版本：只有 Semgrep 關閉版本檢查；60 秒逾時、|| true 與取不到版本時為 null 的處理不變（Req 6.7、6.8）', () => {
+    const versions = functionBody('void scannerVersions()');
+    const calls = versions.split('\n').map((l) => l.trim()).filter((l) => /^v [a-z-]+ /.test(l));
+    expect(calls).toEqual([
+      'v gitleaks "$LM_GITLEAKS_IMAGE" version',
+      'v osv-scanner "$LM_OSV_SCANNER_IMAGE" --version',
+      'v trivy "$LM_TRIVY_IMAGE" --version',
+      'v semgrep -e SEMGREP_ENABLE_VERSION_CHECK=0 --entrypoint semgrep "$LM_SEMGREP_IMAGE" --version',
+    ]);
+    expect([...versions.matchAll(/SEMGREP_ENABLE_VERSION_CHECK/g)].length).toBe(1);
+    expect([...versions.matchAll(/timeout --kill-after=10 60 docker run /g)].length).toBe(1);
+    expect(versions).toContain('--network none "$@" 2>/dev/null');
+    expect(versions).toContain('| head -n 1 > "$LM_SCAN_DIR/out/$tool.version" || true');
+    expect(versions).toMatch(/\n\s*exit 0\n/);
+    // 版本步驟在 secStep('無法取得掃描工具版本') 與 secStep('') 之間（步驟失敗時記錄為掃描未完成）。
+    expect(sec).toMatch(/secStep\('無法取得掃描工具版本'\)\s*\n\s*scannerVersions\(\)\s*\n\s*secStep\(''\)/);
   });
 
   test('掃描器容器：非 root、唯讀根檔案系統、--cap-drop ALL、no-new-privileges、建置標籤；寫入只限掃描暫存目錄', () => {

@@ -9,6 +9,9 @@
 #     schema_migrations DDL，內容受版本控制、不含使用者輸入（見該檔檔頭「唯一例外」說明）。
 #   - tests/support/pg.js：測試輔助模組以 `CREATE/DROP SCHEMA <ident>` 建立隔離 schema，identifier
 #     先通過 TEST_SCHEMA_PATTERN 嚴格檢查。tests/ 不在 Req 6.3 的掃描範圍內，排除項目僅為範圍擴大時保持一致。
+# 排除樣式採 Semgrepignore v2 的 anchored 寫法（開頭 `/`），相對於 ci/semgrep/run.sh 以 --project-root .
+# 指定的 repository 根目錄；未加 `/` 的寫法會產生警告，且 CI 匯出沒有 .git 時比對不到（Design §27.4）。
+# 清單由 tests/ci-semgrep-rules.test.js 檢查。
 #
 # 範例檔：同目錄 lm-sql-unsafe.js（semgrep --test）。
 rules:
@@ -25,7 +28,7 @@ rules:
       source: little-moments（自行撰寫）
     paths:
       exclude:
-        - server/db/migrations.js
-        - tests/support/pg.js
+        - /server/db/migrations.js
+        - /tests/support/pg.js
     # 比對屬性存取本身（含呼叫與 `const run = sql.unsafe` 這類別名取用），避免以變數繞過。
     pattern: $DB.unsafe

@@ -1705,6 +1705,155 @@ sequenceDiagram
 - **實測**：26.5 的 `bun.lock`、Property 29、Property 20 與完整套件。
 - **維運者檢查**：`infra/build-image` 的 Verify 通過；28.5 合併後 `release/little-moments » main` 的 Build_Record `toolchain.bun` 為 `1.4.4`，Unit Tests 在 15 分鐘內結束並產生 JUnit 報告。
 
+### 27. 安全掃描的測試假值、Gitleaks 歷史起點與 Semgrep 排除路徑（新增；Req 6.1、6.3、6.4、6.5、6.7、6.8、6.10、23.4）
+
+`release/little-moments » main` 建置 #11（commit `c08447436cb3db000b577a3de28f8be8acbee540`）第一次通過 Toolchain、Install、Build、Unit Tests 與 Browser Tests，在 Security Scan 失敗。`reports/security/evaluation.json` 有 9 筆未處理的阻擋結果，全部是測試假值或已審查的程式碼，沒有真實秘密，也沒有新的漏洞。本節讓這些結果不再出現，而且不放寬任何規則：秘密（`kind: secret`）仍永遠不可豁免（`security/exceptions.json` 的政策與 Req 6.4 不變），Critical_High_Finding 仍使建置失敗（Req 6.5），掃描未完成仍使建置失敗（Req 6.8）。
+
+使用者的決定：Git 歷史掃描採用「固定的歷史起點」（Secret_History_Baseline）。不採用「逐筆允許歷史上的秘密結果」：那需要 repo 內的 Gitleaks 設定或 baseline 檔，而 `prepareScanSources` 會把 repo 內的掃描器設定從掃描輸入刪除（第 9 節），PR 也可能藉同一機制隱藏新的秘密。
+
+本節沒有新的 Correctness Property：變更是測試字串、Groovy／sh 的範圍決定與 Semgrep 規則的路徑設定，以靜態檢查、固定樣本與實際掃描器的本機執行驗證。
+
+#### 27.1 建置 #11 的結果
+
+| 掃描 | 規則 | 位置 | 性質 |
+|---|---|---|---|
+| Gitleaks 8.30.1 `dir` | `private-key` | `tests/ci-scrub-dir.test.js:32` | 假的 PEM（OpenSSH 私鑰的 BEGIN／END 標記包住只有 header 的 base64 行），測試多行秘密的遮罩 |
+| Gitleaks 8.30.1 `dir` | `generic-api-key` | `tests/config.test.js:269` | 假的 `sk-test` 值（`SECRET` 加 16 個字元的尾段），測試設定摘要不輸出秘密 |
+| Gitleaks 8.30.1 `git` | `private-key` | `tests/ci-scrub-dir.test.js:32` @ `139d8ac76a44966028b1cafb013c5bf469e8a00c` | 同上一個 PEM 的加入 commit |
+| Gitleaks 8.30.1 `git` | `generic-api-key` | `tests/deploy-config.test.js:207` @ `ffdbef22323fa98232cdff7db496f6b34979604d` | 測試假值；檔案之後已刪除 |
+| Gitleaks 8.30.1 `git` | `generic-api-key` | `tests/assignment-motion.e2e.js:3` @ `cd06606a4e75bc119c3a439e282832c5f31cd9de` | 當時的測試 fixture |
+| Gitleaks 8.30.1 `git` | `generic-api-key` | `tests/gear-presets.e2e.js:49` @ `cd06606a4e75bc119c3a439e282832c5f31cd9de` | 當時的測試 fixture |
+| Semgrep 1.185.0 | `ci.semgrep.rules.lm-js-tls-verify-disabled`（high） | `server/db/connect.js:18` | 已審查的例外：`sslmode=require` 的語意（`js-security-vendored.yaml` 的 `paths.exclude`） |
+| Semgrep 1.185.0 | `ci.semgrep.rules.lm-sql-unsafe`（high） | `server/db/migrations.js:163` | 已審查的例外：Migration_Runner 執行受版本控制的 SQL（`lm-sql-unsafe.yaml` 的 `paths.exclude`） |
+| Semgrep 1.185.0 | `ci.semgrep.rules.lm-sql-unsafe`（high） | `server/db/migrations.js:181` | 同上 |
+
+Git 歷史掃描的範圍是完整歷史：`main` 第一次有成功的建置之前 `GIT_PREVIOUS_SUCCESSFUL_COMMIT` 為空，`--log-opts` 只是建置 commit 的 SHA。之後只要 Security Scan 失敗，`GIT_PREVIOUS_SUCCESSFUL_COMMIT` 就一直為空，每次建置都會重新掃描完整歷史並得到同樣的 4 筆結果；只改目前的檔案無法讓建置通過。
+
+另外，`scannerVersions` 的 Semgrep 步驟（`semgrep --version`）被 60 秒的 `timeout` 以 `Killed` 結束，但版本 `1.185.0` 已寫入 `semgrep.version`（`grep … | head -n 1` 在輸出第一行後就取得版本）。這不影響本次的判定，但每次建置多等 70 秒，且版本輸出在逾時前完成只是時序上的巧合。
+
+#### 27.2 測試假值改寫（任務 29.1）
+
+改寫原則：測試在執行時得到的值與現在完全相同，只有原始碼中的寫法改變，讓 Gitleaks 的預設規則在原始碼中找不到相符的字串。
+
+| 檔案 | 現在 | 改寫方式 |
+|---|---|---|
+| `tests/ci-scrub-dir.test.js:32` | 單一字串常值內含 OpenSSH 私鑰完整的 BEGIN 與 END 標記行（本文件不照抄，以免符合秘密掃描規則） | 標記在執行時組合，例如 `const marker = ['PRIVATE', 'KEY'].join(' ')`，`` `-----BEGIN OPENSSH ${marker}-----` ``；`pem` 的值、`rawSecretEntries` 的輸入與兩個 `expect` 不變 |
+| `tests/config.test.js:269` | `CAMPING_OPENAI_API_KEY` 的值是單一字串常值：假的 `sk-test` 值（`SECRET` 加 16 個字元的尾段）（鍵名含 `KEY`，值的熵足以符合 `generic-api-key`） | 值在執行時組合，例如以四段（`sk`、`test`、`SECRET` 與獨立變數中的 16 字元尾段）以 `-` 串接，或先存入沒有 `key`／`secret`／`token`／`password` 字樣的變數再放入物件；`not.toContain(value)` 與 `not.toContain('sk-')` 不變 |
+
+- 不使用 `gitleaks:allow` 註解，也不新增 repo 的 `.gitleaks.toml`／`.gitleaksignore`：Pipeline 會刪除 repo 內的掃描器設定，且行內允許註解會讓任何 PR 作者都能略過秘密掃描。
+- 測試的意圖與強度不變：多行 PEM 仍包含 BEGIN／END 標頭、header 行與短行，遮罩測試仍斷言標頭行不列入、長行列入；設定摘要測試仍以符合 OpenAI 金鑰前綴的值斷言不輸出。
+- 同類寫法的盤點（2026-11-13 以 `git grep` 查得）：`tests/ci-record.test.js:206–207`（RSA 私鑰的 BEGIN 標記行接 `${t}`，沒有 END 標記，目前不符合 `private-key`）與 `tests/receipt-ai.test.js:11`（假的 `sk-test` 值，以 `only-not-a-real-openai-api-key` 為尾段，目前未被回報）。建置 #11 的 `dir` 掃描沒有回報它們；任務 29.4 以真實的 Gitleaks 確認，回報時才以相同方式改寫。另以 grep 檢查 `deploy/tests/`、`ci/semgrep/rules/*.js` 與 `docs/`。
+
+#### 27.3 Gitleaks 歷史起點（任務 29.2）
+
+`Jenkinsfile` 的 `environment` 新增常數（說明註解放在 `pipeline {` 之前，與其他常數相同）：
+
+```groovy
+LM_GITLEAKS_HISTORY_BASE = 'c08447436cb3db000b577a3de28f8be8acbee540'
+```
+
+**審查紀錄**：`c08447436cb3db000b577a3de28f8be8acbee540`（2026-11-13，「Add Modern Web Guidance steering for frontend work」，19 個 commit）是建置 #11 的 commit。Gitleaks 8.30.1 以預設規則掃描其完整歷史，結果是第 27.1 節表中的 4 筆 `git` 結果：`139d8ac`、`ffdbef2`、`cd06606`（兩筆），都是 `c084474` 的祖先，都是測試假值。本機秘密掃描（`bun scripts/scan-secrets.mjs`）掃描所有 commit，沒有真實秘密。結論：`c084474` 與其所有祖先不含真實秘密，歷史掃描可以從它之後開始。
+
+**範圍決定**（`prepareScanSources` 的 `Gitleaks history range` 腳本；Untrusted_PR 的分支不變）：
+
+| 情況 | `LM_GITLEAKS_LOG_OPTS` |
+|---|---|
+| Untrusted_PR | `<merge-base origin/$CHANGE_TARGET HEAD>..<sha>`（不變；取不到 merge base 時歷史掃描未完成） |
+| 非 PR，`LM_GITLEAKS_HISTORY_BASE` 不是 40 個小寫十六進位字元、不存在，或不是 `<sha>` 的祖先 | 空（歷史掃描未完成，「安全」關卡未通過；Req 6.8、6.10） |
+| 非 PR，`GIT_PREVIOUS_SUCCESSFUL_COMMIT` 為 40 個十六進位字元、存在、是 `<sha>` 的祖先，且 `LM_GITLEAKS_HISTORY_BASE` 是它的祖先（含相同） | `$GIT_PREVIOUS_SUCCESSFUL_COMMIT..<sha>` |
+| 非 PR，其他情況（`GIT_PREVIOUS_SUCCESSFUL_COMMIT` 為空、無效、不是 `<sha>` 的祖先，或比起點舊） | `<LM_GITLEAKS_HISTORY_BASE>..<sha>` |
+
+```sh
+set -u
+head="$GIT_COMMIT_FULL"
+if [ -n "${LM_SCAN_BASE_REF:-}" ]; then
+  base="$(git merge-base "${LM_SCAN_BASE_REF:-}" "$head" 2>/dev/null)" || exit 0
+  printf '%s..%s\n' "$base" "$head"
+  exit 0
+fi
+# Secret_History_Baseline（Req 6.1、6.10）：無效或不是建置 commit 的祖先時不輸出 → 歷史掃描未完成。
+floor="${LM_GITLEAKS_HISTORY_BASE:-}"
+printf '%s\n' "$floor" | grep -Eqx '[0-9a-f]{40}' || exit 0
+git cat-file -e "$floor^{commit}" 2>/dev/null || exit 0
+git merge-base --is-ancestor "$floor" "$head" 2>/dev/null || exit 0
+start="$floor"
+prev="${GIT_PREVIOUS_SUCCESSFUL_COMMIT:-}"
+if printf '%s\n' "$prev" | grep -Eqx '[0-9a-f]{40}' \
+  && git cat-file -e "$prev^{commit}" 2>/dev/null \
+  && git merge-base --is-ancestor "$prev" "$head" 2>/dev/null \
+  && git merge-base --is-ancestor "$floor" "$prev" 2>/dev/null; then
+  start="$prev"
+fi
+printf '%s..%s\n' "$start" "$head"
+```
+
+- 不再有「完整歷史」的分支：非 PR 的腳本只輸出 `<40 hex>..<sha>` 或什麼都不輸出。沒有任何情況會略過歷史掃描。
+- Groovy 端的驗證不變：PR 為 `^[0-9a-f]{40}\.\.[0-9a-f]{40}$`，其他為 `^([0-9a-f]{40}\.\.)?[0-9a-f]{40}$`，且 `range.endsWith(sha)`；不符時 `LM_GITLEAKS_LOG_OPTS = ''` 並在 `lmScanErrors` 記錄固定訊息。非 PR 的訊息改為 `Gitleaks（Git 歷史）無法決定掃描範圍（LM_GITLEAKS_HISTORY_BASE 無效或不是建置 commit 的祖先），歷史掃描未完成`，不含任何 SHA 或其他值。
+- `LM_GITLEAKS_HISTORY_BASE` 只在 `environment` 定義，是經 code review 修改的常數，不是 `parameters`，也不從任何建置參數、`params.*` 或 Job 設定讀取（Req 23.4）。PR 修改它不會影響自己的掃描範圍，因為 PR 使用 merge base 分支。
+- 起點等於建置 commit 時（例如重建 `c084474`），範圍是 `c084474..c084474`，沒有任何 commit。任務 29.4 確認 Gitleaks 8.30.1 對空範圍輸出 `[]` 且結束碼為 0；結果不同時（例如結束碼非 0 或沒有報告）停止並回報，不自行改為略過。
+- 建置 commit 的所有受版本控制檔案仍每次以 `gitleaks dir` 完整掃描（Req 6.1）；起點只限制 Git 歷史的範圍。
+- `history.git` 只含建置 commit 可達的物件；起點是建置 commit 的祖先，因此一定在其中。工作區先 `git fetch --unshallow`，`git cat-file` 與 `git merge-base --is-ancestor` 才能判斷。
+- 影響：Release_Tag 若指向 `c084474` 之前的 commit，或非 PR 的分支沒有包含 `c084474`，歷史掃描會未完成（fail closed）；處理方式是以包含起點的 commit 建置。
+- 移動起點：只有在以 Gitleaks 掃描新起點的完整歷史、確認每筆結果都不是真實秘密並在本節記錄之後，才以經審查的 commit 修改常數。這段說明也寫入 `ci/jenkins/README.md`。
+
+#### 27.4 Semgrep 的排除路徑（任務 29.3）
+
+`js-security-vendored.yaml` 的 `lm-js-tls-verify-disabled` 以 `paths.exclude: [server/db/connect.js]`、`lm-sql-unsafe.yaml` 以 `paths.exclude: [server/db/migrations.js, tests/support/pg.js]` 排除已審查的檔案，但 Semgrep 1.185.0 在 CI 沒有套用。主控台另有警告：`Rule ... contains an exclude pattern 'server/db/connect.js' that will soon be interpreted as '/server/db/connect.js' to comply with the Semgrepignore v2 ... To make this pattern permanently unanchored ... change it to '**/server/db/connect.js'`。
+
+研究（[Semgrepignore v2 reference](https://docs.semgrep.dev/semgrepignore-v2-reference)、[Semgrep release notes July 2025](https://docs.semgrep.dev/release-notes/july-2025)；內容經改寫）：
+
+- Semgrepignore v2 的樣式語法遵循 Gitignore：開頭有 `/` 或中間有 `/` 的樣式是 anchored，只以 `/` 結尾的樣式（例如 `src/`）是 floating。Semgrep 對中間有 `/` 而沒有開頭 `/` 的樣式印出上述警告，請使用者改為 `/…`（anchored）或 `**/…`（floating）。
+- 規則的 `paths.exclude`／`paths.include` 比對的是相對於 **project root** 的正規化路徑。Semgrep 從每個 scan root 往上找 `.git` 等版本控制目錄來決定 project root；找不到時，project root 就是 scan root 本身（資料夾）。
+
+推論（任務 29.3 實測確認）：CI 的掃描輸入是 `git checkout-index` 匯出的 `tree/`，沒有 `.git`，且 `ci/semgrep/run.sh` 以 `src server scripts` 三個 scan root 掃描。若 project root 因此變成各 scan root，`server/db/connect.js` 比對時的路徑是 `db/connect.js`，`server/db/connect.js`、`/server/db/connect.js` 與 `**/server/db/connect.js` 都不會相符。在開發者的 checkout 中（有 `.git`）路徑是 `server/db/connect.js`，排除會生效，這可以解釋為何先前的本機掃描沒有這 3 筆結果。另一種可能是 1.185.0 已改以 anchored 方式解讀而有其他差異。兩者都由實測判定。
+
+調查方式：
+
+1. 在 WSL 的臨時目錄建立 Python venv，安裝 `semgrep==1.185.0`，設定 `PYTHON_CPU_COUNT=1`（與先前的本機執行相同），先以 `semgrep --version` 確認版本。用完刪除 venv 與所有暫存檔。
+2. 重現 CI 的輸入：以暫存 index 執行 `git read-tree <commit>` 與 `git checkout-index --all --prefix=<tmp>/tree/`（與 `prepareScanSources` 相同），刪除相同的掃描器設定檔，然後在 `<tmp>/tree` 內執行 `sh ci/semgrep/run.sh scan <tmp>/out.json`。確認結果與建置 #11 相同：3 筆 high 加 51 筆非阻擋結果（medium／low，不需要例外）。也在 repository checkout 內執行一次比較。
+3. 以 `--x-ls-long`（實驗性選項，只用於調查）與 `--verbose` 的輸出確認比對時使用的路徑與 project root。
+4. 逐一嘗試樣式：`/server/db/connect.js`、`**/server/db/connect.js`，以及實測顯示的其他寫法。採用的樣式必須同時符合：在 CI 形式的匯出與 checkout 中都只排除列出的檔案；沒有上述警告；不排除 `src`、`server`、`scripts` 下的其他任何檔案（掃描結果等於原結果減去這 3 筆）。`tests/support/pg.js` 使用相同寫法。
+5. 若沒有任何規則層級的樣式能在 CI 形式的匯出中生效（例如 project root 確實是各 scan root），停止並把實測結果與選項交給使用者決定，不自行修改 `ci/semgrep/run.sh` 的 scan root、`Jenkinsfile` 的匯出方式或 `security/exceptions.json`。可提出的選項：讓匯出的 `tree/` 成為 project root（Semgrep 1.185.0 若有指定 project root 的選項）、改為單一 scan root 並以 anchored 的 include 限定 Req 6.3 的範圍（須證明目標檔案清單與現在完全相同），或其他實測可行的方式。
+
+範圍限制：
+
+- 只修改上述三個排除項目的寫法與相關註解。`lm-js-timing-unsafe-compare` 的 `paths.exclude: [src/]` 不修改；在回報中記錄它在 CI 形式的匯出中是否生效。
+- 51 筆非阻擋結果必須維持不變（規則、檔案、行號相同）。修正後非阻擋結果有任何差異時，列出差異並停止詢問使用者。
+- 規則內容、嚴重度、`run.sh` 的 `--include`、scan root 與 `--metrics=off`／`--disable-version-check` 不變。
+
+**實測結果與使用者決定（任務 29.3，取代上列範圍限制中關於 `run.sh`、`src/` 與 51 筆的部分）**：
+
+- 原因確認：CI 形式的匯出沒有 `.git`，三個 scan root 各自成為 project root，`server/db/connect.js` 比對時的路徑是 `/db/connect.js`，沒有任何規則層級的寫法能在匯出與 checkout 中都生效（步驟 5）。同一原因也使 `lm-js-timing-unsafe-compare` 的 `src/` 在 CI 沒有生效。
+- 決定（使用者選擇步驟 5 的第一個選項）：`ci/semgrep/run.sh` 的 `semgrep scan` 加上 `--project-root .`（1.185.0 的 `semgrep scan --help` 有此選項；它也讓 Semgrep 以 novcs 處理，不讀取 `.gitignore`）。scan root `src server scripts`、`--include`、`--metrics=off`、`--disable-version-check` 不變。四個排除項目都改為 anchored：`/server/db/connect.js`、`/server/db/migrations.js`、`/tests/support/pg.js`、`/src/`。
+- 結果（Semgrep 1.185.0，`PYTHON_CPU_COUNT=1`）：修正前的 CI 形式匯出為 3 筆阻擋、51 筆非阻擋（與建置 #11 相同）。修正後在 CI 形式匯出（工作樹的受版本控制檔案，刪除相同的掃描器設定檔）與 checkout 都是 0 筆阻擋、38 筆非阻擋，沒有 Semgrepignore 警告，掃描的檔案清單都是相同的 56 個檔案。38 筆與修正前 51 筆比較（規則、檔案、行號、欄位，含重複）恰好少了 `lm-js-timing-unsafe-compare` 在 `src/accounts-ui.js`、`src/expenses-ui.js` 的 13 筆，這是規則原本就要排除的結果；其餘 38 筆都是 `lm-js-dom-html-sink`（Low），與修正前相同。使用者接受 51 → 38。`sh ci/semgrep/run.sh test` 通過。
+- 檢查：`tests/ci-semgrep-rules.test.js` 斷言所有 `paths.exclude`／`paths.include` 都以 `/` 開頭、排除清單恰為上述四項、每項都指向存在且受版本控制的檔案或目錄，以及 `run.sh` 的 scan 指令含 `--project-root .`。
+
+**`semgrep --version` 的逾時**：`scannerVersions` 的指令沒有 `--disable-version-check`，推定 Semgrep 在 `--network none` 下嘗試檢查新版本而等到逾時。任務 29.3 量測 `semgrep --version` 的耗時（有與沒有 `SEMGREP_ENABLE_VERSION_CHECK=0`）：版本檢查是原因時，只對 Semgrep 的版本步驟加上 `-e SEMGREP_ENABLE_VERSION_CHECK=0`（經 `v()` 的 `"$@"` 傳給 `docker run`）；不是時，只把 Semgrep 版本步驟的逾時提高到 180 秒。其他工具的版本步驟、`|| true`、版本取不到時 `toolVersion` 為 `null` 的處理，以及掃描未完成的判定（Req 6.8）不變。
+
+#### 27.5 本機驗證（任務 29.4）
+
+- **Gitleaks 執行檔**：從 `https://github.com/gitleaks/gitleaks/releases/tag/v8.30.1` 下載 `gitleaks_8.30.1_linux_x64.tar.gz`（WSL）或 `gitleaks_8.30.1_windows_x64.zip`，以及同一 release 的 `gitleaks_8.30.1_checksums.txt`，自行計算 SHA-256 並與 checksums 中相同檔名的一行比對；不同時停止並回報。放在 repository 以外的臨時目錄，驗證完成後刪除。執行時不指定 `--config`，掃描的目錄中沒有 `.gitleaks.toml`，且不設定 `GITLEAKS_CONFIG`，與 CI 使用的預設規則相同。
+- **dir 掃描**：以暫存 index 對驗證的 commit 執行 `git read-tree` 與 `git checkout-index --all --prefix=<tmp>/tree/`，刪除與 CI 相同的掃描器設定檔，執行 `gitleaks dir --redact --no-banner --exit-code 0 --report-format json --report-path <tmp>/dir.json <tmp>/tree`，報告必須為 `[]`。
+- **git 掃描**：比照 CI 建立只含該 commit 可達物件的 bare repository，執行 `gitleaks git --redact --no-banner --exit-code 0 --report-format json --report-path <tmp>/git.json --log-opts="c08447436cb3db000b577a3de28f8be8acbee540..<sha>" <tmp>/history.git`，報告必須為 `[]`。另以 `--log-opts="c08447436cb3db000b577a3de28f8be8acbee540"`（完整歷史）重現第 27.1 節的 4 筆結果（規則、檔案、行號、commit 相同），以及以 `c08447436cb3db000b577a3de28f8be8acbee540..c08447436cb3db000b577a3de28f8be8acbee540` 確認空範圍的行為（第 27.3 節）。
+- **未提交的變更**：Gitleaks 的 `git` 模式只掃描 commit。29.1–29.3 完成後，先詢問使用者是否在本機建立 commit（不 push；合併與推送由使用者決定）。同意時以該 commit 執行上述 dir 與 git 掃描。不同意時，以 `git ls-files` 的工作樹內容匯出到臨時目錄執行 dir 掃描，並在回報中說明推論：`c084474..HEAD` 合併後只含這次修正的 commit，Gitleaks 的 `git` 模式只檢查加入的行，而加入的行都在工作樹中，dir 掃描為 `[]` 表示 git 掃描也為 `[]`；合併後的建置是最後的確認。
+- **Semgrep**：第 27.4 節的 CI 形式匯出（`run.sh` 已含 `--project-root .`），結果與 29.3 相同：0 筆阻擋、38 筆非阻擋（全部為 `lm-js-dom-html-sink`），掃描 56 個檔案，沒有 Semgrepignore 警告；`sh ci/semgrep/run.sh test` 通過。
+
+#### 27.6 測試
+
+- **`tests/ci-jenkinsfile.test.js`**（`prepareScanSources`）：`environment` 恰有一個 `LM_GITLEAKS_HISTORY_BASE = '<40 個小寫十六進位字元>'`，值等於 `c08447436cb3db000b577a3de28f8be8acbee540`；`parameters` 與任何 `params.` 都不含它。腳本含 `"${LM_GITLEAKS_HISTORY_BASE:-}"`、`git merge-base --is-ancestor "$floor" "$head"`、`git merge-base --is-ancestor "$floor" "$prev"`，且不再含只輸出 `$head` 的完整歷史分支（`printf '%s\\n' "$head"`）。既有斷言（`grep -Eqx '[0-9a-f]{40}'`、`git merge-base --is-ancestor "$prev" "$head"`、`${GIT_PREVIOUS_SUCCESSFUL_COMMIT:-}`、兩個範圍正規表示式、`range.endsWith(sha)`、`LM_GITLEAKS_LOG_OPTS = ''` 之後接 `lmScanErrors <<`）不變；測試標題改為描述起點。
+- **腳本行為**：有 POSIX `sh` 與 `git` 時，在臨時 repository 建立線性歷史 A–B–C–D 與一個分岔的 commit X，取出 `Gitleaks history range` 腳本執行：`base=B`、`prev` 為空 → `B..D`；`prev=C` → `C..D`；`prev=A`（比起點舊）→ `B..D`；`prev=X`（不是 D 的祖先）→ `B..D`；`prev` 不是 40 hex → `B..D`；`base` 不是 40 hex、不存在或 `base=X` → 沒有輸出；`base=D=head` → `D..D`；PR 分支的輸出不變。沒有 `sh` 時以明確的標題略過。
+- **`tests/ci-jenkinsfile-shell-env.test.js`、`tests/ci-jenkinsfile-cps.test.js`、`tests/ci-jenkinsfile-size.test.js`**：斷言不變且通過（`${X:-}` 規則、CPS 規則、`pipeline {}` ≤ 400 行與函式 ≤ 250 行）。
+- **Semgrep 規則**（`tests/ci-semgrep-rules.test.js`，29.3 新增，7 個測試）：以 `Bun.YAML.parse` 解析 `ci/semgrep/rules/*.yaml`（不新增相依套件）；規則檔可解析且每條規則都有 `id`；`paths.exclude` 恰為已審查的四個 anchored 項目：`lm-js-tls-verify-disabled` 為 `/server/db/connect.js`，`lm-sql-unsafe` 為 `/server/db/migrations.js`、`/tests/support/pg.js`，`lm-js-timing-unsafe-compare` 為 `/src/`；所有規則的 `paths.exclude`／`paths.include` 都以 `/` 開頭；每個項目都指向存在的檔案或目錄（以 `/` 結尾者為目錄）；在 git checkout 中每個項目都受版本控制（沒有 `.git` 時以明確的標題略過）；`run.sh` 的 scan 指令含 `--project-root .`，scan root `src server scripts`、`--include`、`--metrics=off`、`--disable-version-check` 不變；`run.sh` 維持 LF 行尾。
+- **假值**：`tests/ci-scrub-dir.test.js` 與 `tests/config.test.js` 的斷言不變並通過。不另加「原始碼不含 PEM 標記」之類的靜態測試，因為它只能重新實作 Gitleaks 的部分規則；驗證方式是以真實的 Gitleaks 8.30.1 掃描（第 27.5 節）與 `bun scripts/scan-secrets.mjs`。
+- **維運者檢查**：合併後對 `release/little-moments » main` 按 Build Now，主控台顯示 `Gitleaks Git 歷史範圍：c08447436cb3db000b577a3de28f8be8acbee540..<sha>`，Security Scan 通過，建置進入之後的階段；Semgrep 版本步驟沒有 `Killed`。
+
+#### 27.7 維運者的下一步
+
+1. 合併 29.1–29.3 的變更到 `main`。
+2. 對 `release/little-moments » main` 按 Build Now。預期 Security Scan 通過，建置進入 Security Scan 之後的階段。之後的階段若失敗，把失敗的階段與主控台訊息交給開發者。
+3. 把 Unit Tests 的實際時間（JUnit 報告的總時間）交給開發者，確認 28.4 的 600 秒目標。
+4. 這次建置成功後，`GIT_PREVIOUS_SUCCESSFUL_COMMIT` 會有值，之後的建置從上一次成功建置的 commit 開始掃描。
+
 ## Data Models
 
 ### PostgreSQL Schema（`migrations/0001_initial.sql`）
@@ -2436,6 +2585,15 @@ test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ 
 - **實測**：Bun 1.4.4 的 `bun install --frozen-lockfile` 不修改 `bun.lock`；Property 29 執行三次、Property 20 連續十次皆通過；完整套件依兩種檔案順序各執行一次，目標 600 秒以下。
 - **維運者檢查**：`infra/build-image` 的 Verify 通過；28.5 合併後 Build_Record 的 `toolchain.bun` 為 `1.4.4`，Unit Tests 在 15 分鐘內結束。
 
+### 安全掃描的測試假值、歷史起點與 Semgrep 排除路徑（Components 第 27 節）
+
+不新增 PBT：範圍決定的輸入只有三個 commit 之間的祖先關係，以臨時 Git repository 的窮舉範例涵蓋；假值與排除路徑是固定的字串。測試如下（細節見第 27.6 節）：
+
+- **靜態檢查**（`tests/ci-jenkinsfile.test.js`、新增的 `tests/ci-semgrep-rules.test.js`）：`LM_GITLEAKS_HISTORY_BASE` 是 `environment` 的常數而不是參數；範圍腳本沒有完整歷史的分支；Semgrep 的 `paths.exclude` 恰為四個 anchored 項目（`/server/db/connect.js`、`/server/db/migrations.js`、`/tests/support/pg.js`、`/src/`），所有 `paths` 樣式都以 `/` 開頭，`run.sh` 的 scan 指令含 `--project-root .`。
+- **腳本行為**：以臨時 Git repository 執行範圍腳本，涵蓋起點有效／無效、`GIT_PREVIOUS_SUCCESSFUL_COMMIT` 為空、較新、較舊、分岔與等於建置 commit 的情況。
+- **實際掃描器**：Gitleaks 8.30.1 的 dir 與 git 掃描為 0 筆；Semgrep 1.185.0 在 CI 形式的匯出與 checkout 上都為 0 筆阻擋、38 筆非阻擋結果，掃描 56 個檔案，沒有警告；`ci/semgrep/run.sh test` 通過。
+- **維運者檢查**：合併後的建置通過 Security Scan，主控台的 Gitleaks 範圍以 `c08447436cb3db000b577a3de28f8be8acbee540..` 開頭。
+
 ## Open Risks
 
 1. **資料層重寫工作量**：`server/accounts.js` 約 50 個同步 prepared statement、所有路由與 `tx` 呼叫點都要改為 async，測試檔也要全面改寫。這是本功能最大的工作項目，也最容易引入行為差異。緩解：先建立 `queries.js` 一對一轉換、以既有測試作回歸基準、用全域 advisory lock 保留單一寫入者語意；Bun.SQL 若在 BIGINT 型別、錯誤型別或重連上有問題，切換到 `postgres@3.4.7`。
@@ -2458,3 +2616,4 @@ test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ 
 18. **bun test 卡住的原因尚未證實**：第 24 節的 H1–H5 要在任務 26.1 以 CI 相同的映像重現後才能判定，本機可能無法重現 Linux 上的時序。測試連線的逾時與結束時終止 backend 讓任何一種原因都只會使個別測試失敗，不會讓整個套件等到 15 分鐘上限；殘留的風險是 `lock_timeout` 在極少數情況下回報逾時但鎖已取得（PostgreSQL 郵件清單有此報告），此時 `close()` 終止 backend 仍會釋放它。另一個風險是套件總時間：本機約 603 秒，Linux 上的 Bun 1.3.14 為 876 秒，接近 900 秒上限；改在 Bun 1.4.4 上量測，由任務 28.4 決定是否需要另外處理（Components 第 26 節）。
 19. **Production 收據 AI 的金鑰與費用**：金鑰以明文存在同一台主機 `192.168.1.121` 的兩個位置：Jenkins controller 的秘密目錄（1000:1000、0600）與 `/srv/lm/prod/secrets/openai-api-key`（root 0700 目錄內、10001:10001、0400）。取得該主機 root 的人都能讀到。Credentials Binding 不遮罩 `file` 憑證的內容，主控台的安全只靠腳本不輸出金鑰與封存前的 scrub。Production 對網際網路公開，政策為 `all` 時每個可編輯旅行的成員都能使用，費用上限只有每位使用者、每日與每月的次數上限，以及 OpenAI 後台的預算。輪替只在下一次部署生效，舊槽位在觀察期內仍使用舊金鑰；金鑰外洩時先在 OpenAI 撤銷，再輪替（Components 第 25.7 節）。照片會送到 OpenAI，README 已提醒使用者確認 OpenAI 的 API 資料政策。
 20. **Bun 1.4.4 升級**：1.4 是 minor 版本升級，release notes 沒有逐條確認 Components 第 26.1 節的三個問題已修正，修正與否只能由任務 28.3 實測判定；本機（WSL 或 Windows）的時序與 CI 的 Build_Image 不同，本機通過不保證 CI 通過。28.1–28.4 合併到 28.5 合併之間，所有 `ci/` 與 `release/` 建置都在 Toolchain 失敗（第 26.4 節，fail closed）；維運者延遲重建 Build_Image 時，這段期間無法發布。`bun.lock` 若被 1.4.4 改為 `lockfileVersion: 2`，osv-scanner 與 Trivy 可能無法解析（Open Risk 4），所以預設保留 v1。preview-deploy Job 不在本 repository，其 `oven/bun` digest 由維運者另外更新，忘記時該 Job 仍以 1.3.14 執行。
+21. **Secret_History_Baseline 之前的歷史不再掃描**：`c084474` 與其祖先的歷史只在 2026-11-13 審查過一次（Components 第 27.3 節）。之後 Gitleaks 新增的規則若會在舊 commit 找到真實秘密，Pipeline 不會發現。這段歷史只有 19 個 commit，且當時的 4 筆結果都是測試假值；需要時可在本機以新版 Gitleaks 掃描完整歷史。另一個影響是指向 `c084474` 之前 commit 的 Release_Tag 會在 Security Scan 失敗（fail closed）。Semgrep 的排除路徑若依賴 project root 的判定，Semgrep 升級後可能再次改變；`tests/ci-semgrep-rules.test.js` 只檢查寫法，真正的確認是每次升級後在 CI 形式的匯出上執行掃描。

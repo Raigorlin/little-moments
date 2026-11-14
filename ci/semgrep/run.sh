@@ -18,7 +18,11 @@ cd "$(dirname "$0")/../.."
 case "${1:-}" in
   scan)
     out="${2:?用法：ci/semgrep/run.sh scan <out.json>}"
+    # --project-root .：CI 的掃描輸入（git checkout-index 匯出）沒有 .git，若不指定，Semgrep 會把每個
+    # scan root 當成 project root，規則的 anchored paths.exclude（/server/db/connect.js 等）就比對不到
+    # （Design §27.4）。指定後在匯出與 checkout 中都以 repository 根目錄為準。
     exec semgrep scan \
+      --project-root . \
       --config ci/semgrep/rules \
       --metrics=off \
       --disable-version-check \
