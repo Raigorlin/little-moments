@@ -285,3 +285,28 @@ select option,select optgroup{font-family:var(--font-ui);background:var(--paper)
 .invite-links{list-style:none;margin:0 0 16px;padding:0;display:grid;gap:8px}.invite-links li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px}.invite-links li>span{flex:1 1 auto;min-width:0;overflow-wrap:anywhere;line-height:1.6}.invite-links li>.button{flex:none;margin-left:auto}
 
 .linked-meals{display:grid;gap:8px;margin:12px 0}.linked-meals .check-row{display:flex;align-items:center;gap:10px;min-height:44px}
+
+/* Account header: desktop keeps the inline links; phones fold them into a menu. */
+.header-collapse{display:contents}
+.header-menu-toggle{display:none}
+.header-home{order:1}.header-admin{order:2}.header-theme{order:3}.header-collapse>.profile-button{order:4}.header-logout{order:5}
+.tab-icon{display:none}
+@media(max-width:760px){
+  .header-actions{gap:8px;position:relative}
+  .header-theme{order:0}
+  .header-menu-toggle{display:inline-grid;order:1;border:2px solid var(--ink);border-radius:12px;color:var(--ink);background:var(--paper)}
+  .header-collapse{display:none;position:absolute;right:0;top:calc(100% + 10px);flex-direction:column;align-items:stretch;min-width:190px;background:var(--paper);border:2px solid var(--ink);border-radius:14px;box-shadow:3px 4px 0 var(--shadow);padding:6px;z-index:30}
+  .header-collapse.open{display:flex}
+  .header-collapse>*,.header-collapse>.profile-button{order:0;justify-content:flex-start;min-height:44px;width:100%;padding:0 12px;text-decoration:none}
+  .header-home{display:none!important}
+  .toolbar-actions .button{padding:0;width:46px;min-width:46px;height:46px}
+  .toolbar-actions .button span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .toolbar-actions .button .icon{width:21px;height:21px}
+  .section-tabs{position:sticky;top:77px;z-index:15;background:var(--paper);overflow:visible;gap:0;margin-left:-4px;margin-right:-4px}
+  .section-tabs>button{flex:1 1 0;min-width:0;padding:12px 4px 15px;display:flex;align-items:center;justify-content:center}
+  .section-tabs>button .tab-icon{display:inline-grid;place-items:center}
+  .section-tabs>button .tab-icon .icon{width:24px;height:24px}
+  .section-tabs>button .tab-number,.section-tabs>button .tab-label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .section-tabs>button .tab-badge{position:absolute;top:6px;right:calc(50% - 22px);margin:0}
+}
+@media(max-width:480px){.section-tabs{top:72px}}
