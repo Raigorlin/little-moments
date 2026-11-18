@@ -339,4 +339,5 @@ select option,select optgroup{font-family:var(--font-ui);background:var(--paper)
   .hero:not(.hero-home) .countdown small{grid-column:auto;font-size:12px}
   .hero:not(.hero-home) .countdown strong{font-size:22px}
   .hero:not(.hero-home) .countdown>span{font-size:12px;padding-bottom:0}
+  .hero:not(.hero-home) .trip-menu-button{position:absolute;width:1px;height:1px;min-width:0;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 }
