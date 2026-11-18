@@ -374,3 +374,5 @@ select option,select optgroup{font-family:var(--font-ui);background:var(--paper)
   .section-tabs>button[aria-current] .tab-icon{border-color:var(--ink)}
   .section-tabs>button:not([aria-current]) .tab-icon{opacity:.75}
 }
+@media(max-width:600px){.section-tabs>button .tab-icon,.section-tabs>button[aria-current] .tab-icon{background:none;border:0;opacity:1}.section-tabs>button .tab-icon .icon{width:28px;height:28px}}
+@media(max-width:600px){.mode-switch .icon,.toolbar-actions .icon{width:24px;height:24px}.hero:not(.hero-home) .hero-pin .icon{width:24px;height:24px}}
