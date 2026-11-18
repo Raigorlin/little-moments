@@ -294,7 +294,7 @@ select option,select optgroup{font-family:var(--font-ui);background:var(--paper)
 @media(max-width:760px){
   .header-actions{gap:8px;position:relative}
   .header-theme{order:0}
-  .header-menu-toggle{display:inline-grid;order:1;border:2px solid var(--ink);border-radius:12px;color:var(--ink);background:var(--paper)}
+  .header-menu-toggle{display:inline-grid;order:1;place-items:center;width:42px;min-width:42px;height:42px;padding:0;border:2px solid var(--ink);border-radius:50%;color:#3e3a39;background:var(--coral);font-size:16px;font-weight:700;line-height:1}
   .header-collapse{display:none;position:absolute;right:0;top:calc(100% + 10px);flex-direction:column;align-items:stretch;min-width:190px;background:var(--paper);border:2px solid var(--ink);border-radius:14px;box-shadow:3px 4px 0 var(--shadow);padding:6px;z-index:30}
   .header-collapse.open{display:flex}
   .header-collapse>*,.header-collapse>.profile-button{order:0;justify-content:flex-start;min-height:44px;width:100%;padding:0 12px;text-decoration:none}
