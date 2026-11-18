@@ -333,9 +333,9 @@ select option,select optgroup{font-family:var(--font-ui);background:var(--paper)
   .hero:not(.hero-home) .hero-tags>span{font-size:13px;padding:4px 7px}
   .hero:not(.hero-home) .hero-tags>.hero-destination{flex:1 1 100%;order:3}
   .hero:not(.hero-home) .hero-art{height:86px;min-height:0;margin:0}
-  .hero:not(.hero-home) .hero-art>.illustration{width:100%;height:100%;margin:0;overflow:hidden;transform:none}.hero:not(.hero-home) .hero-art>.illustration>svg{position:absolute;left:0;bottom:0;width:100%;height:auto}
+  .hero:not(.hero-home) .hero-art>.illustration{width:100%;height:100%;margin:0;overflow:hidden;transform:none}.hero:not(.hero-home) .hero-art>.illustration>svg{position:absolute;left:0;top:50%;width:100%;height:auto;translate:0 -50%}
   .hero:not(.hero-home) .postcard-sticker{display:none}
-  .hero:not(.hero-home) .countdown{left:12px;right:auto;bottom:8px;padding:4px 10px;transform:rotate(-3deg);grid-template-columns:auto auto auto;gap:0 6px;align-items:baseline;border-radius:10px;box-shadow:2px 2px 0 #3e3a39}
+  .hero:not(.hero-home) .countdown{padding:4px 10px;grid-template-columns:auto auto auto;gap:0 6px;align-items:baseline;border-radius:10px;box-shadow:2px 2px 0 #3e3a39}
   .hero:not(.hero-home) .countdown small{grid-column:auto;font-size:12px}
   .hero:not(.hero-home) .countdown strong{font-size:22px}
   .hero:not(.hero-home) .countdown>span{font-size:12px;padding-bottom:0}
