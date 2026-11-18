@@ -32,6 +32,9 @@ import {test,expect} from './local-planner-fixture.js';
 
 // Every test runs the bundle the server serves now, never one a service worker cached, as receipt-ocr.e2e.js does.
 test.use({serviceWorkers:'block'});
+// Record every settle the moment .swipe-settling is added, so a loaded runner whose frames run late can still read
+// the settle that started on release even if it has already ended. A new drag clears the record.
+test.beforeEach(async({page})=>{await page.addInitScript(()=>{const surfaceOf=el=>{const s=[...el.children].filter(c=>!c.matches('.swipe-actions,.swipe-toggle'));return s.find(c=>c.getClientRects().length>0)??s[0];};new MutationObserver(list=>{for(const m of list){const el=m.target;if(!(el instanceof Element))continue;const had=(m.oldValue||'').split(/\s+/);if(el.classList.contains('swipe-dragging')&&!had.includes('swipe-dragging'))el.__lmSettle=null;if(el.classList.contains('swipe-settling')&&!had.includes('swipe-settling')){const s=surfaceOf(el);el.__lmSettle={duration:s?getComputedStyle(s).getPropertyValue('transition-duration'):''};}}}).observe(document,{subtree:true,attributes:true,attributeFilter:['class'],attributeOldValue:true});});});
 
 const PHONE={width:390,height:900};
 // Panel geometry, calc(var(--swipe-count)*68px), the same constant the controller uses for End_Stop.
@@ -468,11 +471,10 @@ function expectWithin1px(actual,expected,what){
  * straight after the releasing drag() resolves, which is two frames after the release.
  */
 async function settleTransitionDuration(row,what){
- const settling=()=>row.evaluate(el=>el.classList.contains('swipe-settling'));
- expect(await settling(),`${what}: .swipe-settling before the read`).toBe(true);
- const duration=await surfaceTransitionDuration(row);
- expect(await settling(),`${what}: .swipe-settling after the read`).toBe(true);
- return duration;
+ // Read the live settle if it is still running, else the one the init script recorded when it started.
+ const r=await row.evaluate(el=>{const surface=[...el.children].filter(c=>!c.matches('.swipe-actions,.swipe-toggle'));const child=surface.find(c=>c.getClientRects().length>0)??surface[0];if(!child)throw new Error('swipe row has no surface child');const now=el.classList.contains('swipe-settling'),seen=el.__lmSettle;el.__lmSettle=null;return {settled:now||!!seen,duration:now?getComputedStyle(child).getPropertyValue('transition-duration'):seen?.duration};});
+ expect(r.settled,`${what}: .swipe-settling ran after the release`).toBe(true);
+ return r.duration;
 }
 
 /**
