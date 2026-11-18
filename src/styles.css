@@ -312,3 +312,14 @@ select option,select optgroup{font-family:var(--font-ui);background:var(--paper)
 @media(max-width:480px){.section-tabs{top:72px}}
 
 .sync-status[hidden]{display:none}
+
+/* Phones: mode switch and toolbar actions share one row, all as icons. */
+@media(max-width:760px){
+  .trip-toolbar{flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:space-between;gap:10px}
+  .mode-switch{width:auto;flex:0 0 auto}
+  .mode-switch>a{flex:0 0 auto;width:54px;min-width:54px;padding:0;justify-content:center}
+  .mode-switch>a>.icon{width:21px;height:21px}
+  .mode-switch>a>.icon:last-child{display:none}
+  .mode-switch .mode-label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .toolbar-actions{width:auto;flex:0 0 auto;justify-content:flex-end;gap:8px}
+}
