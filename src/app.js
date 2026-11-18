@@ -1,16 +1,26 @@
-import { activityForVehicle, activityForPerson, activityParticipantLabel, validActivityVehicles } from './vehicle-itinerary.js';
+import { activityForPerson, activityParticipantLabel } from './vehicle-itinerary.js';
 import { createExpensePanel } from './expenses-ui.js';
 import { mapLink } from './maps.js';
-import { parseVehicleMeeting, formatVehicleMeeting, vehicleDepartures } from './vehicle-departures.js';
+import { parseVehicleMeeting } from './vehicle-departures.js';
 import { dailyNote, setupDailyNote } from './daily-notes.js';
 import { MEAL_SLOTS, mealSlotOptions, groupMealsByDate } from './meal-order.js';
 import { RECIPE_TEMPLATES, COMMON_INGREDIENTS, DISH_TYPES, mergeIngredients, applyRecipeTemplate, inferDishKind } from './recipes.js';
 import { dishIllustration } from './dish-art.js';
 import { PERSONAL_GEAR_GROUPS, personalGearPreset } from './gear-presets.js';
-import { SHOPPING_CATEGORIES, parseIngredients, classifyIngredient, syncMealIngredients } from './ingredients.js';
+import { SHOPPING_CATEGORIES, parseIngredients, classifyIngredient, syncMealIngredients, removeIngredientFromMeals } from './ingredients.js';
 import { illustration, logo } from './art.js';
 import { setupSceneMotion, syncSceneMotion, sceneMotionSettings } from './scene-motion.js';
 import { tripMenuEntries } from './trip-menu.js';
+import { watchPosterDays } from './itinerary-motion.js';
+import { toStudio, fromStudio } from './storybook-adapter.js';
+import { mountStudio } from './storybook-studio.js';
+import { posterHtml } from './itinerary-poster.js';
+import { itineraryText } from './itinerary-text.js';
+import { editorHtml, placeLimitReached } from './itinerary-editor.js';
+import { dayLocation, dayModel, firstDayDeparture, planningWarnings, shoppingPlan, sortedRoutes, tripDays, vehicleRouteDays } from './itinerary-derive.js';
+import { EDIT_MESSAGES, activityDraft, addPresets, clearLegacy, deleteActivity, deletePlace, deleteRoute, legacyRouteDraft, newActivityDraft, newRouteDraft, routeDraft, saveActivity, saveArrival, saveDaySettings, saveMeal, saveMealTime, savePlace, saveRoute, saveVehicle, setActivityDone } from './itinerary-edits.js';
+import { LIMITS, PLACE_NAME_MESSAGES, destinationConflict, placeNameError, trimWhite } from './itinerary-model.js';
+import { retimeByDayIndex, shortenBlockedMessage } from './itinerary-dates.js';
 import { STORAGE_KEY, THEMES_KEY, TABS, COLORS, emptyState, readStorage, save, uid, escape as e, dateRange, dateLabel, weekday, personName, myGear, readyCount, unassigned, togglePacking, assignGear, assignShopping, canDepart, progress, logEvent, isValidState, addParticipant, resolveTab } from './model.js';
 
 const app = document.querySelector('#app');
@@ -27,7 +37,62 @@ let baseRevision = state.revision, originalBackup = initial.raw || '';
 let dialogDirty = false;
 let inviteDraft={name:'',role:''}, inviteError='';
 let expensePanel = null;
-let scheduleVehicle = '';
+let presenceField = null; const presenceClientId = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now()).replace(/[^A-Za-z0-9_-]/g, '');
+let studioHost = null, studioMount = null, studioFailed = false, studioRetryAllowed = false, studioBaseRevision = null, studioBasePlan = null;
+const studioDirty = () => Boolean(studioMount?.isDirty());
+function dropStudio() { studioMount?.destroy(); studioMount = null; studioHost = null; studioFailed = false; studioRetryAllowed=false; studioBaseRevision=null; studioBasePlan=null; }
+async function saveStoryPlan(plan) {
+  if (accountSaving || account && !account.permissions.canEdit) return {ok:false,message:'目前無法儲存這趟旅行。'};
+  if (account && (accountSessionChanged || !saved && !studioRetryAllowed)) return {ok:false,message:accountError || '原有修改尚未儲存。請先處理衝突或匯出備份。'};
+  if (!account && (storageLocked || !saved)) return {ok:false,message:'本機資料尚未安全儲存，或另一分頁有更新。請先匯出備份並處理衝突。'};
+  const before = state;
+  // fromStudio performs field-level three-way merge against studioBasePlan; a revision-only change does not discard unrelated updates.
+  try {
+    const next = fromStudio(before,plan,{canDelete:!account||account.permissions.canDelete===true,basePlan:studioBasePlan});
+    if (!isValidState(next)) throw new Error('行程資料未通過網站驗證，未儲存。');
+    if (JSON.stringify(next) === JSON.stringify(before)) {
+      if(account){await assertAccountSession();const latest=await account.api(`/api/trips/${account.trip.id}`);if(latest.trip.revision!==account.trip.revision)return {ok:false,message:'旅行已有更新，請匯出繪本草稿後重新載入。'};}
+      else {const disk=readStorage(storage);if(disk.status!=='ok'||disk.state.revision!==baseRevision)return {ok:false,message:'本機資料已在另一分頁變更，請先備份。'};}
+      return {ok:true,plan:toStudio(before)};
+    }
+    if (!account) {
+      const disk = readStorage(storage);
+      if (disk.status === 'ok' && disk.state.revision !== baseRevision) {storageLocked=true;pendingRemote=disk.state;saved=false;return {ok:false,message:'另一分頁已修改這趟旅行，請先匯出備份。'};}
+      if (disk.status !== 'ok') return {ok:false,message:'無法確認本機儲存狀態，請先備份。'};
+    }
+    if (account) {
+      // Keep the canonical candidate local until the existing revision/session-checked API responds; the studio keeps its own draft.
+      accountSaving=true; saved=false; accountError=''; render();
+      try {
+        await assertAccountSession();
+        const result=await account.api(`/api/trips/${account.trip.id}`,{method:'PUT',body:{revision:account.trip.revision,expectedUserId:account.user.id,state:next}});
+        acceptAccountResult(result); settlePlan(); studioFailed=false; studioRetryAllowed=false; studioBaseRevision=state.revision; studioBasePlan=toStudio(state); return {ok:true,plan:studioBasePlan};
+      } catch(error) {
+        state=before; saved=!(error.status===0 || error.status===401 || error.status===409 || error.status>=500 || accountSessionChanged); studioFailed=true;studioRetryAllowed=(error.status===0 || error.status>=500) && !accountSessionChanged;
+        accountError=error.status===409?'其他人已更新這趟旅行。你的繪本草稿仍保留，請先匯出備份再重新載入合併。':error.status===401?'登入已失效。繪本草稿未儲存，請先匯出備份。':`${error.message}，繪本草稿尚未儲存。`;
+        return {ok:false,message:accountError};
+      } finally {accountSaving=false;render();}
+    }
+    state=next;
+    const ok=commit('行程繪本已更新',false);
+    studioFailed=!ok;
+    if (!ok) {state=before;render();return {ok:false,message:'儲存失敗，編輯草稿仍在畫面。請匯出 JSON 備份。'};}
+    studioBaseRevision=state.revision;studioBasePlan=toStudio(state);
+    return {ok:true,plan:studioBasePlan};
+  } catch (error) {state=before;studioFailed=true;return {ok:false,message:error?.message||'儲存失敗，草稿仍在畫面。'};}
+}
+function mountStoryAfterRender() {
+  const marker = app.querySelector('#story-studio-mount');
+  if (!marker) return;
+  if (!studioHost) {studioHost=document.createElement('div');studioHost.className='story-studio-host';}
+  marker.replaceWith(studioHost);
+  try {
+    if (!studioMount) {const plan=toStudio(state);studioBaseRevision=state.revision;studioBasePlan=plan;studioMount=mountStudio(studioHost,{plan,onSave:saveStoryPlan,canEdit:!account||account.permissions.canEdit===true,canDelete:!account||account.permissions.canDelete===true,getPeople:()=>state.people.map(p=>p.name).filter(Boolean),onFocusField:f=>{presenceField=f;},onDirty:()=>{}});}
+    else if (!studioDirty() && studioBaseRevision!==state.revision) {if(typeof studioMount.refresh!=='function') throw new Error('studio refresh missing');const latestPlan=toStudio(state);if(studioMount.refresh(latestPlan)){studioBasePlan=latestPlan;studioBaseRevision=state.revision;}}
+  } catch(error) {dropStudio();const warning=document.createElement('p');warning.setAttribute('role','alert');warning.className='save-warning';warning.textContent='行程繪本無法顯示：'+(error?.message||'未知錯誤')+'。原始旅行資料未修改。';app.querySelector('.workspace-main,.story-schedule-page')?.append(warning);}
+}
+// Itinerary tab state (design 「planner 狀態」). Not persisted: it never enters Trip_State, localStorage or the server.
+const planner = {view:'poster',shown:false,dayIndex:0,segment:'routes',placesOpen:false,unassignedOpen:false,textOpen:false,presets:new Set(),card:null,notice:null,focus:''};
 let tripMenuOpen = false;
 let tab = 'schedule', day = state.trip.startDate, shoppingFilter = 'all', gearFilter = 'all', hideDone = false;
 let syncStartupError = '', migrated = false;
@@ -37,7 +102,6 @@ if(saved)baseRevision=state.revision;
 let theme = 'light';
 try { theme = localStorage.getItem(THEMES_KEY) === 'dark' ? 'dark' : 'light'; } catch {}
 document.documentElement.dataset.theme = theme;
-const types = {meet:'集合',market:'採買補給',camp:'營地時光',meal:'一起吃飯',night:'星空時間',travel:'在路上'};
 const categories = SHOPPING_CATEGORIES;
 const icons = {
   sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>',
@@ -60,7 +124,13 @@ const icons = {
   leaf:'<path d="M20 3C8 1 1 8 5 16c8 6 17-2 15-13ZM3 21 15 9"/>',
   info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v1"/>',
   cloud:'<path d="M6 18a5 5 0 0 1-1-10 7 7 0 0 1 13-1 5.5 5.5 0 0 1 0 11H6Z"/>',
-  menu:'<path d="M4 7h16M4 12h16M4 17h16"/>'
+  menu:'<path d="M4 7h16M4 12h16M4 17h16"/>',
+  up:'<path d="M12 19V5m-6 6 6-6 6 6"/>',
+  down:'<path d="M12 5v14m-6-6 6 6 6-6"/>',
+  copy:'<rect x="8" y="8" width="13" height="13" rx="2.5"/><path d="M16 8V5.5A2.5 2.5 0 0 0 13.5 3h-8A2.5 2.5 0 0 0 3 5.5v8A2.5 2.5 0 0 0 5.5 16H8"/>',
+  route:'<circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="6" r="2.5"/><path d="M8.5 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.5"/>',
+  stop:'<path d="M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 1 1 14 0Z"/><path d="m9.5 10 1.8 1.8 3.2-3.6"/>',
+  warning:'<path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 10v4m0 3v.01"/>'
 };
 function icon(name, className='') { return `<svg class="icon ${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.tent}</svg>`; }
 function avatar(p, small=false) { return `<span class="avatar ${COLORS.includes(p.color)?p.color:'coral'} ${small?'small':''}" aria-label="${e(p.name)}">${e([...String(p.name || '?').trim()][0] || '?')}</span>`; }
@@ -69,27 +139,34 @@ function dateOptions(selected=day) { return dateRange(state.trip.startDate,state
 function button(text, action, className='', extra='') { return `<button class="button ${className}" data-action="${action}" ${extra}>${text}</button>`; }
 function route() { if(account)return location.pathname.endsWith('/go')?'go':'trip'; return location.hash.replace(/^#\/?/,'').split('?')[0] || 'trip'; }
 function notify(message) { clearTimeout(toastTimer); document.querySelector('#toasts').textContent = message; document.querySelector('#toasts').classList.add('visible'); toastTimer=setTimeout(()=>document.querySelector('#toasts').classList.remove('visible'),4500); }
-function commit(message, announce=true) { if(account){void commitAccount(message,announce);return;} const disk=readStorage(storage); if(disk.status==='ok' && disk.state.revision!==baseRevision){storageLocked=true;pendingRemote=disk.state;} logEvent(state,message); saved=!storageLocked && save(storage,state);if(saved)baseRevision=state.revision;render();if(announce||!saved)notify(saved?message+' · 已儲存在本機':'尚未儲存。請匯出備份，再處理儲存或分頁衝突。'); }
+// Returns `saved` in Local_Planner and the commitAccount() promise (true on success) in Account_Mode; callers may ignore it.
+function commit(message, announce=true) { if(account)return commitAccount(message,announce); const disk=readStorage(storage); if(disk.status==='ok' && disk.state.revision!==baseRevision){storageLocked=true;pendingRemote=disk.state;} logEvent(state,message); saved=!storageLocked && save(storage,state);if(saved){baseRevision=state.revision;settlePlan();}render();if(announce||!saved)notify(saved?message+' · 已儲存在本機':'尚未儲存。請匯出備份，再處理儲存或分頁衝突。'); return saved; }
 function render() {
-  const active=document.activeElement?.dataset.focus || deferredFocus;
+  const active=planner.focus||document.activeElement?.dataset.focus||deferredFocus;
+  planner.focus='';
+  if(planner.card&&!accountSaving)planner.card.sending=false;
   deferredFocus=accountSaving?(active||''):'';
   const page=route();
   const pageTitle=page==='home'?'我的旅行':page==='privacy'?'資料與隱私':page==='invite'?'旅行邀請':page==='go'?`${state.trip.title} · 行前清單`:state.trip.title;
   document.title = `${pageTitle} · 日子拾光`;
   document.body.classList.toggle('departure-page',page==='go');
+  if (studioHost?.isConnected) studioHost.remove();
   app.innerHTML = `${header()}${!account&&!saved?'<div class="save-warning" role="alert">資料尚未儲存，或有另一分頁的變更。請先保留備份。<button class="text-button" data-action="export">匯出目前內容</button><button class="text-button" data-action="recover-storage">處理儲存問題</button></div>':''}${page==='invite'?invite():page==='home'?home():page==='privacy'?privacy():page==='go'?departure():trip()}${footer()}`;
+  if(page==='trip'&&resolveTab(tab)==='schedule')document.body.dataset.printScope='itinerary';else delete document.body.dataset.printScope;
   if(account)applyAccountChrome();
+  if(page==='trip'&&tab==='schedule') {mountStoryAfterRender();studioMount?.resume?.();} else if(studioMount){studioMount.suspend?.();if(!studioDirty())dropStudio();}
   const expenseMount=app.querySelector('#expenses-mount');
   if(expenseMount){expensePanel??=createExpensePanel({getState:()=>state,account,assertSession:()=>assertAccountSession(),onDirty:()=>{}});expenseMount.append(expensePanel.element);if(accountSessionChanged)expensePanel.lock('登入帳號已在其他分頁變更。請匯出分帳草稿，再重新登入原帳號。');}
   syncSceneMotion();
-  if(active) [...document.querySelectorAll('[data-focus]')].find(el=>el.dataset.focus===active)?.focus({preventScroll:true});
+  watchPosterDays(app);
+  if(active){const target=active.startsWith(':css:')?document.querySelector(active.slice(5)):[...document.querySelectorAll('[data-focus]')].find(el=>el.dataset.focus===active);target?.focus({preventScroll:true});if(target&&active.startsWith('meal-edit-'))target.scrollIntoView({block:'center'});}
   const activeTab=app.querySelector('.section-tabs [aria-current="page"]');
   if(activeTab&&matchMedia('(max-width:760px)').matches){
     const tabs=activeTab.parentElement,tabRect=activeTab.getBoundingClientRect(),tabsRect=tabs.getBoundingClientRect();
     if(tabRect.left<tabsRect.left||tabRect.right>tabsRect.right)tabs.scrollLeft+=tabRect.left<tabsRect.left?tabRect.left-tabsRect.left:tabRect.right-tabsRect.right;
   }
   const activeDay=app.querySelector('.date-tabs button[aria-pressed="true"]');
-  if(activeDay&&matchMedia('(max-width:760px)').matches){
+  if(activeDay){
     const days=activeDay.parentElement,dayRect=activeDay.getBoundingClientRect(),daysRect=days.getBoundingClientRect();
     if(dayRect.left<daysRect.left||dayRect.right>daysRect.right)days.scrollLeft+=dayRect.left<daysRect.left?dayRect.left-daysRect.left:dayRect.right-daysRect.right;
   }
@@ -109,48 +186,251 @@ function home() { return `<main id="main" class="page">${hero(true)}<div class="
 function trip() {
   tab = resolveTab(tab);
   const count=unassigned(state).length;
-  return `<main id="main" class="page"><nav class="breadcrumb" aria-label="麵包屑"><a href="#/home">我的旅行</a><span>/</span><span>${e(state.trip.title)}</span></nav>${hero()}<div class="trip-toolbar"><nav class="mode-switch" aria-label="旅行模式"><a href="#/trip" aria-current="page">${icon('book')} 規劃手冊</a><a href="#/go">${icon('tent')} 出發模式 ${icon('arrow')}</a></nav><div class="toolbar-actions">${button(icon('download')+'<span>匯出手冊</span>','export','quiet')}${button(icon('people')+'邀請旅伴','invite','blue')}</div></div><div class="sync-status"><i></i>${saved?'已儲存在這台裝置':'尚未儲存'}<span>·</span> ${navigator.onLine?'本機資料，不會同步至其他裝置':'目前離線，仍可在本機編輯'}</div><nav class="section-tabs" aria-label="旅行內容">${TABS.map(([key,label],i)=>`<button data-tab="${key}" data-focus="tab-${key}" ${tab===key?'aria-current="page"':''}><span class="tab-number">0${i+1}</span>${label}${key==='gear'&&count?`<span class="tab-badge" aria-label="${count} 項待分配">${count}</span>`:''}</button>`).join('')}</nav><div class="workspace"><section class="workspace-main" aria-label="${TABS.find(t=>t[0]===tab)?.[1] || ''}">${tab==='schedule'?schedule():tab==='meals'?meals():tab==='shopping'?shopping():tab==='gear'?gear():tab==='expenses'?'<div id="expenses-mount"></div>':schedule()}</section>${sidebar()}</div>${tripMenuOpen?tripMenu():''}</main>`;
+  return `<main id="main" class="page ${tab==="schedule"?"story-schedule-page":""}"><nav class="breadcrumb" aria-label="麵包屑"><a href="#/home">我的旅行</a><span>/</span><span>${e(state.trip.title)}</span></nav>${hero()}<div class="trip-toolbar"><nav class="mode-switch" aria-label="旅行模式"><a href="#/trip" aria-current="page">${icon('book')} 規劃手冊</a><a href="#/go">${icon('tent')} 出發模式 ${icon('arrow')}</a></nav><div class="toolbar-actions">${button(icon('download')+'<span>匯出手冊</span>','export','quiet')}${button(icon('people')+'邀請旅伴','invite','blue')}</div></div><div class="sync-status"><i></i>${saved?'已儲存在這台裝置':'尚未儲存'}<span>·</span> ${navigator.onLine?'本機資料，不會同步至其他裝置':'目前離線，仍可在本機編輯'}</div><nav class="section-tabs" aria-label="旅行內容">${TABS.map(([key,label],i)=>`<button data-tab="${key}" data-focus="tab-${key}" ${tab===key?'aria-current="page"':''}><span class="tab-number">0${i+1}</span>${label}${key==='gear'&&count?`<span class="tab-badge" aria-label="${count} 項待分配">${count}</span>`:''}</button>`).join('')}</nav>${tab==='schedule'?scheduleTab():`<div class="workspace"><section class="workspace-main" aria-label="${TABS.find(t=>t[0]===tab)?.[1] || ''}">${tab==='meals'?meals():tab==='shopping'?shopping():tab==='gear'?gear():tab==='expenses'?'<div id="expenses-mount"></div>':scheduleTab()}</section>${sidebar()}</div>`}${tripMenuOpen?tripMenu():''}</main>`;
 }
 function sidebar() {
   const p=progress(state), u=unassigned(state).length, note=dailyNote();
   return `<aside class="sidebar"><section class="crew-panel"><span class="eyebrow">OUR TRAVEL CREW</span><h2>小隊準備好了嗎？</h2><div class="avatar-stack">${state.people.map(p=>avatar(p)).join('')}</div><p>${state.people.length} 位旅伴，一起收集回憶。</p><div class="progress-line"><span>食材採買</span><b>${p.shoppingDone} <span>/ ${p.shoppingTotal}</span></b></div><progress aria-label="食材採買進度" max="${Math.max(1,p.shoppingTotal)}" value="${p.shoppingDone}"></progress><div class="progress-line"><span>裝備準備</span><b>${p.gearDone} <span>/ ${p.gearTotal}</span></b></div><progress class="yellow-progress" aria-label="裝備準備進度" max="${Math.max(1,p.gearTotal)}" value="${p.gearDone}"></progress>${u?`<button class="unassigned-link" data-tab="gear">${icon('info')} ${u} 項裝備還在等主人 ${icon('arrow')}</button>`:''}<a href="#/go" class="button full">看看我的行前清單 ${icon('arrow')}</a></section><section class="paper-note daily-note" aria-label="每日快樂小語"><span class="tape"></span><span class="doodle-flower" aria-hidden="true">✳</span><span class="daily-note-label">每日一語 <time data-daily-date datetime="${note.date}">${note.date.slice(5).replace('-','/')}</time></span><p data-daily-quote>${e(note.text)}</p><span class="eyebrow">A LITTLE JOY, EVERY DAY</span></section><div class="side-footnote">${icon('leaf')} 把垃圾帶走，把風景留下。</div></aside>`;
 }
-function schedule() {
-  const dates=dateRange(state.trip.startDate,state.trip.endDate);
-  if(!dates.includes(day))day=dates[0];
-  if(scheduleVehicle&&!state.vehicles.some(v=>v.id===scheduleVehicle))scheduleVehicle='';
-  const activities=state.activities.filter(a=>a.date===day&&(!scheduleVehicle||activityForVehicle(state,a,scheduleVehicle))).sort((a,b)=>a.time.localeCompare(b.time));
-  const rows=activities.map((a,i)=>`<article class="activity-card ${a.done?'done':''}" data-swipe-row data-activity-id="${e(a.id)}"><span class="timeline-stamp ${COLORS[i%3]}">${icon(a.type==='meet'?'people':a.type==='market'?'bag':a.type==='meal'?'cup':a.type==='night'?'moon':a.type==='travel'?'car':'tent')}</span><div class="activity-top"><time>${e(a.time)}</time><span class="tag ${COLORS[i%3]}">${types[a.type]||'活動'}</span><div class="activity-actions"><button class="icon-button activity-edit" data-action="activity" data-id="${e(a.id)}" aria-label="編輯 ${e(a.title)}">${icon('edit')}</button>${!account||account.permissions.canDelete?`<button class="icon-button danger" data-action="delete" data-kind="activity" data-id="${e(a.id)}" aria-label="移除 ${e(a.title)}">${icon('close')}</button>`:''}</div></div><h3>${e(a.title)}</h3><div class="activity-location">${icon('pin')}${mapLink(a.location)}</div><p>${e(a.note)}</p><div class="activity-bottom"><span>${icon(a.vehicleIds?'car':'people')}<span>${e(activityParticipantLabel(state,a))}</span></span><label class="mini-check"><input type="checkbox" data-activity-check="${e(a.id)}" data-focus="activity-${e(a.id)}" ${a.done?'checked':''} aria-label="${e(a.title)}已完成"><span>${a.done?'已完成':'完成'}</span></label></div></article>`).join('');
-  return `<div class="schedule-bar"><div class="date-tabs" aria-label="選擇行程日期">${dates.map((date,i)=>`<button class="${day===date?'selected':''} ${COLORS[i%3]}" data-day="${date}" data-focus="day-${date}" aria-pressed="${day===date}"><small>DAY ${String(i+1).padStart(2,'0')}</small><b>${dateLabel(date)}</b><span>${weekday(date)}</span></button>`).join('')}</div>${button(icon('plus')+'新增一站','activity','small')}</div>${vehicleDepartureSection()}${vehicleScheduleFilter()}<div class="schedule-intro"><span>${scheduleVehicle?e(state.vehicles.find(v=>v.id===scheduleVehicle).name)+' 的當日行程':'當日行程 · 慢慢走，好好玩。'}</span><span>${activities.length} 個小片刻</span></div><div class="timeline">${rows||`<div class="empty">${icon('cloud')}<h3>這一天，留給新的故事。</h3><p>${scheduleVehicle?'這台車今天還沒有安排，新增一站即可指定參與車輛。':'新增第一站，一起開始規劃。'}</p></div>`}</div><div class="endnote"><span></span>${icon('leaf')} 好日子，不用急。<span></span></div>`;
+function scheduleTab() {
+  return `<div class="workspace story-schedule-layout"><div id="story-studio-mount" role="region" aria-label="旅行繪本工作室"></div>${sidebar()}</div>`;
 }
-function vehicleScheduleFilter() {
-  if(!state.vehicles.length)return '';
-  return `<div class="vehicle-schedule-filter"><label class="field"><span>按車查看行程</span><select id="schedule-vehicle" data-focus="schedule-vehicle" aria-label="按車查看行程"><option value="">全部行程</option>${state.vehicles.map(v=>`<option value="${e(v.id)}" ${v.id===scheduleVehicle?'selected':''}>${e(v.name)}</option>`).join('')}</select></label><p class="help">單車檢視會包含全體行程，以及原旅伴名單中有這台車成員的行程。不同車輛可各自安排抵達時間，不會自動合併。</p></div>`;
+// One computation of the day models and shopping plan, shared by the poster and the editor.
+function planData(){
+  const days=tripDays(state),plan=shoppingPlan(state);
+  return {days,plan,models:new Map(days.map(d=>[d.date,dayModel(state,d.date,plan)]))};
 }
-function activityParticipationFields(item) {
-  const mode=item.vehicleIds?'vehicles':item.people?.length?'legacy':!item.id&&scheduleVehicle?'vehicles':'all';
-  const selected=item.vehicleIds||(!item.id&&scheduleVehicle?[scheduleVehicle]:[]);
-  return field('這一站誰參加',`<select name="participation" aria-label="這一站誰參加" aria-describedby="activity-participation-help"><option value="all" ${mode==='all'?'selected':''}>全體旅伴</option><option value="vehicles" ${mode==='vehicles'?'selected':''} ${!state.vehicles.length?'disabled':''}>指定車輛（可複選）</option>${item.people?.length?`<option value="legacy" ${mode==='legacy'?'selected':''}>保留原旅伴名單</option>`:''}</select>`,true)+`<p id="activity-participation-help" class="help wide">${item.people?.length?`原旅伴名單：${e(item.people.map(id=>personName(state,id)).join('、'))}。不更改此選項就會保留。`:''}${state.vehicles.length?'指定車輛只代表這些車參加；即使抵達營區，也不會自動改成全體。':'請先在「旅行選單」新增車輛，才能分車安排。'}</p><fieldset class="wide activity-vehicle-choices" data-activity-vehicles ${mode==='vehicles'?'':'hidden disabled'}><legend>參與車輛（至少選一台）</legend>${state.vehicles.map(v=>`<label><input type="checkbox" name="vehicleIds" value="${e(v.id)}" ${selected.includes(v.id)?'checked':''}><span><strong>${e(v.name)}</strong><small>駕駛：${e(personName(state,v.driver))} · 乘客：${v.passengers.length?v.passengers.map(id=>e(personName(state,id))).join('、'):'尚未分配'}</small></span></label>`).join('')}</fieldset>`;
+function posterBody(canEdit){
+  const {models,plan}=planData();
+  return `${posterHtml(state,{print:false,textOpen:planner.textOpen,canEdit,models,plan,icon,mapLink})}<div class="endnote"><span></span>${icon('leaf')} 好日子，不用急。<span></span></div>`;
 }
-function updateActivityParticipation() {
-  const form=dialog.querySelector('#edit-form[data-kind="activity"]');
-  if(!form)return;
-  const group=form.querySelector('[data-activity-vehicles]');
-  group.hidden=group.disabled=form.elements.participation.value!=='vehicles';
+// ---- Itinerary_Editor planner (task 9.6): navigation, cards and Drafts. Nothing here writes Trip_State. ----
+const PLAN_FIRST_FIELD=':css:form[data-plan-card] input:not([type="hidden"]),form[data-plan-card] select,form[data-plan-card] textarea';
+const planFieldFocus=name=>`:css:form[data-plan-card] [name="${name}"]`;
+const planFocusOf=key=>key==='day'?'plan-day-settings':`plan-${key}`;
+const segmentBound=key=>/^(route|activity|meal):|^arrival$/.test(key);
+function defaultSegment(index){
+  const day=tripDays(state)[index];
+  if(!day)return 'routes';
+  return day.kind!=='middle'||sortedRoutes(state,day.date).length?'routes':'activities';
 }
-function vehicleDepartureSection() {
-  if(day!==state.trip.startDate)return '';
-  const departures=vehicleDepartures(state,day).filter(({vehicle})=>!scheduleVehicle||vehicle.id===scheduleVehicle);
-  const rows=departures.map(({vehicle:v,time,location})=>`<article class="departure-vehicle" data-swipe-row data-vehicle-departure="${e(v.id)}"><div class="departure-vehicle-top"><div class="departure-vehicle-name" data-person-color="${personColor(v.driver)}">${icon('car')}<h3>${e(v.name)}</h3></div><div class="vehicle-swipe-actions"><button class="icon-button" data-action="vehicle" data-id="${e(v.id)}" aria-label="編輯 ${e(v.name)}出發安排">${icon('edit')}</button>${!account||account.permissions.canDelete?`<button class="icon-button danger" data-action="delete" data-kind="vehicle" data-id="${e(v.id)}" aria-label="移除 ${e(v.name)}">${icon('close')}</button>`:''}</div></div><div class="departure-vehicle-time">${time?`<time datetime="${e(day)}T${e(time)}">${e(time)}</time><span>出發</span>`:'<span class="help">出發時間待確認</span>'}</div><p class="departure-vehicle-place">${icon('pin')}<span>${mapLink(location,{fallback:'出發地點待確認'})}</span></p><dl><div><dt>駕駛</dt><dd>${e(personName(state,v.driver))}</dd></div><div><dt>乘客</dt><dd>${v.passengers.length?v.passengers.map(id=>e(personName(state,id))).join('、'):'尚未分配乘客'}</dd></div></dl><small class="departure-vehicle-count">${v.passengers.length+(v.driver?1:0)} / ${v.seats} 人</small></article>`).join('');
-  return `<section class="vehicle-departures" aria-labelledby="vehicle-departures-title"><div class="vehicle-departures-heading"><div><span class="eyebrow">DIFFERENT STARTS, SHARED MEMORIES</span><h2 id="vehicle-departures-title">各車出發 <span>${departures.length} 台車</span></h2></div>${button(icon('plus')+'新增車輛','vehicle','small')}</div><p class="help">出發時間與地點會同步到「旅行選單」的車輛。沿途採買、接人與抵達營區，請在下方新增一站，指定參與車輛。</p>${rows?`<div class="departure-vehicles">${rows}</div>`:'<div class="departure-vehicles-empty">新增車輛，各自填寫出發時間與地點，就能分開查看。</div>'}</section>`;
+// Requirement 4.12: keep the selected day, else the Last_Day; collapse a card whose target is gone.
+function syncPlanner(days,models){
+  if(!days.length)return;
+  if(!(planner.dayIndex>=0&&planner.dayIndex<days.length)){planner.dayIndex=days.length-1;planner.segment=defaultSegment(planner.dayIndex);planner.card=null;}
+  const card=planner.card;if(!card)return;
+  const day=days[planner.dayIndex],model=models.get(day.date),key=card.key,sub=key.slice(key.indexOf(':')+1);
+  let gone=false;
+  if(key.startsWith('route:legacy:'))gone=!(model?.legacy||[]).some(entry=>entry.vehicle.id===key.slice(13));
+  else if(key==='arrival')gone=!(model?.arrivalRoutes?.length||model?.arrival);
+  else if(key.startsWith('route:')&&key!=='route:new')gone=!state.routes.some(r=>r.id===sub&&r.date===day.date);
+  else if(key.startsWith('activity:')&&key!=='activity:new')gone=!state.activities.some(a=>a.id===sub&&a.date===day.date);
+  else if(key.startsWith('meal:'))gone=!state.meals.some(m=>m.id===sub&&m.date===day.date);
+  else if(key.startsWith('place:')&&key!=='place:new')gone=!state.places.some(p=>p.id===sub);
+  if(gone)planner.card=null;
 }
+function editorBody(){
+  planner.shown=true;
+  const {days,plan,models}=planData();
+  const warnings=planningWarnings(state,plan);
+  syncPlanner(days,models);
+  // Print copy (13.6): built from the stored Trip_State only, never from a Draft; screen-hidden, shown by itinerary.css when printing.
+  const printCopy=`<div class="itinerary-print-copy">${posterHtml(state,{print:true,canEdit:false,models,plan,icon,mapLink})}<div class="endnote"><span></span>${icon('leaf')} 好日子，不用急。<span></span></div></div>`;
+  return `${editorHtml(state,planner,{icon,mapLink,plan,models,warnings,accountSaving,canDeleteVehicle:!account||account.permissions.canDelete===true})}${printCopy}`;
+}
+// Draft of a card that is about to open, built from stored values (null when the target no longer exists).
+function planDraft(key){
+  const date=tripDays(state)[planner.dayIndex]?.date;
+  if(key==='place:new')return {name:''};
+  if(key==='day'){const s=(state.daySettings||[]).find(x=>x?.date===date);return {title:typeof s?.title==='string'?s.title:'',place:dayLocation(state,date)?.ref??'',newPlaces:[]};}
+  if(key==='arrival'){const a=dayModel(state,date)?.arrival;return {arrival:typeof a==='string'?a:''};}
+  let draft=null;
+  if(key==='route:new')draft=newRouteDraft(state,date);
+  else if(key.startsWith('route:legacy:'))draft=legacyRouteDraft(state,key.slice(13));
+  else if(key.startsWith('route:'))draft=routeDraft(state,key.slice(6));
+  else if(key==='activity:new')return newActivityDraft(state,date);
+  else if(key.startsWith('activity:'))return activityDraft(state,key.slice(9));
+  else if(key.startsWith('meal:')){const m=state.meals.find(x=>x.id===key.slice(5));return m?{time:typeof m.time==='string'?m.time:''}:null;}
+  else if(key.startsWith('place:')){const p=state.places.find(x=>x.id===key.slice(6));return p?{name:p.name}:null;}
+  if(draft){draft.newPlaces??=[];draft.stops.forEach((s,i)=>{if(typeof s.key!=='string'||!s.key)s.key=String(i+1);});}
+  return draft;
+}
+function planToggle(key){
+  if(key==='places'){planner.placesOpen=!planner.placesOpen;if(!planner.placesOpen&&planner.card?.key.startsWith('place:'))planner.card=null;planner.focus='plan-places';render();return;}
+  if(key==='unassigned'){planner.unassignedOpen=!planner.unassignedOpen;planner.focus='plan-unassigned';render();return;}
+  if(planner.card?.key===key){planner.card=null;planner.focus=planFocusOf(key);render();return;}
+  const draft=planDraft(key);if(!draft)return;
+  planner.card={key,draft,dirty:false,errors:{},formError:'',inlinePlace:null,sending:false};
+  planner.focus=PLAN_FIRST_FIELD;render();
+}
+// Text_Panel copy (design 「Text_Panel 與剪貼簿」, 15.2, 15.3, 15.8): writes text/plain only, never calls commit().
+async function copyItinerary(){
+  const text=itineraryText(state);
+  try{
+    if(!navigator.clipboard?.writeText)throw new Error('unavailable');
+    await navigator.clipboard.writeText(text);
+    notify('已複製行程文字');
+  }catch{
+    planner.textOpen=true;planner.focus='text-panel-copy';render();
+    const body=app.querySelector('#text-panel-body');
+    if(body)getSelection()?.selectAllChildren(body);
+    notify('請手動複製已選取的文字');
+  }
+}
+function planNav(el){
+  if(el.dataset.planNav==='day'){
+    const i=Number(el.dataset.day);if(!Number.isInteger(i))return;
+    if(i!==planner.dayIndex){planner.dayIndex=i;planner.segment=defaultSegment(i);planner.card=null;}
+    planner.focus=`plan-day-${i}`;render();
+  }else if(el.dataset.planNav==='segment'){
+    const segment=el.dataset.segment==='activities'?'activities':'routes';
+    if(segment!==planner.segment){planner.segment=segment;if(planner.card&&segmentBound(planner.card.key))planner.card=null;}
+    planner.focus=`plan-segment-${segment}`;render();
+  }
+}
+function planOp(el){
+  const card=planner.card,draft=card?.draft;if(!draft)return;
+  const op=el.dataset.planOp,key=el.dataset.stop,stops=draft.stops||[],target=el.dataset.target||'';
+  const index=stops.findIndex(s=>s.key===key);
+  if(op==='add-stop'){
+    if(stops.length>=LIMITS.stops)return;
+    const k=String(1+Math.max(0,...stops.map(s=>Number(s.key)||0)));
+    stops.push({stopId:null,key:k,place:'',kind:'shop',note:''});draft.stops=stops;
+    card.dirty=true;planner.focus=planFieldFocus(`stop-${k}-place`);render();
+  }else if(op==='remove-stop'&&index>=0){
+    stops.splice(index,1);card.dirty=true;
+    const next=stops[index]??stops[index-1];
+    planner.focus=next?planFieldFocus(`stop-${next.key}-place`):'plan-add-stop';render();
+  }else if((op==='stop-up'||op==='stop-down')&&index>=0){
+    const to=op==='stop-up'?index-1:index+1;if(to<0||to>=stops.length)return;
+    [stops[index],stops[to]]=[stops[to],stops[index]];card.dirty=true;
+    let which=op==='stop-up'?'up':'down';
+    if((which==='up'&&to===0)||(which==='down'&&to===stops.length-1))which=which==='up'?'down':'up';
+    planner.focus=`plan-stop-${key}-${which}`;render();
+  }else if(op==='add-place'){
+    if(placeLimitReached(state,planner))return;
+    card.inlinePlace={name:'',error:'',target};planner.focus='plan-inline-place';render();
+  }else if(op==='cancel-place'){
+    card.inlinePlace=null;planner.focus=`plan-add-place-${target||'day'}`;render();
+  }else if(op==='confirm-place'){
+    const inline=card.inlinePlace;if(!inline)return;
+    const name=trimWhite(inline.name??''),pending=draft.newPlaces??(draft.newPlaces=[]);
+    const reason=placeNameError(name,{places:state.places,destination:state.trip.destination,pending});
+    const error=reason?PLACE_NAME_MESSAGES[reason]:placeLimitReached(state,planner)?'地點最多 100 個':'';
+    if(error){inline.error=error;planner.focus='plan-inline-place';render();return;}
+    const ref=`new:${1+Math.max(0,...pending.map(p=>Number(String(p.ref).slice(4))||0))}`;
+    pending.push({ref,name});
+    let field='';
+    if(target==='day'){draft.place=ref;field='place';}
+    else if(target==='from'||target==='to'){draft[target]=ref;field=target;}
+    else if(target.startsWith('stop-')){const stop=stops.find(s=>s.key===target.slice(5));if(stop){stop.place=ref;field=`stop-${stop.key}-place`;}}
+    card.inlinePlace=null;card.dirty=true;
+    planner.focus=field?planFieldFocus(field):'';render();
+  }
+}
+// Writes a card field into the Draft (requirement 10.9); only changes that alter the preview or the fields re-render.
+function planField(event){
+  const el=event.target,card=planner.card;
+  if(!el.closest?.('form[data-plan-card]')||!card||!el.name)return;
+  if(el.name==='inlinePlace'){if(card.inlinePlace)card.inlinePlace.name=el.value;return;}
+  const draft=card.draft;if(!draft)return;
+  const stop=/^stop-(.+)-(place|kind|note)$/.exec(el.name);
+  if(stop){const s=draft.stops.find(x=>x.key===stop[1]);if(!s)return;s[stop[2]]=el.value;}
+  else if(el.name==='vehicle')draft.vehicleId=el.value;
+  else if(el.name==='vehicleIds')draft.vehicleIds=[...el.form.querySelectorAll('[name="vehicleIds"]:checked')].map(box=>box.value);
+  else draft[el.name]=el.value;
+  card.dirty=true;
+  if(event.type==='change'&&['vehicle','stop-place','stop-kind','participation'].includes(el.dataset.planField)){
+    planner.focus=el.dataset.focus||planFieldFocus(el.name).replace(/\]$/,el.type==='radio'?`][value="${el.value}"]`:']');
+    render();
+  }
+}
+document.addEventListener('input',planField);
+document.addEventListener('change',planField);
+document.addEventListener('change',event=>{
+  const el=event.target,type=el.dataset?.planPreset;
+  if(type===undefined)return;
+  if(el.checked)planner.presets.add(type);else planner.presets.delete(type);
+  planner.focus=`:css:[data-plan-preset="${type}"]`;render();
+});
+const planActions={};
+// ---- Saving and deleting (task 9.7). One write per action; the pure edits live in itinerary-edits.js. ----
+const planBlocked=()=>account?(accountSaving||!saved||!account.permissions.canEdit):false;
+const errorFieldName=field=>field==='vehicles'?'vehicleIds':field;
+// Collapses a card whose write succeeded, once nothing newer than the write sits in its Draft (requirements 10.4, 10.5).
+function settlePlan(){
+  const card=planner.card;
+  if(!card?.written||card.dirty)return;
+  planner.card=null;planner.focus=planFocusOf(card.focusAfter);
+}
+function planEdit(card){
+  const draft=card.draft||{},key=card.key,date=tripDays(state)[planner.dayIndex]?.date;
+  if(key==='place:new')return savePlace(state,{id:null,name:draft.name});
+  if(key.startsWith('place:'))return savePlace(state,{id:key.slice(6),name:draft.name});
+  if(key==='day')return saveDaySettings(state,date,draft,{});
+  if(key==='arrival')return saveArrival(state,date,draft);
+  if(key.startsWith('route:'))return saveRoute(state,draft,{});
+  if(key.startsWith('activity:'))return saveActivity(state,draft,{day:date});
+  if(key.startsWith('meal:'))return saveMealTime(state,key.slice(5),draft);
+  return null;
+}
+function planSave(){
+  const card=planner.card;if(!card||card.sending||planBlocked())return;
+  planner.notice=null;
+  const result=planEdit(card);if(!result)return;
+  if(!result.ok){
+    card.errors=Object.fromEntries(result.errors.map(item=>[item.field,item.message]));card.formError=result.formError||'';
+    planner.focus=result.errors.length?planFieldFocus(errorFieldName(result.errors[0].field)):':css:form[data-plan-card] .field-error[role="alert"]';
+    render();return;
+  }
+  state=result.state;
+  Object.assign(card,{errors:{},formError:'',dirty:false,sending:true,written:true,focusAfter:result.focus});
+  commit(result.message);
+}
+// Writes that are not a card: delete, legacy departure, presets and the 完成 checkbox. planner.card is neither read nor cleared.
+function planWrite(result,announce=true){
+  if(!result.ok){notify(result.formError||EDIT_MESSAGES.invalidState);render();return false;}
+  state=result.state;planner.focus=planFocusOf(result.focus);commit(result.message,announce);return true;
+}
+planActions['plan-save']=()=>planSave();
+document.addEventListener('submit',event=>{if(event.target.matches?.('form[data-plan-card]')){event.preventDefault();planSave();}});
+planActions['plan-delete']=(id,el)=>{
+  const kind=el.dataset.kind;
+  if(kind==='place'){
+    const result=deletePlace(state,id);
+    if(!result.ok){
+      if(result.usages.length)planner.notice={key:`place:${id}`,text:`${result.formError}${result.usages.map(u=>`第 ${u.n} 天：${u.label}`).join('；')}`};
+      else notify(result.formError);
+      render();return;
+    }
+  }
+  showDialog('移除這個項目？',`<p>${account?'會從這趟旅行移除項目，其他旅伴也會看到變更。':'只會從這台裝置的本機手冊移除，無法復原。'}</p><div class="form-actions">${button('取消','close-dialog')}${button('確認移除','plan-confirm-delete','danger',`data-id="${e(id)}" data-kind="${e(kind)}"`)}</div>`);
+};
+planActions['plan-confirm-delete']=(id,el)=>{
+  const kind=el.dataset.kind;
+  closeDialog(true);
+  const result=kind==='place'?deletePlace(state,id):kind==='route'?deleteRoute(state,id):kind==='activity'?deleteActivity(state,id):null;
+  if(!result)return;
+  if(result.ok)planner.card=null;
+  planWrite(result);
+};
+planActions['plan-clear-legacy']=id=>{
+  showDialog('不使用舊的出發資料？',`<p>這台車第 1 天的舊出發資料會被清除，已儲存的路線不受影響。</p><div class="form-actions">${button('取消','close-dialog')}${button('確認','plan-confirm-clear-legacy','danger',`data-id="${e(id)}"`)}</div>`);
+};
+planActions['plan-confirm-clear-legacy']=id=>{closeDialog(true);planWrite(clearLegacy(state,id));};
+planActions['plan-add-presets']=()=>{
+  const date=tripDays(state)[planner.dayIndex]?.date;if(!date)return;
+  const result=addPresets(state,date,planner.presets,{});
+  if(result.ok)planner.presets.clear();
+  planWrite(result);
+};
 function sectionTitle(eyebrow,title,action='') { return `<div class="section-title"><div><span class="eyebrow">${eyebrow}</span><h2>${title}</h2></div>${action}</div>`; }
 function mealCard(m) {
   const kind=inferDishKind(m), names=parseIngredients(m.ingredients);
   return `<article class="meal-card" data-swipe-row data-meal-id="${e(m.id)}" data-meal-slot="${e(m.slot)}">
     <div class="meal-illustration">${dishIllustration(kind)}</div>
     <div class="meal-content">
-      <div class="meal-heading"><div><span class="meal-slot">${e(m.slot)}</span><h4>${e(m.title)}</h4></div><div class="meal-actions"><button class="icon-button" data-action="meal" data-id="${e(m.id)}" aria-label="編輯 ${e(m.title)}">${icon('edit')}</button>${!account||account.permissions.canDelete===true?`<button class="icon-button meal-remove-button" data-action="delete" data-kind="meal" data-id="${e(m.id)}" aria-label="移除 ${e(m.title)}">${icon('close')}</button>`:''}</div></div>
+      <div class="meal-heading"><div><span class="meal-slot">${e(m.slot)}</span><h4>${e(m.title)}</h4></div><div class="meal-actions"><button class="icon-button" data-action="meal" data-id="${e(m.id)}" data-focus="meal-edit-${e(m.id)}" aria-label="編輯 ${e(m.title)}">${icon('edit')}</button>${!account||account.permissions.canDelete===true?`<button class="icon-button meal-remove-button" data-action="delete" data-kind="meal" data-id="${e(m.id)}" aria-label="移除 ${e(m.title)}">${icon('close')}</button>`:''}</div></div>
       <p class="meal-meta">${m.servings} 人份 <span aria-hidden="true">·</span> 主廚 ${e(personName(state,m.cookId))}</p>
       <p class="meal-ingredients"><span>食材</span> ${names.length?e(names.join('、')):'尚未填寫'}</p>
       <div class="meal-card-footer">${m.notes?`<details class="meal-notes"><summary>料理筆記</summary><p>${e(m.notes)}</p></details>`:''}<button class="text-button" data-tab="shopping">${icon('bag')}查看採買清單</button></div>
@@ -172,8 +452,10 @@ function assigneeSelect(item, kind) {
 }
 function shopping() {
   const p=progress(state);
+  const where=shoppingPlan(state).locationOf;
+  const whereText=id=>{const w=where.get(id);return w?`<small class="shopping-where">第 ${w.n} 天在${e(w.placeName)}（${e(w.vehicleName)}）</small>`:'';};
   const rows=state.shopping.filter(item=>(shoppingFilter==='all'||item.assignee===state.currentUser)&&(!hideDone||!item.done));
-  return `${sectionTitle('GATHER INGREDIENTS, MAKE MEMORIES','把好吃的買齊',button(icon('plus')+'新增品項','shopping','small'))}<p class="section-description">料理食材會自動分類到這裡；點選數量可直接修改，負責人與分類也能手動調整。</p><div class="shopping-expense-link"><span>買好後，拍張收據逐項記帳。</span><button type="button" class="text-button" data-tab="expenses">收據辨識與分帳 ${icon('arrow')}</button></div><div class="filter-toolbar"><div class="segmented"><button data-shop-filter="all" aria-pressed="${shoppingFilter==='all'}">全部 <span>${state.shopping.length}</span></button><button data-shop-filter="mine" aria-pressed="${shoppingFilter==='mine'}">我負責的</button></div><label class="hide-done"><input type="checkbox" id="hide-done" ${hideDone?'checked':''}>隱藏已買</label></div><div class="shopping-summary"><span>${p.shoppingDone} / ${p.shoppingTotal} 項已買齊</span><progress aria-label="採買完成度" max="${Math.max(1,p.shoppingTotal)}" value="${p.shoppingDone}"></progress></div><div class="shopping-list">${categories.filter(cat=>rows.some(s=>s.category===cat)).map(cat=>`<section class="shopping-category"><h3>${cat}<span>${rows.filter(s=>s.category===cat).length} 項</span></h3>${rows.filter(s=>s.category===cat).map(s=>`<div class="shopping-row ${s.done?'done':''}" data-swipe-row><label><input type="checkbox" data-shopping-check="${e(s.id)}" data-focus="shopping-${e(s.id)}" ${s.done?'checked':''} aria-label="${e(s.name)}已買齊"><span><b>${e(s.name)}</b>${s.mealIds?.length?`<small class="recipe-source">料理：${s.mealIds.map(id=>e(state.meals.find(m=>m.id===id)?.title||'')).join('、')}</small>`:s.recipeRemoved?'<small class="recipe-source">料理已不需要，保留採買品項</small>':''}</span></label>${assigneeSelect(s,'shopping')}${account&&!account.permissions.canEdit?`<span class="quantity">${e(s.quantity)}</span>`:`<button type="button" class="quantity quantity-editable" data-action="edit-shopping-quantity" data-id="${e(s.id)}" data-focus="shopping-quantity-${e(s.id)}" aria-label="編輯 ${e(s.name)}數量" title="點選直接編輯數量">${e(s.quantity)}</button>`}<div class="shopping-row-actions"><button type="button" class="icon-button" data-action="shopping" data-id="${e(s.id)}" aria-label="編輯 ${e(s.name)}">${icon('edit')}</button>${!account||account.permissions.canDelete?`<button type="button" class="icon-button meal-remove-button" data-action="delete" data-kind="shopping" data-id="${e(s.id)}" aria-label="移除 ${e(s.name)}">${icon('close')}</button>`:''}</div></div>`).join('')}</section>`).join('') || `<div class="empty">${icon('check')}<h3>${hideDone?'眼前的清單，全部搞定！':'目前沒有品項'}</h3><p>切換篩選或新增採買品項。</p></div>`}</div>`;
+  return `${sectionTitle('GATHER INGREDIENTS, MAKE MEMORIES','把好吃的買齊',button(icon('plus')+'新增品項','shopping','small'))}<p class="section-description">料理食材會自動分類到這裡；點選數量可直接修改，負責人與分類也能手動調整。</p><div class="shopping-expense-link"><span>買好後，拍張收據逐項記帳。</span><button type="button" class="text-button" data-tab="expenses">收據辨識與分帳 ${icon('arrow')}</button></div><div class="filter-toolbar"><div class="segmented"><button data-shop-filter="all" aria-pressed="${shoppingFilter==='all'}">全部 <span>${state.shopping.length}</span></button><button data-shop-filter="mine" aria-pressed="${shoppingFilter==='mine'}">我負責的</button></div><label class="hide-done"><input type="checkbox" id="hide-done" ${hideDone?'checked':''}>隱藏已買</label></div><div class="shopping-summary"><span>${p.shoppingDone} / ${p.shoppingTotal} 項已買齊</span><progress aria-label="採買完成度" max="${Math.max(1,p.shoppingTotal)}" value="${p.shoppingDone}"></progress></div><div class="shopping-list">${categories.filter(cat=>rows.some(s=>s.category===cat)).map(cat=>`<section class="shopping-category"><h3>${cat}<span>${rows.filter(s=>s.category===cat).length} 項</span></h3>${rows.filter(s=>s.category===cat).map(s=>`<div class="shopping-row ${s.done?'done':''}" data-swipe-row><label><input type="checkbox" data-shopping-check="${e(s.id)}" data-focus="shopping-${e(s.id)}" ${s.done?'checked':''} aria-label="${e(s.name)}已買齊"><span><b>${e(s.name)}</b>${s.mealIds?.length?`<small class="recipe-source">料理：${s.mealIds.map(id=>e(state.meals.find(m=>m.id===id)?.title||'')).join('、')}</small>`:s.recipeRemoved?'<small class="recipe-source">料理已不需要，保留採買品項</small>':''}${whereText(s.id)}</span></label>${assigneeSelect(s,'shopping')}${account&&!account.permissions.canEdit?`<span class="quantity">${e(s.quantity)}</span>`:`<button type="button" class="quantity quantity-editable" data-action="edit-shopping-quantity" data-id="${e(s.id)}" data-focus="shopping-quantity-${e(s.id)}" aria-label="編輯 ${e(s.name)}數量" title="點選直接編輯數量">${e(s.quantity)}</button>`}<div class="shopping-row-actions"><button type="button" class="icon-button" data-action="shopping" data-id="${e(s.id)}" aria-label="編輯 ${e(s.name)}">${icon('edit')}</button>${!account||account.permissions.canDelete?`<button type="button" class="icon-button meal-remove-button" data-action="delete" data-kind="shopping" data-id="${e(s.id)}" aria-label="移除 ${e(s.name)}">${icon('close')}</button>`:''}</div></div>`).join('')}</section>`).join('') || `<div class="empty">${icon('check')}<h3>${hideDone?'眼前的清單，全部搞定！':'目前沒有品項'}</h3><p>切換篩選或新增採買品項。</p></div>`}</div>`;
 }
 function gear() {
   const missing=unassigned(state);
@@ -190,7 +472,14 @@ function gear() {
 function identityNote(menu) { return `<div class="identity-note">${icon('info')}你現在是 <b>${e(personName(state,state.currentUser))}</b>${button('切換身分',menu.switchIdentity.action,'text-button')}</div>`; }
 // Permission rules come from tripMenuEntries() so they live in one place.
 function memberCards(menu) { return menu.people.map(entry=>{const p=state.people.find(x=>x.id===entry.id);return `<article class="member-card">${avatar(p)}<div><h3>${e(p.name)}${entry.isMe?'<span class="tag yellow">我</span>':''}</h3><p>${e(p.role)}</p><small>行前準備 ${readyCount(state,p.id)} / ${myGear(state,p.id).length}</small>${entry.canEdit?button('編輯旅伴',menu.addPerson.action,'text-button',`data-id="${e(p.id)}"`):''}</div></article>`;}).join(''); }
-function vehicleCards(menu) { return menu.vehicles.map(entry=>{const v=state.vehicles.find(x=>x.id===entry.id);return `<article class="vehicle-card"><div class="vehicle-title">${icon('car')}<h3>${e(v.name)}</h3><button class="icon-button" data-action="${entry.edit.action}" data-id="${e(v.id)}" aria-label="編輯 ${e(v.name)}">${icon('edit')}</button>${entry.canDelete?`<button class="icon-button danger" data-action="delete" data-kind="vehicle" data-id="${e(v.id)}" aria-label="移除 ${e(v.name)}">${icon('close')}</button>`:''}</div><p>駕駛 ${e(personName(state,v.driver))} <span>·</span> ${v.passengers.length+(v.driver?1:0)} / ${v.seats} 人</p><p class="help">${icon('pin')}${mapLink(parseVehicleMeeting(v.meeting).location,{label:v.meeting,fallback:'出發地點待確認'})}</p><div class="passenger-list">${v.passengers.map(id=>`<span>${e(personName(state,id))}</span>`).join('')}</div></article>`;}).join(''); }
+function vehicleDepartureLine(vehicleId) {
+  const d=firstDayDeparture(state,vehicleId);
+  if(d.kind==='none')return '第 1 天還沒有路線';
+  const place=d.place?mapLink(d.place):'出發地點待定';
+  const head=d.time?`第 1 天・${e(d.time)} 出發：`:'第 1 天・出發時間待定：';
+  return `${head}${place}${d.kind==='legacy'?'（舊的出發資料）':''}`;
+}
+function vehicleCards(menu) { return menu.vehicles.map(entry=>{const v=state.vehicles.find(x=>x.id===entry.id);return `<article class="vehicle-card"><div class="vehicle-title">${icon('car')}<h3>${e(v.name)}</h3><button class="icon-button" data-action="${entry.edit.action}" data-id="${e(v.id)}" aria-label="編輯 ${e(v.name)}">${icon('edit')}</button>${entry.canDelete?`<button class="icon-button danger" data-action="delete" data-kind="vehicle" data-id="${e(v.id)}" aria-label="移除 ${e(v.name)}">${icon('close')}</button>`:''}</div><p>駕駛 ${e(personName(state,v.driver))} <span>·</span> ${v.passengers.length+(v.driver?1:0)} / ${v.seats} 人</p><p class="help">${icon('pin')}${vehicleDepartureLine(v.id)}</p><div class="passenger-list">${v.passengers.map(id=>`<span>${e(personName(state,id))}</span>`).join('')}</div></article>`;}).join(''); }
 function tripDetailsPanel() { return `<section class="settings-panel"><dl><dt>旅行名稱</dt><dd>${e(state.trip.title)}</dd><dt>旅行日期</dt><dd>${e(state.trip.startDate)} — ${e(state.trip.endDate)}</dd><dt>目的地</dt><dd>${mapLink(state.trip.destination)}</dd><dt>旅行小叮嚀</dt><dd>${e(state.trip.note)}</dd><dt>資料儲存</dt><dd>這台裝置的瀏覽器，不會傳送到原網站。</dd></dl></section>`; }
 const DATA_TOOL_LABELS={export:icon('download')+'匯出備份',import:'匯入備份',print:'列印目前頁面'};
 function dataTools(menu) { return `<section class="data-tools"><h3>把這本手冊帶走</h3><p>匯出 JSON 備份，也可以在另一台裝置匯入。匯入會取代目前資料。</p><div>${menu.data.map(action=>button(DATA_TOOL_LABELS[action],action)).join('')}</div></section>`; }
@@ -272,7 +561,6 @@ function applyGearPreset() {
 function editForm(kind,id) {
   const collection={activity:'activities',meal:'meals',shopping:'shopping',gear:'gear',vehicle:'vehicles'}[kind];
   const item=(collection?state[collection].find(i=>i.id===id):null)||{};
-  if(kind==='activity')formDialog(id?'編輯這個小片刻':'新增一站','activity',field('活動名稱',input('title',item.title,'text','required maxlength="100"'),true)+field('日期',`<select name="date">${dateOptions(item.date)}</select>`)+field('時間',input('time',item.time||'12:00','time','required'))+field('活動類型',`<select name="type" aria-label="活動類型">${Object.entries(types).map(([k,v])=>`<option value="${k}" ${item.type===k?'selected':''}>${v}</option>`).join('')}</select>`)+field('地點',input('location',item.location,'text','maxlength="150"'))+field('備註',`<textarea name="note" rows="3" maxlength="1000">${e(item.note||'')}</textarea>`,true)+activityParticipationFields(item),id);
   if(kind==='meal'){
     const templates=`<section class="wide recipe-tools"><div class="recipe-tools-heading"><span class="eyebrow">A LITTLE HELP IN THE KITCHEN</span><h3>今晚想煮什麼？</h3><p>從常用料理開始，或直接往下填。食材會合併，不會清空你的清單。</p></div><div class="template-controls">${field('常用料理範本',`<select id="recipe-template" aria-label="常用料理範本"><option value="">選一道常用料理</option>${RECIPE_TEMPLATES.map(r=>`<option value="${r.id}">${e(r.title)}</option>`).join('')}</select>`)}<button type="button" class="button primary" data-action="apply-recipe" disabled>套用範本</button></div><div id="template-preview" hidden></div></section>`;
     const imageField=input('imageKind',item.imageKind||'auto','hidden');
@@ -288,10 +576,17 @@ function editForm(kind,id) {
     updateGearScope();
   }
   if(kind==='person'){const p=state.people.find(p=>p.id===id);formDialog(p?'編輯旅伴':'多一個人，多一份快樂','person',field('旅伴名字',input('name',p?.name||'','text','required maxlength="30"'),true)+field('小隊角色',input('role',p?.role||'','text','required maxlength="60" placeholder="例如：早餐擔當"'),true)+field('旅伴代表色',`<select name="color" aria-label="旅伴代表色">${COLORS.map(color=>`<option value="${color}" ${color===(p?.color||COLORS[state.people.length%COLORS.length])?'selected':''}>${colorChoices[color]}</option>`).join('')}</select>`,true),id);}
-  if(kind==='vehicle'){const departure=parseVehicleMeeting(item.meeting);formDialog(id?'編輯這台車':'新增一台出發的車','vehicle',field('車輛暱稱',input('name',item.name,'text','required maxlength="50"'),true)+field('駕駛',`<select name="driver" aria-label="駕駛">${personOptions(item.driver??state.currentUser,!!account)}</select>`)+field('座位數（含駕駛）',input('seats',item.seats||4,'number','required min="1" max="9"'))+field('出發時間（選填）',input('departTime',departure.time,'time'))+field('出發地點',input('departLocation',departure.location,'text',`${id&&!departure.location?'':'required '}maxlength="150" placeholder="例如：台北車站東三門"`),true)+`<p class="help wide">顯示在 ${dateLabel(state.trip.startDate)} 首日行程的「各車出發」，也同步到旅行選單。</p>`+`<fieldset class="wide"><legend>乘客（請勿重複選駕駛）</legend><div class="passenger-checks">${state.people.map(p=>`<label><input type="checkbox" name="passengers" value="${e(p.id)}" ${item.passengers?.includes(p.id)?'checked':''}>${e(p.name)}</label>`).join('')}</div></fieldset>`,id);}
+  if(kind==='vehicle'){formDialog(id?'編輯這台車':'新增一台出發的車','vehicle',field('車輛暱稱',input('name',item.name,'text','required maxlength="50"'),true)+field('駕駛',`<select name="driver" aria-label="駕駛">${personOptions(item.driver??state.currentUser,!!account)}</select>`)+field('座位數（含駕駛）',input('seats',item.seats||4,'number','required min="1" max="9"'))+`<p class="help wide">每天的出發時間與地點，請在規劃行程的路線填寫。</p>`+`<fieldset class="wide"><legend>乘客（請勿重複選駕駛）</legend><div class="passenger-checks">${state.people.map(p=>`<label><input type="checkbox" name="passengers" value="${e(p.id)}" ${item.passengers?.includes(p.id)?'checked':''}>${e(p.name)}</label>`).join('')}</div></fieldset>`,id);}
   if(kind==='trip-settings')formDialog('把旅行，寫成你喜歡的樣子','trip-settings',field('旅行名稱',input('title',state.trip.title,'text','required maxlength="100"'),true)+field('目的地',input('destination',state.trip.destination,'text','required maxlength="100"'),true)+field('開始日期',input('startDate',state.trip.startDate,'date','required'))+field('結束日期',input('endDate',state.trip.endDate,'date','required'))+field('旅行介紹',`<textarea name="description" rows="2" maxlength="300">${e(state.trip.description)}</textarea>`,true)+field('旅行小叮嚀',`<textarea name="note" rows="2" maxlength="500">${e(state.trip.note)}</textarea>`,true));
 }
-function exportData() { const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='good-good-camping-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notify('旅行手冊已匯出'); }
+function exportData() { if(studioDirty()&&route()==='trip'&&tab==='schedule'){const text=JSON.stringify(studioMount.getPlan(),null,2);const blob=new Blob([text],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='storybook-unsaved-draft.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notify('已匯出尚未儲存的繪本草稿，這不是完整旅行備份');return;}const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='good-good-camping-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notify('旅行手冊已匯出'); }
+function linkedShoppingDialog(id){
+  const item=state.shopping.find(s=>s.id===id);if(!item)return;
+  const meals=(item.mealIds||[]).map(mid=>state.meals.find(m=>m.id===mid)).filter(Boolean);
+  const many=meals.length>1;
+  const list=meals.map((m,i)=>`<label class="check-row"><input type="checkbox" name="linked-meal" value="${e(m.id)}" checked> ${e(m.title)}（${e(m.date)} ${e(m.slot)}）</label>`).join('');
+  showDialog('移除這項食材？',`<p><b>${e(item.name)}</b> 是料理食材。${many?'它同時用在下面幾道料理，請勾選要移除的料理：':'移除後，料理菜單上的這項食材也會一併刪除：'}</p><div class="linked-meals">${list}</div><p class="help">提醒：這會同步修改對應料理的食材清單${account?'，其他旅伴也會看到變更':''}。${many?'若只勾選部分料理，採買品項會保留給其餘料理使用。':''}</p><div class="form-actions">${button('取消','close-dialog')}${button('確認移除','confirm-delete-linked','danger',`data-id="${e(id)}"`)}</div>`);
+}
 function formLinkedError(){const message='這項食材仍被料理使用。請先到料理菜單移除食材，再刪除採買品項。',error=dialog.querySelector('#edit-form[data-kind="shopping"] .form-error');if(error)error.textContent=message;else notify(message);}
 const actions={
   'apply-recipe':applySelectedRecipe,
@@ -308,20 +603,22 @@ const actions={
   export:exportData,
   'recover-storage'(){showDialog('先保留資料，再繼續',`<p>為避免覆蓋損毀資料或另一分頁的更新，目前暫停儲存。請先匯出目前內容，再選擇下一步。</p><div class="form-actions">${button('匯出目前內容','export')}${originalBackup?button('下載原始資料','export-original'):''}${pendingRemote?button('載入另一分頁版本','apply-remote'):''}${button('以目前內容取代儲存','unlock-storage','primary')}</div>`);},
   'export-original'(){const url=URL.createObjectURL(new Blob([originalBackup],{type:'text/plain'}));const a=document.createElement('a');a.href=url;a.download='camping-original-recovery.txt';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);},
-  'apply-remote'(){if(!pendingRemote)return;state=pendingRemote;baseRevision=state.revision;pendingRemote=null;storageLocked=false;saved=true;closeDialog(true);render();},
-  'unlock-storage'(){storageLocked=false;pendingRemote=null;state.revision=Math.max(state.revision,readStorage(storage).state.revision)+1;saved=save(storage,state);if(saved){baseRevision=state.revision;originalBackup='';}closeDialog(true);render();notify(saved?'已儲存目前內容':'仍無法儲存，請匯出備份。');},
+  'apply-remote'(){if(!pendingRemote)return;if(studioDirty()){notify('繪本草稿尚未儲存，請先匯出繪本 JSON 後重新載入，再套用另一分頁資料。');return;}dropStudio();state=pendingRemote;baseRevision=state.revision;pendingRemote=null;storageLocked=false;saved=true;closeDialog(true);render();},
+  'unlock-storage'(){if(studioDirty()){notify('繪本草稿尚未儲存，請先匯出繪本 JSON；此操作只會儲存網站目前資料。');return;}storageLocked=false;pendingRemote=null;state.revision=Math.max(state.revision,readStorage(storage).state.revision)+1;saved=save(storage,state);if(saved){baseRevision=state.revision;originalBackup='';settlePlan();}closeDialog(true);render();notify(saved?'已儲存目前內容':'仍無法儲存，請匯出備份。');},
   import(){showDialog('匯入旅行備份',`<form id="import-form"><p class="dialog-note">匯入會取代這台裝置的旅行手冊。請先匯出目前的資料。</p><label class="field">選擇 JSON 備份<input type="file" name="backup" accept=".json,application/json" required></label><p class="form-error" role="alert"></p><div class="form-actions"><button class="button" type="button" data-action="close-dialog">取消</button><button class="button primary">匯入並取代</button></div></form>`);},
   print(){window.print();},
   reset(){showDialog('清除這本旅行手冊？',`<p>這會移除目前裝置儲存的行程、料理、採買與其他內容，並建立一本空白手冊。此操作無法復原。</p><div class="form-actions">${button('先不要','close-dialog')}${button('清除並重新開始','confirm-reset','danger')}</div>`);},
-  'confirm-reset'(){state=emptyState();day=state.trip.startDate;tab='schedule';storageLocked=false;pendingRemote=null;saved=save(storage,state);baseRevision=state.revision;closeDialog(true);render();notify(saved?'已建立空白旅行手冊':'重設只保留在記憶體，請檢查儲存空間。');},
+  'confirm-reset'(){if(studioDirty()){notify('請先儲存繪本草稿，或在繪本內匯出 JSON 後重新載入，再清除旅行手冊。');return;}dropStudio();state=emptyState();day=state.trip.startDate;tab='schedule';storageLocked=false;pendingRemote=null;saved=save(storage,state);baseRevision=state.revision;closeDialog(true);render();notify(saved?'已建立空白旅行手冊':'重設只保留在記憶體，請檢查儲存空間。');},
   'close-dialog'(){closeDialog();},
   'resolve-gear'(){tab='gear';gearFilter='unassigned';if(account)location.href=accountTripPath();else location.hash='/trip';},
   depart(){if(account){void accountCheck('depart','',true);return;}if(!canDepart(state))return;state.departed.push(state.currentUser);commit('準備完成，一起出發');},
   advance(id){const item=state.activities.find(a=>a.id===id);if(item){item.done=true;commit(`完成了「${item.title}」`);}},
-  delete(id,el){if(el.dataset.kind==='vehicle'&&state.activities.some(a=>a.vehicleIds?.includes(id))){const message='這台車仍有指定行程。請先把那些行程改派其他車輛或改為全體，再移除車輛。',error=dialog.querySelector('#edit-form[data-kind="vehicle"] .form-error');if(error)error.textContent=message;else notify(message);return;}if(el.dataset.kind==='shopping' && state.shopping.find(s=>s.id===id)?.mealIds?.length){formLinkedError();return;}if(dialogDirty&&!window.confirm('移除項目前，會放棄尚未儲存的修改。確定繼續？'))return;const kind=el.dataset.kind;showDialog('移除這個項目？',`<p>${account?'會從這趟旅行移除項目，其他旅伴也會看到變更。':'只會從這台裝置的本機手冊移除，無法復原。'}</p><div class="form-actions">${button('取消','close-dialog')}${button('確認移除','confirm-delete','danger',`data-id="${e(id)}" data-kind="${kind}"`)}</div>`);},
+  delete(id,el){if(el.dataset.kind==='vehicle'){const messages=[],days=vehicleRouteDays(state,id);if(days.length)messages.push(`這台車在${days.map(n=>`第 ${n} 天`).join('、')}還有路線，請先刪除這些路線，或改派給其他車。`);if(state.activities.some(a=>a.vehicleIds?.includes(id)))messages.push('這台車仍有指定行程。請先把那些行程改派其他車輛或改為全體，再移除車輛。');if(messages.length){const message=messages.join(' '),error=dialog.querySelector('#edit-form[data-kind="vehicle"] .form-error');if(error)error.textContent=message;else notify(message);return;}}if(el.dataset.kind==='shopping' && state.shopping.find(s=>s.id===id)?.mealIds?.length){if(dialogDirty&&!window.confirm('移除項目前，會放棄尚未儲存的修改。確定繼續？'))return;linkedShoppingDialog(id);return;}if(dialogDirty&&!window.confirm('移除項目前，會放棄尚未儲存的修改。確定繼續？'))return;const kind=el.dataset.kind;showDialog('移除這個項目？',`<p>${account?'會從這趟旅行移除項目，其他旅伴也會看到變更。':'只會從這台裝置的本機手冊移除，無法復原。'}</p><div class="form-actions">${button('取消','close-dialog')}${button('確認移除','confirm-delete','danger',`data-id="${e(id)}" data-kind="${kind}"`)}</div>`);},
+  'confirm-delete-linked'(id){const ids=[...dialog.querySelectorAll('input[name=linked-meal]:checked')].map(x=>x.value);if(!ids.length){notify('請至少勾選一道料理。');return;}const next=removeIngredientFromMeals(state,id,ids);try{syncMealIngredients(next);}catch(err){notify(err.message);return;}state=next;closeDialog();commit('已移除食材，並同步更新料理菜單');},
   'confirm-delete'(id,el){const collection={activity:'activities',meal:'meals',shopping:'shopping',gear:'gear',vehicle:'vehicles'}[el.dataset.kind];if(collection){if(collection==='vehicles'&&state.activities.some(a=>a.vehicleIds?.includes(id))){notify('這台車仍有指定行程，請先重新安排。');return;}const next={...state,[collection]:state[collection].filter(x=>x.id!==id)};try{if(collection==='meals'||collection==='shopping')syncMealIngredients(next);}catch(err){notify(err.message);return;}state=next;if(collection==='gear')state.departed=[];closeDialog();commit('已移除項目');}}
 };
-['activity','meal','shopping','gear','person','vehicle','trip-settings'].forEach(kind=>actions[kind]=id=>editForm(kind,id));
+['meal','shopping','gear','person','vehicle','trip-settings'].forEach(kind=>actions[kind]=id=>editForm(kind,id));
+Object.assign(actions,planActions);
 function openTripMenu(){tripMenuOpen=true;render();app.querySelector('#trip-menu-title')?.focus({preventScroll:true});}
 function closeTripMenu(){
   if(!tripMenuOpen)return;
@@ -333,8 +630,34 @@ function closeTripMenu(){
 actions['trip-menu']=()=>tripMenuOpen?closeTripMenu():openTripMenu();
 actions['close-trip-menu']=()=>closeTripMenu();
 
+// Requirements 10.2, 10.3: whether a click leaves a dirty card (design 「離開確認」 table).
+function leavesPlanCard(el){
+  const card=planner.card;if(!card?.dirty)return false;
+  const action=el.dataset.action||'';
+  if(['trip-menu','vehicle','trip-settings','account-reload','account-logout'].includes(action))return true;
+  if(el.dataset.tab||el.dataset.navTab)return true;
+  if(el.tagName==='A'){const href=el.getAttribute('href');return !!href&&!el.target&&href!=='#';}
+  if(el.dataset.planNav){const nav=el.dataset.planNav;return nav==='meal'||nav==='shopping'||el.getAttribute('aria-pressed')!=='true';}
+  if(el.dataset.planToggle!==undefined){const key=el.dataset.planToggle;return key!=='unassigned'&&!(key==='places'&&!card.key.startsWith('place:'));}
+  if(action==='plan-delete')return card.key!==`${el.dataset.kind}:${el.dataset.id}`;
+  return false;
+}
+document.addEventListener('click',event=>{
+  const el=event.target.closest('button,a');
+  if(!el||!studioDirty()||studioHost?.contains(el))return;
+  const leave=el.dataset.tab&&el.dataset.tab!=='schedule'||el.dataset.navTab&&el.dataset.navTab!=='schedule'||el.tagName==='A'&&el.getAttribute('href')&&el.getAttribute('href')!=='#'||['account-reload','account-logout','confirm-reset','apply-remote'].includes(el.dataset.action);
+  if(leave&&!window.confirm('繪本還有未儲存的行程。切換網站分頁會保留草稿，但在其他分頁修改旅行後將無法直接儲存繪本。請先儲存或匯出繪本 JSON。確定繼續？')){event.preventDefault();event.stopImmediatePropagation();}
+},true);
 document.addEventListener('click',event=>{
   const el=event.target.closest('button,a');if(!el||expensePanel?.element.contains(el))return;
+  if(leavesPlanCard(el)){
+    if(!window.confirm('尚有未儲存的修改。確定放棄？')){event.preventDefault();event.stopImmediatePropagation();return;}
+    const key=planner.card.key;planner.card=null;
+    // The card's own collapse button: the card is already gone, so finish here instead of reopening it.
+    if(el.dataset.planToggle===key){event.preventDefault();event.stopImmediatePropagation();planner.focus=planFocusOf(key);render();return;}
+    // Actions that only open a dialog do not re-render: drop the discarded card from the page now (requirement 10.2).
+    if(['plan-delete','vehicle','trip-settings'].includes(el.dataset.action))render();
+  }
   const leavesTab=el.dataset.tab&&el.dataset.tab!=='expenses';
   const leavesPage=el.tagName==='A'&&el.getAttribute('href')&&!el.target&&el.getAttribute('href')!=='#';
   const resetsPage=['account-reload','account-logout'].includes(el.dataset.action);
@@ -350,10 +673,18 @@ document.addEventListener('click',event=>{
   const el=event.target.closest('button,a');if(!el)return;
   if(account&&el.dataset.action&&!allowAccountAction(el.dataset.action)){event.preventDefault();return;}
   if(tripMenuOpen&&el.dataset.action&&el.closest('#trip-menu')&&!['trip-menu','close-trip-menu'].includes(el.dataset.action))closeTripMenu();
-  if(el.dataset.navTab)tab=el.dataset.navTab;
+  if(el.dataset.navTab){tab=el.dataset.navTab;planner.card=null;}
+  if(planner.notice&&el.dataset.action!=='plan-delete')planner.notice=null;
   if(el.dataset.action && actions[el.dataset.action]) actions[el.dataset.action](el.dataset.id,el);
-  if(el.dataset.tab){tripMenuOpen=false;tab=el.dataset.tab;render();}
-  if(el.dataset.day){day=el.dataset.day;render();}
+  if(el.dataset.tab){tripMenuOpen=false;tab=el.dataset.tab;planner.card=null;render();}
+  if(el.dataset.planNav==='view'){const next=el.dataset.view==='poster'?'poster':'editor';if(next==='editor'&&account&&account.permissions.canEdit!==true)return;if(next!==planner.view){planner.view=next;if(next==='editor'&&!planner.shown){planner.shown=true;planner.dayIndex=0;planner.segment=defaultSegment(0);}planner.focus='plan-view-'+next;render();}}
+  if(el.dataset.planNav==='day'||el.dataset.planNav==='segment')planNav(el);
+  if(el.dataset.planNav==='meal'){tripMenuOpen=false;tab='meals';planner.card=null;planner.focus='meal-edit-'+el.dataset.id;render();}
+  if(el.dataset.planNav==='shopping'){tripMenuOpen=false;tab='shopping';planner.card=null;planner.focus='tab-shopping';render();}
+  if(el.dataset.textPanel==='toggle'){planner.textOpen=!planner.textOpen;planner.focus='text-panel-toggle';render();}
+  if(el.dataset.textPanel==='copy')void copyItinerary();
+  if(el.dataset.planToggle!==undefined)planToggle(el.dataset.planToggle);
+  if(el.dataset.planOp)planOp(el);
   if(el.dataset.shopFilter){shoppingFilter=el.dataset.shopFilter;render();}
   if(el.dataset.gearFilter){gearFilter=el.dataset.gearFilter;render();}
 });
@@ -364,15 +695,13 @@ document.addEventListener('change',event=>{
   if(el.name==='imageKind' && el.closest('#edit-form')){dialogDirty=true;updateMealForm();}
   if(el.id==='recipe-template')updateTemplatePreview();
   if(el.id==='gear-preset')applyGearPreset();
-  if(el.id==='schedule-vehicle'){scheduleVehicle=el.value;render();}
-  if(el.name==='participation'&&el.closest('#edit-form[data-kind="activity"]')){dialogDirty=true;updateActivityParticipation();}
   if(el.name==='scope'&&el.closest('#edit-form[data-kind="gear"]')){dialogDirty=true;updateGearScope();}
   if(el.id==='hide-done'){hideDone=el.checked;render();}
   if(el.dataset.shoppingCheck&&account){void accountCheck('shopping',el.dataset.shoppingCheck,el.checked);return;}
   if(el.dataset.pack&&account){void accountCheck('gear',el.dataset.pack,el.checked);return;}
   if(account&&(accountSaving||!saved||!account.permissions.canEdit)&& (el.dataset.activityCheck||el.dataset.gearAssignee||el.dataset.shoppingAssignee)){render();return;}
   if(el.dataset.shoppingCheck){const item=state.shopping.find(s=>s.id===el.dataset.shoppingCheck);if(!item)return;item.done=el.checked;commit(`${item.name}${item.done?'已買齊':'改為待買'}`,false);}
-  if(el.dataset.activityCheck){const item=state.activities.find(a=>a.id===el.dataset.activityCheck);if(!item)return;item.done=el.checked;commit(`更新了「${item.title}」的進度`,false);}
+  if(el.dataset.activityCheck)planWrite(setActivityDone(state,el.dataset.activityCheck,el.checked));
   if(el.dataset.shoppingAssignee){if(assignShopping(state,el.dataset.shoppingAssignee,el.value))commit('採買分工已更新');else render();}
   if(el.dataset.gearAssignee){const item=state.gear.find(g=>g.id===el.dataset.gearAssignee);if(item&&item.assignee!==el.value&&assignGear(state,item.id,el.value))commit('裝備分工已更新');else render();}
   if(el.dataset.pack){togglePacking(state,el.dataset.pack);commit('行前清單已更新',false);}
@@ -404,40 +733,48 @@ document.addEventListener('submit',async event=>{
     catch(err){inviteError=err.message;form.querySelector('.form-error').textContent=inviteError;}
     return;
   }
-  if(form.id==='import-form'){try{const file=data.get('backup');if(!file||file.size>1_048_576)throw new Error('請選擇不超過 1 MiB 的備份檔。');const imported=JSON.parse(await file.text());if(!isValidState(imported))throw new Error('這不是有效的旅行手冊備份。');syncMealIngredients(imported);state=imported;day=state.trip.startDate;storageLocked=false;pendingRemote=null;state.revision=Math.max(state.revision,readStorage(storage).state.revision)+1;saved=save(storage,state);baseRevision=state.revision;closeDialog(true);render();notify(saved?'旅行備份已匯入':'已載入，但無法永久儲存。');}catch(err){form.querySelector('.form-error').textContent=err.message;}return;}
+  if(form.id==='import-form'){try{if(studioDirty())throw new Error('繪本有未儲存的草稿。請先在繪本內儲存或匯出 JSON，重新載入頁面後再匯入整趟旅行。');const file=data.get('backup');if(!file||file.size>1_048_576)throw new Error('請選擇不超過 1 MiB 的備份檔。');const imported=JSON.parse(await file.text());if(!isValidState(imported))throw new Error('這不是有效的旅行手冊備份。');syncMealIngredients(imported);dropStudio();state=imported;day=state.trip.startDate;storageLocked=false;pendingRemote=null;state.revision=Math.max(state.revision,readStorage(storage).state.revision)+1;saved=save(storage,state);baseRevision=state.revision;closeDialog(true);render();notify(saved?'旅行備份已匯入':'已載入，但無法永久儲存。');}catch(err){form.querySelector('.form-error').textContent=err.message;}return;}
   const kind=form.dataset.kind,id=form.dataset.id;
   const values=Object.fromEntries([...data.entries()].filter(([key])=>!['passengers','vehicleIds','participation'].includes(key)).map(([key,value])=>[key,typeof value==='string'?value.trim():value]));
   if([...form.querySelectorAll('[required]')].some(el=>!String(el.value).trim())){form.querySelector('.form-error').textContent='請填寫必要欄位，不能只有空白。';return;}
   if(kind==='trip-settings'){
     const dates=dateRange(values.startDate,values.endDate);
     if(!dates.length||Date.parse(values.endDate)-Date.parse(values.startDate)>30*86400000){form.querySelector('.form-error').textContent='結束日期需在開始日期之後，旅行最長 31 天。';return;}
-    const oldDates=dateRange(state.trip.startDate,state.trip.endDate);
-    for(const item of [...state.activities,...state.meals]){const offset=oldDates.indexOf(item.date);item.date=dates[Math.min(Math.max(offset,0),dates.length-1)];}
-    state.trip={...state.trip,...values};day=state.trip.startDate;
+    const fail=message=>{form.querySelector('.form-error').textContent=message;};
+    if(values.destination!==state.trip.destination){
+      const conflict=destinationConflict(state,values.destination);
+      if(conflict?.type==='duplicate'){fail(`已有同名地點：${conflict.name}。請先在「地點與車」把這個地點改名。`);return;}
+    }
+    const retimed=retimeByDayIndex(state,values.startDate,values.endDate);
+    if(!retimed.ok){fail(shortenBlockedMessage(retimed.blocked));return;}
+    const next=retimed.state;
+    next.trip={...next.trip,...values};
+    if(!isValidState(next)){fail('旅行設定無法儲存，請檢查輸入的內容。');return;}
+    state=next;day=state.trip.startDate;
   }else if(kind==='person'){
     try{if(account&&id){const old=state.people.find(p=>p.id===id);const probe={...state,people:state.people.filter(p=>p.id!==id)};const updated=addParticipant(probe,values.name,values.role).person;state={...state,people:state.people.map(p=>p.id===id?{...old,name:updated.name,role:updated.role,color:COLORS.includes(values.color)?values.color:old.color}:p)};}else {const added=addParticipant(state,values.name,values.role);state=added.state;if(COLORS.includes(values.color))state.people.find(p=>p.id===added.person.id).color=values.color;}}catch(err){form.querySelector('.form-error').textContent=err.message;return;}
+  }else if(kind==='meal'){
+    const result=saveMeal(state,{...values,id:id||null},{uid});
+    if(!result.ok){form.querySelector('.form-error').textContent=result.formError||EDIT_MESSAGES.invalidState;return;}
+    state=result.state;
+  }else if(kind==='vehicle'){
+    const result=saveVehicle(state,{...values,id:id||null,passengers:data.getAll('passengers')},{uid});
+    if(!result.ok){form.querySelector('.form-error').textContent=result.formError||EDIT_MESSAGES.invalidState;return;}
+    state=result.state;
   }else{
     const collection={activity:'activities',meal:'meals',shopping:'shopping',gear:'gear',vehicle:'vehicles'}[kind];
     const old=state[collection].find(x=>x.id===id);
-    const defaults=kind==='activity'?{people:[],done:false}:kind==='shopping'?{done:false}:kind==='gear'?{ready:[]}:{};
+    const defaults=kind==='shopping'?{done:false}:kind==='gear'?{ready:[]}:{};
     const item={...defaults,...old,...values,id:old?.id||uid()};
-    if(kind==='activity'){
-      const mode=data.get('participation');
-      if(mode==='vehicles'){item.people=[];item.vehicleIds=data.getAll('vehicleIds');if(!validActivityVehicles(item,state.vehicles)){form.querySelector('.form-error').textContent='請至少選擇一台有效的參與車輛。';return;}}
-      else if(mode==='all'){item.people=[];delete item.vehicleIds;}
-      else if(mode!=='legacy'||!old?.people?.length){form.querySelector('.form-error').textContent='請選擇這一站的參與方式。';return;}
-    }
-    if(kind==='meal'){if(!mealSlotOptions(old?.slot).includes(values.slot)){form.querySelector('.form-error').textContent='請選擇有效的餐次。';return;}item.servings=Number(values.servings);item.ingredients=parseIngredients(values.ingredients).join('、');if(item.imageKind==='auto')delete item.imageKind;if(item.imageKind!==undefined&&!DISH_TYPES.some(([key])=>key===item.imageKind)){form.querySelector('.form-error').textContent='請選擇有效的料理圖片。';return;}}
     if(kind==='shopping'){
       if(old?.mealIds?.length && values.name!==old.name){form.querySelector('.form-error').textContent='連動食材名稱請在料理菜單修改。';return;}
       const names=parseIngredients(values.name).map(name=>name.replace(/\s+/gu,'').toLocaleLowerCase('zh-TW'));
       if(!old && state.shopping.some(s=>parseIngredients(s.name).some(name=>names.includes(name.replace(/\s+/gu,'').toLocaleLowerCase('zh-TW'))))){form.querySelector('.form-error').textContent='清單已有同名品項，請編輯既有品項的數量與分類。';return;}
       item.source='manual';
     }
-    if(kind==='vehicle'){try{item.meeting=formatVehicleMeeting(values.departTime,values.departLocation,old?.meeting);}catch(err){form.querySelector('.form-error').textContent=err.message;return;}delete item.departTime;delete item.departLocation;item.seats=Number(values.seats);item.passengers=data.getAll('passengers').filter(p=>p!==item.driver);if(item.passengers.length+1>item.seats){form.querySelector('.form-error').textContent='乘客加上駕駛不能超過座位數。';return;}}
     if(kind==='gear'){if(item.scope==='personal')item.assignee='';if(old?.assignee!==item.assignee||old?.scope!==item.scope)item.ready=[];state.departed=[];}
     const next={...state,[collection]:old?state[collection].map(x=>x.id===id?item:x):[...state[collection],item]};
-    if(kind==='meal'||kind==='shopping'){try{syncMealIngredients(next);}catch(err){form.querySelector('.form-error').textContent=err.message;return;}}
+    if(kind==='shopping'){try{syncMealIngredients(next);}catch(err){form.querySelector('.form-error').textContent=err.message;return;}}
     state=next;
   }
   closeDialog(true);commit(kind==='meal'?'料理已儲存，食材已同步採買清單':'旅行手冊已更新');
@@ -457,13 +794,15 @@ document.addEventListener('keydown',event=>{
   if(event.key!=='Escape'||!tripMenuOpen||dialog.open)return;
   event.preventDefault();closeTripMenu();
 });
-window.addEventListener('hashchange',()=>{if(dialog.open)closeDialog();tripMenuOpen=false;render();window.scrollTo({top:0,behavior:'instant'});});
-window.addEventListener('storage',event=>{if(account)return;if(event.key!==STORAGE_KEY||!event.newValue)return;let incoming;try{incoming=JSON.parse(event.newValue);}catch{return;}if(!isValidState(incoming)||incoming.revision===baseRevision)return;if(!saved||dialog.open||(route()==='invite'&&(inviteDraft.name||inviteDraft.role))){pendingRemote=incoming;storageLocked=true;saved=false;render();notify('另一分頁有更新。已保留你的修改，請先匯出備份。');return;}state=incoming;baseRevision=incoming.revision;render();notify('已載入另一個分頁的本機更新');});
-window.addEventListener('beforeunload',event=>{if(expensePanel?.isDirty()||dialogDirty||!saved||(route()==='invite'&&(inviteDraft.name||inviteDraft.role))){event.preventDefault();event.returnValue='';}});
+let lastPage=route();
+window.addEventListener('hashchange',()=>{const page=route();if(page==='trip'&&lastPage!=='trip')planner.view='poster';lastPage=page;if(dialog.open)closeDialog();tripMenuOpen=false;render();window.scrollTo({top:0,behavior:'instant'});});
+window.addEventListener('storage',event=>{if(account)return;if(event.key!==STORAGE_KEY||!event.newValue)return;let incoming;try{incoming=JSON.parse(event.newValue);}catch{return;}if(!isValidState(incoming)||incoming.revision===baseRevision)return;if(!saved||studioDirty()||dialog.open||planner.card||(route()==='invite'&&(inviteDraft.name||inviteDraft.role))){pendingRemote=incoming;storageLocked=true;saved=false;render();notify('另一分頁有更新。已保留你的修改，請先匯出備份。');return;}state=incoming;baseRevision=incoming.revision;render();notify('已載入另一個分頁的本機更新');});
+window.addEventListener('beforeunload',event=>{if(expensePanel?.isDirty()||studioDirty()||dialogDirty||planner.card?.dirty||!saved||(route()==='invite'&&(inviteDraft.name||inviteDraft.role))){event.preventDefault();event.returnValue='';}});
 function accountTripPath(){return `/${account.user.username}/trips/${account.trip.id}`;}
 function accountHeader(){return `<header class="topbar"><div class="topbar-inner"><a class="brand" href="/${e(account.user.username)}/home" aria-label="日子拾光首頁">${logo()}<span>日子拾光<small>LITTLE MOMENTS</small></span></a><div class="header-actions"><a class="text-link" href="/${e(account.user.username)}/home">我的首頁</a>${account.user.role==='admin'?'<a class="text-link" href="/admin">管理後台</a>':''}<button class="icon-button" data-action="theme" aria-label="切換${theme==='light'?'深色':'淺色'}模式">${icon(theme==='light'?'moon':'sun')}</button><button class="profile-button" data-action="profile">${e(account.user.displayName)}</button><button class="text-button" data-action="account-logout">登出</button></div></div></header>`;}
 function allowAccountAction(action){
-  if(['delete','confirm-delete'].includes(action)&&account.permissions.canDelete!==true){notify('只有旅行建立者與管理員可以刪除內容。');return false;}
+  // plan-* actions (including plan-delete) are not gated by canDelete; they still obey the saving / !saved checks below.
+  if(['delete','confirm-delete','confirm-delete-linked'].includes(action)&&account.permissions.canDelete!==true){notify('只有旅行建立者與管理員可以刪除內容。');return false;}
   if(INVITE_ACTIONS.includes(action)&&account.permissions.canInvite!==true){notify(INVITE_DENIED);return false;}
   const blocked=['choose-person','import','reset','confirm-reset','unlock-storage','recover-storage','apply-remote','export-original'];
   if(blocked.includes(action)){notify('帳號版不提供這項本機操作。');return false;}
@@ -480,7 +819,7 @@ function applyAccountChrome(){
     link.href=dest==='home'?`/${account.user.username}/home`:dest==='go'?accountTripPath()+'/go':accountTripPath();
   }
   const sync=app.querySelector('.sync-status');
-  if(sync)sync.innerHTML=`<i></i>${accountSaving?'正在儲存…':saved?'已儲存至本機伺服器':'尚未儲存'}<span>·</span>${account.permissions.canDelete?'建立者／管理員模式':account.permissions.canEdit?'協作編輯模式，不能刪除':'僅可檢視模式'}${navigator.onLine?'':' · 離線時無法儲存'}`;
+  if(sync)sync.innerHTML=`<i></i>${accountSaving?'正在儲存…':saved?'已儲存至本機伺服器':'尚未儲存'}<span>·</span>${account.permissions.canDelete?'建立者／管理員模式':account.permissions.canEdit?'協作編輯模式，不能刪除旅伴、料理、採買品項、裝備與車輛':'僅可檢視模式'}${navigator.onLine?'':' · 離線時無法儲存'}`;
   if(!account.permissions.canEdit)for(const el of app.querySelectorAll('[data-action]'))if(!['theme','profile','export','print','close-dialog','resolve-gear','depart','account-logout','trip-menu','close-trip-menu'].includes(el.dataset.action))el.hidden=true;
   if(account.permissions.canInvite!==true)for(const el of app.querySelectorAll(INVITE_ACTIONS.map(a=>`[data-action="${a}"]`).join(',')))el.hidden=true;
   for(const selector of ['.reset-area','.data-tools [data-action="import"]','.identity-note [data-action="profile"]'])for(const el of app.querySelectorAll(selector))el.remove();
@@ -490,19 +829,22 @@ function applyAccountChrome(){
   for(const el of app.querySelectorAll('[data-shopping-check]')){const row=state.shopping.find(s=>s.id===el.dataset.shoppingCheck);el.disabled=accountSaving||!saved||(!account.permissions.canEdit&&row?.assignee!==account.permissions.personId);}
   for(const el of app.querySelectorAll('[data-pack]'))el.disabled=accountSaving||!saved||!account.permissions.personId;
   for(const el of app.querySelectorAll('[data-activity-check],[data-gear-assignee],[data-shopping-assignee]'))el.disabled=accountSaving||!saved||!account.permissions.canEdit;
+  if(accountSaving)for(const el of app.querySelectorAll('[data-plan-nav],[data-plan-toggle],.plan-card input,.plan-card select,.plan-card textarea'))el.disabled=true;
   for(const el of app.querySelectorAll('[data-action]'))if(accountSaving&&!['export','theme','profile','trip-menu','close-trip-menu'].includes(el.dataset.action))el.disabled=true;
   if(route()==='go'&&!account.permissions.personId){app.querySelector('main').innerHTML=`<div class="empty"><h1>你目前以管理員身分檢視</h1><p>尚未加入此旅行，因此沒有個人行前清單。你仍可編輯所有旅行內容。</p><a class="button primary" href="${accountTripPath()}">回到規劃手冊</a></div>`;}
-  if(accountError||!saved){const warning=document.createElement('div');warning.className='save-warning';warning.setAttribute('role','alert');warning.innerHTML=`<span>${e(accountError||'內容尚未儲存，請保留備份。')}</span>${!saved?button('匯出未存內容','export')+button('重試儲存','account-retry'):''}${button('重新載入伺服器版本','account-reload')}`;app.querySelector('header').after(warning);}
+  if(accountError||!saved){const warning=document.createElement('div');warning.className='save-warning';warning.setAttribute('role','alert');warning.innerHTML=`<span>${e(accountError||'內容尚未儲存，請保留備份。')}</span>${studioDirty()?'繪本草稿請在繪本內匯出 JSON；帳號未成功儲存。':!saved?button('匯出未存內容','export')+button('重試儲存','account-retry'):''}${button('重新載入伺服器版本','account-reload')}`;app.querySelector('header').after(warning);}
 }
 function acceptAccountResult(result){state=result.state;account.state=result.state;account.trip=result.trip;account.permissions=result.permissions;baseRevision=state.revision;saved=true;accountError='';}
 async function commitAccount(message,announce=true){
-  if(accountSaving)return;
-  if(!account.permissions.canEdit){notify('你目前沒有這趟旅行的編輯權限。');return;}
-  if(!isValidState(state)){saved=false;accountError='內容驗證未通過，尚未寫入伺服器。請匯出備份後重新載入。';render();return;}
+  if(accountSaving)return false;
+  if(!account.permissions.canEdit){notify('你目前沒有這趟旅行的編輯權限。');return false;}
+  if(!isValidState(state)){saved=false;accountError='內容驗證未通過，尚未寫入伺服器。請匯出備份後重新載入。';render();return false;}
   accountSaving=true;saved=false;accountError='';render();
-  try{await assertAccountSession();const result=await account.api(`/api/trips/${account.trip.id}`,{method:'PUT',body:{revision:account.trip.revision,expectedUserId:account.user.id,state}});acceptAccountResult(result);if(announce)notify(message+' · 已儲存至本機伺服器');}
+  let ok=false;
+  try{await assertAccountSession();const result=await account.api(`/api/trips/${account.trip.id}`,{method:'PUT',body:{revision:account.trip.revision,expectedUserId:account.user.id,state}});acceptAccountResult(result);ok=true;settlePlan();if(announce)notify(message+' · 已儲存至本機伺服器');}
   catch(err){accountError=err.status===409?'其他人已更新這趟旅行。你的修改仍留在畫面，請先匯出，再重新載入合併。':err.status===401?'登入已失效。你的未儲存修改還在本頁，請先匯出備份，再重新登入。':`${err.message}，你的修改尚未儲存。`;}
   finally{accountSaving=false;render();}
+  return ok;
 }
 async function accountCheck(kind,id,checked){
   if(accountSaving||!saved){render();return;}
@@ -562,9 +904,29 @@ async function revokeAccountInvite(id){
 actions['create-invite']=()=>{void createAccountInvite();};
 actions['revoke-invite']=id=>{void revokeAccountInvite(id);};
 if(account)dialog.addEventListener('close',()=>{if(!accountInviteOpen)return;accountInviteOpen=false;clearAccountInviteLink();accountInviteError='';accountInvites=[];});
-actions['account-retry']=()=>{void commitAccount('旅行手冊已更新');};
-actions['account-reload']=()=>{if((!saved||dialogDirty)&&!confirm('重新載入會放棄尚未儲存的修改。請確認已匯出備份，是否繼續？'))return;saved=true;dialogDirty=false;location.reload();};
-actions['account-logout']=async()=>{if((!saved||dialogDirty)&&!confirm('登出會放棄尚未儲存的修改，確定繼續？'))return;try{await account.api('/api/logout',{method:'POST',body:{}});saved=true;dialogDirty=false;location.href='/login';}catch(err){notify(err.message);}};
+actions['account-retry']=()=>{if(studioDirty()){notify('繪本草稿仍在編輯器，請在繪本內重新按「儲存行程」。');return;}void commitAccount('旅行手冊已更新');};
+actions['account-reload']=()=>{if((!saved||studioDirty()||dialogDirty)&&!confirm('重新載入會放棄尚未儲存的修改。請確認已匯出備份，是否繼續？'))return;saved=true;dialogDirty=false;location.reload();};
+// Cross-device sync: every 3 s tell the server which field this device is editing, lock fields other devices are editing, and
+// pick up a newer revision. A dirty studio keeps its draft; saving then merges it into the newer state (three-way, see saveStoryPlan).
+let presenceBusy=false;
+async function presenceTick(){
+  if(!account||!studioMount||tab!=='schedule'||document.hidden||presenceBusy||accountSessionChanged)return;
+  presenceBusy=true;
+  try{
+    const r=await account.api(`/api/trips/${account.trip.id}/presence`,{method:'PUT',body:{clientId:presenceClientId,field:presenceField}});
+    studioMount?.setLocks(r.editors||[]);
+    if(r.revision>account.trip.revision&&saved&&!accountSaving){
+      const latest=await account.api(`/api/trips/${account.trip.id}`);
+      if(latest.trip.revision>account.trip.revision&&saved&&!accountSaving){
+        acceptAccountResult(latest);
+        if(studioMount&&!studioDirty()){const plan=toStudio(state);if(studioMount.refresh(plan)){studioBasePlan=plan;studioBaseRevision=state.revision;}}
+        if(!studioHost?.shadowRoot?.activeElement&&!studioDirty())render();
+      }
+    }
+  }catch{}finally{presenceBusy=false;}
+}
+if(account)setInterval(presenceTick,3000);
+actions['account-logout']=async()=>{if((!saved||studioDirty()||dialogDirty)&&!confirm('登出會放棄尚未儲存的修改，確定繼續？'))return;try{await account.api('/api/logout',{method:'POST',body:{}});saved=true;dialogDirty=false;location.href='/login';}catch(err){notify(err.message);}};
 window.addEventListener('pageshow',event=>{if(account&&event.persisted)location.reload();});
 let sessionChecking=false,sessionLastChecked=0,accountSessionChanged=false;
 async function assertAccountSession(){
@@ -575,7 +937,7 @@ async function assertAccountSession(){
 async function recheckAccountSession(){
  if(!account||sessionChecking||Date.now()-sessionLastChecked<1000)return;
  sessionChecking=true;sessionLastChecked=Date.now();
- try{const result=await account.api('/api/session');if(result.user?.id!==account.user.id||result.user?.role!==account.user.role){accountSessionChanged=true;if(expensePanel?.isDirty()||dialogDirty||!saved){expensePanel?.lock('登入帳號已變更，分帳草稿不能由另一個帳號儲存。請匯出草稿，再重新登入。');saved=false;accountError='登入帳號已在其他分頁變更。這份未儲存草稿仍在此頁，請先匯出備份再重新整理。';render();}else location.reload();}}
+ try{const result=await account.api('/api/session');if(result.user?.id!==account.user.id||result.user?.role!==account.user.role){accountSessionChanged=true;if(expensePanel?.isDirty()||studioDirty()||dialogDirty||!saved){expensePanel?.lock('登入帳號已變更，分帳草稿不能由另一個帳號儲存。請匯出草稿，再重新登入。');saved=false;accountError='登入帳號已在其他分頁變更。這份未儲存草稿仍在此頁，請先匯出備份再重新整理。';render();}else location.reload();}}
  catch(err){if(err.status===0||err.status===401){accountError='無法確認帳號是否仍登入。為保護資料，請確認本機伺服器，必要時匯出備份再重新整理。';saved=false;render();}}
  finally{sessionChecking=false;}
 }

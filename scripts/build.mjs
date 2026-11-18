@@ -6,7 +6,7 @@ const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),out=resolve(roo
 await mkdir(out,{recursive:true});
 const build=await Bun.build({entrypoints:[resolve(root,'src/entry.js')],outdir:out,minify:true,target:'browser',splitting:true,naming:{entry:'entry.js',chunk:'chunks/[name]-[hash].[ext]'}});
 if(!build.success){console.error(build.logs);process.exit(1);}
-const css=await Promise.all(['styles.css','accounts.css','scene-motion.css','expenses.css'].map(file=>readFile(resolve(root,'src',file),'utf8'))).then(parts=>parts.join('\n'));
+const css=await Promise.all(['styles.css','accounts.css','scene-motion.css','itinerary.css','storybook-host.css','expenses.css'].map(file=>readFile(resolve(root,'src',file),'utf8'))).then(parts=>parts.join('\n'));
 await writeFile(resolve(out,'styles.css'),css);
 let html=await readFile(resolve(root,'index.html'),'utf8');
 html=html.replace('./src/app.js','/entry.js').replace('./src/styles.css','/styles.css').replace('./favicon.svg','/favicon.svg');

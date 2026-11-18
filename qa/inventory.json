@@ -572,6 +572,204 @@
       "testCases": ["TC-XSS-004"],
       "critical": false,
       "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-001",
+      "page": "/<user>/trips/<id>",
+      "control": "itinerary-conflict-draft",
+      "role": "member",
+      "scenario": "另一個請求先更新同一趟旅行後，member 儲存規劃行程的路線卡片",
+      "expected": "畫面與草稿保留並顯示其他人已更新的提示，伺服器上的資料沒有被覆寫",
+      "testCases": ["TC-ITIN-001"],
+      "critical": true,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-002",
+      "page": "/<user>/trips/<id>",
+      "control": "itinerary-planner-permissions",
+      "role": "member",
+      "scenario": "旅行擁有者與受邀旅伴開啟規劃行程，旅伴嘗試刪除車輛與路線",
+      "expected": "各角色只看到可用的控制項；旅伴在車輛視窗與旅行選單沒有刪除車輛控制項，刪除已儲存路線後重新載入不再出現，同步狀態文字標明旅伴模式",
+      "testCases": ["TC-ITIN-002", "TC-ITIN-003"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-003",
+      "page": "/<user>/trips/<id>",
+      "control": "itinerary-viewer",
+      "role": "member",
+      "scenario": "沒有編輯與刪除權限的檢視者開啟旅行",
+      "expected": "只顯示行程圖，沒有檢視切換與任何新增、修改、刪除或勾選完成的控制項，仍可展開文字面板、複製文字與操作動態開關",
+      "testCases": ["TC-ITIN-004"],
+      "critical": true,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-004",
+      "page": "/demo",
+      "control": "poster-copy-text",
+      "role": "anonymous",
+      "scenario": "使用者在行程圖複製行程文字，瀏覽器剪貼簿寫入成功或失敗",
+      "expected": "成功時剪貼簿內容與行程文字逐字相同並顯示已複製提示；失敗時展開文字面板、全選文字並提示手動複製",
+      "testCases": ["TC-ITIN-010", "TC-ITIN-011"],
+      "critical": true,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-005",
+      "page": "/demo",
+      "control": "poster-reduced-motion",
+      "role": "anonymous",
+      "scenario": "系統設定為減少動態時開啟行程圖",
+      "expected": "行程圖為靜態、沒有動畫、隱藏動態開關並顯示說明，切換設定即時生效",
+      "testCases": ["TC-ITIN-012"],
+      "critical": true,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-006",
+      "page": "/demo",
+      "control": "poster-motion-print-text",
+      "role": "anonymous",
+      "scenario": "使用者操作行程圖的動態開關、列印與文字面板",
+      "expected": "動態開關與旅行選單同步並在重新載入後保留；列印輸出封面與完整行程並隱藏控制項；文字面板預設收合、唯讀且不寫入資料",
+      "testCases": ["TC-ITIN-013", "TC-ITIN-014", "TC-ITIN-015", "TC-ITIN-016", "TC-ITIN-017", "TC-ITIN-018", "TC-ITIN-019"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-007",
+      "page": "/demo",
+      "control": "legacy-local-planner-seed",
+      "role": "anonymous",
+      "scenario": "本機版開啟舊手冊 seed()，逐日走訪規劃行程並匯入備份",
+      "expected": "全程不寫入儲存資料，10 筆活動各出現一次且參加者不變，匯入備份後結果相同",
+      "testCases": ["TC-ITIN-020", "TC-ITIN-021", "TC-ITIN-024"],
+      "critical": true,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-008",
+      "page": "/demo",
+      "control": "legacy-local-departures",
+      "role": "anonymous",
+      "scenario": "本機版開啟舊手冊的車輛出發資料與自由文字、不完整格式",
+      "expected": "舊出發資料只顯示在第 1 天，自由文字原樣顯示，缺少的時間或地點顯示待定",
+      "testCases": ["TC-ITIN-022", "TC-ITIN-023", "TC-ITIN-029"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-009",
+      "page": "/<user>/trips/<id>",
+      "control": "legacy-account-seed",
+      "role": "member",
+      "scenario": "帳號版開啟以舊手冊 seed() 建立的旅行並逐日走訪規劃行程",
+      "expected": "不送出 PUT 或 PATCH，revision 與狀態不變，10 筆活動各出現一次且參加者不變",
+      "testCases": ["TC-ITIN-025", "TC-ITIN-026"],
+      "critical": true,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-010",
+      "page": "/<user>/trips/<id>",
+      "control": "legacy-account-departures",
+      "role": "member",
+      "scenario": "帳號版開啟舊手冊的車輛出發資料與自由文字",
+      "expected": "舊出發資料只顯示在第 1 天，自由文字原樣顯示並標示時間待定",
+      "testCases": ["TC-ITIN-027", "TC-ITIN-028"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-011",
+      "page": "/demo",
+      "control": "itinerary-dialogs",
+      "role": "anonymous",
+      "scenario": "使用者操作車輛視窗、旅行選單與旅行設定視窗",
+      "expected": "車輛視窗只有四類欄位；有路線的車不能刪除並列出日子；目的地與天數的不合法修改被拒絕且未儲存；延後日期與改目的地後各處同步",
+      "testCases": ["TC-ITIN-030", "TC-ITIN-031", "TC-ITIN-032", "TC-ITIN-033", "TC-ITIN-034", "TC-ITIN-035", "TC-ITIN-036", "TC-ITIN-037", "TC-ITIN-038", "TC-ITIN-039"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-012",
+      "page": "/demo",
+      "control": "itinerary-editor-route-save",
+      "role": "anonymous",
+      "scenario": "使用者在規劃行程儲存路線卡片後重新載入",
+      "expected": "路線寫入並顯示於規劃行程、行程圖與文字",
+      "testCases": ["TC-ITIN-041"],
+      "critical": true,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-013",
+      "page": "/demo",
+      "control": "itinerary-editor",
+      "role": "anonymous",
+      "scenario": "使用者在規劃行程編輯常用活動、採買路線、地點、餐點時間",
+      "expected": "每項修改只改變對應資料，重新載入後保留，同名地點與使用中地點的刪除被拒絕",
+      "testCases": ["TC-ITIN-040", "TC-ITIN-042", "TC-ITIN-043", "TC-ITIN-044", "TC-ITIN-045", "TC-ITIN-046", "TC-ITIN-047"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-014",
+      "page": "/demo",
+      "control": "itinerary-drafts",
+      "role": "anonymous",
+      "scenario": "使用者在有未儲存草稿時切換、離開或匯出匯入備份",
+      "expected": "每項會丟失草稿的操作先詢問，取消保留草稿，確認才丟棄；沒有草稿時不詢問；備份匯入後狀態與匯出前相同",
+      "testCases": ["TC-ITIN-050", "TC-ITIN-051", "TC-ITIN-052", "TC-ITIN-053", "TC-ITIN-054", "TC-ITIN-055", "TC-ITIN-056", "TC-ITIN-057", "TC-ITIN-058", "TC-ITIN-059"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-015",
+      "page": "/demo",
+      "control": "itinerary-accessibility",
+      "role": "anonymous",
+      "scenario": "使用者以鍵盤與輔助技術操作行程圖與規劃行程",
+      "expected": "鍵盤可完成新增，展開狀態、焦點、提示、點擊範圍、字級、對比、焦點外框與錯誤欄位標示皆符合無障礙需求",
+      "testCases": ["TC-ITIN-060", "TC-ITIN-061", "TC-ITIN-062", "TC-ITIN-063", "TC-ITIN-064", "TC-ITIN-065", "TC-ITIN-066", "TC-ITIN-067", "TC-ITIN-068", "TC-ITIN-069"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-016",
+      "page": "/demo",
+      "control": "poster-layout-text",
+      "role": "anonymous",
+      "scenario": "範例旅行在 320、390、1440 像素與淺色、深色主題下開啟行程圖",
+      "expected": "行程圖文字與順序在每種組合下相同",
+      "testCases": ["TC-ITIN-070"],
+      "critical": true,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-ITIN-017",
+      "page": "/demo",
+      "control": "itinerary-layout",
+      "role": "anonymous",
+      "scenario": "範例與壓力資料在各視窗寬度與主題下顯示行程圖與規劃行程",
+      "expected": "版面方向、配色正確，文字不重疊、沒有水平捲動，跨越 760 像素時保留檢視與草稿",
+      "testCases": ["TC-ITIN-071", "TC-ITIN-072", "TC-ITIN-073", "TC-ITIN-074", "TC-ITIN-075", "TC-ITIN-076"],
+      "critical": false,
+      "unauthorized": false
+    },
+    {
+      "id": "QA-XSS-004",
+      "page": "/<user>/trips/<id>",
+      "control": "itinerary-xss",
+      "role": "member",
+      "scenario": "行程各欄位為 XSS 測試字串的旅行開啟行程圖、文字面板與規劃行程各卡片",
+      "expected": "所有測試字串以文字顯示；沒有對話框、腳本、CSP 違規、注入的元素或對其他來源的請求",
+      "testCases": ["TC-XSS-005"],
+      "critical": false,
+      "unauthorized": false
     }
   ]
 }

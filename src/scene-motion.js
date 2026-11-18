@@ -96,8 +96,26 @@ export function animatedIllustration(kind = 'camp', options = {}) {
   return `<div class="scene-motion illustration scene-motion--${safeKind}">${illustration(kind, '', options)}</div>`;
 }
 
-export function sceneMotionSettings() {
+/**
+ * The Motion_Toggle button and the reduced-motion note (requirements 13.2, 13.3), as `{ note, button }` strings.
+ * Exactly one of the two is visible: reduced motion hides the button and shows the note.
+ */
+function motionParts() {
   const state = sceneMotionState();
   const reduced = state === 'reduced';
-  return `<section class="motion-settings" aria-label="插畫動畫"><div class="motion-settings__copy"><h3>插畫動畫</h3><p>控制車子與背景動態，只影響這台裝置。</p><p class="motion-settings__note" data-motion-reduced-note${reduced ? '' : ' hidden'}>依系統減少動態設定，插畫保持靜態。</p></div><button type="button" class="scene-motion__toggle" data-scene-motion-toggle aria-label="${toggleLabel(state)}"${reduced ? ' hidden' : ''}>${PAUSE_ICON}${PLAY_ICON}<span class="scene-motion__label scene-motion__label--pause">暫停動畫</span><span class="scene-motion__label scene-motion__label--play">播放動畫</span></button></section>`;
+  return {
+    note: `<p class="motion-settings__note" data-motion-reduced-note${reduced ? '' : ' hidden'}>依系統減少動態設定，插畫保持靜態。</p>`,
+    button: `<button type="button" class="scene-motion__toggle" data-scene-motion-toggle aria-label="${toggleLabel(state)}"${reduced ? ' hidden' : ''}>${PAUSE_ICON}${PLAY_ICON}<span class="scene-motion__label scene-motion__label--pause">暫停動畫</span><span class="scene-motion__label scene-motion__label--play">播放動畫</span></button>`
+  };
+}
+
+/** The `[data-motion-reduced-note]` note followed by the `[data-scene-motion-toggle]` button (itinerary poster). */
+export function sceneMotionToggle() {
+  const { note, button } = motionParts();
+  return `${note}${button}`;
+}
+
+export function sceneMotionSettings() {
+  const { note, button } = motionParts();
+  return `<section class="motion-settings" aria-label="插畫動畫"><div class="motion-settings__copy"><h3>插畫動畫</h3><p>控制車子與背景動態，只影響這台裝置。</p>${note}</div>${button}</section>`;
 }

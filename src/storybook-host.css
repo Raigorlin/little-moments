@@ -1,0 +1,14 @@
+@font-face{font-family:WenKai;src:url('/assets/storybook/fonts/LXGWWenKaiTC-Regular.ttf') format('truetype');font-display:swap}@font-face{font-family:'Patrick Hand';src:url('/assets/storybook/fonts/PatrickHand-Regular.ttf') format('truetype');font-display:swap}
+/* The schedule tab keeps the site's normal page chrome (hero, toolbar, tabs, footer). The studio is embedded straight under the tabs:
+   no .workspace wrapper, no frame, and a height that fits the viewport so the poster never needs its own scrollbar. */
+.story-schedule-page{max-width:1780px}
+.story-schedule-page .section-tabs{margin-bottom:0}
+.story-studio-host{display:block;min-width:0;width:100%;height:calc(100dvh - 120px);min-height:520px;border:0;border-radius:0;box-shadow:none;overflow:hidden}
+@media(max-width:760px){.story-studio-host{height:auto;min-height:0}}
+@media print{.story-studio-host{border:0;box-shadow:none;overflow:visible;height:auto}}/* Collapsed editor: the layout is the same .workspace grid as every other tab (same widths, gap and breakpoints),
+   on the same 1220px page with the same tab spacing, so the crew side panel lines up exactly.
+   Expanded editor: one column, no side panel. The studio sets data-editor-hidden on its host. */
+.story-schedule-layout:not(:has(>.story-studio-host[data-editor-hidden])){display:grid;grid-template-columns:minmax(0,1fr)}
+.story-schedule-layout:not(:has(>.story-studio-host[data-editor-hidden]))>.sidebar{display:none}
+.story-schedule-page:has(.story-studio-host[data-editor-hidden]){max-width:1220px}
+.story-schedule-page:has(.story-studio-host[data-editor-hidden]) .section-tabs{margin-bottom:29px}.story-studio-host[data-editor-hidden]{height:auto;min-height:0;overflow:visible}

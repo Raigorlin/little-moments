@@ -1,8 +1,12 @@
+// trip-planning-workflow-enhance: requirement 1.6 removed the schedule bar and its 「新增一站」 button from the 「行程表」 tab,
+// and the day buttons now live in 「規劃行程」 (Itinerary_Editor, `.plan-days>.date-tabs`). TC-SCHED-001 therefore measures
+// those day buttons and keeps mobile-smooth-swipe requirements 7.3 to 7.6 (same top, page width, 15-day scroll, not
+// squeezed). Only the 「新增一站」 placement checks (7.1, 7.2) are removed, because that button no longer exists.
 import {test,expect} from './local-planner-fixture.js';
 
 // Layout regression for Requirement 7 (mobile-smooth-swipe, task 6.8): the 新增一站 button must never be pushed
 // under the date tabs. schedule() in src/app.js renders it with button(icon('plus')+'新增一站','activity','small')
-// as the last child of .schedule-bar, right after .date-tabs, which holds one button per trip day.
+// as the last child of the schedule bar (removed by trip-planning-workflow-enhance), right after .date-tabs.
 //
 // Until task 3.3 deleted the schedule bar's wrap rules from src/styles.css, the button wrapped under the tabs at
 // 761, 768, 820, 900 and 1020px with 8 and with 15 days. This file repeats that task's sweep from design.md,
@@ -27,7 +31,13 @@ const TRIPS=[{days:3,endDate:null},{days:8,endDate:'2026-11-27'},{days:15,endDat
 const nav=(page,tab)=>page.locator(`.section-tabs [data-tab="${tab}"]`).click();
 const saveDialog=page=>page.locator('#edit-form button[type="submit"]').click();
 
-/** Move the trip's end date with the trip menu's settings dialog, as tests/app.e2e.js does, then return to the schedule tab. */
+/** Switch the 「行程表」 tab from 「行程圖」 to 「規劃行程」, whose day buttons are the ones measured here. */
+async function openEditor(page){
+ await page.locator('.plan-view-switch [data-view="editor"]').click();
+ await expect(page.locator('.plan-days>.date-tabs')).toBeVisible();
+}
+
+/** Move the trip's end date with the trip menu's settings dialog, as tests/app.e2e.js does, then return to 「規劃行程」. */
 async function setTripEnd(page,endDate){
  await page.getByRole('button',{name:'旅行選單',exact:true}).click();
  // Any action inside the drawer closes it before the dialog opens.
@@ -36,25 +46,25 @@ async function setTripEnd(page,endDate){
  await saveDialog(page);
  await expect(page.locator('#dialog')).not.toBeVisible();
  await nav(page,'schedule');
+ await openEditor(page);
 }
 
 /**
- * In-page: the schedule bar's geometry once the viewport is `width` px wide and the fonts have loaded, including each
+ * In-page: the day buttons' geometry once the viewport is `width` px wide and the fonts have loaded, including each
  * date button's rendered and max-content widths, line boxes and overflow. It rejects when the page cannot be measured
  * as intended. page.evaluate serializes this function, so it must not reference anything outside its own body.
  */
 async function measureScheduleBar(width){
  for(let i=0;i<10&&innerWidth!==width;i+=1)await new Promise(resolve=>requestAnimationFrame(()=>resolve()));
  if(innerWidth!==width)throw new Error(`the viewport is ${innerWidth}px wide, not ${width}px`);
- // The date buttons and the button are sized by their text, so measure with the UI font, not its fallback.
+ // The date buttons are sized by their text, so measure with the UI font, not its fallback.
  await document.fonts.ready;
  if(!document.fonts.check('400 16px "jf open 粉圓"'))throw new Error('the jf open 粉圓 font has not loaded');
- const bars=document.querySelectorAll('.schedule-bar');
- if(bars.length!==1)throw new Error(`expected one .schedule-bar, found ${bars.length}`);
- const tabs=bars[0].querySelector(':scope>.date-tabs'),button=bars[0].querySelector(':scope>[data-action="activity"]');
- if(!tabs?.getClientRects().length)throw new Error('.schedule-bar has no rendered .date-tabs');
- if(!button?.getClientRects().length||button.textContent.trim()!=='新增一站')throw new Error('.schedule-bar has no rendered 新增一站 button');
- const tabsBox=tabs.getBoundingClientRect(),buttonBox=button.getBoundingClientRect(),dates=[...tabs.querySelectorAll(':scope>button')];
+ const bars=document.querySelectorAll('.plan-days>.date-tabs');
+ if(bars.length!==1)throw new Error(`expected one .plan-days>.date-tabs, found ${bars.length}`);
+ const tabs=bars[0];
+ if(!tabs.getClientRects().length)throw new Error('.plan-days>.date-tabs is not rendered');
+ const tabsBox=tabs.getBoundingClientRect(),dates=[...tabs.querySelectorAll(':scope>button')];
  // A date label is a grid item, so its own getClientRects() returns one box however many lines its text takes. A
  // Range over its contents returns a rect per line instead, and rects whose tops are within 1px share a line box.
  const lineBoxes=label=>{
@@ -68,11 +78,10 @@ async function measureScheduleBar(width){
  const geometry={
   innerWidth,pageScrollWidth:document.documentElement.scrollWidth,
   tabs:{bottom:tabsBox.bottom,right:tabsBox.right,scrollWidth:tabs.scrollWidth,clientWidth:tabs.clientWidth,overflowX:getComputedStyle(tabs).overflowX},
-  button:{top:buttonBox.top,left:buttonBox.left},
   dateTops:dates.map(date=>date.offsetTop),
   dates:dates.map(date=>({
-   day:date.querySelector(':scope>small')?.textContent??'',width:date.getBoundingClientRect().width,
-   lines:Object.fromEntries(['small','b','span'].map(label=>[label,lineBoxes(date.querySelector(`:scope>${label}`))])),
+   day:date.querySelector(':scope>span')?.textContent??'',width:date.getBoundingClientRect().width,
+   lines:Object.fromEntries([1,2,3].map(nth=>[`span:nth-child(${nth})`,lineBoxes(date.querySelector(`:scope>span:nth-child(${nth})`))])),
    scrollWidth:date.scrollWidth,clientWidth:date.clientWidth
   }))
  };
@@ -93,18 +102,17 @@ async function measureScheduleBar(width){
  return geometry;
 }
 
-test('[TC-SCHED-001] 新增一站 stays to the right of the date tabs and no date button is squeezed, at every width for 3, 8 and 15 days',async({page})=>{
+test('[TC-SCHED-001] the 規劃行程 day buttons share one row, fit the page and are not squeezed, at every width for 3, 8 and 15 days',async({page})=>{
  await page.goto('/demo/');
+ await openEditor(page);
  for(const {days,endDate} of TRIPS){
   if(endDate)await setTripEnd(page,endDate);
-  await expect(page.locator('.schedule-bar>.date-tabs>button')).toHaveCount(days);
+  await expect(page.locator('.plan-days>.date-tabs>button')).toHaveCount(days);
   for(const width of WIDTHS){
    await page.setViewportSize({width,height:HEIGHT});
    const m=await page.evaluate(measureScheduleBar,width),at=`${width}px, ${days} days`;
    expect(m.dateTops,`${at}: one date button per day`).toHaveLength(days);
-   // Task 3.3's five checks. They are soft, so a failing run lists every failing width and trip length.
-   expect.soft(m.button.top,`${at}: the button's top is above the tabs' bottom (7.1)`).toBeLessThan(m.tabs.bottom);
-   expect.soft(m.button.left,`${at}: the button's left edge is at most 1px left of the tabs' right edge (7.2)`).toBeGreaterThanOrEqual(m.tabs.right-1);
+   // Task 3.3's remaining checks. They are soft, so a failing run lists every failing width and trip length.
    expect.soft(m.dateTops,`${at}: every date button has the same offsetTop (7.3)`).toEqual(m.dateTops.map(()=>m.dateTops[0]));
    expect.soft(m.pageScrollWidth,`${at}: the page is no wider than the viewport (7.5)`).toBeLessThanOrEqual(m.innerWidth);
    if(days===15){

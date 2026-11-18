@@ -1,3 +1,7 @@
+// trip-planning-workflow-enhance: requirements 22.2 and 23.11 replaced the 行程 tab's old timeline, 活動 cards and 各車出發 cards with the 行程圖
+// (Itinerary_Poster), its expandable 文字版 (Text_Panel) and the Itinerary_Editor. So [TC-XSS-003] now reads the schedule tab's payloads from the
+// 行程圖 and the expanded Text_Panel instead of the removed screens, and [TC-XSS-005] (new) covers the poster, Text_Panel and editor in detail.
+// No check of existing behavior was dropped.
 // Feature: security-hardening, task 9.5. Stored XSS checks across every page that renders User_Content.
 // Requirements 1.12, 9.1, 9.6, 11.9.
 //
@@ -15,6 +19,8 @@
 //    markup that reached an HTML_Sink unescaped produces exactly these elements, while the app's own
 //    markup never does, so the check needs no per-page element counts.
 // Each payload must also appear in the page's rendered text (document.body.innerText) exactly as stored.
+// [TC-XSS-005] (trip-planning-workflow-enhance, task 13.7; requirements 22.1, 22.2, 22.4, 23.9) applies the same detectors to
+// the Itinerary_Poster, the expanded Text_Panel and the Itinerary_Editor, and also fails on any request to another origin.
 //
 // Budget: one registered account (the signed-out invite registration); the owner and the signed-in invitee are
 // harness pool accounts renamed by the admin (tests/support/e2e-pool.js), and there are no failed logins, so this file
@@ -171,6 +177,142 @@ test('[TC-XSS-002] signed-in invite page shows the trip payloads as text',async(
  await api(ctx.invitee.request,`/api/invites/${ctx.invites[0].token}/join`,'POST',{name:JOIN_NAME.invitee});
 });
 
+// BEGIN planner-xss (shared by [TC-XSS-005]; keep this block free of references to the account-mode context)
+// Itinerary tab checks (requirements 22.1, 22.2, 22.4, 23.9). Every XSS_Payload_Set string (P) is stored in each field
+// that keeps it whole: Place names, car names, Activity titles, locations and notes, Stop notes (non-shopping Stops),
+// Day_Titles (20 characters at most, so only P[3] and P[4]), meal titles and ingredients, names of shopping items listed at a
+// Shopping_Stop, and names of participants who buy an item but ride in no car (shown in the 「未分配採買清單」 reasons).
+const PLAN_DAY_1='2026-10-20',PLAN_DAY_2='2026-10-21';
+const PLAN_PLACE_IDS=['pl-a','pl-b','pl-c','pl-d','pl-shop','pl-taipei'];
+function planState(exampleTrip,syncMealIngredients){
+ const s=exampleTrip();
+ const byId=(list,id)=>list.find(x=>x.id===id);
+ PLAN_PLACE_IDS.forEach((id,i)=>{byId(s.places,id).name=P[i];});
+ ['v1','v2','v3','v4'].forEach((id,i)=>{byId(s.vehicles,id).name=P[i];});
+ // Two more cars with ordinary drivers, and five buyers who ride in no car.
+ s.people.push({id:'p9',name:'車手九',color:'coral',role:''},{id:'p10',name:'車手十',color:'blue',role:''});
+ s.vehicles.push({id:'v5',name:P[4],driver:'p9',seats:4,passengers:[],meeting:''},{id:'v6',name:P[5],driver:'p10',seats:4,passengers:[],meeting:''});
+ s.routes.push({id:'rt-1-v5',date:PLAN_DAY_1,vehicleId:'v5',from:'pl-a',to:'@destination',time:'10:00',stops:[]},{id:'rt-1-v6',date:PLAN_DAY_1,vehicleId:'v6',from:'pl-b',to:'@destination',time:'10:30',stops:[]});
+ // Six non-shopping Stops, each with a payload note, on the first car's route.
+ byId(s.routes,'rt-1-v1').stops=P.map((note,i)=>({id:`st-${i+2}`,place:PLAN_PLACE_IDS[(i+1)%5],kind:['pickup','gear','other'][i%3],note}));
+ s.daySettings.find(x=>x.date===PLAN_DAY_1).title=P[3];s.daySettings.find(x=>x.date===PLAN_DAY_2).title=P[4];
+ // Six Activities on day 1 so every card can be opened from the same day.
+ ['a1','a2','a3','a4','a5','a6'].forEach((id,i)=>Object.assign(byId(s.activities,id),{date:PLAN_DAY_1,title:P[i],location:P[(i+1)%6],note:P[(i+2)%6]}));
+ ['m1','m2','m3','m4','m5'].forEach((id,i)=>{byId(s.meals,id).title=P[i];});
+ byId(s.meals,'m1').ingredients=`${P[0]}、${P[1]}`;byId(s.meals,'m4').ingredients=`${P[2]}、${P[3]}`;byId(s.meals,'m5').ingredients=`${P[4]}、${P[5]}`;
+ s.meals.push({id:'m6',date:PLAN_DAY_2,slot:'消夜',title:P[5],cookId:'',servings:8,ingredients:'',notes:''});
+ // s1 to s6 are bought by the drivers and passengers of the car that stops at 超市／賣場 (品項 s7 and s8 keep plain names).
+ ['s1','s2','s3','s4','s5','s6'].forEach((id,i)=>{byId(s.shopping,id).name=P[i];});
+ for(let i=0;i<5;i++){
+  s.people.push({id:`p${11+i}`,name:P[i],color:'green',role:''});
+  s.shopping.push({id:`xs${i+1}`,name:P[i],quantity:'',category:'其他',assignee:`p${11+i}`,done:false,source:'manual'});
+ }
+ syncMealIngredients(s);
+ return s;
+}
+// Requests to another origin (a map link opened by the user is not a request of the page).
+function trackForeign(page,origin){
+ const found=[];
+ page.on('request',request=>{let url;try{url=new URL(request.url());}catch{return;}if(/^https?:$/.test(url.protocol)&&url.origin!==origin)found.push(request.url());});
+ return found;
+}
+async function assertClean(page,problems,foreign,where){
+ await page.evaluate(()=>window.__xssScan());
+ expect(await page.evaluate(()=>window.__xss),`${where}: sentinel`).toBeUndefined();
+ expect(problems,`${where}: script ran or markup was injected`).toEqual([]);
+ expect(foreign,`${where}: request to another origin`).toEqual([]);
+}
+const trimmed=async locator=>(await locator.allInnerTexts()).map(t=>t.trim());
+async function checkPlanner(page,problems,foreign){
+ const poster=page.locator('.itinerary-poster');
+ await expect(poster).toBeVisible();
+ // Itinerary_Poster and the expanded Text_Panel: the payloads are text, never markup.
+ const toggle=page.locator('[data-text-panel=toggle]');
+ if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();
+ const body=page.locator('#text-panel-body');
+ await expect(body).toBeVisible();
+ const text=await body.innerText();
+ const posterText=await poster.innerText();
+ for(const v of P){
+  expect(text,`Text_Panel: ${JSON.stringify(v)}`).toContain(v);
+  expect(posterText,`Itinerary_Poster: ${JSON.stringify(v)}`).toContain(v);
+ }
+ await expect(body.locator('*')).toHaveCount(0);
+ await assertClean(page,problems,foreign,'Itinerary_Poster and Text_Panel');
+
+ // Itinerary_Editor: Places_And_Cars.
+ await page.locator('.plan-view-switch [data-view="editor"]').click();
+ await expect(page.locator('.itinerary-editor')).toBeVisible();
+ await page.locator('[data-plan-toggle="places"]').click();
+ await expect(page.locator('.plan-places-list')).toBeVisible();
+ const places=await trimmed(page.locator('.plan-places-list .plan-place .plan-row-name'));
+ expect(places).toEqual(expect.arrayContaining(P));
+ const cars=await trimmed(page.locator('.plan-cars-list .plan-car .plan-row-name'));
+ expect(cars).toEqual(expect.arrayContaining(P));
+ await assertClean(page,problems,foreign,'Places_And_Cars');
+
+ // Route cards: the car with six Stop notes, then the car that shops (item preview).
+ const card=page.locator('form[data-plan-card]');
+ await page.locator('li.plan-route[data-id="rt-1-v1"] .plan-row-button').click();
+ await expect(card).toBeVisible();
+ await expect(card.locator('[name="from"] option:checked')).toHaveText(P[0]);
+ const notes=card.locator('input[name$="-note"]');
+ await expect(notes).toHaveCount(P.length);
+ for(let i=0;i<P.length;i++)await expect(notes.nth(i)).toHaveValue(P[i]);
+ await assertClean(page,problems,foreign,'Route card with Stop notes');
+ await page.locator('li.plan-route[data-id="rt-1-v3"] .plan-row-button').click();
+ await expect(card.locator('.plan-preview-items li').first()).toBeVisible();
+ expect(await trimmed(card.locator('.plan-preview-items li'))).toEqual(expect.arrayContaining(P));
+ await assertClean(page,problems,foreign,'Route card with item preview');
+
+ // 「未分配採買清單」: item names and the 「{旅伴名}不在任何車上」 reasons.
+ await page.locator('[data-plan-toggle="unassigned"]').click();
+ const unassigned=page.locator('.plan-unassigned-list');
+ await expect(unassigned).toBeVisible();
+ const reasons=await trimmed(unassigned.locator('.help'));
+ for(const v of P.slice(0,5))expect(reasons,`未分配採買清單: ${JSON.stringify(v)}`).toContain(`${v}不在任何車上`);
+ expect(await trimmed(unassigned.locator('li li'))).toEqual(expect.arrayContaining(P.slice(0,5).map(v=>expect.stringContaining(v))));
+ await assertClean(page,problems,foreign,'未分配採買清單');
+
+ // Activity cards, one after another.
+ await page.locator('[data-plan-nav="segment"][data-segment="activities"]').click();
+ for(let i=0;i<6;i++){
+  const row=page.locator(`li.plan-activity[data-id="a${i+1}"]`);
+  await expect(row.locator('.plan-row-name')).toHaveText(P[i]);
+  await row.locator('.plan-row-button').click();
+  await expect(card).toBeVisible();
+  await expect(card.locator('[name="title"]')).toHaveValue(P[i]);
+  await expect(card.locator('[name="location"]')).toHaveValue(P[(i+1)%6]);
+  await expect(card.locator('[name="note"]')).toHaveValue(P[(i+2)%6]);
+  await assertClean(page,problems,foreign,`Activity card a${i+1}`);
+ }
+}
+// END planner-xss
+
+// Runs before [TC-XSS-003] on purpose: in serial mode a failure there would otherwise skip this one.
+test('[TC-XSS-005] Itinerary_Poster, Text_Panel and Itinerary_Editor render the payloads as text',async()=>{
+ test.setTimeout(120000);
+ const {exampleTrip}=await import('./fixtures/example-trip.js');
+ const {syncMealIngredients}=await import('../src/ingredients.js');
+ const wanted=planState(exampleTrip,syncMealIngredients);
+ const {trip}=await api(ctx.owner.request,'/api/trips','POST',{legacyState:wanted});
+ const {state}=await api(ctx.owner.request,`/api/trips/${trip.id}`);
+ // The server keeps every payload whole.
+ expect(state.places.map(x=>x.name)).toEqual(expect.arrayContaining(P));
+ expect(state.vehicles.map(x=>x.name)).toEqual(expect.arrayContaining(P));
+ expect(state.routes.find(r=>r.id==='rt-1-v1').stops.map(x=>x.note)).toEqual(P);
+ expect(state.daySettings.map(x=>x.title)).toEqual(expect.arrayContaining([P[3],P[4]]));
+ expect(state.activities.filter(a=>/^a[1-6]$/.test(a.id)).map(a=>[a.title,a.location,a.note])).toEqual(P.map((v,i)=>[v,P[(i+1)%6],P[(i+2)%6]]));
+ expect(state.shopping.filter(x=>x.assignee).map(x=>x.name)).toEqual(expect.arrayContaining(P));
+ expect(state.meals.map(m=>m.title)).toEqual(expect.arrayContaining(P));
+ const page=await ctx.owner.newPage();
+ const foreign=trackForeign(page,new URL(testBase).origin);
+ await page.goto(`/${ctx.ownerUser.username}/trips/${trip.id}`);
+ await page.locator('.section-tabs [data-tab="schedule"]').click();
+ await checkPlanner(page,ctx.ownerProblems,foreign);
+ await page.close();
+});
+
 test('[TC-XSS-003] home page, trip page tabs, Invitation_Dialog and expenses view render every payload as text',async()=>{
  test.setTimeout(120000);
  const problems=ctx.ownerProblems;
@@ -185,6 +327,13 @@ test('[TC-XSS-003] home page, trip page tabs, Invitation_Dialog and expenses vie
  for(const tab of ['schedule','meals','shopping','gear']){
   await page.locator(`.section-tabs [data-tab="${tab}"]`).click();
   await check(page,problems,`trip page ${tab} tab`,[P[5]]);
+  if(tab==='schedule'){
+   // The 行程圖 is shown at once; the Text_Panel body is written only while it is expanded.
+   await expect(page.locator('.itinerary-poster')).toBeVisible();
+   const toggle=page.locator('[data-text-panel=toggle]');
+   if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();
+   await expect(page.locator('#text-panel-body')).toBeVisible();
+  }
   await collect();
  }
  // Participant names (including both invite joiners), activities, meals, shopping, gear, vehicles and the

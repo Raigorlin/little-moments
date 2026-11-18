@@ -1,6 +1,8 @@
+// trip-planning-workflow-enhance：新增 13 種活動類型（需求 18.2）與 Example_Trip 的驗證測試；既有測試不變。
 import { describe, test, expect } from 'bun:test';
 import {seed,emptyState,isValidState, dateRange, load, save, STORAGE_KEY, togglePacking, assignGear, canDepart, myGear, readyCount, unassigned, progress, escape} from '../src/model.js';
 import {illustration,logo} from '../src/art.js';
+import { exampleTrip } from './fixtures/example-trip.js';
 const memory=()=>{const data=new Map();return {getItem:k=>data.get(k)||null,setItem:(k,v)=>data.set(k,v)}};
 describe('local camping model',()=>{
   test('demo data has a valid complete schema',()=>expect(isValidState(seed())).toBe(true));
@@ -25,3 +27,18 @@ describe('local camping model',()=>{
 test('rejects hidden categories and unknown gear assignees in backups',()=>{const state=seed();state.shopping[0].category='invisible';expect(isValidState(state)).toBe(false);const other=seed();other.gear[4].assignee='ghost';expect(isValidState(other)).toBe(false);});
 test('rejects out of trip dates and duplicate passengers',()=>{const state=seed();state.activities[0].date='2030-01-01';expect(isValidState(state)).toBe(false);const other=seed();other.vehicles[0].passengers=['p1','p1'];expect(isValidState(other)).toBe(false);});
 test('rejects normalized invalid dates and spans longer than one month',()=>{expect(dateRange('2026-02-30','2026-03-04')).toEqual([]);expect(dateRange('2026-01-01','2026-03-01')).toEqual([]);});
+
+describe('activity types and Example_Trip', () => {
+  const withActivityType = type => { const state = seed(); state.activities[0].type = type; return state; };
+  // seed() already uses the six Legacy_Activity_Type values (meet, market, camp, meal, night, travel).
+  test('the seven new activity types are valid', () => {
+    const types = ['wake', 'pitch', 'free', 'tea', 'strike', 'clean', 'return'];
+    expect(types.filter(type => !isValidState(withActivityType(type)))).toEqual([]);
+  });
+  test('unknown activity types and the empty string are invalid', () => {
+    // '起床' is the category label, not the stored type
+    const types = ['', 'party', 'Wake', ' wake', '起床'];
+    expect(types.filter(type => isValidState(withActivityType(type)))).toEqual([]);
+  });
+  test('Example_Trip is valid', () => expect(isValidState(exampleTrip())).toBe(true));
+});

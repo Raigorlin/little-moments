@@ -1,6 +1,7 @@
 import { validActivityVehicles } from './vehicle-itinerary.js';
 import { SHOPPING_CATEGORIES } from './ingredients.js';
 import { DISH_TYPES } from './recipes.js';
+import { ACTIVITY_TYPES, validateItinerary } from './itinerary-model.js';
 export const LEGACY_STORAGE_KEY = 'ggc-local-demo-v1';
 export const STORAGE_KEY = 'ggc-local-demo-v2';
 export const THEMES_KEY = 'ggc-local-theme';
@@ -103,11 +104,12 @@ export function isValidState(value) {
   return people.has(value.currentUser)
     && value.people.every(p => p.name.trim() && COLORS.includes(p.color))
     && value.gear.every(g => ['personal','shared'].includes(g.scope) && person(g.assignee) && ids(g.ready) && (g.scope !== 'shared' || g.ready.every(id => id === g.assignee)))
-    && value.activities.every(a => dates.includes(a.date) && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(a.time) && ['meet','market','camp','meal','night','travel'].includes(a.type) && ids(a.people) && validActivityVehicles(a, value.vehicles) && typeof a.done === 'boolean')
+    && value.activities.every(a => dates.includes(a.date) && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(a.time) && ACTIVITY_TYPES.includes(a.type) && ids(a.people) && validActivityVehicles(a, value.vehicles) && typeof a.done === 'boolean')
     && value.shopping.every(s => typeof s.done === 'boolean' && person(s.assignee) && SHOPPING_CATEGORIES.includes(s.category) && (s.recipeRemoved === undefined || typeof s.recipeRemoved === 'boolean') && (s.source === undefined || ['meal','manual'].includes(s.source)) && (s.mealIds === undefined || (Array.isArray(s.mealIds) && s.mealIds.length === new Set(s.mealIds).size && s.mealIds.every(id => value.meals.some(m => m.id === id)))))
     && value.meals.every(m => (m.imageKind === undefined || DISH_TYPES.some(([id])=>id===m.imageKind)) && dates.includes(m.date) && person(m.cookId) && Number.isInteger(m.servings) && m.servings > 0 && m.servings <= 100)
     && value.vehicles.every(v => person(v.driver) && ids(v.passengers) && !v.passengers.includes(v.driver) && Number.isInteger(v.seats) && v.seats > 0 && v.seats <= 9 && v.passengers.length + 1 <= v.seats)
-    && value.events.every(ev => Number.isFinite(Date.parse(ev.at))) && ids(value.departed);
+    && value.events.every(ev => Number.isFinite(Date.parse(ev.at))) && ids(value.departed)
+    && validateItinerary(value, dates);
 }
 export function readStorage(storage) {
   let raw, migratedFromLegacy=false;

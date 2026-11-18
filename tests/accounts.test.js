@@ -1,3 +1,5 @@
+// trip-planning-workflow-enhance: requirement 23.11 now lets invited collaborators
+// remove Activities, so the whole-state PUT removal test no longer expects 403 for activities.
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createAccountService } from '../server/accounts.js';
 import { seed, isValidState } from '../src/model.js';
@@ -1024,7 +1026,6 @@ describe('collaborator edit and owner-only delete rights', () => {
   test('members cannot remove existing items through whole-state PUT; owners can', async () => {
     const { owner, member, trip, onion } = await world();
     const removals = [
-      s => { s.activities = []; },
       s => { s.meals = []; s.shopping = s.shopping.filter(x => x.source !== 'meal'); },
       s => { s.gear = s.gear.filter(g => g.id !== 'bag'); },
       s => { s.vehicles = []; },
@@ -1040,6 +1041,10 @@ describe('collaborator edit and owner-only delete rights', () => {
     const after = await getTrip(owner.cookie, trip.id);
     expect(after.trip.revision).toBe(trip.revision);
     expect(after.state.shopping.map(x => x.id).sort()).toEqual(['bought1', 'manual1', onion, after.state.shopping.find(x => x.name === '紅蘿蔔').id].sort());
+    // Requirement 23.11: invited collaborators may remove Activities through whole-state PUT.
+    const memberRemoved = ok(await putState(member.cookie, trip.id, s => { s.activities = []; }));
+    expect(memberRemoved.body.state.activities).toEqual([]);
+    expect((await getTrip(owner.cookie, trip.id)).state.activities).toEqual([]);
     const res = ok(await putState(owner.cookie, trip.id, s => {
       s.activities = []; s.vehicles = []; s.gear = s.gear.filter(g => g.id !== 'bag');
       s.people = s.people.filter(p => p.id !== 'extra');

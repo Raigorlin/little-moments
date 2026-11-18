@@ -1,14 +1,28 @@
+// trip-planning-workflow-enhance: requirements 1.6 and 3.7 removed the 新增一站 button, the activity timeline (.activity-card),
+// the schedule bar and the 出發地點 field of the vehicle dialog. Itinerary_Poster now shows the days, and Itinerary_Editor
+// (規劃行程) holds the day buttons and custom activities. So the checks that used those controls now count activities per day
+// in the poster, measure the editor's day buttons, add/edit/remove a custom activity in the editor, use meal cards for the
+// swipe check, and use dialogs that still exist (新增餐次, 新增旅伴) for the dark-mode, Escape, corrupted-data, discard, backdrop
+// and other-tab draft checks. Only checks of behavior that no longer exists were removed (the 出發地點 step).
 import {test,expect} from './local-planner-fixture.js';
 import {seed,STORAGE_KEY} from '../src/model.js';
 const nav=async(page,tab)=>page.locator(`.section-tabs [data-tab="${tab}"]`).click();
 const openTripMenu=page=>page.getByRole('button',{name:'旅行選單',exact:true}).click();
 const tripMenu=page=>page.locator('#trip-menu');
 const saveDialog=async page=>page.locator('#edit-form button[type="submit"]').click();
+// Number of Activity cards in each day section of the Itinerary_Poster.
+const posterCounts=page=>page.locator('[data-poster-day]').evaluateAll(days=>days.map(day=>day.querySelectorAll('[data-line="activity"]').length));
+const openEditor=async page=>{await page.locator('.plan-view-switch [data-view="editor"]').click();await expect(page.locator('.plan-days>.date-tabs')).toBeVisible();};
+const dayTabs=page=>page.locator('.plan-days>.date-tabs');
+const planCard=page=>page.locator('form[data-plan-card]');
+const activityRow=(page,title)=>page.locator('.plan-activity',{hasText:title});
+// 新增餐次 is a dialog that is still on the page (the planner's 新增一站 dialog is gone).
+const openMealDialog=async page=>{await nav(page,'meals');const button=page.getByRole('button',{name:'新增餐次',exact:true});await button.click();await expect(page.locator('#dialog')).toBeVisible();return button;};
 test('[TC-DEMO-002] new local planner starts blank and reset stays blank',async({page})=>{
-  await page.goto('/demo/?blank=1');await expect(page.getByRole('heading',{name:'我的露營旅行',exact:true})).toBeVisible();await expect(page.locator('.activity-card')).toHaveCount(0);
+  await page.goto('/demo/?blank=1');await expect(page.getByRole('heading',{name:'我的露營旅行',exact:true})).toBeVisible();await expect(page.locator('.itinerary-poster')).toContainText('這趟旅行還沒有行程');await expect(page.locator('[data-poster-day]')).toHaveCount(0);
   const fresh=await page.evaluate(key=>JSON.parse(localStorage.getItem(key)),STORAGE_KEY);expect(fresh.activities).toEqual([]);expect(fresh.meals).toEqual([]);expect(fresh.shopping).toEqual([]);expect(fresh.gear).toEqual([]);
   await page.evaluate(key=>localStorage.removeItem(key),STORAGE_KEY);await page.goto('/demo/');await openTripMenu(page);await page.getByRole('button',{name:'清除旅行資料',exact:true}).click();await page.getByRole('button',{name:'清除並重新開始',exact:true}).click();
-  await expect(page.getByRole('heading',{name:'我的露營旅行',exact:true})).toBeVisible();await expect(page.locator('.activity-card')).toHaveCount(0);await page.reload();await expect(page.getByRole('heading',{name:'我的露營旅行',exact:true})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'我的露營旅行',exact:true})).toBeVisible();await expect(page.locator('.itinerary-poster')).toContainText('這趟旅行還沒有行程');await expect(page.locator('[data-poster-day]')).toHaveCount(0);await page.reload();await expect(page.getByRole('heading',{name:'我的露營旅行',exact:true})).toBeVisible();
 });
 test('[TC-DEMO-001] dashboard renders and all planning tabs work',async({page})=>{
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -17,8 +31,8 @@ test('[TC-DEMO-001] dashboard renders and all planning tabs work',async({page})=
   await expect(page.locator('.hero-art>.illustration>svg>rect').first()).toHaveCSS('fill','rgba(0, 0, 0, 0)');
   await page.setViewportSize({width:390,height:900});await expect(hero).toHaveCSS('background-image',/linear-gradient/);
   await page.setViewportSize({width:1440,height:1000});
-  await expect(page.locator('.activity-card')).toHaveCount(5);
-  await page.locator('[data-day="2026-11-21"]').click();await expect(page.locator('.activity-card')).toHaveCount(3);
+  await expect(page.locator('.itinerary-poster')).toBeVisible();await expect(page.locator('[data-poster-day]')).toHaveCount(3);
+  await expect.poll(()=>posterCounts(page)).toEqual([5,3,2]);
   for(const [tab,title] of [['meals','一起煮，一起吃'],['shopping','把好吃的買齊'],['gear','小隊裝備分工'],['expenses','分帳與收據']]){await nav(page,tab);await expect(page.getByRole('heading',{name:title,exact:true})).toBeVisible();}
   await openTripMenu(page);for(const title of ['旅行選單','旅行設定','旅伴','車輛'])await expect(tripMenu(page).getByRole('heading',{name:title,exact:true})).toBeVisible();
   expect(errors).toEqual([]);
@@ -30,42 +44,45 @@ test('invite lets a new companion type their name and persists membership',async
   await page.reload();await expect(page.locator('.profile-button')).toContainText('小樹');
 });
 test('create, edit, and remove an itinerary entry',async({page})=>{
-  await page.goto('/demo/');await page.getByRole('button',{name:'新增一站',exact:true}).click();
-  await page.getByLabel('活動名稱').fill('測試野餐');await page.getByLabel('時間',{exact:true}).fill('13:20');await page.getByLabel('地點',{exact:true}).fill('樹下');await saveDialog(page);
-  await expect(page.getByRole('heading',{name:'測試野餐',exact:true})).toBeVisible();
-  await page.reload();await page.getByRole('button',{name:'編輯 測試野餐',exact:true}).click();
-  await page.getByLabel('活動名稱').fill('午后野餐');await saveDialog(page);
-  await expect(page.getByRole('heading',{name:'午后野餐',exact:true})).toBeVisible();
-  await page.getByRole('button',{name:'編輯 午后野餐',exact:true}).click();await page.getByRole('button',{name:'移除項目',exact:true}).click();await page.getByRole('button',{name:'確認移除',exact:true}).click();
-  await expect(page.getByRole('heading',{name:'午后野餐',exact:true})).toHaveCount(0);
+  await page.goto('/demo/');await openEditor(page);await page.locator('[data-plan-nav="segment"][data-segment="activities"]').click();
+  await page.locator('[data-plan-toggle="activity:new"]').click();
+  await planCard(page).locator('[name="title"]').fill('測試野餐');await planCard(page).locator('[name="time"]').fill('13:20');await planCard(page).locator('[name="location"]').fill('樹下');await planCard(page).locator('[data-action="plan-save"]').click();
+  await expect(planCard(page)).toHaveCount(0);await expect(activityRow(page,'測試野餐')).toBeVisible();
+  await page.reload();await openEditor(page);await page.locator('[data-plan-nav="segment"][data-segment="activities"]').click();
+  await expect(activityRow(page,'測試野餐')).toBeVisible();await activityRow(page,'測試野餐').locator('.plan-row-button').click();
+  await planCard(page).locator('[name="title"]').fill('午后野餐');await planCard(page).locator('[data-action="plan-save"]').click();
+  await expect(activityRow(page,'午后野餐')).toBeVisible();await expect(activityRow(page,'測試野餐')).toHaveCount(0);
+  await activityRow(page,'午后野餐').locator('.plan-row-button').click();await planCard(page).locator('[data-action="plan-delete"]').click();await page.getByRole('button',{name:'確認移除',exact:true}).click();
+  await expect(activityRow(page,'午后野餐')).toHaveCount(0);
+  expect((await page.evaluate(key=>JSON.parse(localStorage.getItem(key)).activities.map(a=>a.title),STORAGE_KEY)).some(t=>t.includes('野餐'))).toBe(false);
 });
 test('[TC-SWIPE-001] mobile list rows reveal edit and delete actions by swiping left @critical',async({page})=>{
-  await page.goto('/demo/');await page.setViewportSize({width:390,height:900});
-  const card=page.locator('.activity-card').first();
+  await page.goto('/demo/');await page.setViewportSize({width:390,height:900});await nav(page,'meals');
+  const card=page.locator('.meal-card').first();
   await expect(card.locator('.swipe-actions')).toHaveCount(1);
-  const heading=card.locator('h3'),box=await heading.boundingBox();
+  const heading=card.locator('h4'),box=await heading.boundingBox();
   await heading.dispatchEvent('pointerdown',{pointerType:'touch',clientX:box.x+box.width-10,clientY:box.y+10});
   await heading.dispatchEvent('pointerup',{pointerType:'touch',clientX:box.x+box.width-95,clientY:box.y+10});
   await expect(card).toHaveClass(/swipe-open/);
-  await expect(card.locator('.swipe-actions [data-action="activity"]')).toBeVisible();
+  await expect(card.locator('.swipe-actions [data-action="meal"]')).toBeVisible();
   await expect(card.locator('.swipe-actions [data-action="delete"]')).toBeVisible();
   await card.locator('.swipe-actions [data-action="delete"]').click();
   await expect(page.getByRole('heading',{name:'移除這個項目？'})).toBeVisible();
   await page.getByRole('button',{name:'取消',exact:true}).click();
   await expect(card).toBeVisible();
   await page.setViewportSize({width:1440,height:1000});
-  await expect(card.locator('.activity-top [data-action="activity"]')).toBeVisible();
+  await expect(card.locator('.meal-actions [data-action="meal"]')).toBeVisible();
 });
 test('[TC-DEMO-003] mobile planner keeps its first section close and selected navigation visible',async({page})=>{
-  await page.goto('/demo/');
+  await page.goto('/demo/');await openEditor(page);
   for(const width of [320,390]){
     await page.setViewportSize({width,height:844});await page.evaluate(()=>window.scrollTo(0,0));
-    const metrics=await page.evaluate(()=>({hero:document.querySelector('.hero:not(.hero-home)').getBoundingClientRect().height,workspace:document.querySelector('.workspace').getBoundingClientRect().top,scheduleBar:document.querySelector('.schedule-bar').getBoundingClientRect().height,documentWidth:document.documentElement.scrollWidth,clientWidth:document.documentElement.clientWidth}));
-    expect(metrics.hero,`${width}px hero`).toBeLessThan(250);expect(metrics.workspace,`${width}px workspace`).toBeLessThan(720);expect(metrics.scheduleBar,`${width}px schedule controls`).toBeLessThan(130);expect(metrics.documentWidth,`${width}px overflow`).toBeLessThanOrEqual(metrics.clientWidth);
+    const metrics=await page.evaluate(()=>({hero:document.querySelector('.hero:not(.hero-home)').getBoundingClientRect().height,workspace:document.querySelector('.workspace').getBoundingClientRect().top,dayControls:document.querySelector('.plan-days>.date-tabs').getBoundingClientRect().height,documentWidth:document.documentElement.scrollWidth,clientWidth:document.documentElement.clientWidth}));
+    expect(metrics.hero,`${width}px hero`).toBeLessThan(250);expect(metrics.workspace,`${width}px workspace`).toBeLessThan(720);expect(metrics.dayControls,`${width}px day controls`).toBeLessThan(130);expect(metrics.documentWidth,`${width}px overflow`).toBeLessThanOrEqual(metrics.clientWidth);
   }
-  const lastDay=page.locator('.date-tabs button').last();
+  const lastDay=dayTabs(page).locator('button').last();
   await lastDay.click();await expect(lastDay).toHaveAttribute('aria-pressed','true');
-  const dayVisible=await page.evaluate(()=>{const days=document.querySelector('.date-tabs'),active=days.querySelector('button[aria-pressed="true"]'),list=days.getBoundingClientRect(),item=active.getBoundingClientRect();return item.left>=list.left&&item.right<=list.right;});
+  const dayVisible=await page.evaluate(()=>{const days=document.querySelector('.plan-days>.date-tabs'),active=days.querySelector('button[aria-pressed="true"]'),list=days.getBoundingClientRect(),item=active.getBoundingClientRect();return item.left>=list.left&&item.right<=list.right;});
   expect(dayVisible).toBe(true);
   const tabs=page.locator('.section-tabs'),expensesTab=tabs.locator('[data-tab="expenses"]');
   await expensesTab.click();await expect(expensesTab).toHaveAttribute('aria-current','page');await expect(expensesTab).toBeInViewport();
@@ -116,12 +133,12 @@ test('departure is blocked by unassigned shared items, then succeeds',async({pag
 });
 test('can add a person and validate vehicle capacity',async({page})=>{
   await page.goto('/demo/');await openTripMenu(page);await tripMenu(page).getByRole('button',{name:'新增旅伴',exact:true}).click();await page.getByLabel('旅伴名字').fill('小樹');await page.getByLabel('小隊角色').fill('點心擔當');await saveDialog(page);await openTripMenu(page);await expect(tripMenu(page).getByRole('heading',{name:'小樹',exact:true})).toBeVisible();
-  await tripMenu(page).getByRole('button',{name:'新增車輛',exact:true}).click();await page.getByLabel('車輛暱稱').fill('小樹號');await page.getByLabel('出發地點',{exact:true}).fill('台北車站');await page.getByLabel('座位數（含駕駛）').fill('1');await page.getByRole('checkbox',{name:'阿哲',exact:true}).check();await saveDialog(page);await expect(page.locator('.form-error')).toContainText('不能超過座位數');
+  await tripMenu(page).getByRole('button',{name:'新增車輛',exact:true}).click();await page.getByLabel('車輛暱稱').fill('小樹號');await page.getByLabel('座位數（含駕駛）').fill('1');await page.getByRole('checkbox',{name:'阿哲',exact:true}).check();await saveDialog(page);await expect(page.locator('.form-error')).toContainText('不能超過座位數');
   await page.getByLabel('座位數（含駕駛）').fill('4');await saveDialog(page);await openTripMenu(page);await expect(tripMenu(page).getByRole('heading',{name:'小樹號',exact:true})).toBeVisible();
 });
 test('invalid dates rejected; changed date range keeps activities visible',async({page})=>{
   await page.goto('/demo/');await openTripMenu(page);await page.getByRole('button',{name:'編輯旅行',exact:true}).click();await page.getByLabel('結束日期').fill('2026-11-01');await saveDialog(page);await expect(page.locator('.form-error')).toContainText('結束日期');
-  await page.getByLabel('開始日期').fill('2027-02-01');await page.getByLabel('結束日期').fill('2027-02-03');await saveDialog(page);await nav(page,'schedule');await expect(page.locator('.activity-card')).toHaveCount(5);await expect(page.locator('.date-tabs')).toContainText('2/1');
+  await page.getByLabel('開始日期').fill('2027-02-01');await page.getByLabel('結束日期').fill('2027-02-03');await saveDialog(page);await nav(page,'schedule');await expect(page.locator('[data-poster-day]')).toHaveCount(3);await expect.poll(()=>posterCounts(page)).toEqual([5,3,2]);await openEditor(page);await expect(dayTabs(page)).toContainText('2/1');
 });
 test('export, validated import, and HTML text escaping',async({page})=>{
   await page.goto('/demo/');const downloadPromise=page.waitForEvent('download');await page.locator('.toolbar-actions [data-action="export"]').click();const dl=await downloadPromise;expect(dl.suggestedFilename()).toBe('good-good-camping-backup.json');
@@ -131,7 +148,7 @@ test('export, validated import, and HTML text escaping',async({page})=>{
 });
 test('dark mode persists and dialogs support Escape and focus',async({page})=>{
   await page.goto('/demo/');await page.getByRole('button',{name:'切換深色模式',exact:true}).click();await page.reload();await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
-  await page.getByRole('button',{name:'新增一站',exact:true}).click();await expect(page.locator('dialog')).toBeVisible();await page.keyboard.press('Escape');await expect(page.locator('dialog')).not.toBeVisible();await expect(page.getByRole('button',{name:'新增一站',exact:true})).toBeFocused();
+  const add=await openMealDialog(page);await expect(page.locator('dialog')).toBeVisible();await page.keyboard.press('Escape');await expect(page.locator('dialog')).not.toBeVisible();await expect(add).toBeFocused();
 });
 test('storage failure is visible and does not claim success',async({page})=>{
   await page.addInitScript(()=>{Storage.prototype.setItem=function(){throw new Error('Quota exceeded')};});await page.goto('/demo/');await nav(page,'shopping');await page.getByRole('checkbox',{name:'牛肉片已買齊',exact:true}).check();await expect(page.locator('.save-warning')).toBeVisible();await expect(page.locator('.sync-status')).toContainText('尚未儲存');
@@ -139,8 +156,8 @@ test('storage failure is visible and does not claim success',async({page})=>{
 test('responsive layouts do not overflow on common phone widths',async({page})=>{
   for(const width of [320,390,768,1440]){
     await page.setViewportSize({width,height:900});await page.goto('/demo/');
-    // Date tabs sit beside 新增一站 and scroll sideways when the days do not fit (mobile-smooth-swipe Requirement 7), so check the strip, not every button.
-    if(width<=390){const days=await page.locator('.date-tabs').evaluate(el=>{const r=el.getBoundingClientRect(),items=[...el.children],fits=items.every(b=>{const x=b.getBoundingClientRect();return x.left>=r.left&&x.right<=r.right;});return {inViewport:r.left>=0&&r.right<=innerWidth,oneRow:new Set(items.map(b=>b.offsetTop)).size===1,reachable:fits||(getComputedStyle(el).overflowX==='auto'&&el.scrollWidth>el.clientWidth)};});expect(days).toEqual({inViewport:true,oneRow:true,reachable:true});}
+    // The editor's day buttons scroll sideways when the days do not fit (mobile-smooth-swipe Requirement 7), so check the strip, not every button.
+    if(width<=390){await openEditor(page);const days=await dayTabs(page).evaluate(el=>{const r=el.getBoundingClientRect(),items=[...el.children],fits=items.every(b=>{const x=b.getBoundingClientRect();return x.left>=r.left&&x.right<=r.right;});return {inViewport:r.left>=0&&r.right<=innerWidth,oneRow:new Set(items.map(b=>b.offsetTop)).size===1,reachable:fits||(getComputedStyle(el).overflowX==='auto'&&el.scrollWidth>el.clientWidth)};});expect(days).toEqual({inViewport:true,oneRow:true,reachable:true});}
     for(const tab of ['schedule','meals','shopping','gear','expenses']){await nav(page,tab);const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1);expect(overflow,`${width}px ${tab}`).toBe(false);}
     await openTripMenu(page);await expect(tripMenu(page)).toBeVisible();
     expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),`${width}px trip menu`).toBe(false);
@@ -157,34 +174,34 @@ test('corrupted stored data is preserved until explicitly replaced',async({page}
   await page.addInitScript(key=>localStorage.setItem(key,'{broken original data'),STORAGE_KEY);
   await page.goto('/demo/');await expect(page.locator('.save-warning')).toBeVisible();
   // Malformed storage loads the blank planner (see model.test.js), so make an edit that a blank trip allows.
-  await page.getByRole('button',{name:'新增一站',exact:true}).click();await page.getByLabel('活動名稱').fill('不會覆蓋原始資料');await page.getByLabel('時間',{exact:true}).fill('09:00');await page.getByLabel('地點',{exact:true}).fill('營地');await saveDialog(page);
-  await expect(page.getByRole('heading',{name:'不會覆蓋原始資料',exact:true})).toBeVisible();
+  await openTripMenu(page);await tripMenu(page).getByRole('button',{name:'新增旅伴',exact:true}).click();await page.getByLabel('旅伴名字').fill('不會覆蓋原始資料');await page.getByLabel('小隊角色').fill('營地擔當');await saveDialog(page);
+  await openTripMenu(page);await expect(tripMenu(page).getByRole('heading',{name:'不會覆蓋原始資料',exact:true})).toBeVisible();await page.keyboard.press('Escape');
   expect(await page.evaluate(key=>localStorage.getItem(key),STORAGE_KEY)).toBe('{broken original data');
   await page.getByRole('button',{name:'處理儲存問題',exact:true}).click();await expect(page.getByRole('button',{name:'下載原始資料',exact:true})).toBeVisible();
 });
 test('discard prompt preserves an unsaved dialog when declined',async({page})=>{
-  await page.goto('/demo/');await page.getByRole('button',{name:'新增一站',exact:true}).click();await page.getByLabel('活動名稱').fill('不要弄丟我的草稿');
-  page.once('dialog',d=>d.dismiss());await page.keyboard.press('Escape');await expect(page.getByLabel('活動名稱')).toHaveValue('不要弄丟我的草稿');
+  await page.goto('/demo/');await openMealDialog(page);await page.getByLabel('料理名稱').fill('不要弄丟我的草稿');
+  page.once('dialog',d=>d.dismiss());await page.keyboard.press('Escape');await expect(page.getByLabel('料理名稱')).toHaveValue('不要弄丟我的草稿');
   page.once('dialog',d=>d.accept());await page.keyboard.press('Escape');await expect(page.locator('#dialog')).not.toBeVisible();
 });
 test('edit dialog: tapping the backdrop closes it, asks once when there are unsaved changes, and contains page scrolling',async({page})=>{
   await page.goto('/demo/');const dialog=page.locator('#dialog');
   let prompts=0;page.on('dialog',d=>{prompts++;void (prompts===1?d.dismiss():d.accept());});
-  await page.getByRole('button',{name:'新增一站',exact:true}).click();await expect(dialog).toBeVisible();
+  await openMealDialog(page);
   // 樣式：背景與對話框都阻止捲動傳到下方頁面（prevent-page-scroll-under-modal-dialog）。
   expect(await dialog.evaluate(el=>[getComputedStyle(el).overscrollBehaviorY,getComputedStyle(el,'::backdrop').overflow,getComputedStyle(el,'::backdrop').overscrollBehaviorY])).toEqual(['contain','hidden','contain']);
   // 沒有修改：點背景直接關閉，不詢問。
   await page.mouse.click(4,4);await expect(dialog).not.toBeVisible();expect(prompts).toBe(0);
   // 有修改：點背景只詢問一次；拒絕時保留草稿，同意時關閉。
-  await page.getByRole('button',{name:'新增一站',exact:true}).click();await page.getByLabel('活動名稱').fill('點背景也不會弄丟');
-  await page.mouse.click(4,4);await expect.poll(()=>prompts).toBe(1);await expect(page.getByLabel('活動名稱')).toHaveValue('點背景也不會弄丟');
+  await page.getByRole('button',{name:'新增餐次',exact:true}).click();await page.getByLabel('料理名稱').fill('點背景也不會弄丟');
+  await page.mouse.click(4,4);await expect.poll(()=>prompts).toBe(1);await expect(page.getByLabel('料理名稱')).toHaveValue('點背景也不會弄丟');
   await page.mouse.click(4,4);await expect(dialog).not.toBeVisible();expect(prompts).toBe(2);
 });
 test('another tab cannot silently overwrite an open edit draft',async({page,context})=>{
   await page.goto('/demo/');const other=await context.newPage();await other.goto('/demo/');
-  await page.getByRole('button',{name:'新增一站',exact:true}).click();await page.getByLabel('活動名稱').fill('這個分頁的草稿');
+  await openMealDialog(page);await page.getByLabel('料理名稱').fill('這個分頁的草稿');
   await nav(other,'shopping');await other.getByRole('checkbox',{name:'牛肉片已買齊',exact:true}).check();
-  await expect(page.locator('.save-warning')).toBeVisible();await expect(page.getByLabel('活動名稱')).toHaveValue('這個分頁的草稿');
+  await expect(page.locator('.save-warning')).toBeVisible();await expect(page.getByLabel('料理名稱')).toHaveValue('這個分頁的草稿');
   await saveDialog(page);await expect(page.getByRole('heading',{name:'這個分頁的草稿',exact:true})).toBeVisible();await expect(page.locator('.save-warning')).toBeVisible();
   await other.close();
 });

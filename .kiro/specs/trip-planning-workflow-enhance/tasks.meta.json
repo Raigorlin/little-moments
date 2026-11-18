@@ -1,0 +1,2071 @@
+{
+  "pbtResults": {
+    "1.2 撰寫 Property 15 的 property test（`tests/itinerary-place-name.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794731268891
+    },
+    "1.3 撰寫 Property 16 的 property test（`tests/itinerary-time-input.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794755130940
+    },
+    "1.8 撰寫 Property 1 的 property test（`tests/itinerary-valid.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794756311124
+    },
+    "2.5 撰寫 Property 12 的 property test（`tests/itinerary-warnings.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794764394611
+    },
+    "2.7 撰寫 Property 22 的 property test（`tests/itinerary-end-groups.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794764537441
+    },
+    "2.3 撰寫 Property 6 的 property test（`tests/itinerary-day-sequence.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794764811227
+    },
+    "4.2 撰寫 Property 13 的 property test（`tests/itinerary-retime.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794766259905
+    },
+    "3.2 撰寫 Property 4 的 property test（`tests/itinerary-text-lines.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794766278527
+    },
+    "3.3 撰寫 Property 5 的 property test（`tests/itinerary-text-format.test.js`）": {
+      "status": "passed",
+      "lastRunTimestamp": 1794767425123
+    },
+    "11.16 撰寫 Property 20 的 property test（`tests/itinerary-html-safety.test.js`）": {
+      "status": "failed",
+      "failingExample": "No counterexample: fast-check interruptAfterTimeLimit(50_000, failOnInterrupt) fired — \"Property interrupted after 90 tests { seed: -1400977605 }\" when run alone (77 and 72 runs in the full suite, seeds 1782696491 and others). numRuns is 100, so each run takes ~0.55 s on this machine.",
+      "lastRunTimestamp": 1794817949038
+    }
+  },
+  "executionHistory": {
+    "1.1 建立 `src/itinerary-model.js` 的常數、文字與日期規則": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727483553
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727511070
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794728679687
+      }
+    ],
+    "1.2 撰寫 Property 15 的 property test（`tests/itinerary-place-name.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727483639
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794729521565
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794753598876
+      }
+    ],
+    "1.3 撰寫 Property 16 的 property test（`tests/itinerary-time-input.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727483734
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794753613089
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794755165946
+      }
+    ],
+    "1.4 撰寫 Property 17 的 property test（`tests/itinerary-numerals.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727483853
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794753613463
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794755167003
+      }
+    ],
+    "1.5 實作 `validateItinerary()`、`destinationConflict()`，並改寫 `isValidState()`": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727484168
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794728687291
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794729503980
+      }
+    ],
+    "1.6 建立 Example_Trip 固定資料": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727485247
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794729520558
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794753595055
+      }
+    ],
+    "1.7 建立屬性測試產生器（`tests/support/itinerary-arb.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727485331
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794729520688
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794753595453
+      }
+    ],
+    "1.8 撰寫 Property 1 的 property test（`tests/itinerary-valid.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727485607
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794755188309
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794760713785
+      }
+    ],
+    "1.9 撰寫 Property 3 的 property test（`tests/itinerary-invalid.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727485803
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794755188616
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794760713995
+      }
+    ],
+    "1.10 撰寫資料規則的範例測試（`tests/itinerary-model.test.js`、`tests/model.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727486044
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794755188820
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794760713457
+      }
+    ],
+    "2.1 實作地點、路線、舊出發資料與採買推導": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727486226
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794729520918
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794753596469
+      }
+    ],
+    "2.2 實作 `dayModel()` 與 `endGroups()`": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727486340
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794755188195
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794760714992
+      }
+    ],
+    "2.3 撰寫 Property 6 的 property test（`tests/itinerary-day-sequence.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727486458
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794763119803
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794764952711
+      }
+    ],
+    "2.4 實作 `planningWarnings()`": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727486712
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794761421785
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794763089913
+      }
+    ],
+    "2.5 撰寫 Property 12 的 property test（`tests/itinerary-warnings.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727487048
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794763119925
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794764952960
+      }
+    ],
+    "2.6 撰寫推導模組的範例測試（`tests/itinerary-derive.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727487216
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794763120068
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794764953717
+      }
+    ],
+    "2.7 撰寫 Property 22 的 property test（`tests/itinerary-end-groups.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727487401
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794763120175
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794764954579
+      }
+    ],
+    "3.1 實作 `itineraryText()` 與共用的文字片段": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727487482
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794761422064
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794763090134
+      }
+    ],
+    "3.2 撰寫 Property 4 的 property test（`tests/itinerary-text-lines.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727487590
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794764966547
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794767481648
+      }
+    ],
+    "3.3 撰寫 Property 5 的 property test（`tests/itinerary-text-format.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727487697
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794764966844
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794767482214
+      }
+    ],
+    "3.4 撰寫文字版的範例測試（`tests/itinerary-text.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727487806
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794764967973
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794767483188
+      }
+    ],
+    "4.1 實作 `retimeByDayIndex()` 與 `shiftByOffset()`": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727487914
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794729521078
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794753597690
+      }
+    ],
+    "4.2 撰寫 Property 13 的 property test（`tests/itinerary-retime.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727488048
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794764968749
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794767484434
+      }
+    ],
+    "4.3 撰寫 Property 14 的 property test（`tests/itinerary-shift.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727488133
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794755189040
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794760716204
+      }
+    ],
+    "4.4 撰寫日期變更的範例測試（`tests/itinerary-dates.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727488221
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794760724340
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794761390905
+      }
+    ],
+    "5.1 實作地點、每日設定、路線與舊出發資料的編輯": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727488324
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794761422170
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794763091334
+      }
+    ],
+    "5.2 撰寫 Property 10 的 property test（`tests/itinerary-preview.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727488454
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794767501788
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794769856599
+      }
+    ],
+    "5.3 實作活動、餐點時間、車輛與料理的編輯": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727489396
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794763119506
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794764952305
+      }
+    ],
+    "5.4 撰寫 Property 11 的 property test（`tests/itinerary-edit-ops.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727489664
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794767502139
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794772471099
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799152599
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794799555141
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794799687660
+      }
+    ],
+    "5.5 撰寫 Property 9 的 property test（`tests/itinerary-shopping.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727489875
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794767502251
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794769856855
+      }
+    ],
+    "5.6 撰寫編輯模組的範例測試（`tests/itinerary-edits.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727490020
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794767502859
+      },
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794769857201
+      }
+    ],
+    "6. Checkpoint - 規則模組": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727490133
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799152681
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794819091195
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794819557413
+      }
+    ],
+    "7.1 `cleanState()` 保留新欄位，`PUT /api/trips/:id` 補回缺少的欄位": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727490205
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799152761
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794799699339
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794799757487
+      }
+    ],
+    "7.2 受邀旅伴可以移除活動、地點、路線與途中任務": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727490280
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799152900
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794799762955
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794799792832
+      }
+    ],
+    "7.3 旅行卡片與匯入時的目的地檢查與日期平移": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727490368
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799152975
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794799797351
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794799848240
+      }
+    ],
+    "7.4 撰寫伺服器的 API 測試（`tests/itinerary-accounts.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727490431
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799153048
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794799854091
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794800041671
+      }
+    ],
+    "8. Checkpoint - 伺服器": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727490509
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799153121
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794819629780
+      }
+    ],
+    "9.1 行程表分頁的骨架與檢視切換（`src/app.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727490595
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799153229
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794800048309
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794800478562
+      }
+    ],
+    "9.2 `editorHtml()` 的外框、Places_And_Cars 與每日區塊（`src/itinerary-editor.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727490670
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799153330
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794800048406
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794800478758
+      }
+    ],
+    "9.3 「路線」分段（`src/itinerary-editor.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727490748
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799153395
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794800483339
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794800695828
+      }
+    ],
+    "9.4 「活動」分段（`src/itinerary-editor.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727490816
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799153473
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794800700478
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794800863030
+      }
+    ],
+    "9.5 規劃行程的樣式（`src/itinerary.css`、`scripts/build.mjs`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727490894
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799153548
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794800867349
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794800952034
+      }
+    ],
+    "9.6 Draft、日子與分段的切換（`src/app.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727490974
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799153651
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794800963149
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794801318219
+      }
+    ],
+    "9.7 儲存、刪除與立即寫入的操作（`src/app.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727491045
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799153775
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794801322589
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794801696187
+      }
+    ],
+    "9.8 離開確認與跨分頁的導覽（`src/app.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727491121
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799153853
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794801700985
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802024003
+      }
+    ],
+    "9.9 權限（`src/app.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727491193
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799153930
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802028959
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802084016
+      }
+    ],
+    "9.10 撰寫帳號版規劃行程的瀏覽器測試（`tests/itinerary-accounts.e2e.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727491272
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799154011
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802091037
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802206001
+      }
+    ],
+    "10. Checkpoint - 規劃行程": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727491408
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799154218
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794819630048
+      }
+    ],
+    "11.1 插圖模組（`src/itinerary-art.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727491472
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799154384
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802211647
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802328403
+      }
+    ],
+    "11.2 `posterHtml()` 的結構、每日段落與活動小卡（`src/itinerary-poster.js`、`src/scene-motion.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727491537
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799154461
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802333275
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802526226
+      }
+    ],
+    "11.3 撰寫 Property 21 的 property test（`tests/itinerary-dish-variation.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727491604
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799154540
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802756334
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794803053356
+      }
+    ],
+    "11.4 `routeMapLayout()` 與 `posterHtml()` 的路線圖（`src/itinerary-poster.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727491671
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799154620
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802532638
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802751330
+      }
+    ],
+    "11.5 撰寫 Property 7 的 property test（`tests/itinerary-poster-order.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727491741
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799154794
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802757107
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794803051514
+      }
+    ],
+    "11.6 撰寫 Property 19 的 property test（`tests/itinerary-car-color.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727491816
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799154870
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802758119
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794803054078
+      }
+    ],
+    "11.7 行程圖的版面與主題（`src/itinerary.css`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727491905
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799154947
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802758917
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794803050713
+      }
+    ],
+    "11.8 行程表分頁接上行程圖（`src/app.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727492006
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799155024
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794803063719
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794803203073
+      }
+    ],
+    "11.9 車子與裝飾動畫（`src/itinerary-poster.js`、`src/itinerary.css`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727492542
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799155132
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794803208091
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794803802353
+      }
+    ],
+    "11.10 撰寫 Property 8 的 property test（`tests/itinerary-poster-structure.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727492638
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799155288
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794803807296
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794804023898
+      }
+    ],
+    "11.11 撰寫 Property 18 的 property test（`tests/itinerary-motion-plan.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727492724
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799155363
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794803808266
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794804024622
+      }
+    ],
+    "11.12 畫面外的日子暫停（`src/itinerary-motion.js`、`src/app.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727492825
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799155434
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794803808993
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794804025499
+      }
+    ],
+    "11.13 Text_Panel 與複製文字（`src/itinerary-poster.js`、`src/app.js`、`src/itinerary.css`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727492917
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799155510
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794804030659
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794804289071
+      }
+    ],
+    "11.14 列印（`src/app.js`、`src/itinerary-poster.js`、`src/itinerary.css`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727493015
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799155592
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794804294100
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794804405447
+      }
+    ],
+    "11.15 撰寫 Property 2 的 property test（`tests/itinerary-legacy-state.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727493154
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799155663
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794804410434
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794805219075
+      }
+    ],
+    "11.16 撰寫 Property 20 的 property test（`tests/itinerary-html-safety.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727493364
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799155788
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794804411480
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794805463366
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794818478425
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794819084606
+      }
+    ],
+    "11.17 撰寫行程圖的範例測試（`tests/itinerary-poster.test.js`、`tests/itinerary-motion.test.js`、`tests/scene-motion.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727493464
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799155916
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794804412277
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794805219250
+      }
+    ],
+    "11.18 撰寫行程圖的瀏覽器測試（`tests/itinerary-poster.e2e.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727493756
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799155982
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794804413158
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794805219406
+      }
+    ],
+    "11.19 撰寫舊資料的瀏覽器測試（`tests/itinerary-legacy.e2e.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727493876
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799156059
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794805470074
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794805697776
+      }
+    ],
+    "11.20 撰寫 Viewer 的瀏覽器測試（`tests/itinerary-accounts.e2e.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727494031
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799156131
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794805702521
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794805773735
+      }
+    ],
+    "11.21 撰寫 Property 23 的 property test（`tests/itinerary-route-roads.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727494114
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799156205
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802759843
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794803052358
+      }
+    ],
+    "12. Checkpoint - 行程圖": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727494196
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799156274
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794819631047
+      }
+    ],
+    "13.1 車輛：Vehicle_Dialog、刪除檢查與 Trip_Menu 車輛卡片（`src/app.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727494280
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799156349
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794805779936
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794806091248
+      }
+    ],
+    "13.2 Trip_Settings_Dialog（`src/app.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727494357
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799156423
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794806096122
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794806202222
+      }
+    ],
+    "13.3 料理菜單與採買清單分頁（`src/app.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727494448
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799156579
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794806206904
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794806577178
+      }
+    ],
+    "13.4 撰寫既有畫面的瀏覽器測試（`tests/itinerary-screens.e2e.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727494527
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799156650
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794806589003
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794807329769
+      }
+    ],
+    "13.5 撰寫規劃行程的瀏覽器測試（`tests/itinerary-editor.e2e.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727494606
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799156731
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794807334693
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794807763008
+      }
+    ],
+    "13.6 撰寫 Draft 與備份的瀏覽器測試（`tests/itinerary-drafts.e2e.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727494729
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799156813
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794807768555
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794808300817
+      }
+    ],
+    "13.7 撰寫 XSS 的瀏覽器測試（`tests/security-xss.e2e.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727494926
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799156892
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794808305438
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794808729045
+      }
+    ],
+    "14. Checkpoint - 既有畫面": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727495020
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799156966
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794819631324
+      }
+    ],
+    "15.1 無障礙與版面的樣式補強（`src/styles.css`、`src/itinerary.css`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727495169
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799157045
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794808736926
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794808827223
+      }
+    ],
+    "15.2 撰寫 CSS 的靜態測試（`tests/itinerary-css.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727495435
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799157146
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794808832379
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794812381615
+      }
+    ],
+    "15.3 撰寫無障礙的瀏覽器測試（`tests/itinerary-a11y.e2e.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727495598
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799157268
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794808833177
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794812382499
+      }
+    ],
+    "15.4 撰寫版面的瀏覽器測試（`tests/itinerary-layout.e2e.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727495701
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799157340
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794812388227
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794813365239
+      }
+    ],
+    "15.5 把新的瀏覽器測試加入 QA_Inventory（`qa/inventory.json`、`qa/tc-map.md`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727495806
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799157411
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794813373616
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794813635440
+      }
+    ],
+    "16.1 改寫 README（`README.md`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727495929
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799157495
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794808737225
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794808826378
+      }
+    ],
+    "16.2 撰寫 README 的測試（`tests/readme.test.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727496660
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799157570
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794808833999
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794812380687
+      }
+    ],
+    "17.1 `tests/schedule-bar.e2e.js`": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727496908
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799157643
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794813373797
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794813636727
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794814379797
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794814436710
+      }
+    ],
+    "17.2 `tests/app.e2e.js`": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727497042
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799157728
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794813644066
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794814379531
+      }
+    ],
+    "17.3 `tests/mobile-swipe.e2e.js`": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727497222
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799157913
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794814438674
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794814831872
+      }
+    ],
+    "17.4 `tests/vehicle-itinerary.e2e.js`": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727497337
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799157998
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794814832760
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794815376493
+      }
+    ],
+    "17.5 `tests/vehicle-departures.e2e.js`": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727497572
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799158072
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794815377015
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794816387494
+      }
+    ],
+    "17.6 `tests/maps.e2e.js`": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727497712
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799158162
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794816388169
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794816485797
+      }
+    ],
+    "17.7 `tests/security-xss.e2e.js`": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727497789
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799158242
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794816484795
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794816556011
+      }
+    ],
+    "17.8 `tests/accounts.test.js`": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727497859
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799158317
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794799854173
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794800042500
+      }
+    ],
+    "17.9 清查其他 Changed_Test": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727497938
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799158387
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794816560939
+      },
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794818478202
+      }
+    ],
+    "18. Final checkpoint - 全部測試": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794727498058
+      },
+      {
+        "executionId": "5e3bf5ae-98f0-426f-98ed-1095a591f8b4",
+        "chatSessionId": "sess_25609d42-d0bf-4ea6-a78d-c0a58ef2c9a3",
+        "timestamp": 1794799158560
+      }
+    ],
+    "1. 資料規則與驗證（`src/itinerary-model.js`、`src/model.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794760714221
+      }
+    ],
+    "2. 每日模型、採買推導與規劃提醒（`src/itinerary-derive.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794764954684
+      }
+    ],
+    "3. 文字版（`src/itinerary-text.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794767483254
+      }
+    ],
+    "4. 旅行日期變更（`src/itinerary-dates.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794767484582
+      }
+    ],
+    "5. 卡片編輯（`src/itinerary-edits.js`）": [
+      {
+        "executionId": "2875ff28-5dd7-4015-ad34-bb4d39b59edf",
+        "chatSessionId": "sess_90d6ab65-b44a-425d-9ed7-ef88de91b897",
+        "timestamp": 1794772471227
+      }
+    ],
+    "7. 伺服器（`server/accounts.js`）": [
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794800041759
+      }
+    ],
+    "9. 規劃行程（Itinerary_Editor）": [
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794802206115
+      }
+    ],
+    "11. 行程圖（Itinerary_Poster）": [
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794805773811
+      }
+    ],
+    "13. 既有畫面的調整": [
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794808729140
+      }
+    ],
+    "16. README": [
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794812380802
+      }
+    ],
+    "15. 無障礙與版面": [
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794813635576
+      }
+    ],
+    "17. 修改需求 23.11 列出的 Changed_Test": [
+      {
+        "executionId": "fe77fb80-7414-433c-800d-d6f5844538c2",
+        "chatSessionId": "sess_1c97efef-e7bf-4075-8d08-b22e6b0e4a60",
+        "timestamp": 1794818478294
+      }
+    ]
+  }
+}

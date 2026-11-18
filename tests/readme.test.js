@@ -556,3 +556,200 @@ describe('Production 收據 AI（OpenAI）文件（Req 15.7、24.9；design.md C
     }
   });
 });
+
+describe('README 行程表文件（trip-planning-workflow-enhance Req 24.1 至 24.6）', () => {
+  const features = sectionOf(readme, 'Features');
+  const featureItem = prefix => features.split('\n').find(l => l.startsWith(`- **${prefix}:**`)) ?? '';
+  const itinerary = featureItem('Itinerary');
+  const invitations = featureItem('Invitations and permissions');
+  const plan = sectionOf(readme, 'Plan a trip');
+  const planLines = plan.split('\n');
+
+  // 九個頂層步驟：{ n, title, body }，body 含該步驟的子項目行。
+  const steps = (() => {
+    const out = [];
+    for (const line of planLines) {
+      const m = /^(\d+)\. \*\*(.+?)\*\*/.exec(line);
+      if (m) out.push({ n: Number(m[1]), title: m[2], lines: [line] });
+      else if (out.length && /^ {3}\S/.test(line)) out.at(-1).lines.push(line);
+    }
+    return out.map(s => ({ ...s, body: s.lines.join('\n') }));
+  })();
+  const step = n => steps.find(s => s.n === n);
+  const substeps = n => step(n).lines.slice(1).map(l => l.replace(/^ {3}\d+\. /, ''));
+  const has = (text, parts) => parts.map(p => ({ p, ok: text.includes(p) }));
+  const allOk = results => expect(results.filter(r => !r.ok)).toEqual([]);
+
+  describe('**Itinerary:** 項目（24.1、24.2、24.5）', () => {
+    test('項目存在且以 **Itinerary:** 開頭', () => {
+      expect(itinerary.startsWith('- **Itinerary:**')).toBe(true);
+    });
+
+    test('(a) 預設顯示「行程圖」，包含受邀旅伴的編輯者可以切換到「規劃行程」', () => {
+      allOk(has(itinerary, ['**行程表**', '**行程圖**', '**規劃行程**', 'by default', 'invited companions']));
+    });
+
+    test('(b) 行程圖以動態插畫一次呈現整趟旅行，每天一段，並涵蓋出發、停留、抵達、活動與餐點', () => {
+      allOk(has(itinerary, ['animated illustration', 'one section per day', 'leaves from', 'at what time',
+        'stops on the way', 'expected to arrive', 'activities and meals']));
+    });
+
+    test('(c) 規劃行程以勾選與選單一次規劃一天', () => {
+      allOk(has(itinerary, ['checkboxes and menus', 'one day at a time']));
+    });
+
+    test('(d) 「地點與車」集中管理地點清單與車輛', () => {
+      allOk(has(itinerary, ['**地點與車**', 'place list', 'vehicles']));
+    });
+
+    test('(e) 每台車每天最多一條路線、每條最多 6 個停靠點，並列出四種任務類型', () => {
+      allOk(has(itinerary, ['at most one route per day', 'at most 6 stops', 'shopping', 'pick-up or drop-off', 'gear pick-up or return', 'other']));
+    });
+
+    test('(f) 「常用活動」為第一天、中間的日子與最後一天提供不同建議，也可以新增自訂活動', () => {
+      allOk(has(itinerary, ['**常用活動**', 'first day', 'middle days', 'last day', 'custom activities']));
+    });
+
+    test('(g) 「料理菜單」的餐點自動出現在當天行程，並顯示料理名稱與食材', () => {
+      allOk(has(itinerary, ['**料理菜單**', 'automatically', 'dish names and ingredients']));
+    });
+
+    test('(h) 「文字版」顯示自動產生、格式一致的行程文字，「複製文字」一鍵複製', () => {
+      allOk(has(itinerary, ['**文字版**', '**複製文字**', 'generated from the plan', 'consistent format', 'one click']));
+    });
+
+    test('24.2：路線只是示意，逐一寫明四項不提供的功能，並說明抵達時間由規劃的人填寫、App 不計算', () => {
+      allOk(has(itinerary, ['only a sketch', 'no navigation', 'no live location', 'no driving-time estimates', 'no return-time prediction',
+        "arrival time is entered by the person planning", 'never calculates it']));
+    });
+
+    test('24.5：七個介面名稱以粗體繁體中文原樣寫出，第一次出現時後方括號附英文說明', () => {
+      const names = ['行程圖', '規劃行程', '地點與車', '常用活動', '未分配採買清單', '文字版', '複製文字'];
+      const results = names.map(name => {
+        const i = readme.indexOf(name);
+        const boldFirst = readme.slice(i - 2, i + name.length + 2) === `**${name}**`;
+        const annotated = /^\*\* \([a-z][^()]*\)/.test(readme.slice(i + name.length, i + name.length + 60));
+        return { name, boldFirst, annotated };
+      });
+      expect(results.filter(r => !r.boldFirst || !r.annotated)).toEqual([]);
+    });
+
+    test('24.5：七個介面名稱第一次出現時的英文說明依序為 poster、planner、places and cars、common activities、unassigned shopping list、text version、copy text', () => {
+      const expected = {
+        行程圖: 'itinerary poster', 規劃行程: 'itinerary planner', 地點與車: 'places and cars', 常用活動: 'common activities',
+        未分配採買清單: 'unassigned shopping list', 文字版: 'text version', 複製文字: 'copy text',
+      };
+      for (const [name, english] of Object.entries(expected)) {
+        const i = readme.indexOf(`**${name}** (`);
+        expect({ name, text: readme.slice(i, i + name.length + 6 + english.length + 1) }).toEqual({ name, text: `**${name}** (${english})` });
+      }
+    });
+  });
+
+  describe('**Invitations and permissions:** 項目（24.6）', () => {
+    test('項目存在且以 **Invitations and permissions:** 開頭', () => {
+      expect(invitations.startsWith('- **Invitations and permissions:**')).toBe(true);
+    });
+
+    test('受邀旅伴（collaborators）可以在「行程表」刪除路線、途中任務、活動與地點', () => {
+      allOk(has(invitations, ['collaborators', '**行程表**', 'routes', 'stop tasks', 'activities', 'places']));
+      expect(invitations).toMatch(/collaborators\) can delete routes, stop tasks, activities, and places in \*\*行程表\*\*/);
+    });
+
+    test('旅伴、料理、採買品項、裝備與車輛仍只有旅行建立者與管理員可以刪除', () => {
+      expect(invitations).toMatch(/companions, meals, shopping items, gear, and vehicles can still be deleted only by the trip creator and administrators/);
+    });
+
+    test('不再寫成只有旅行建立者與管理員可以刪除旅行內容', () => {
+      expect(invitations).not.toMatch(/only (?:the )?trip creators? and administrators (?:can )?delete/i);
+      expect(invitations).not.toMatch(/delete trip content/i);
+      expect(invitations).not.toMatch(/Only trip creators and administrators can delete/i);
+    });
+  });
+
+  describe('## Plan a trip（24.3、24.4）', () => {
+    test('維持 9 個步驟，主題與順序不變', () => {
+      expect(steps.map(s => s.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      expect(steps.map(s => s.title)).toEqual([
+        'Create or open a handbook.', 'Add companions and vehicles.', 'Plan the itinerary.', 'Plan meals.', 'Organize shopping.',
+        'Divide the gear.', 'Record expenses (account mode).', 'Get ready to leave.', 'Keep or share the handbook.',
+      ]);
+    });
+
+    test('第 2 步：旅伴在「旅行選單」新增；車輛資料在「旅行選單」或「地點與車」編輯且是同一份；地點清單在「地點與車」；出發時間與地點在第 3 步的 Route 設定', () => {
+      allOk(has(step(2).body, ['**旅行選單**', 'companions', 'driver, passengers, and seat count', 'trip menu or in **地點與車**',
+        'both places edit the same data', 'place list in **地點與車**', 'does not have a departure time or place', 'per day on each route in step 3']));
+    });
+
+    test('第 3 步有 7 個子項 (a) 至 (g)，以「行程表」開頭', () => {
+      expect(step(3).lines[0]).toContain('In **行程表**:');
+      expect(substeps(3).length).toBe(7);
+    });
+
+    test('第 3 步 (a) 在其他各點之前：切換到「規劃行程」並選擇一天', () => {
+      const [a] = substeps(3);
+      allOk(has(a, ['Switch to **規劃行程**', 'select a day']));
+    });
+
+    test('第 3 步 (b)：新增路線、從地點清單選擇出發地、每個停靠點與終點，可就地新增地點，出發時間可先留空', () => {
+      allOk(has(substeps(3)[1], ['Add a route for each vehicle', 'starting place', "each stop's place", 'destination', 'place list',
+        'added on the spot', 'departure time can be left empty']));
+    });
+
+    test('第 3 步 (c)：採買停靠點自動列出駕駛與乘客負責買的品項、多個時列在第一個、換車的方式、未分配採買清單', () => {
+      allOk(has(substeps(3)[2], ['shopping stop', 'driver and passengers', '**誰負責買**', '**採買清單**', 'first one',
+        'change **誰負責買**', "vehicle's driver and passengers", '**未分配採買清單**']));
+    });
+
+    test('第 3 步 (d) 至 (f)：抵達時間、常用活動與自訂活動、料理菜單餐點的時間與名稱修改位置', () => {
+      const [, , , d, e, f] = substeps(3);
+      allOk(has(d, ['expected arrival time']));
+      allOk(has(e, ['**常用活動**', 'custom activity']));
+      allOk(has(f, ['**料理菜單**', 'default by mealtime', '**規劃行程**', "meal's name and ingredients in **料理菜單**"]));
+    });
+
+    test('第 3 步 (g) 在其他各點之後：回到「行程圖」，展開「文字版」，用「複製文字」貼到聊天群組', () => {
+      const g = substeps(3).at(-1);
+      allOk(has(g, ['Go back to **行程圖**', '**文字版**', '**複製文字**', 'group chat']));
+      // 其餘各子項都不是回到行程圖的步驟，且順序為 規劃行程 → … → 行程圖。
+      const body = substeps(3);
+      expect(body.slice(0, -1).filter(s => s.includes('Go back to **行程圖**'))).toEqual([]);
+      expect(body[0]).toContain('**規劃行程**');
+    });
+
+    test('第 8 步以 activity 稱呼出發模式顯示的下一個未完成項目，不描述 Route 或 Stop', () => {
+      const body = step(8).body;
+      expect(body).toContain('next unfinished activity');
+      expect(body).not.toMatch(/\broutes?\b/i);
+      expect(body).not.toMatch(/\bstops?\b/i);
+    });
+
+    test('24.4：README 不含列出的舊英文片語', () => {
+      const banned = [
+        'Plan dated and timed stops', 'mark stops complete', 'filter by vehicle',
+        'Each vehicle can have its own departure time and meeting place', 'The add-stop button sits beside the date tabs',
+        "set each vehicle's departure time and place", 'add a stop with a time, location, type, notes, and participants',
+        "Vehicle filters show each car's stops separately", 'the next unfinished stop',
+      ];
+      const lower = readme.toLowerCase();
+      expect(banned.filter(p => lower.includes(p.toLowerCase()))).toEqual([]);
+    });
+
+    test('24.4：不以其他文字描述在 Vehicle_Dialog 設定出發時間與出發地點', () => {
+      expect(readme).not.toMatch(/Vehicle_Dialog/);
+      expect(readme).not.toMatch(/vehicle (?:dialog|form)[^.\n]*(?:departure|meeting)/i);
+      expect(step(2).body).not.toMatch(/vehicle'?s? (?:departure|meeting)[^.\n]*(?:set|enter|edit)/i);
+    });
+  });
+
+  describe('語言與格式（24.5）', () => {
+    test('Itinerary 與 Invitations 項目、Plan a trip 第 2、3 步除介面名稱與括號內英文說明外沒有其他中日韓文字', () => {
+      const cjk = /[\u3400-\u9fff]/;
+      const stripNames = text => text.replace(/\*\*[^*]*\*\*/g, '');
+      const texts = { itinerary, invitations, step2: step(2).body, step3: step(3).body };
+      for (const [id, text] of Object.entries(texts)) {
+        expect({ id, cjk: cjk.test(stripNames(text)) }).toEqual({ id, cjk: false });
+      }
+    });
+  });
+});

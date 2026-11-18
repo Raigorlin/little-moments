@@ -1,0 +1,369 @@
+/* Planning editor (「規劃行程」) layout. Controls reuse .button, .segmented, .date-tabs and .field from styles.css;
+   this file only arranges them. Colors come from the existing theme variables, so dark mode needs no overrides. */
+.plan-view-switch{max-width:100%;flex-wrap:wrap;margin:0 0 16px}
+.plan-editor,.itinerary-editor,.poster-text{min-width:0;max-width:100%}
+.poster-text{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;font:inherit;font-size:16px;line-height:1.85;margin:0}
+.itinerary-editor{display:grid;gap:16px}
+.itinerary-editor :where(p,li,span,label,legend,button,h3){overflow-wrap:anywhere;min-width:0}
+.itinerary-editor :where(ul,ol){list-style:none;margin:0;padding:0}
+
+/* Collapsible sections (Places_And_Cars, day settings, unassigned shopping) */
+.plan-section{border:1px solid var(--line);border-radius:10px;padding:14px;min-width:0}
+.plan-section-title{font-size:16px;line-height:1.5}
+.plan-section-toggle,.plan-row-button{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 12px;width:100%;min-height:44px;padding:4px 0;border:0;background:none;color:var(--ink);font-size:16px;font-weight:700;text-align:left}
+.plan-row-button{flex:1 1 0;width:auto;min-width:0;justify-content:flex-start;font-weight:500}
+.plan-section-body{display:grid;gap:12px;margin-top:10px}
+.plan-list{display:grid;gap:10px;margin:0}
+.plan-list>li{min-width:0}
+.plan-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0;min-height:44px}
+.plan-row-name{flex:1 1 140px;min-width:0;font-size:16px;font-weight:700;line-height:1.6}
+.plan-row-button .plan-row-name{flex:0 1 auto;font-weight:600}
+.plan-row-meta{font-size:14px;line-height:1.75;color:var(--muted)}
+.plan-row .button{flex:0 1 auto;max-width:100%}
+.plan-route,.plan-place,.plan-car,.plan-moment{border-bottom:1px dashed var(--line);padding-bottom:8px}
+.plan-list>li:last-child{border-bottom:0;padding-bottom:0}
+.plan-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;min-width:0}
+.plan-actions>.button{max-width:100%}
+.plan-notice,.plan-summary,.plan-empty{font-size:14px;line-height:1.75}
+.plan-summary{color:var(--muted)}
+.plan-empty{padding:14px;border:1px dashed var(--line);border-radius:10px;color:var(--muted);text-align:center}
+
+/* Day buttons: the one row allowed to scroll sideways (the .date-tabs row scrolls inside itself) */
+.plan-days{display:grid;gap:6px;min-width:0}
+.plan-days-label{font-size:14px;font-weight:700;color:var(--muted)}
+.plan-days .date-tabs{max-width:100%}
+.plan-days .date-tabs>button{min-height:44px;background:var(--card);color:var(--ink)}
+.plan-days .date-tabs>button.selected{background:var(--yellow);color:#3e3a39}
+.plan-days .date-tabs>button>span{white-space:nowrap}
+.date-tab-count{display:inline-grid;place-items:center;min-width:24px;min-height:24px;padding:0 6px;border-radius:12px;background:var(--danger);color:var(--paper);font-size:14px;line-height:1.4;white-space:nowrap}
+.plan-segments{display:flex;flex-wrap:wrap;gap:8px;min-width:0}
+.plan-segments>.button[aria-pressed=true]{background:var(--yellow);color:#3e3a39}
+.plan-segment-body{display:grid;gap:14px;min-width:0}
+
+/* Planning warnings */
+.plan-warnings{display:grid;gap:8px}
+.plan-warnings>li{display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border:1.5px dashed #b99756;border-radius:10px;background:var(--warn);font-size:14px;line-height:1.75}
+.plan-warnings>li>.icon{margin-top:3px}
+
+/* Expanded cards and their fields */
+.plan-card{display:grid;gap:12px;margin-top:10px;padding:14px;border:1.5px solid var(--ink);border-radius:10px;background:var(--card);min-width:0}
+.plan-card-title{font-size:14px;font-weight:700;line-height:1.75}
+.plan-card .field{display:grid;gap:6px;min-width:0}
+.plan-card .field>label{font-size:14px;font-weight:700}
+.plan-card .field input,.plan-card .field select,.plan-card .field textarea{min-height:44px;max-width:100%}
+.field-error{color:var(--danger);font-size:14px;line-height:1.75}
+.plan-stops{display:grid;gap:12px}
+.plan-stop{display:grid;gap:10px;padding:12px;border:1px solid var(--line);border-radius:10px;min-width:0}
+.plan-preview{display:grid;gap:8px;padding:10px;border:1px dashed var(--line);border-radius:10px;background:var(--soft)}
+.plan-preview-title{font-size:14px;font-weight:700}
+.plan-preview-items{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:14px;line-height:1.75}
+.plan-bought,.plan-added{display:inline-block;padding:0 6px;border:1px solid var(--line);border-radius:6px;background:var(--soft);color:var(--ink);font-size:12px;line-height:1.75}
+.plan-preview :where(.plan-summary,.plan-row-meta,.plan-notice){color:var(--ink)}
+.plan-card :where(input,textarea)::placeholder{color:var(--muted);opacity:1}
+.plan-card :where(button,.button){min-height:44px}
+/* Non-text contrast (16.10): the shared select border (ink 28%) is 1.7:1 on the light card; 60% ink keeps ≥3:1 in both themes */
+.itinerary-editor .field select{border-color:color-mix(in srgb,var(--ink) 60%,var(--paper))}
+
+/* Focus visibility (16.12): focused controls stay clear of the sticky .topbar (up to 89px) and the mobile .section-tabs (top 80px, ~50px high) */
+.itinerary-editor :where(button,a,input,select,textarea,summary,[tabindex]),
+.itinerary-poster :where(button,a,input,select,textarea,summary,[tabindex]),
+.plan-view-switch :where(button,a){scroll-margin-top:156px;scroll-margin-bottom:24px}
+.plan-ingredients{font-size:14px;line-height:1.75;overflow-wrap:anywhere}
+
+/* Checkbox / radio groups: whole row is the ≥44px target */
+.plan-fieldset{display:grid;gap:4px;min-width:0;margin:0;padding:10px;border:1px solid var(--line);border-radius:10px}
+.plan-fieldset legend{padding:0 4px;font-size:14px;font-weight:700}
+.plan-choice{display:flex;align-items:center;gap:4px;min-height:44px;min-width:0}
+.plan-choice>input{flex:0 0 24px;width:24px;height:24px;margin:10px}
+.plan-choice>label{flex:1 1 0;min-width:0;min-height:44px;display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:14px;line-height:1.75}
+.plan-activity>.plan-row>.plan-done-check{flex:0 0 44px;display:flex;align-items:center;justify-content:center;width:44px;height:44px;cursor:pointer}
+.plan-done-check>input[type=checkbox]{width:24px;height:24px;margin:0}
+
+@media (max-width:480px){
+  .itinerary-editor{gap:12px}
+  .plan-section,.plan-card{padding:10px}
+  .plan-actions>.button,.plan-row>.button{flex:1 1 100%}
+  .plan-segments>.button{flex:1 1 0}
+}
+
+
+/* ===== Itinerary_Poster (「行程圖」) — layout and theme for the markup of itinerary-poster.js =====
+   Colours: --ip-* (light here, dark below), car-0..car-7 set --ip-car (same values as CAR_PALETTE in both themes).
+   The only background drawn for the poster is .itinerary-poster (--ip-paper); summary, day sections and the closing
+   line have none. Route maps, cards and the Text_Panel use --ip-card. Crossing 760px only changes the CSS arrangement. */
+:root{--ip-paper:#fffcf6;--ip-card:#fffdf8;--ip-ink:#3e3a39;--ip-muted:#766e63;--ip-road:#f8e2b0;--ip-badge-ink:#3e3a39;--ip-tone-0:#efa28f;--ip-tone-1:#b7dbe5;--ip-tone-2:#b9cda5}
+:root[data-theme=dark]{--ip-paper:#252b28;--ip-card:#2d332e;--ip-ink:#f1ebdd;--ip-muted:#bdbbae;--ip-road:#5c533f;--ip-badge-ink:#131915;--ip-tone-0:#be7768;--ip-tone-1:#6696a4;--ip-tone-2:#809c68}
+.car-0{--ip-car:#efa28f}.car-1{--ip-car:#b7dbe5}.car-2{--ip-car:#b9cda5}.car-3{--ip-car:#f6d27a}
+.car-4{--ip-car:#d6c8df}.car-5{--ip-car:#f2cbb0}.car-6{--ip-car:#9fc9c0}.car-7{--ip-car:#e3a6bd}
+
+.itinerary-poster{display:grid;gap:22px;min-width:0;max-width:100%;padding:18px;border-radius:14px;background:var(--ip-paper);color:var(--ip-ink);font-size:14px;line-height:1.7}
+.itinerary-poster :where(p,li,span,h3,div){min-width:0;overflow-wrap:anywhere}
+.itinerary-poster :where(ul){list-style:none;margin:0;padding:0}
+.itinerary-poster :where(p){line-height:1.7}
+.itinerary-poster .ip-art{display:block;max-width:100%;height:auto}
+.poster-print-cover{display:none}
+.poster-summary{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;font-size:14px;font-weight:700}
+.poster-summary [data-scene-motion-toggle]{flex:0 0 auto}
+.poster-empty{display:grid;justify-items:center;gap:12px;padding:24px 12px;text-align:center}
+.poster-empty-art .ip-art{width:160px}
+.poster-empty-title{font-size:16px;font-weight:700}
+.poster-closing{text-align:center;font-size:16px;font-weight:700}
+.poster-disclaimer{text-align:center;font-size:12px;color:var(--ip-muted)}
+
+/* Text_Panel (15.1, 15.5): the text keeps its line breaks and wraps inside the panel */
+.itinerary-text-panel{margin-top:16px;padding:12px 14px;border:1.5px solid var(--ip-ink);border-radius:12px;background:var(--ip-card);color:var(--ip-ink);min-width:0}
+.text-panel-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.text-panel-head h3{flex:1 1 auto;margin:0;font-size:16px}
+.itinerary-text-panel .itinerary-text{margin:12px 0 0;font:inherit;font-size:14px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
+
+/* Day sections: dashed 1.5px rule between neighbours, three badge tones */
+.poster-day{display:grid;gap:14px;min-width:0}
+.poster-day+.poster-day{padding-top:22px;border-top:1.5px dashed var(--ip-muted)}
+.day-tone-0{--ip-tone:var(--ip-tone-0)}.day-tone-1{--ip-tone:var(--ip-tone-1)}.day-tone-2{--ip-tone:var(--ip-tone-2)}
+.poster-day-head{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:12px;row-gap:0;align-items:start}
+.poster-day-head>.day-badge{grid-column:1;grid-row:1 / span 6;display:grid;place-items:center;min-width:44px;height:44px;padding:0 8px;border:2px solid var(--ip-ink);border-radius:12px;background:var(--ip-tone);color:var(--ip-badge-ink);font-size:18px;font-weight:700}
+.poster-day-head>:not(.day-badge){grid-column:2}
+.poster-day-head h3{font-size:20px;line-height:1.5}
+.day-meta,.day-location{font-size:14px;color:var(--ip-muted)}
+
+/* Activity and Meal_Moment cards: 2 per row, 3 above 760px, 4 from 1280px */
+.moment-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.moment-card{display:grid;grid-template-columns:minmax(0,1fr);justify-items:start;align-content:start;gap:6px;min-width:0;padding:10px;border:1.5px solid var(--ip-ink);border-radius:12px;background:var(--ip-card);color:var(--ip-ink)}
+.moment-art{display:block;width:48px;max-width:100%}
+.moment-art .ip-art{width:100%}
+.moment-art .moment-dish{border-radius:8px}
+.moment-body{display:grid;gap:2px;min-width:0;width:100%}
+.moment-time{font-size:14px;font-weight:700}
+.moment-title{font-size:14px;font-weight:700;line-height:1.5}
+.moment-tag,.moment-ingredients,.moment-location,.moment-note,.moment-people,.moment-vehicle,.moment-done{font-size:12px;line-height:1.6;color:var(--ip-muted)}
+.moment-done{display:flex;align-items:center;gap:4px;color:var(--ip-ink)}
+.moment-card.is-done .moment-title{text-decoration:line-through;text-decoration-thickness:1px}
+@media (min-width:761px){.moment-list{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (min-width:1280px){.moment-list{grid-template-columns:repeat(4,minmax(0,1fr))}}
+
+/* Route map: shared pieces */
+.route-map{--step:calc(10px * min(1, (92 - var(--lw, 12))) + (1 - min(1, (92 - var(--lw, 12)))) * 80px / max(var(--t, 8), 8));--cl:linear-gradient(var(--ip-car),var(--ip-car));--il:linear-gradient(var(--ip-ink),var(--ip-ink));display:grid;min-width:0;padding:12px;border:1.5px solid var(--ip-ink);border-radius:14px;background:var(--ip-card);color:var(--ip-ink)}
+.rm-list,.rm-track{margin:0;padding:0;list-style:none}
+.rm-list{display:grid;grid-template-columns:subgrid;grid-template-rows:subgrid;pointer-events:none}
+.rm-track{display:grid;grid-template-columns:subgrid;grid-template-rows:subgrid;position:relative;pointer-events:none;--cl:linear-gradient(var(--ip-car),var(--ip-car));--il:linear-gradient(var(--ip-ink),var(--ip-ink))}
+.rm-track>*{pointer-events:auto}
+.rm-track>.rm-lane{pointer-events:none}
+.rm-lane{display:contents}
+.rm-dep{position:relative;margin:0;padding:12px 8px 6px 20px;font-size:14px;line-height:1.5}
+.rm-chip{position:absolute;left:0;top:15px;width:14px;height:14px;box-sizing:border-box;border:1.5px solid var(--ip-ink);border-radius:4px;background:var(--ip-car)}
+.rm-stop-art{display:block;width:36px;border-radius:50%;background:var(--ip-card);z-index:1}
+.rm-stop-art .ip-art{width:36px;height:36px}
+.rm-stop{margin:0;font-size:12px;line-height:1.5;z-index:1}
+.rm-stop-note{color:var(--ip-muted)}
+.rm-car{width:32px;height:20px}
+/* Car relay elements: zero-sized (or one-axis) wrappers; the car sits at the start of the wrapper and the wrapper moves */
+.rm-relay{position:relative;display:block;opacity:0;pointer-events:none;z-index:2;margin:0;padding:0}
+.rm-relay--first{opacity:1}
+.rm-relay .rm-car{position:absolute}
+.rm-run .rm-car{left:0;top:0;transform:translate(0,-50%)}
+.rm-lr .rm-car,.rm-hop .rm-car,.rm-hturn .rm-car,.rm-hjoin .rm-car{left:0;top:0;transform:translate(-50%,-50%)}
+.rm-rl .rm-car,.rm-vh0 .rm-car,.rm-vdirect .rm-car,.rm-vroad .rm-car{right:0;top:0;transform:translate(50%,-50%)}
+.rm-vcol .rm-car{left:0;top:0;transform:translate(-50%,-50%)}
+.rm-up-own .rm-car,.rm-up-mid .rm-car,.rm-up-top .rm-car{left:0;bottom:0;transform:translate(-50%,50%)}
+.rm-run,.rm-hop,.rm-hturn,.rm-hjoin,.rm-vh0,.rm-vdirect,.rm-vroad{height:0}
+.rm-up-own,.rm-up-mid,.rm-up-top,.rm-vcol{width:0}
+.rm-park-car{opacity:0}
+.rm-seg{background:var(--ip-car);box-shadow:0 0 0 1px var(--ip-ink)}
+.rm-road{background:var(--ip-road);border:1px solid var(--ip-ink);box-sizing:border-box}
+.rm-ends{display:contents}
+.rm-end{position:relative;display:flex;flex-wrap:wrap;align-items:flex-start;gap:4px 8px;min-width:0}
+.rm-end-art{display:block;flex:0 0 auto;width:44px}
+.rm-end-art .ip-art{width:44px;height:44px}
+.rm-end-name{flex:1 1 6rem;margin:0;font-size:14px;font-weight:700;line-height:1.5}
+.rm-arrival{flex:1 1 100%;margin:0;font-size:12px;line-height:1.5;color:var(--ip-muted)}
+.rm-park{display:flex;flex:1 1 100%;flex-wrap:wrap;gap:4px 6px}
+.rm-space{display:block;padding:2px 3px;border:1.5px dashed var(--ip-muted);border-radius:6px}
+.rm-space .rm-car{width:28px;height:18px}
+.rm-end::before{content:"";position:absolute;background:var(--ip-road);box-shadow:0 0 0 1px var(--ip-ink)}
+.rm-caption{margin:0;font-size:12px;line-height:1.5;color:var(--ip-muted)}
+.rm-return{margin:0}
+
+/* Horizontal arrangement (wider than 760px): departure | K Stop columns | merge | road | end */
+@media (min-width:761px){
+  .route-map{grid-template-columns:[dep] minmax(9rem,13rem) [stops] repeat(var(--k,1),minmax(0,1fr)) [merge] calc(var(--cw,0) * 1px) [road] 28px [end] minmax(9rem,13rem) [fin];grid-template-rows:repeat(var(--t,1),auto) auto auto}
+  .rm-list{grid-column:dep / road;grid-row:1 / span var(--t,1)}
+  .rm-track{grid-column:1 / -1;grid-row:var(--dr,1)}
+  .rm-track:has(.rm-h[style*="--late:1"]){grid-row:1 / calc(var(--dr,1) + 1)}
+  .rm-dep{grid-column:1;grid-row:-2 / -1}
+  .rm-stop-art{grid-column:calc(var(--sj,1) + 1);grid-row:-2 / -1;justify-self:center;align-self:start;margin-top:8px}
+  .rm-stop{grid-column:calc(var(--sj,1) + 1);grid-row:-2 / -1;padding-top:52px;text-align:center;padding-left:4px;padding-right:4px}
+  .rm-v{display:none}
+  .rm-h{display:grid;grid-template-columns:subgrid;grid-template-rows:subgrid;grid-column:stops / road;grid-row:-2 / -1;--bo:calc((var(--lane,1) - 1) * 10px)}
+  .rm-h[style*="--late:1"]{grid-row:var(--target,1) / -1}
+  .rm-h .rm-run{grid-column:1 / calc(var(--k,1) + 1);grid-row:-2 / -1;align-self:start;margin-top:26px}
+  .rm-h .rm-hop,.rm-h .rm-hturn{grid-column:calc(var(--k,1) + 1);grid-row:-2 / -1;align-self:start;margin-top:26px}
+  .rm-h .rm-up-own,.rm-h .rm-up-mid,.rm-h .rm-up-top{grid-column:calc(var(--k,1) + 1);justify-self:end;margin-right:calc(9px + var(--bo))}
+  .rm-h .rm-up-own{grid-row:-2 / -1;align-self:start;height:26px}
+  .rm-h .rm-up-mid{grid-row:var(--rr,1);align-self:stretch}
+  .rm-h .rm-up-top{grid-row:1;align-self:stretch;margin-top:calc(var(--entry,26) * 1px)}
+  .rm-h .rm-hjoin{grid-column:calc(var(--k,1) + 1);grid-row:1;justify-self:end;width:calc(25px + var(--bo));margin-top:calc(var(--entry,26) * 1px)}
+  .rm-h::before{content:"";grid-column:1 / -1;grid-row:-2 / -1;background:var(--cl) left 0 top 24px / 100% 4px no-repeat,var(--il) left 0 top 23px / 100% 6px no-repeat}
+  .rm-h[style*="--late:1"]::before{background:var(--cl) left 0 top 24px / calc(100% - 9px - var(--bo)) 4px no-repeat,var(--cl) right calc(7px + var(--bo)) top 0 / 4px 27px no-repeat,var(--il) left 0 top 23px / calc(100% - 6px - var(--bo)) 6px no-repeat,var(--il) right calc(6px + var(--bo)) top 0 / 6px 29px no-repeat}
+  .rm-h:not([style*="--late:1"])::after{display:none}
+  .rm-h[style*="--late:1"]::after{content:"";grid-column:1 / -1;grid-row:1 / -2;background:var(--cl) right calc(7px + var(--bo)) top calc(var(--entry,26) * 1px - 2px) / 4px calc(100% - var(--entry,26) * 1px + 2px) no-repeat,var(--cl) right 0 top calc(var(--entry,26) * 1px - 2px) / calc(11px + var(--bo)) 4px no-repeat,var(--il) right calc(6px + var(--bo)) top calc(var(--entry,26) * 1px - 3px) / 6px calc(100% - var(--entry,26) * 1px + 3px) no-repeat,var(--il) right 0 top calc(var(--entry,26) * 1px - 3px) / calc(12px + var(--bo)) 6px no-repeat}
+  .rm-road{grid-column:road / end;grid-row:var(--hr,1) / span var(--hspan,1);border-radius:6px}
+  .rm-road:not(:first-of-type){margin-top:6px}
+  .rm-road:not(:last-of-type){margin-bottom:6px}
+  .rm-end{grid-column:end / fin;grid-row:var(--hr,1) / span var(--hspan,1);padding:4px 0 8px 14px}
+  .rm-end::before{left:0;top:22px;width:14px;height:8px}
+  .rm-end-name{padding-top:0}
+  .rm-ends>.rm-arrival{grid-column:dep / fin;grid-row:calc(var(--t,1) + 1)}
+  .rm-caption{grid-column:1 / -1;grid-row:calc(var(--t,1) + 2);padding-top:6px}
+  .rm-track:nth-child(1) .rm-dep{min-height:var(--mh-1,0px)}.rm-track:nth-child(2) .rm-dep{min-height:var(--mh-2,0px)}
+  .rm-track:nth-child(3) .rm-dep{min-height:var(--mh-3,0px)}.rm-track:nth-child(4) .rm-dep{min-height:var(--mh-4,0px)}
+  .rm-track:nth-child(5) .rm-dep{min-height:var(--mh-5,0px)}.rm-track:nth-child(6) .rm-dep{min-height:var(--mh-6,0px)}
+  .rm-track:nth-child(7) .rm-dep{min-height:var(--mh-7,0px)}.rm-track:nth-child(8) .rm-dep{min-height:var(--mh-8,0px)}
+  .rm-track:nth-child(9) .rm-dep{min-height:var(--mh-9,0px)}.rm-track:nth-child(10) .rm-dep{min-height:var(--mh-10,0px)}
+  .rm-track:nth-child(11) .rm-dep{min-height:var(--mh-11,0px)}.rm-track:nth-child(12) .rm-dep{min-height:var(--mh-12,0px)}
+  .rm-track:nth-child(13) .rm-dep{min-height:var(--mh-13,0px)}.rm-track:nth-child(14) .rm-dep{min-height:var(--mh-14,0px)}
+  .rm-track:nth-child(15) .rm-dep{min-height:var(--mh-15,0px)}.rm-track:nth-child(16) .rm-dep{min-height:var(--mh-16,0px)}
+}
+
+/* Vertical arrangement (760px and narrower): road 16px | branch column --lw | content */
+@media (max-width:760px){
+  .route-map{grid-template-columns:[road] 16px [lane] calc(var(--lw,12) * 1px) [content] minmax(0,1fr);row-gap:0;padding:10px}
+  .rm-list{grid-column:1 / -1;grid-row:1 / span calc(var(--mrows,2) - 1)}
+  .rm-track{grid-column:1 / -1;grid-row:var(--mr,1) / span var(--mspan,1)}
+  .rm-dep{grid-column:3;grid-row:1 / 2;padding:12px 4px 6px 20px}
+  .rm-chip{top:15px}
+  .rm-stop-art{grid-column:3;grid-row:calc(var(--sr,1) - var(--mr,1) + 1);margin-top:4px;margin-left:20px}
+  .rm-stop{grid-column:3;grid-row:calc(var(--sr,1) - var(--mr,1) + 1);padding:12px 4px 6px 62px}
+  .rm-h{display:none}
+  .rm-v{display:grid;grid-template-columns:subgrid;grid-template-rows:subgrid;grid-column:1 / -1;grid-row:1 / -1;--x:calc(6px + (var(--lane,1) - 1) * var(--step))}
+  .rm-v .rm-vh0{grid-column:2;grid-row:1;align-self:start;justify-self:end;margin-top:22px;margin-right:-2px;width:calc(var(--lw,12) * 1px - var(--x) + 2px)}
+  .rm-v .rm-vdirect{grid-column:1 / 3;grid-row:1;align-self:start;margin:22px -2px 0 8px}
+  .rm-v .rm-vroad{grid-column:1 / 3;grid-row:var(--rr,1);align-self:start;margin:22px calc(var(--lw,12) * 1px - var(--x)) 0 8px}
+  .rm-v .rm-vcol{grid-column:2;grid-row:var(--rr,1);justify-self:start;align-self:stretch;margin-left:var(--x)}
+  .rm-v .rm-vhead,.rm-v .rm-vrest{margin-top:22px}
+  .rm-v .rm-vtop{align-self:start;height:22px}
+  .rm-v .rm-vend{align-self:start;height:14px}
+  .rm-v::before{content:"";grid-column:2;grid-row:1 / -2;background:var(--cl) calc(var(--x) - 2px) 20px / 4px calc(100% - 20px) no-repeat,var(--cl) calc(var(--x) - 2px) 20px / calc(100% - var(--x) + 2px) 4px no-repeat,var(--il) calc(var(--x) - 3px) 19px / 6px calc(100% - 19px) no-repeat,var(--il) calc(var(--x) - 3px) 19px / calc(100% - var(--x) + 3px) 6px no-repeat}
+  .rm-v::after{content:"";grid-column:2;grid-row:-2 / -1;background:var(--cl) calc(var(--x) - 2px) 0 / 4px 26px no-repeat,var(--il) calc(var(--x) - 3px) 0 / 6px 28px no-repeat}
+  .rm-v[style*="--lane:0;"]{grid-row:1 / 2}
+  .rm-v[style*="--lane:0;"]::before{grid-column:1 / 3;grid-row:1 / 2;background:var(--cl) 8px 20px / calc(100% - 8px) 4px no-repeat,var(--il) 8px 19px / calc(100% - 8px) 6px no-repeat}
+  .rm-v[style*="--lane:0;"]::after{display:none}
+  .rm-road{border-radius:8px}
+  .rm-road:last-of-type{grid-column:road;grid-row:var(--vr,1) / span var(--vspan,1);margin-top:14px}
+  .rm-road:not(:last-of-type){grid-column:lane;grid-row:var(--vr,1);align-self:start;height:16px;margin:14px 0 0 6px;border-radius:8px 0 0 8px}
+  .rm-end{grid-column:3;grid-row:var(--vr,1);padding:0 0 10px 8px}
+  .rm-end::before{right:100%;top:14px;height:16px;width:10px}
+  .rm-end:last-of-type::before{width:calc(var(--lw,12) * 1px)}
+  .rm-ends>.rm-arrival{grid-column:3;grid-row:var(--mrows,2)}
+  .rm-caption{grid-column:1 / -1;grid-row:calc(var(--mrows,2) + 1);padding-top:6px}
+}
+
+/* No subgrid: stack the departures, Stops and ends top to bottom; lines, roads and cars are not drawn */
+@supports not (grid-template-rows:subgrid){
+  .route-map,.rm-list,.rm-track,.rm-ends{display:block}
+  .rm-lane,.rm-h,.rm-v,.rm-road,.rm-park,.rm-end::before{display:none!important}
+  .rm-dep,.rm-stop{padding:4px 0 4px 20px}
+  .rm-stop-art{margin:2px 0 0 20px}
+  .rm-end{display:flex;padding:8px 0 4px}
+  .rm-caption{padding-top:6px}
+}
+
+@media (max-width:480px){
+  .itinerary-poster{padding:12px}
+}
+/* Print (13.6 to 13.9, 15.9, 17.9): only the poster, or the print copy while the planner is shown, in light colours on white. */
+.itinerary-print-copy{display:none}
+@media print{
+  body[data-print-scope="itinerary"]{background:#fff;color:#3e3a39}
+  body[data-print-scope="itinerary"] :is(.topbar,.save-warning,.breadcrumb,.hero,.trip-toolbar,.sync-status,.section-tabs,.sidebar,.footer,.trip-menu,.trip-menu-backdrop,#dialog,#toasts,.toasts,.plan-view-switch,.itinerary-editor,.itinerary-text-panel,[data-scene-motion-toggle],[data-motion-reduced-note],.motion-settings__note,.skip-link,button){display:none!important}
+  body[data-print-scope="itinerary"] .itinerary-print-copy{display:block}
+  body[data-print-scope="itinerary"] .page{max-width:none;padding:0;background:#fff}
+  body[data-print-scope="itinerary"] .workspace{display:block}
+  body[data-print-scope="itinerary"] :is(.itinerary-poster,.itinerary-poster *){animation:none!important}
+  body[data-print-scope="itinerary"] .itinerary-poster{--ip-paper:#fffcf6;--ip-card:#fffdf8;--ip-ink:#3e3a39;--ip-muted:#766e63;--ip-road:#f8e2b0;--ip-badge-ink:#3e3a39;--ip-tone-0:#efa28f;--ip-tone-1:#b7dbe5;--ip-tone-2:#b9cda5;background:#fff;color:#3e3a39;border-radius:0}
+  body[data-print-scope="itinerary"] .poster-print-cover{display:block;break-inside:avoid;break-after:avoid}
+  body[data-print-scope="itinerary"] .poster-print-title{font-size:24px;font-weight:700}
+  body[data-print-scope="itinerary"] .poster-print-cover p{margin:0 0 6px}
+  body[data-print-scope="itinerary"] .poster-summary{display:none}
+  body[data-print-scope="itinerary"] .poster-day,body[data-print-scope="itinerary"] .route-map,body[data-print-scope="itinerary"] .moment-card{break-inside:avoid}
+  body[data-print-scope="itinerary"] .poster-day-head{break-after:avoid}
+  body[data-print-scope="itinerary"] .itinerary-poster p{orphans:2;widows:2}
+  .ip-anim{animation:none!important}
+}
+
+/* Decorative motion (12.5, 12.8): only under no-preference and a running or paused Scene_Motion_State; cycles of at least 2.4s,
+   shifts up to 3px, rotations up to 4deg, only the stars change opacity (3s). Text, lines, badges and cards never move. */
+@keyframes ip-flame-flicker{0%,100%{transform:translateY(0) scaleY(1)}50%{transform:translateY(-2px) scaleY(1.06)}}
+@keyframes ip-steam-rise{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+@keyframes ip-star-twinkle{0%,100%{opacity:1}50%{opacity:.6}}
+@keyframes ip-tree-sway{0%,100%{transform:rotate(-2deg)}50%{transform:rotate(2deg)}}
+@keyframes ip-flag-wave{0%,100%{transform:rotate(0)}50%{transform:rotate(3deg)}}
+@media (prefers-reduced-motion:no-preference){
+  :root[data-scene-motion=running] .itinerary-poster .ip-flame,:root[data-scene-motion=paused] .itinerary-poster .ip-flame{transform-box:fill-box;transform-origin:50% 100%;animation:ip-flame-flicker 2.4s ease-in-out infinite}
+  :root[data-scene-motion=running] .itinerary-poster .ip-steam,:root[data-scene-motion=paused] .itinerary-poster .ip-steam{animation:ip-steam-rise 3.2s ease-in-out infinite}
+  :root[data-scene-motion=running] .itinerary-poster .ip-star,:root[data-scene-motion=paused] .itinerary-poster .ip-star{animation:ip-star-twinkle 3s ease-in-out infinite}
+  :root[data-scene-motion=running] .itinerary-poster .ip-tree,:root[data-scene-motion=paused] .itinerary-poster .ip-tree{transform-box:fill-box;transform-origin:50% 100%;animation:ip-tree-sway 4s ease-in-out infinite}
+  :root[data-scene-motion=running] .itinerary-poster .ip-flag,:root[data-scene-motion=paused] .itinerary-poster .ip-flag{transform-box:fill-box;transform-origin:0 50%;animation:ip-flag-wave 2.8s ease-in-out infinite}
+}
+/* Paused, or the day is outside the viewport: stop where it is (12.7, 13.4, 13.5). Specificity beats the generated rules. */
+:root[data-scene-motion=paused] .itinerary-poster .ip-anim,
+:root .itinerary-poster .poster-day[data-offscreen] .ip-anim{animation-play-state:paused}
+@media print{.ip-anim{animation:none!important}}
+
+/* ===== Poster v2: illustrated "planner sheet" look (follows the aki trip-poster design) =====
+   Pure restyle of the existing markup; every value still comes from the trip data, so editing the plan reflows the sheet.
+   Moments are free-standing scenes in a wrapping row (any count per day works), day heads get a tilted tone badge. */
+.itinerary-poster{gap:28px;padding:clamp(16px,3vw,32px);border-radius:20px;background:var(--ip-paper)}
+.poster-summary{font-size:15px;font-weight:600;letter-spacing:.06em;color:var(--ip-muted)}
+.poster-summary>p{position:relative;display:inline-block;padding-bottom:8px}
+.poster-summary>p::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;border-radius:3px;background:var(--ip-tone-0);transform:rotate(-.4deg)}
+
+.poster-day{gap:18px}
+.poster-day+.poster-day{padding-top:26px;border-top:2px solid color-mix(in srgb,var(--ip-muted) 35%,transparent);border-radius:0}
+.poster-day-head{column-gap:16px;align-items:center}
+.poster-day-head>.day-badge{min-width:60px;height:60px;border-width:2.5px;border-radius:10px 14px 11px 15px;font-size:28px;letter-spacing:-.02em;transform:rotate(-3deg);box-shadow:2px 3px 0 color-mix(in srgb,var(--ip-ink) 18%,transparent)}
+.day-tone-1>.poster-day-head>.day-badge{transform:rotate(2deg)}
+.poster-day-head h3{font-size:clamp(22px,3.4vw,30px);line-height:1.3;letter-spacing:.04em}
+.day-meta,.day-location{font-size:14px;letter-spacing:.05em}
+
+.moment-list{display:flex;flex-wrap:wrap;justify-content:space-around;gap:18px 10px;padding:6px 0 2px}
+.moment-card{flex:1 1 150px;max-width:260px;justify-items:center;text-align:center;gap:8px;padding:0;border:0;border-radius:0;background:none}
+.moment-art{width:min(112px,100%);padding:10px 12px 6px;border-radius:50% 50% 46% 54% / 60% 58% 42% 40%;background:color-mix(in srgb,var(--ip-tone) 22%,transparent)}
+.moment-card--meal .moment-art{width:min(132px,100%)}
+.moment-body{justify-items:center;gap:1px}
+.moment-time{font-size:17px;letter-spacing:.08em;font-variant-numeric:tabular-nums}
+.moment-title{font-size:16px;font-weight:600;letter-spacing:.03em}
+.moment-ingredients{max-width:22ch;font-size:13px}
+.moment-tag{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.poster-closing{padding-top:14px;border-top:2px solid color-mix(in srgb,var(--ip-muted) 35%,transparent);font-weight:600;letter-spacing:.06em;color:var(--ip-muted)}
+@media (min-width:761px){.moment-list{display:flex}}
+@media (min-width:1280px){.moment-list{display:flex}}
+@media (max-width:480px){.moment-card{flex-basis:130px}.poster-day-head>.day-badge{min-width:48px;height:48px;font-size:22px}}
+@media print{.moment-art{background:none}}
+
+/* ===== Route fan: the cars' lines bend smoothly into one shared road (markup: itinerary-poster.js fanHtml) ===== */
+@media (min-width:761px){
+  .route-map.rm-fanmap{grid-template-columns:[dep] minmax(11rem,15rem) [stops] repeat(var(--k,1),minmax(0,1fr)) [merge] 0px [road] 130px [end] minmax(9rem,14rem) [fin];grid-template-rows:repeat(var(--t,1),minmax(var(--R,72px),auto)) auto auto;border-radius:22px}
+  .rm-fanmap .rm-road{background:none;border:0;border-radius:0;margin:0;overflow:visible}
+  .rm-fanmap .rm-road:not(:first-of-type),.rm-fanmap .rm-road:not(:last-of-type){margin:0}
+  .rm-fan{display:block;width:100%;overflow:visible}
+  .rm-fan path{fill:none;stroke-linecap:round;vector-effect:non-scaling-stroke}
+  .rm-fan-ink{stroke:var(--ip-ink);stroke-width:6px}
+  .rm-fan-line{stroke:var(--ip-car);stroke-width:4px}
+  .rm-fan-trunk-ink{stroke:var(--ip-ink);stroke-width:20px;stroke-linecap:butt!important}
+  .rm-fan-trunk{stroke:var(--ip-road);stroke-width:18px;stroke-linecap:butt!important}
+  .rm-fanmap .rm-end{align-self:center;padding:4px 0 8px 14px}
+  .rm-fanmap .rm-end::before{top:50%;width:14px;height:18px;margin-top:-9px;background:var(--ip-road);box-shadow:0 -1px 0 var(--ip-ink),0 1px 0 var(--ip-ink)}
+  .rm-fanmap .rm-dep{font-size:13px}
+}
+
+/* Cars ride the fan curves: the wrapper is a zero-size point moved and turned by keyframes (curveRelay in itinerary-poster.js) */
+.rm-fan,.rm-curve{display:none}
+@media (min-width:761px){
+  .rm-fanmap .rm-road{position:relative}
+  .rm-fan{display:block}
+  .rm-curve{display:block;position:absolute;left:0;top:0;width:0;height:0}
+  .rm-curve .rm-car{position:absolute;left:0;top:0;max-width:none;transform:translate(-50%,-50%)}
+}
+
+/* The dish drawing carries its own paper-coloured card (480x260); on the poster the round tone behind the art replaces it, which also fixes the white boxes in dark mode */
+.moment-art .moment-dish rect[width="480"][height="260"]{fill:transparent;stroke:none}

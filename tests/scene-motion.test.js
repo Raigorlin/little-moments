@@ -2,7 +2,7 @@ import {describe,test,expect,beforeEach,afterEach} from 'bun:test';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {illustration} from '../src/art.js';
-import {animatedIllustration,sceneMotionSettings,setupSceneMotion,syncSceneMotion,setSceneMotionPaused,sceneMotionState,teardownSceneMotion,SCENE_MOTION_KEY} from '../src/scene-motion.js';
+import {animatedIllustration,sceneMotionSettings,sceneMotionToggle,setupSceneMotion,syncSceneMotion,setSceneMotionPaused,sceneMotionState,teardownSceneMotion,SCENE_MOTION_KEY} from '../src/scene-motion.js';
 import {STORAGE_KEY,THEMES_KEY} from '../src/model.js';
 
 function fakeStorage(init={}){const data={...init};return{data,getItem:k=>k in data?data[k]:null,setItem:(k,v)=>{data[k]=String(v);}};}
@@ -91,6 +91,30 @@ describe('sceneMotionSettings',()=>{
     const html=sceneMotionSettings();
     expect(html).toContain('aria-label="暫停動畫" hidden>');
     expect(html).toContain('data-motion-reduced-note>依系統減少動態設定');
+  });
+});
+
+describe('sceneMotionToggle',()=>{
+  const NOTE='<p class="motion-settings__note" data-motion-reduced-note hidden>依系統減少動態設定，插畫保持靜態。</p>';
+  test('is the reduced-motion note followed by the toggle button, nothing else',()=>{
+    const html=sceneMotionToggle();
+    expect(html.startsWith(NOTE+'<button type="button" class="scene-motion__toggle" data-scene-motion-toggle aria-label="暫停動畫">')).toBe(true);
+    expect(html.endsWith('</button>')).toBe(true);
+    expect(html.match(/<button/g).length).toBe(1);
+    expect(html).not.toMatch(/<section|<h3|aria-pressed|data-action|\bid=|https?:|url\(/);
+    expect(html).toContain('<span class="scene-motion__label scene-motion__label--pause">暫停動畫</span><span class="scene-motion__label scene-motion__label--play">播放動畫</span>');
+  });
+  test('sceneMotionSettings wraps exactly the same note and button',()=>{
+    expect(sceneMotionSettings()).toBe(`<section class="motion-settings" aria-label="插畫動畫"><div class="motion-settings__copy"><h3>插畫動畫</h3><p>控制車子與背景動態，只影響這台裝置。</p>${NOTE}</div>${sceneMotionToggle().slice(NOTE.length)}</section>`);
+  });
+  test('follows paused and reduced states like the settings section',()=>{
+    setupSceneMotion({document:fakeDoc(),window:fakeWin(),storage:fakeStorage({[SCENE_MOTION_KEY]:'paused'}),reducedMotion:fakeQuery(false)});
+    expect(sceneMotionToggle()).toContain('aria-label="播放動畫">');
+    teardownSceneMotion();
+    setupSceneMotion({document:fakeDoc(),window:fakeWin(),storage:fakeStorage(),reducedMotion:fakeQuery(true)});
+    const html=sceneMotionToggle();
+    expect(html).toContain('data-motion-reduced-note>依系統減少動態設定');
+    expect(html).toContain('aria-label="暫停動畫" hidden>');
   });
 });
 

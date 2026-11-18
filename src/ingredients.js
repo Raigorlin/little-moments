@@ -2,6 +2,17 @@ export const SHOPPING_CATEGORIES = ['肉類','海鮮','蔬菜','水果','蛋奶'
 const keyOf = name => name.normalize('NFKC').replace(/\s+/gu, '').toLocaleLowerCase('zh-TW');
 
 // Keep quantities in the shopping list. Ingredient names are not a quantity parser.
+/** Delete a meal-linked shopping item: drop its ingredient name from the chosen meals' ingredient lists.
+ * The row itself goes away only when no meal needs it any more; otherwise it stays for the remaining meals. */
+export function removeIngredientFromMeals(state, itemId, mealIds) {
+  const item = state.shopping.find(s => s.id === itemId);
+  if (!item) return state;
+  const keys = new Set(parseIngredients(item.name).map(keyOf));
+  const chosen = new Set(mealIds);
+  const meals = state.meals.map(m => chosen.has(m.id) ? {...m, ingredients: parseIngredients(m.ingredients).filter(n => !keys.has(keyOf(n))).join('、')} : m);
+  const stillNeeded = meals.some(m => parseIngredients(m.ingredients).some(n => keys.has(keyOf(n))));
+  return {...state, meals, shopping: stillNeeded ? state.shopping : state.shopping.filter(s => s.id !== itemId)};
+}
 export function parseIngredients(text = '') {
   const unique = new Map();
   for (const part of text.normalize('NFKC').split(/[、，;；\/。\r\n]+|(?<!\d)[,.]|[,.](?!\d)/u)) {

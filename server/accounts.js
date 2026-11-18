@@ -9,6 +9,8 @@ import { GENERIC_500, logRequestError } from './safe-log.js';
 import { AI_COST_DEFAULTS, PER_USER_WINDOW_MS, quotaDecision, utcDayStart, utcMonthStart } from './ai-cost.js';
 import { addParticipant, canDepart, dateRange, isValidState, myGear, normalizeParticipantName } from '../src/model.js';
 import { syncMealIngredients } from '../src/ingredients.js';
+import { destinationConflict } from '../src/itinerary-model.js';
+import { outOfRangeMessage, shiftByOffset } from '../src/itinerary-dates.js';
 import {
   RECEIPT_AI_KEY, RECEIPT_AI_POLICIES, REGISTRATION_KEY, REGISTRATION_POLICIES,
   receiptAiDecision, resolveReceiptAiPolicy, resolveRegistrationPolicy
@@ -111,7 +113,7 @@ function validateName(value, role = '') {
 }
 const validateDisplayName = value => validateName(value).name;
 
-function cleanState(input) {
+export function cleanState(input) {
   if (!isPlainObject(input)) return null;
   const pick = (item, keys, optional = []) => {
     if (!isPlainObject(item)) return item;
@@ -121,15 +123,29 @@ function cleanState(input) {
     return out;
   };
   const list = (value, keys, optional) => Array.isArray(value) ? value.map(item => pick(item, keys, optional)) : value;
+  const has = key => Object.hasOwn(input, key);
+  const routes = value => Array.isArray(value)
+    ? value.map(route => {
+        const out = pick(route, ['id', 'date', 'vehicleId', 'from', 'to'], ['time', 'stops']);
+        if (isPlainObject(out) && Array.isArray(out.stops)) out.stops = list(out.stops, ['id', 'place', 'kind'], ['note', 'time', 'items', 'taskKind']);
+        return out;
+      })
+    : value;
+  const itinerary = {};
+  if (has('places')) itinerary.places = list(input.places, ['id', 'name'], ['templateId']);
+  if (has('routes')) itinerary.routes = routes(input.routes);
+  if (has('daySettings')) itinerary.daySettings = list(input.daySettings, ['date'], ['title', 'place', 'arrival', 'arrivalLabel', 'routePosition']);
+  if (has('storybook')) itinerary.storybook = pick(input.storybook, [], ['headline', 'caption', 'destinationTemplate']);
   return {
     schema: input.schema, revision: input.revision, currentUser: input.currentUser, joined: input.joined,
     trip: pick(input.trip, ['title', 'destination', 'startDate', 'endDate', 'description', 'note']),
     people: list(input.people, ['id', 'name', 'color', 'role']),
     activities: list(input.activities, ['id', 'date', 'time', 'title', 'type', 'location', 'note', 'people', 'done'], ['vehicleIds']),
-    meals: list(input.meals, ['id', 'date', 'slot', 'title', 'cookId', 'servings', 'ingredients', 'notes'], ['imageKind']),
+    meals: list(input.meals, ['id', 'date', 'slot', 'title', 'cookId', 'servings', 'ingredients', 'notes'], ['imageKind', 'time']),
+    ...itinerary,
     shopping: list(input.shopping, ['id', 'name', 'quantity', 'category', 'assignee', 'done'], ['source', 'mealIds', 'recipeRemoved']),
     gear: list(input.gear, ['id', 'name', 'quantity', 'scope', 'assignee', 'ready']),
-    vehicles: list(input.vehicles, ['id', 'name', 'driver', 'seats', 'passengers', 'meeting']),
+    vehicles: list(input.vehicles, ['id', 'name', 'driver', 'seats', 'passengers', 'meeting'], ['color']),
     events: list(input.events, ['id', 'text', 'at', 'actor']),
     departed: input.departed
   };
@@ -180,15 +196,15 @@ function mergeCard(body, base, required) {
   return card;
 }
 
-const addDays = (date, days) => new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY).toISOString().slice(0, 10);
 function applyCardToState(state, card) {
-  const range = dateRange(card.startDate, card.endDate);
-  const offset = Math.round((Date.parse(`${card.startDate}T00:00:00Z`) - Date.parse(`${state.trip.startDate}T00:00:00Z`)) / DAY) || 0;
-  for (const item of [...state.activities, ...state.meals]) {
-    const shifted = offset ? addDays(item.date, offset) : item.date;
-    if (!range.includes(shifted)) fail(400, '新日期範圍放不下既有行程或餐次，請先調整行程或延長日期。');
-    item.date = shifted;
-  }
+  // Destination and date-shift failures respond before isValidState(); nothing is modified until both pass.
+  const conflict = destinationConflict(state, card.destination);
+  if (conflict?.type === 'duplicate') fail(400, '旅行目的地與地點清單中的地點同名，請先把該地點改名。');
+  if (conflict?.type === 'in-use') fail(400, '仍有路線或停靠點使用旅行目的地，不能把目的地清空。');
+  // shiftByOffset() moves activities, meals, routes and daySettings once; no other code shifts them.
+  const shifted = shiftByOffset(state, card.startDate, card.endDate);
+  if (!shifted.ok) fail(400, outOfRangeMessage(shifted.categories));
+  for (const key of ['activities', 'meals', 'routes', 'daySettings']) if (key in shifted.state) state[key] = shifted.state[key];
   state.trip = { title: card.title, destination: card.destination, startDate: card.startDate, endDate: card.endDate, description: card.description, note: card.note };
 }
 
@@ -547,6 +563,8 @@ export async function createAccountService({
       memberCount: row.people_count, isMember
     };
   };
+  const presence = new Map(); // tripId -> Map(clientId -> { name, field, at })
+  const PRESENCE_TTL_MS = 10_000, PRESENCE_MAX_PER_TRIP = 50;
   async function envelope(e, user, tripId) {
     const access = await tripAccess(e, user, tripId);
     const state = JSON.parse(access.row.state_json);
@@ -636,7 +654,8 @@ export async function createAccountService({
   const DENY_PACKING = '只能變更自己的行前準備。';
   // A row someone bought stays a manual row once a member unticks it, so a later recipe edit cannot prune it.
   const retainPurchased = (old, item) => { if (old?.done && !item.done && item.source === 'meal') item.source = 'manual'; };
-  // Invited members may add and edit, but never remove items, rewrite other accounts' identities or pack for others.
+  // Invited members may add, edit and remove activities, places, routes and en-route tasks, but never remove
+  // participants, meals, gear or vehicles, rewrite other accounts' identities or pack for others.
   async function guardCollaborator(t, tripId, stored, next, me) {
     const oldShopping = new Map(stored.shopping.map(x => [x.id, x]));
     for (const item of next.shopping) {
@@ -644,7 +663,7 @@ export async function createAccountService({
       if (old && old.source !== 'meal' && item.source === 'meal') fail(403, DENY_REMOVAL);
       retainPurchased(old, item);
     }
-    for (const key of ['people', 'activities', 'meals', 'gear', 'vehicles']) {
+    for (const key of ['people', 'meals', 'gear', 'vehicles']) {
       const kept = new Set(next[key].map(item => item.id));
       if (stored[key].some(item => !kept.has(item.id))) fail(403, DENY_REMOVAL);
     }
@@ -879,6 +898,28 @@ export async function createAccountService({
       return json(200, await envelope(sql, await requireUser(request), tripId));
     },
 
+    // Who is editing which field right now (in memory only, never stored). Used by the schedule studio to lock a field
+    // another device is editing and to learn that a newer revision exists. Entries expire after PRESENCE_TTL_MS.
+    async presenceTrip(request, url, info, [tripId]) {
+      requireJsonType(request);
+      const user = await requireUser(request);
+      const body = await readJson(request);
+      const access = await tripAccess(sql, user, tripId);
+      if (typeof body.clientId !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(body.clientId)) fail(400, '缺少裝置代號 clientId。');
+      if (body.field !== null && body.field !== undefined && (typeof body.field !== 'string' || body.field.length > 120)) fail(400, '欄位代號不正確。');
+      const now = Date.now();
+      let room = presence.get(tripId);
+      if (!room) { room = new Map(); presence.set(tripId, room); }
+      for (const [id, entry] of room) if (now - entry.at > PRESENCE_TTL_MS) room.delete(id);
+      if (access.canEdit) {
+        room.set(body.clientId, { name: user.display_name, field: body.field || null, at: now });
+        while (room.size > PRESENCE_MAX_PER_TRIP) room.delete(room.keys().next().value);
+      }
+      if (!room.size) presence.delete(tripId);
+      const editors = [...room].filter(([id, entry]) => id !== body.clientId && entry.field).map(([, entry]) => ({ name: entry.name, field: entry.field }));
+      return json(200, { revision: access.row.revision, editors });
+    },
+
     async putTrip(request, url, info, [tripId]) {
       requireJsonType(request);
       let user = await requireUser(request);
@@ -890,6 +931,9 @@ export async function createAccountService({
         const stored = JSON.parse(access.row.state_json);
         const next = cleanState(body.state);
         if (!next || !Array.isArray(next.people) || !next.people.length) fail(400, '旅行資料格式不正確。');
+        for (const key of ['places', 'routes', 'daySettings', 'storybook']) {
+          if (!Object.hasOwn(next, key) && stored[key] !== undefined) next[key] = structuredClone(stored[key]);
+        }
         next.revision = access.row.revision;
         next.joined = true;
         next.currentUser = next.people[0]?.id;
@@ -1351,6 +1395,7 @@ export async function createAccountService({
     [/^\/api\/trips$/, { GET: routes.listTrips, POST: routes.createTrip }],
     [/^\/api\/trips\/([^/]+)$/, { GET: routes.getTrip, PUT: routes.putTrip, PATCH: routes.patchTrip }],
     [/^\/api\/trips\/([^/]+)\/check$/, { POST: routes.checkTrip }],
+    [/^\/api\/trips\/([^/]+)\/presence$/, { PUT: routes.presenceTrip }],
     [/^\/api\/trips\/([^/]+)\/ledger$/, { GET: routes.getLedger, PUT: routes.putLedger }],
     [/^\/api\/trips\/([^/]+)\/receipt-ai$/, { GET: routes.getReceiptAi, POST: routes.recognizeReceiptAi }],
     [/^\/api\/trips\/([^/]+)\/invites$/, { GET: routes.listInvites, POST: routes.createInvite }],

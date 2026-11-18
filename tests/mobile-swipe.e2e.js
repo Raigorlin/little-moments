@@ -1,3 +1,9 @@
+// trip-planning-workflow-enhance: requirement 1.6 removed the 「行程表」 tab's activity cards (`.activity-card`) and their
+// swipe rows, so this file's swipe checks now drive the meal cards (`.meal-card`) of the 「料理菜單」 tab (`nav(page,'meals')`),
+// whose heading is an h4. The re-render steps (TC-SWIPE-022) add a meal through the 新增餐次 dialog and move between tabs, and
+// also confirm that 「規劃行程」 holds no `[data-swipe-row]`. TC-SWIPE-024 clicks `.section-description` on the meals tab, which
+// lies outside every panel and has no click handler. Only checks of behavior that no longer exists were removed: the
+// 新增一站 dialog, the completion checkbox and the day buttons that re-rendered the old schedule.
 import {test,expect} from './local-planner-fixture.js';
 
 // End-to-end checks for the tracked swipe in src/mobile-swipe.js (mobile-smooth-swipe, tasks 6.1 to 6.7 and 6.9).
@@ -42,11 +48,15 @@ const FLICK_THRESHOLD=0.35;
 const RUBBER_RESIST=0.3;
 const RUBBER_MAX=48;
 
-/** Load /demo/ at 390×900 (as app.e2e.js sizes the phone layout) and wait for the first card's swipe panel. */
+/** Open a section tab of the trip page, as tests/app.e2e.js does. */
+const nav=(page,tab)=>page.locator(`.section-tabs [data-tab="${tab}"]`).click();
+
+/** Load /demo/ at 390×900 (as app.e2e.js sizes the phone layout), open the meals tab and wait for the first meal card's swipe panel. */
 async function openPhoneDemo(page){
  await page.setViewportSize(PHONE);
  await page.goto('/demo/');
- await expect(page.locator('.activity-card').first().locator('.swipe-actions')).toHaveCount(1);
+ await nav(page,'meals');
+ await expect(page.locator('.meal-card').first().locator('.swipe-actions')).toHaveCount(1);
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -303,7 +313,7 @@ function summarizePointerEvents(events){
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// Readers. `row` is a Locator for a prepared swipe row, such as page.locator('.activity-card').first().
+// Readers. `row` is a Locator for a prepared swipe row, such as page.locator('.meal-card').first().
 // ---------------------------------------------------------------------------------------------------------
 
 /**
@@ -488,8 +498,8 @@ async function expectSettled(row,open,what){
 test('[TC-SWIPE-002] a tracked touch drag writes its offset to the inline --swipe-x',async({page})=>{
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first();
- await drag(page,card.locator('h3'),[{dx:-40}],{end:'none'});
+ const card=page.locator('.meal-card').first();
+ await drag(page,card.locator('h4'),[{dx:-40}],{end:'none'});
  expect(await inlineSwipeX(card)).toBe('-40px');
  await endDrag(page,'cancel');
  expect(errors).toEqual([]);
@@ -498,10 +508,10 @@ test('[TC-SWIPE-002] a tracked touch drag writes its offset to the inline --swip
 // Requirements 1.3, 1.4 and 1.5.
 test('[TC-SWIPE-003] a 40px drag moves only the surface, 1:1 with the finger and with no transition',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first();
+ const card=page.locator('.meal-card').first();
  // At rest the surface has a transition, so a '0s' read mid-drag shows the drag turned it off.
  expect(await surfaceTransitionDuration(card),'surface transition-duration at rest').not.toBe('0s');
- const {dx}=await drag(page,card.locator('h3'),[{dx:-40}],{end:'none'});
+ const {dx}=await drag(page,card.locator('h4'),[{dx:-40}],{end:'none'});
  expectWithin1px(await surfaceTranslateX(card),dx,'surface translateX mid-drag');
  await expect(card.locator('.swipe-actions'),'panel transform mid-drag').toHaveCSS('transform','none');
  await expect(card.locator('.swipe-toggle'),'toggle transform mid-drag').toHaveCSS('transform','none');
@@ -513,9 +523,9 @@ test('[TC-SWIPE-003] a 40px drag moves only the surface, 1:1 with the finger and
 // still clipped to a Panel_Visible_Width of 0. This test reads only its visibility.
 test('[TC-SWIPE-004] the action panel turns visible at the first leftward pixel, before release',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first(),panel=card.locator('.swipe-actions');
+ const card=page.locator('.meal-card').first(),panel=card.locator('.swipe-actions');
  await expect(panel,'panel visibility at rest').toHaveCSS('visibility','hidden');
- await drag(page,card.locator('h3'),[{dx:-1}],{end:'none'});
+ await drag(page,card.locator('h4'),[{dx:-1}],{end:'none'});
  await expect(panel,'panel visibility 1px into the drag').toHaveCSS('visibility','visible');
  await endDrag(page,'cancel');
 });
@@ -523,15 +533,15 @@ test('[TC-SWIPE-004] the action panel turns visible at the first leftward pixel,
 // Requirement 1.7. The open row closes when the dragged row's axis first resolves to horizontal, at 8px.
 test('[TC-SWIPE-005] dragging one row closes the row that was open',async({page})=>{
  await openPhoneDemo(page);
- const cards=page.locator('.activity-card'),rowA=cards.nth(0),rowB=cards.nth(1);
+ const cards=page.locator('.meal-card'),rowA=cards.nth(0),rowB=cards.nth(1);
  // Open A through the release-only path that tests/app.e2e.js drives. With no pointermove there is no velocity,
  // so the 56px distance rule opens the row at any frame rate.
- const heading=rowA.locator('h3'),box=await heading.boundingBox();
+ const heading=rowA.locator('h4'),box=await heading.boundingBox();
  await heading.dispatchEvent('pointerdown',{pointerType:'touch',clientX:box.x+box.width-10,clientY:box.y+10});
  await heading.dispatchEvent('pointerup',{pointerType:'touch',clientX:box.x+box.width-95,clientY:box.y+10});
  await expect(rowA,'row A after its release-only swipe').toHaveClass(/swipe-open/);
  await waitForRest(rowA);
- await drag(page,rowB.locator('h3'),[{dx:-20}],{end:'none'});
+ await drag(page,rowB.locator('h4'),[{dx:-20}],{end:'none'});
  await expect(rowA,'row A while row B is dragged').not.toHaveClass(/swipe-open/);
  await endDrag(page);
 });
@@ -540,13 +550,13 @@ test('[TC-SWIPE-005] dragging one row closes the row that was open',async({page}
 // surface has moved off. hitTest() sets the dragging panel's pointer-events:none aside; clip-path still applies.
 test('[TC-SWIPE-006] the action panel shows exactly the strip the dragged surface has uncovered',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first(),panel=card.locator('.swipe-actions');
+ const card=page.locator('.meal-card').first(),panel=card.locator('.swipe-actions');
  const stop=await endStop(card);
  expect(stop,'End_Stop of the two-action first card').toBe(-2*ACTION_WIDTH);
  // hitTest() returns null off screen, and at 390×900 the first card starts below the fold.
  await card.scrollIntoViewIfNeeded();
  // One gesture visits each distance in turn.
- await drag(page,card.locator('h3'),[],{end:'none'});
+ await drag(page,card.locator('h4'),[],{end:'none'});
  for(const distance of [20,68,136]){
   const {dx}=await dragMore(page,[{dx:-distance}],{end:'none'});
   const translateX=await surfaceTranslateX(card),box=await panel.boundingBox(),clipLeft=await panelClipLeft(card);
@@ -566,8 +576,8 @@ test('[TC-SWIPE-006] the action panel shows exactly the strip the dragged surfac
 // 56px, so only the flick rule can open the row.
 test('[TC-SWIPE-007] a fast 20px leftward flick opens the row',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first();
- const flick=await drag(page,card.locator('h3'),[{dx:-20,steps:2}],{release:'immediate'});
+ const card=page.locator('.meal-card').first();
+ const flick=await drag(page,card.locator('h4'),[{dx:-20,steps:2}],{release:'immediate'});
  expect(measuredReleaseVelocity(flick),'release velocity of the leftward flick, px/ms').toBeLessThanOrEqual(-FLICK_THRESHOLD);
  await expectSettled(card,true,'after the leftward flick');
 });
@@ -577,8 +587,8 @@ test('[TC-SWIPE-007] a fast 20px leftward flick opens the row',async({page})=>{
 // in two frames measures above 0.35 px/ms even while the window still holds samples from the hold.
 test('[TC-SWIPE-008] after a drag past 100px, a fast rightward flick closes the row though it ends past halfway',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first();
- const flick=await drag(page,card.locator('h3'),[{dx:-130},{hold:STILL_MS},{dx:-70,steps:2}],{release:'immediate'});
+ const card=page.locator('.meal-card').first();
+ const flick=await drag(page,card.locator('h4'),[{dx:-130},{hold:STILL_MS},{dx:-70,steps:2}],{release:'immediate'});
  expect(measuredReleaseVelocity(flick),'release velocity of the rightward flick, px/ms').toBeGreaterThanOrEqual(FLICK_THRESHOLD);
  await expectSettled(card,false,'after the rightward flick');
 });
@@ -588,7 +598,7 @@ test('[TC-SWIPE-008] after a drag past 100px, a fast rightward flick closes the 
 // shows that the halfway rule decided it.
 test('[TC-SWIPE-009] a slow release settles closed short of halfway and open past it',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first(),heading=card.locator('h3');
+ const card=page.locator('.meal-card').first(),heading=card.locator('h4');
  const short=await drag(page,heading,[{dx:-60},{hold:STILL_MS}]);
  expect(measuredReleaseVelocity(short),'release velocity after the 60px drag and hold, px/ms').toBe(0);
  await expectSettled(card,false,'after the slow 60px release');
@@ -601,7 +611,7 @@ test('[TC-SWIPE-009] a slow release settles closed short of halfway and open pas
 // read while each settle runs. Before this feature only the open state carried a transition, so closing snapped.
 test('[TC-SWIPE-010] opening and closing settles share one transition-duration of at most 320ms',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first(),heading=card.locator('h3');
+ const card=page.locator('.meal-card').first(),heading=card.locator('h4');
  await drag(page,heading,[{dx:-80},{hold:STILL_MS}]);
  const opening=await settleTransitionDuration(card,'opening settle');
  await expectSettled(card,true,'after opening');
@@ -623,11 +633,11 @@ test('[TC-SWIPE-010] opening and closing settles share one transition-duration o
 // nothing from the panel.
 test('[TC-SWIPE-011] past the End_Stop the surface moves 0.3 times the overshoot, at most 48px, and a release there opens the row',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first();
+ const card=page.locator('.meal-card').first();
  const stop=await endStop(card);
  expect(stop,'End_Stop of the two-action first card').toBe(-2*ACTION_WIDTH);
  // The row starts closed, so the raw offset, startOffset + dx, is dx, and the raw overshoot is stop - dx.
- const proportional=await drag(page,card.locator('h3'),[{dx:-200}],{end:'none'});
+ const proportional=await drag(page,card.locator('h4'),[{dx:-200}],{end:'none'});
  const overshoot=stop-proportional.dx,rendered=stop-await surfaceTranslateX(card);
  expectWithin1px(rendered,RUBBER_RESIST*overshoot,`rendered overshoot at dx ${proportional.dx}px, for a raw overshoot of ${overshoot}px`);
  expect(rendered,`rendered overshoot at dx ${proportional.dx}px, against the raw overshoot of ${overshoot}px`).toBeLessThan(overshoot);
@@ -645,8 +655,8 @@ test('[TC-SWIPE-011] past the End_Stop the surface moves 0.3 times the overshoot
 // the tracker followed the rightward drag and clamped it. pointercancel ends the gesture, so no release rule runs.
 test('[TC-SWIPE-012] a closed row dragged rightward holds at 0',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first();
- const {dx}=await drag(page,card.locator('h3'),[{dx:100}],{end:'none'});
+ const card=page.locator('.meal-card').first();
+ const {dx}=await drag(page,card.locator('h4'),[{dx:100}],{end:'none'});
  expectWithin1px(await surfaceTranslateX(card),0,`surface translateX of the closed row at dx ${dx}px`);
  expect(await inlineSwipeX(card),`inline --swipe-x of the closed row at dx ${dx}px`).toBe('0px');
  await recordPanelClipLeft(card,`closed row at dx ${dx}px`);
@@ -658,7 +668,7 @@ test('[TC-SWIPE-012] a closed row dragged rightward holds at 0',async({page})=>{
 // pointercancel ends the gesture and settles the row back open, so no release rule decides the outcome.
 test('[TC-SWIPE-013] an open row dragged rightward tracks back to 0 and holds there',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first(),heading=card.locator('h3');
+ const card=page.locator('.meal-card').first(),heading=card.locator('h4');
  const stop=await endStop(card);
  await drag(page,heading,[{dx:-80},{hold:STILL_MS}]);
  await expect(card,'row state after the slow 80px release').toHaveClass(/swipe-open/);
@@ -679,11 +689,11 @@ test('[TC-SWIPE-013] an open row dragged rightward tracks back to 0 and holds th
 // Whether the browser sends pointercancel when it starts panning is recorded, not asserted.
 test('[TC-SWIPE-014] a mostly vertical touch drag scrolls the page and never tracks the row',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first();
+ const card=page.locator('.meal-card').first();
  await card.scrollIntoViewIfNeeded();
  const baseline=await page.evaluate(()=>window.scrollY);
  expect(baseline,'page scrollY with the first card scrolled into view').toBeGreaterThan(0);
- const touch=await touchDrag(page,card.locator('h3'),[{dx:-3,dy:12,steps:1},{dx:-4,dy:150}],{sample:()=>trackingState(card)});
+ const touch=await touchDrag(page,card.locator('h4'),[{dx:-3,dy:12,steps:1},{dx:-4,dy:150}],{sample:()=>trackingState(card)});
  for(const {dx,dy,sample} of touch.points){
   const at=`(${dx.toFixed(1)}, ${dy.toFixed(1)})`;
   expect(sample.dragging,`.swipe-dragging with the finger at ${at}`).toBe(false);
@@ -709,10 +719,10 @@ test('[TC-SWIPE-014] a mostly vertical touch drag scrolls the page and never tra
 // velocity would have been.
 test('[TC-SWIPE-015] a mostly horizontal touch drag tracks the row and leaves the page where it was',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first();
+ const card=page.locator('.meal-card').first();
  await card.scrollIntoViewIfNeeded();
  const baseline=await page.evaluate(()=>window.scrollY);
- const touch=await touchDrag(page,card.locator('h3'),[{dx:-40,dy:3}],{end:'cancel',sample:()=>trackingState(card)});
+ const touch=await touchDrag(page,card.locator('h4'),[{dx:-40,dy:3}],{end:'cancel',sample:()=>trackingState(card)});
  const {dx,dy,sample}=touch.points.at(-1);
  expectWithin1px(Number.parseFloat(sample.swipeX),dx,`inline --swipe-x "${sample.swipeX}" with the finger down at (${dx}, ${dy})`);
  expect(touch.points.map(point=>point.sample.scrollY),`page scrollY after each touchMove, against ${baseline} before the drag`).toEqual(touch.points.map(()=>baseline));
@@ -726,7 +736,7 @@ test('[TC-SWIPE-015] a mostly horizontal touch drag tracks the row and leaves th
 // cancel has to clear, and the transition-duration read during the settle shows that the row animates back.
 test('[TC-SWIPE-016] a pointercancel settles a closed row back to closed and clears its inline --swipe-x',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first(),heading=card.locator('h3');
+ const card=page.locator('.meal-card').first(),heading=card.locator('h4');
  for(const distance of [40,100]){
   const {dx}=await drag(page,heading,[{dx:-distance}],{end:'none'});
   expect(await inlineSwipeX(card),`inline --swipe-x of the closed row at dx ${dx}px`).toBe(`${dx}px`);
@@ -741,7 +751,7 @@ test('[TC-SWIPE-016] a pointercancel settles a closed row back to closed and cle
 // halfway, and 100px leaves it 36px from closed, where a slow release would close it. Both cancels settle it open.
 test('[TC-SWIPE-017] a pointercancel settles an open row back to open and clears its inline --swipe-x',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first(),heading=card.locator('h3');
+ const card=page.locator('.meal-card').first(),heading=card.locator('h4');
  const stop=await endStop(card);
  await drag(page,heading,[{dx:-80},{hold:STILL_MS}]);
  await expect(card,'row state after the slow 80px release').toHaveClass(/swipe-open/);
@@ -762,7 +772,7 @@ test('[TC-SWIPE-017] a pointercancel settles an open row back to open and clears
 // that. The controller also abandons the gesture, so the pointerup that finally ends the drag changes nothing.
 test('[TC-SWIPE-018] leaving the touch layout mid-drag closes every row, clears every inline --swipe-x and abandons the gesture',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first(),heading=card.locator('h3');
+ const card=page.locator('.meal-card').first(),heading=card.locator('h4');
  const stop=await endStop(card);
  await drag(page,heading,[{dx:-80},{hold:STILL_MS}]);
  await expect(card,'row state after the slow 80px release').toHaveClass(/swipe-open/);
@@ -792,7 +802,7 @@ test('[TC-SWIPE-019] under reduced motion a drag tracks 1:1, holds at the End_St
  await page.emulateMedia({reducedMotion:'reduce'});
  await openPhoneDemo(page);
  expect(await page.evaluate(()=>matchMedia('(prefers-reduced-motion: reduce)').matches),'Reduced_Motion under the emulation').toBe(true);
- const card=page.locator('.activity-card').first(),heading=card.locator('h3');
+ const card=page.locator('.meal-card').first(),heading=card.locator('h4');
  const stop=await endStop(card);
  expect(stop,'End_Stop of the two-action first card').toBe(-2*ACTION_WIDTH);
  const linear=await drag(page,heading,[{dx:-40}],{end:'none'});
@@ -825,7 +835,7 @@ test('[TC-SWIPE-019] under reduced motion a drag tracks 1:1, holds at the End_St
 // start a new document with a new performance.timeOrigin, so an unchanged timeOrigin shows the page never reloaded.
 test('[TC-SWIPE-020] a reduced-motion preference change applies to the next gesture with no reload',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first(),heading=card.locator('h3');
+ const card=page.locator('.meal-card').first(),heading=card.locator('h4');
  const stop=await endStop(card);
  const timeOrigin=await page.evaluate(()=>performance.timeOrigin);
  for(const [index,reducedMotion] of ['no-preference','reduce','no-preference'].entries()){
@@ -851,15 +861,13 @@ test('[TC-SWIPE-020] a reduced-motion preference change applies to the next gest
 const CLICK_SUPPRESS_DISTANCE=42;
 const CLICK_SUPPRESS_MS=450;
 
-/** Open a section tab of the trip page, as tests/app.e2e.js does. */
-const nav=(page,tab)=>page.locator(`.section-tabs [data-tab="${tab}"]`).click();
-
 /** Whether a swipeRowStates() entry is a row in the open state. */
 const isOpen=({className})=>/(^|\s)swipe-open(\s|$)/.test(className);
 
 /**
  * In-page: what prepare() built in `row`. The originals are the row's buttons outside its panel, apart from the toggle,
- * in document order, which is the order prepare() clones them in, so clones[i] copies originals[i]. `action` is a
+ * in document order, which is the order prepare() clones them in, so clones[i] copies originals[i]. A button with no
+ * data-action or data-xp is not an action of the row, such as the meal card's data-tab link 查看採買清單, so it is left out. `action` is a
  * button's data-action, or its data-xp on a ledger button. A clone's child nodes are listed by nodeName, so a text node
  * shows as '#text'.
  */
@@ -870,7 +878,7 @@ function readPreparedRow(row){
   swipeCount:row.style.getPropertyValue('--swipe-count').trim(),
   panels:panels.map(el=>({role:el.getAttribute('role'),ariaLabel:el.getAttribute('aria-label'),ariaHidden:el.getAttribute('aria-hidden')})),
   clones:[...(panels[0]?.children??[])].map(el=>({tag:el.tagName.toLowerCase(),action:action(el),label:el.dataset.swipeLabel??null,swipeAction:el.classList.contains('swipe-action'),danger:el.classList.contains('swipe-action-danger'),id:el.getAttribute('id'),ariaLabel:el.getAttribute('aria-label'),childNodes:[...el.childNodes].map(node=>node.nodeName.toLowerCase())})),
-  originals:[...row.querySelectorAll('button')].filter(el=>!el.closest('.swipe-actions')&&!el.matches('.swipe-toggle')).map(el=>({action:action(el),id:el.getAttribute('id'),text:el.textContent.trim(),ariaLabel:el.getAttribute('aria-label'),swipeOriginal:el.getAttribute('data-swipe-original'),icons:el.querySelectorAll('svg').length})),
+  originals:[...row.querySelectorAll('button')].filter(el=>!el.closest('.swipe-actions')&&!el.matches('.swipe-toggle')&&action(el)!==null).map(el=>({action:action(el),id:el.getAttribute('id'),text:el.textContent.trim(),ariaLabel:el.getAttribute('aria-label'),swipeOriginal:el.getAttribute('data-swipe-original'),icons:el.querySelectorAll('svg').length})),
   toggles:children.filter(el=>el.matches('.swipe-toggle')).map(el=>({tag:el.tagName.toLowerCase(),ariaLabel:el.getAttribute('aria-label'),ariaExpanded:el.getAttribute('aria-expanded'),text:el.textContent}))
  };
 }
@@ -956,7 +964,7 @@ function readClickLog(stop){
  return log.entries.map(({event,t,bubbled})=>({t,bubbled,defaultPrevented:event.defaultPrevented}));
 }
 
-// Requirement 5.4. The allowlisted controls of the first card are the edit and delete buttons in its .activity-top, so
+// Requirement 5.4. The allowlisted controls of the first meal card are the edit and delete buttons in its .meal-actions, so
 // prepare() gives it a two-button panel and a toggle, and marks both originals, which the touch layout hides. The
 // clones keep the data-action of their originals, which is how the app's click handler acts on them.
 // Those originals hold an svg icon and nothing else, and no id, so a prepare() that left text or ids on its clones
@@ -965,10 +973,10 @@ function readClickLog(stop){
 // expense row and one settlement row to the timeline, with buttons that copy the ledger's markup, icon paths aside.
 test('[TC-SWIPE-021] a prepared row clones its enabled actions into the panel with the swipe-action conventions',async({page})=>{
  await openPhoneDemo(page);
- const card=await page.locator('.activity-card').first().evaluate(readPreparedRow);
- expect(card.originals.map(({action})=>action),'the first card: data-action of each original').toEqual(['activity','delete']);
+ const card=await page.locator('.meal-card').first().evaluate(readPreparedRow);
+ expect(card.originals.map(({action})=>action),'the first card: data-action of each original').toEqual(['meal','delete']);
  expectCloneConventions(card,'the first card',['編輯','刪除']);
- await page.locator('.timeline').evaluate(timeline=>{
+ await page.locator('.meal-days').evaluate(timeline=>{
   const icon=path=>`<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
   timeline.insertAdjacentHTML('beforeend',`<ul class="xp-rows"><li class="xp-row" data-swipe-row data-e2e-row="expense"><div class="xp-row-main"><b class="xp-row-title">晚餐食材</b></div><div class="xp-row-actions"><button type="button" class="icon-button" data-xp="edit-expense" id="e2e-edit-x1" data-xp-id="x1" aria-label="編輯 晚餐食材" title="編輯支出">${icon('M4 20h4L20 8l-4-4L4 16z')}</button><button type="button" class="icon-button danger" data-xp="ask-remove-expense" id="e2e-del-x1" data-xp-id="x1" aria-label="移除 晚餐食材" title="移除 晚餐食材">${icon('M6 6l12 12M18 6 6 18')}</button></div></li><li class="xp-row" data-swipe-row data-e2e-row="settlement"><div class="xp-row-main"><b class="xp-row-title">小安 → 阿哲</b></div><div class="xp-row-actions"><button type="button" class="button small quiet danger" data-xp="ask-remove-settlement" id="e2e-sdel-s1" data-xp-id="s1" aria-label="移除 小安 給 阿哲 的還款紀錄">移除</button></div></li></ul>`);
  });
@@ -978,9 +986,9 @@ test('[TC-SWIPE-021] a prepared row clones its enabled actions into the panel wi
 });
 
 // Requirement 5.5. render() in src/app.js rebuilds the page through app.innerHTML on every change, so each step below
-// renders fresh rows that the MutationObserver has to prepare once each: adding an activity through the 新增一站
-// dialog, as tests/app.e2e.js does (on /demo/ the new activity stays in this context's localStorage), ticking a
-// completion box, leaving the schedule tab and coming back, and changing the day and changing it back. The demo's
+// renders fresh rows that the MutationObserver has to prepare once each: adding a meal through the 新增餐次
+// dialog (on /demo/ the new meal stays in this context's localStorage), and leaving the meals tab for the schedule tab
+// and coming back. The schedule tab itself must hold no swipe rows. The demo's
 // first day has five activities, so six once the new one is added.
 // Those steps never hand the observer a row it has already prepared. render() can: it re-appends the one element it
 // keeps between renders, the expense panel, with its rows, and the data-swipe-ready guard keeps prepare() from cloning
@@ -989,34 +997,31 @@ test('[TC-SWIPE-021] a prepared row clones its enabled actions into the panel wi
 test('[TC-SWIPE-022] every row a re-render adds gets one panel and one toggle, and a re-inserted row gets no second panel',async({page})=>{
  await openPhoneDemo(page);
  await expectOnePanelPerRow(page,'after the first render');
- await page.getByRole('button',{name:'新增一站',exact:true}).click();
- await page.getByLabel('活動名稱').fill('測試野餐');
- await page.getByLabel('時間',{exact:true}).fill('13:20');
- await page.getByLabel('地點',{exact:true}).fill('樹下');
+ const before=await page.locator('.meal-card').count();
+ expect(before,'meal cards on the meals tab').toBeGreaterThan(0);
+ await page.getByRole('button',{name:'新增餐次',exact:true}).click();
+ await page.getByLabel('料理名稱',{exact:true}).fill('測試野餐');
  await page.locator('#edit-form button[type="submit"]').click();
  const title=page.getByRole('heading',{name:'測試野餐',exact:true});
- await expect(title,'heading of the added activity').toBeVisible();
- const added=page.locator('.activity-card').filter({has:title});
- await expect(added.locator('.swipe-actions'),'.swipe-actions panels of the added activity').toHaveCount(1);
- await expect(added.locator('.swipe-toggle'),'.swipe-toggle buttons of the added activity').toHaveCount(1);
- await expectOnePanelPerRow(page,'after adding the activity');
- const done=page.getByRole('checkbox',{name:'城市集合，把日常暫停已完成',exact:true});
- await done.click();
- await expect(done,'completion box of 城市集合，把日常暫停 after the click').toBeChecked();
- await expectOnePanelPerRow(page,'after ticking the completion box');
+ await expect(title,'heading of the added meal').toBeVisible();
+ const added=page.locator('.meal-card').filter({has:title});
+ await expect(added.locator('.swipe-actions'),'.swipe-actions panels of the added meal').toHaveCount(1);
+ await expect(added.locator('.swipe-toggle'),'.swipe-toggle buttons of the added meal').toHaveCount(1);
+ await expect(page.locator('.meal-card'),'meal cards after adding the meal').toHaveCount(before+1);
+ await expectOnePanelPerRow(page,'after adding the meal');
+ // 「規劃行程」 (requirement 1.6) holds no swipe rows, in both of the schedule tab's views.
+ await nav(page,'schedule');
+ await expect(page.locator('.meal-card'),'meal cards on the schedule tab').toHaveCount(0);
+ await expect(page.locator('[data-swipe-row]'),'opt-in rows on the schedule tab, 行程圖').toHaveCount(0);
+ await page.locator('.plan-view-switch [data-view="editor"]').click();
+ await expect(page.locator('.plan-days>.date-tabs'),'day buttons of 規劃行程').toBeVisible();
+ await expect(page.locator('[data-swipe-row]'),'opt-in rows in 規劃行程').toHaveCount(0);
+ await expect(page.locator('.swipe-row'),'prepared swipe rows in 規劃行程').toHaveCount(0);
  await nav(page,'meals');
  await expect(page.getByRole('heading',{name:'一起煮，一起吃',exact:true}),'heading of the meals tab').toBeVisible();
- await expectOnePanelPerRow(page,'on the meals tab');
- await nav(page,'schedule');
- await expect(page.locator('.activity-card'),'activity cards back on the schedule tab').toHaveCount(6);
- await expectOnePanelPerRow(page,'back on the schedule tab');
- await page.locator('[data-day="2026-11-21"]').click();
- await expect(page.locator('.activity-card'),'activity cards on 2026-11-21').toHaveCount(3);
- await expectOnePanelPerRow(page,'on 2026-11-21');
- await page.locator('[data-day="2026-11-20"]').click();
- await expect(page.locator('.activity-card'),'activity cards back on 2026-11-20').toHaveCount(6);
- await expectOnePanelPerRow(page,'back on 2026-11-20');
- await page.locator('.activity-card').first().evaluate(row=>row.parentElement.insertBefore(row,row.nextSibling));
+ await expect(page.locator('.meal-card'),'meal cards back on the meals tab').toHaveCount(before+1);
+ await expectOnePanelPerRow(page,'back on the meals tab');
+ await page.locator('.meal-card').first().evaluate(row=>row.parentElement.insertBefore(row,row.nextSibling));
  await expectOnePanelPerRow(page,'after re-inserting a prepared card');
 });
 
@@ -1026,7 +1031,7 @@ test('[TC-SWIPE-022] every row a re-render adds gets one panel and one toggle, a
 // check the inversion from open that onClick implements, a path only script can take.
 test('[TC-SWIPE-023] a toggle click closes the other rows and inverts the state of its own row',async({page})=>{
  await openPhoneDemo(page);
- const cards=page.locator('.activity-card'),rowA=cards.nth(0),rowB=cards.nth(1);
+ const cards=page.locator('.meal-card'),rowA=cards.nth(0),rowB=cards.nth(1);
  const openRows=async()=>(await swipeRowStates(page)).filter(isOpen).length;
  await rowA.locator('.swipe-toggle').click();
  await expectSettled(rowA,true,'row A after a click on its toggle');
@@ -1041,16 +1046,16 @@ test('[TC-SWIPE-023] a toggle click closes the other rows and inverts the state 
  expect(await openRows(),'open rows after the dispatched click').toBe(0);
 });
 
-// Requirement 5.7. .schedule-intro is the caption above the day's timeline. It lies outside every panel, and no app
-// listener acts on a click there.
+// Requirement 5.7. .section-description is the caption above the meal days on the meals tab. It lies outside every
+// panel, and no app listener acts on a click there.
 test('[TC-SWIPE-024] a click outside every panel closes the open row',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first();
+ const card=page.locator('.meal-card').first();
  await card.locator('.swipe-toggle').click();
  await expectSettled(card,true,'after a click on the toggle');
- await page.locator('.schedule-intro').click();
- expect((await swipeRowStates(page)).filter(isOpen),'rows still open after a click on .schedule-intro').toEqual([]);
- await expectSettled(card,false,'after a click on .schedule-intro');
+ await page.locator('.section-description').click();
+ expect((await swipeRowStates(page)).filter(isOpen),'rows still open after a click on .section-description').toEqual([]);
+ await expectSettled(card,false,'after a click on .section-description');
 });
 
 // Requirement 2.9. Playwright's click() sends a mouse pointerdown first, and onPointerDown clears the suppression
@@ -1059,7 +1064,7 @@ test('[TC-SWIPE-024] a click outside every panel closes the open row',async({pag
 // click that got through would also close the row again.
 test('[TC-SWIPE-025] a swipe of at least 42px swallows the next click within 450ms and only that one',async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first(),heading=card.locator('h3');
+ const card=page.locator('.meal-card').first(),heading=card.locator('h4');
  await page.evaluate(startClickLog);
  const swipe=await drag(page,heading,[{dx:-80},{hold:STILL_MS}]);
  expect(Math.abs(swipe.dx),'horizontal travel of the swipe, px').toBeGreaterThanOrEqual(CLICK_SUPPRESS_DISTANCE);
@@ -1085,7 +1090,7 @@ test('[TC-SWIPE-025] a swipe of at least 42px swallows the next click within 450
 // never resolves an axis and opens no suppression window: the click that follows it within 450ms goes through.
 test('[TC-SWIPE-026] a tap with no travel swallows no click',async({page})=>{
  await openPhoneDemo(page);
- const heading=page.locator('.activity-card').first().locator('h3');
+ const heading=page.locator('.meal-card').first().locator('h4');
  await page.evaluate(startClickLog);
  const tap=await drag(page,heading,[]);
  expect({moves:tap.samples.length,dx:tap.dx,dy:tap.dy},'pointermoves and travel of the tap').toEqual({moves:0,dx:0,dy:0});
@@ -1102,7 +1107,7 @@ test('[TC-SWIPE-026] a tap with no travel swallows no click',async({page})=>{
 // that the MutationObserver scanned the insertion.
 test('[TC-SWIPE-027] a row whose allowlisted actions are all disabled gets no panel and no toggle',async({page})=>{
  await openPhoneDemo(page);
- await page.locator('.timeline').evaluate(timeline=>{
+ await page.locator('.meal-days').evaluate(timeline=>{
   const row=disabled=>`<article data-swipe-row data-e2e-row="${disabled?'disabled':'enabled'}"><h3>測試列</h3><button type="button" data-action="activity" aria-label="編輯 測試列"${disabled?' disabled':''}>編輯</button><button type="button" data-action="delete" aria-label="移除 測試列"${disabled?' disabled':''}>移除</button></article>`;
   timeline.insertAdjacentHTML('beforeend',row(true)+row(false));
  });
@@ -1134,7 +1139,7 @@ function moveVelocity({samples}){
 }
 
 /**
- * Drag `row`, the closed first activity card, `distance` px left in three frames, pause PAUSE_MS, and release straight
+ * Drag `row`, the closed first meal card, `distance` px left in three frames, pause PAUSE_MS, and release straight
  * after the pause. Then assert what makes it a pause test. The row's End_Stop is -136px, so halfway is 68px. The moves
  * alone measured a leftward flick, so the rule from before task 4.5 would open the row at any distance. The release
  * came more than VELOCITY_WINDOW ms after the last move and measured 0 px/ms, so the halfway rule decides. The
@@ -1142,7 +1147,7 @@ function moveVelocity({samples}){
  */
 async function releaseAfterPause(page,row,distance){
  expect(await endStop(row),'End_Stop of the two-action first card').toBe(-2*ACTION_WIDTH);
- const result=await drag(page,row.locator('h3'),[{dx:-distance,steps:3},{pause:PAUSE_MS}],{release:'immediate'});
+ const result=await drag(page,row.locator('h4'),[{dx:-distance,steps:3},{pause:PAUSE_MS}],{release:'immediate'});
  const moves=moveVelocity(result),gap=result.release.t-result.samples.at(-1).t,released=measuredReleaseVelocity(result);
  test.info().annotations.push({type:'release after a pause',description:`${distance}px in ${result.samples.length} moves, which alone measured ${moves===null?'no velocity':`${moves.toFixed(3)}px/ms`}; the release came ${gap.toFixed(1)}ms after the last move and measured ${released}px/ms`});
  expect(moves,`velocity of the moves alone in the ${distance}px drag, px/ms`).toBeLessThanOrEqual(-FLICK_THRESHOLD);
@@ -1155,7 +1160,7 @@ async function releaseAfterPause(page,row,distance){
 // release velocity. Measured back from the last move, as before task 4.5, the same release flicks the row open.
 test(`a fast 40px drag released after a ${PAUSE_MS}ms pause settles closed`,async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first();
+ const card=page.locator('.meal-card').first();
  await releaseAfterPause(page,card,40);
  await expectSettled(card,false,'after the 40px drag, pause and release');
 });
@@ -1163,7 +1168,7 @@ test(`a fast 40px drag released after a ${PAUSE_MS}ms pause settles closed`,asyn
 // Requirements 2.3 and 2.11. 100px is past halfway, so the halfway rule opens the row after the pause.
 test(`a fast 100px drag released after a ${PAUSE_MS}ms pause settles open`,async({page})=>{
  await openPhoneDemo(page);
- const card=page.locator('.activity-card').first();
+ const card=page.locator('.meal-card').first();
  await releaseAfterPause(page,card,100);
  await expectSettled(card,true,'after the 100px drag, pause and release');
 });
