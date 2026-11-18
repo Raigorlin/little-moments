@@ -44,6 +44,7 @@ const INVENTORY = [
   { method: 'PUT', path: '/api/trips/{tripId}', cls: 'protected', json: true },
   { method: 'PATCH', path: '/api/trips/{tripId}', cls: 'protected', json: true },
   { method: 'POST', path: '/api/trips/{tripId}/check', cls: 'protected', json: true },
+  { method: 'PUT', path: '/api/trips/{tripId}/presence', cls: 'protected', json: true },
   { method: 'GET', path: '/api/trips/{tripId}/ledger', cls: 'protected' },
   { method: 'PUT', path: '/api/trips/{tripId}/ledger', cls: 'protected', json: true },
   { method: 'GET', path: '/api/trips/{tripId}/receipt-ai', cls: 'protected' },

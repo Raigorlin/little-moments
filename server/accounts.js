@@ -656,16 +656,19 @@ export async function createAccountService({
   const retainPurchased = (old, item) => { if (old?.done && !item.done && item.source === 'meal') item.source = 'manual'; };
   // Invited members may add, edit and remove activities, places, routes and en-route tasks, but never remove
   // participants, meals, gear or vehicles, rewrite other accounts' identities or pack for others.
+  function denyCollaboratorRemovals(stored, next) {
+    for (const key of ['people', 'meals', 'gear', 'vehicles']) {
+      if (!Array.isArray(next[key])) continue;
+      const kept = new Set(next[key].map(item => item.id));
+      if (stored[key].some(item => !kept.has(item.id))) fail(403, DENY_REMOVAL);
+    }
+  }
   async function guardCollaborator(t, tripId, stored, next, me) {
     const oldShopping = new Map(stored.shopping.map(x => [x.id, x]));
     for (const item of next.shopping) {
       const old = oldShopping.get(item.id);
       if (old && old.source !== 'meal' && item.source === 'meal') fail(403, DENY_REMOVAL);
       retainPurchased(old, item);
-    }
-    for (const key of ['people', 'meals', 'gear', 'vehicles']) {
-      const kept = new Set(next[key].map(item => item.id));
-      if (stored[key].some(item => !kept.has(item.id))) fail(403, DENY_REMOVAL);
     }
     const bound = new Set((await q.membersOf(t, tripId)).map(b => b.person_id));
     for (const person of next.people) {
@@ -937,6 +940,8 @@ export async function createAccountService({
         next.revision = access.row.revision;
         next.joined = true;
         next.currentUser = next.people[0]?.id;
+        // A collaborator's removal is refused (403) before validity, which would otherwise answer 400 for dangling references.
+        if (!access.canDelete) denyCollaboratorRemovals(stored, next);
         if (!isValidState(next)) fail(400, '旅行資料格式不正確。');
         for (const binding of await q.membersOf(t, tripId)) {
           const person = next.people.find(p => p.id === binding.person_id);

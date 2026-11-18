@@ -105,6 +105,7 @@ function scopedRequests(who, inviteId, title) {
     ['PUT trip', id => ['PUT', `/api/trips/${id}`, { body: { expectedUserId: who.id, revision: 1, state: seed() } }]],
     ['PATCH trip', id => ['PATCH', `/api/trips/${id}`, { body: { expectedUserId: who.id, revision: 1, title: '改名' } }]],
     ['POST check', id => ['POST', `/api/trips/${id}/check`, { body: { expectedUserId: who.id, revision: 1, kind: 'shopping', id: 's1', checked: true } }]],
+    ['PUT presence', id => ['PUT', `/api/trips/${id}/presence`, { body: { expectedUserId: who.id, clientId: 'device-0001', field: null } }]],
     ['GET ledger', id => ['GET', `/api/trips/${id}/ledger`, {}]],
     ['PUT ledger', id => ['PUT', `/api/trips/${id}/ledger`, { body: { expectedUserId: who.id, revision: 0, requestId: 'outsider-1', expenses: [], settlements: [] } }]],
     ['GET receipt-ai', id => ['GET', `/api/trips/${id}/receipt-ai`, {}]],
