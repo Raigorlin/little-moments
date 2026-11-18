@@ -325,7 +325,7 @@ select option,select optgroup{font-family:var(--font-ui);background:var(--paper)
 }
 /* Phones: a compact hero. Title and tags on top, the illustration as a slim strip with the countdown on it. */
 @media(max-width:600px){
-  .hero:not(.hero-home){grid-template-columns:1fr;min-height:0;background:var(--soft)}
+  .hero:not(.hero-home){grid-template-columns:1fr;min-height:0}
   .hero:not(.hero-home) .hero-copy{align-self:start;padding:14px 14px 6px}
   .hero:not(.hero-home) .hero-copy .eyebrow{display:none}
   .hero:not(.hero-home) .hero-copy h1{font-size:clamp(22px,6.4vw,26px)}
@@ -339,7 +339,7 @@ select option,select optgroup{font-family:var(--font-ui);background:var(--paper)
   .hero:not(.hero-home) .countdown small{grid-column:auto;font-size:12px}
   .hero:not(.hero-home) .countdown strong{font-size:22px}
   .hero:not(.hero-home) .countdown>span{font-size:12px;padding-bottom:0}
-  .hero:not(.hero-home) .trip-menu-button{position:absolute;width:1px;height:1px;min-width:0;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .hero:not(.hero-home) .hero-copy{position:static}.hero:not(.hero-home){position:relative}.hero:not(.hero-home) .trip-menu-button{position:absolute;top:0;right:0;z-index:3;width:6px;height:6px;min-width:0;padding:0;margin:0;overflow:hidden;opacity:0}
 }
 @media(max-width:600px){
   .crew-panel{padding:14px;border-radius:14px}

@@ -58,7 +58,7 @@ async function saveStoryPlan(plan) {
     }
     if (account) {
       // Keep the canonical candidate local until the existing revision/session-checked API responds; the studio keeps its own draft.
-      accountSaving=true; saved=false; accountError=''; render();
+      accountSaving=true; saved=false; accountError=''; render({soft:true});
       try {
         await assertAccountSession();
         const result=await account.api(`/api/trips/${account.trip.id}`,{method:'PUT',body:{revision:account.trip.revision,expectedUserId:account.user.id,state:next}});
@@ -67,7 +67,7 @@ async function saveStoryPlan(plan) {
         state=before; saved=!(error.status===0 || error.status===401 || error.status===409 || error.status>=500 || accountSessionChanged); studioFailed=true;studioRetryAllowed=(error.status===0 || error.status>=500) && !accountSessionChanged;
         accountError=error.status===409?'其他人已更新這趟旅行。你的繪本草稿仍保留，請先匯出備份再重新載入合併。':error.status===401?'登入已失效。繪本草稿未儲存，請先匯出備份。':`${error.message}，繪本草稿尚未儲存。`;
         return {ok:false,message:accountError};
-      } finally {accountSaving=false;render();}
+      } finally {accountSaving=false;render({soft:true});}
     }
     state=next;
     const ok=commit('行程繪本已更新',false);
@@ -145,7 +145,17 @@ function route() { if(account)return location.pathname.endsWith('/go')?'go':'tri
 function notify(message) { clearTimeout(toastTimer); document.querySelector('#toasts').textContent = message; document.querySelector('#toasts').classList.add('visible'); toastTimer=setTimeout(()=>document.querySelector('#toasts').classList.remove('visible'),4500); }
 // Returns `saved` in Local_Planner and the commitAccount() promise (true on success) in Account_Mode; callers may ignore it.
 function commit(message, announce=true) { if(account)return commitAccount(message,announce); const disk=readStorage(storage); if(disk.status==='ok' && disk.state.revision!==baseRevision){storageLocked=true;pendingRemote=disk.state;} logEvent(state,message); saved=!storageLocked && save(storage,state);if(saved){baseRevision=state.revision;}render();if(announce||!saved)notify(saved?message+' · 已儲存在本機':'尚未儲存。請匯出備份，再處理儲存或分頁衝突。'); return saved; }
-function render() {
+function studioInUse(){return !!(account&&studioHost?.isConnected&&studioMount&&route()==='trip'&&tab==='schedule');}
+// Autosave from the studio must not rebuild the page: that detached the editor (lost focus, flicker, scroll back to top).
+function softChrome(){
+  const sync=app.querySelector('.sync-status');
+  if(sync){sync.innerHTML=`<i></i>${accountSaving?'正在儲存…':saved?'已儲存至本機伺服器':'尚未儲存'}`;sync.hidden=!accountSaving&&saved&&navigator.onLine;}
+  app.querySelector(':scope > .save-warning')?.remove();
+  if(accountError||!saved){const w=document.createElement('div');w.className='save-warning';w.setAttribute('role','alert');w.innerHTML=`<span>${e(accountError||'內容尚未儲存，請保留備份。')}</span>${studioDirty()?'繪本草稿請在繪本內匯出 JSON；帳號未成功儲存。':!saved?button('匯出未存內容','export')+button('重試儲存','account-retry'):''}${button('重新載入伺服器版本','account-reload')}`;app.querySelector('header')?.after(w);}
+}
+function render(opts={}) {
+  if(opts.soft&&studioInUse()){softChrome();return;}
+  const scrollX=window.scrollX,scrollY=window.scrollY;
   const active=document.activeElement?.dataset.focus||deferredFocus;
   deferredFocus=accountSaving?(active||''):'';
   const page=route();
@@ -171,6 +181,7 @@ function render() {
     const days=activeDay.parentElement,dayRect=activeDay.getBoundingClientRect(),daysRect=days.getBoundingClientRect();
     if(dayRect.left<daysRect.left||dayRect.right>daysRect.right)days.scrollLeft+=dayRect.left<daysRect.left?dayRect.left-daysRect.left:dayRect.right-daysRect.right;
   }
+  if(window.scrollY!==scrollY||window.scrollX!==scrollX)window.scrollTo({left:scrollX,top:scrollY,behavior:'instant'});
 }
 function header() {
   if(account)return accountHeader();
