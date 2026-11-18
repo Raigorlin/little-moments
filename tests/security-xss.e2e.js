@@ -301,16 +301,13 @@ test('[TC-XSS-003] home page, trip page tabs, Invitation_Dialog and expenses vie
  await page.goto(`/${ctx.ownerUser.username}/trips/${ctx.trip.id}`);
  await expect(page.locator('#trip-title')).toHaveText(P[5]);
  const seenText=new Set();
- const collect=async()=>{const t=await page.evaluate(()=>document.body.innerText);for(const v of ALL)if(t.includes(v))seenText.add(v);};
+ const collect=async()=>{const t=await page.evaluate(()=>document.body.innerText+'\n'+(document.querySelector('.story-studio-host')?.shadowRoot?.textContent||''));for(const v of ALL)if(t.includes(v))seenText.add(v);};
  for(const tab of ['schedule','meals','shopping','gear']){
   await page.locator(`.section-tabs [data-tab="${tab}"]`).click();
   await check(page,problems,`trip page ${tab} tab`,[P[5]]);
   if(tab==='schedule'){
-   // The 行程圖 is shown at once; the Text_Panel body is written only while it is expanded.
-   await expect(page.locator('.itinerary-poster')).toBeVisible();
-   const toggle=page.locator('[data-text-panel=toggle]');
-   if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();
-   await expect(page.locator('#text-panel-body')).toBeVisible();
+   // The schedule tab is the storybook studio: its journal lives in a shadow root and must also show payloads as text.
+   await expect(page.locator('.story-studio-host').locator('#journal')).toBeVisible();
   }
   await collect();
  }

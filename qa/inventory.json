@@ -327,7 +327,7 @@
       "role": "anonymous",
       "scenario": "未登入者在手機寬度開啟行程頁，並以 X 刪除餐點卡片",
       "expected": "第一個區段緊接在頁首之後，選取的分頁保持可見；確認後餐點卡片被移除",
-      "testCases": ["TC-DEMO-003", "TC-DEMO-004"],
+      "testCases": ["TC-DEMO-004"],
       "critical": false,
       "unauthorized": false
     },
