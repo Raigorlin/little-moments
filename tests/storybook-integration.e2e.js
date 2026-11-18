@@ -38,7 +38,7 @@ test('[studio] one poster edit saves website state and survives reload without d
   await expect(field(page, 'headline')).toHaveValue('四車慢遊測試');
 });
 
-test('[studio] unsaved draft remains when leaving and returning to schedule; only after save updates the trip', async ({page}) => {
+test('[studio] a draft survives leaving and returning to schedule, and autosave then stores it', async ({page}) => {
   await page.goto('/demo');
   await expect(studio(page)).toBeVisible();
   const before=await savedState(page);
@@ -46,7 +46,8 @@ test('[studio] unsaved draft remains when leaving and returning to schedule; onl
   await field(page, 'headline').fill('待儲存草稿');
   page.on('dialog', dialog => dialog.accept());
   await page.locator('.section-tabs [data-tab="shopping"]').click();
-  expect((await savedState(page)).storybook?.headline).toBe(before.storybook?.headline);
+  expect(before.storybook?.headline).not.toBe('待儲存草稿');
+  await expect.poll(async()=> (await savedState(page)).storybook?.headline).toBe('待儲存草稿');
   await page.locator('.section-tabs [data-tab="schedule"]').click();
   await expect(field(page, 'headline')).toHaveValue('待儲存草稿');
 });
@@ -64,6 +65,7 @@ test('[studio] a car stop note and meal edit save with original IDs and unlinked
   await meal.locator('summary').click();
   await meal.locator('textarea').fill('晚餐前提醒大家洗手');
   await expect.poll(async()=> (await savedState(page)).routes.find(route=>route.id==='rt-1-v3').stops[0].note).toBe('記得冷藏食材');
+  await expect.poll(async()=> (await savedState(page)).meals.find(x=>x.id==='m1').notes).toBe('晚餐前提醒大家洗手');
   const after=await savedState(page);
   expect(after.routes.map(x=>x.id)).toEqual(before.routes.map(x=>x.id));
   expect(after.routes.find(x=>x.id==='rt-1-v3').stops[0].id).toBe('st-1');
