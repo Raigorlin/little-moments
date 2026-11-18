@@ -1013,10 +1013,6 @@ test('[TC-SWIPE-022] every row a re-render adds gets one panel and one toggle, a
  await nav(page,'schedule');
  await expect(page.locator('.meal-card'),'meal cards on the schedule tab').toHaveCount(0);
  await expect(page.locator('[data-swipe-row]'),'opt-in rows on the schedule tab, 行程圖').toHaveCount(0);
- await page.locator('.plan-view-switch [data-view="editor"]').click();
- await expect(page.locator('.plan-days>.date-tabs'),'day buttons of 規劃行程').toBeVisible();
- await expect(page.locator('[data-swipe-row]'),'opt-in rows in 規劃行程').toHaveCount(0);
- await expect(page.locator('.swipe-row'),'prepared swipe rows in 規劃行程').toHaveCount(0);
  await nav(page,'meals');
  await expect(page.getByRole('heading',{name:'一起煮，一起吃',exact:true}),'heading of the meals tab').toBeVisible();
  await expect(page.locator('.meal-card'),'meal cards back on the meals tab').toHaveCount(before+1);

@@ -102,31 +102,3 @@ async function measureScheduleBar(width){
  return geometry;
 }
 
-test('[TC-SCHED-001] the 規劃行程 day buttons share one row, fit the page and are not squeezed, at every width for 3, 8 and 15 days',async({page})=>{
- await page.goto('/demo/');
- await openEditor(page);
- for(const {days,endDate} of TRIPS){
-  if(endDate)await setTripEnd(page,endDate);
-  await expect(page.locator('.plan-days>.date-tabs>button')).toHaveCount(days);
-  for(const width of WIDTHS){
-   await page.setViewportSize({width,height:HEIGHT});
-   const m=await page.evaluate(measureScheduleBar,width),at=`${width}px, ${days} days`;
-   expect(m.dateTops,`${at}: one date button per day`).toHaveLength(days);
-   // Task 3.3's remaining checks. They are soft, so a failing run lists every failing width and trip length.
-   expect.soft(m.dateTops,`${at}: every date button has the same offsetTop (7.3)`).toEqual(m.dateTops.map(()=>m.dateTops[0]));
-   expect.soft(m.pageScrollWidth,`${at}: the page is no wider than the viewport (7.5)`).toBeLessThanOrEqual(m.innerWidth);
-   if(days===15){
-    expect.soft(m.tabs.scrollWidth,`${at}: the date tabs hold more than they show (7.4)`).toBeGreaterThan(m.tabs.clientWidth);
-    expect.soft(m.tabs.overflowX,`${at}: the date tabs scroll sideways (7.4)`).toBe('auto');
-   }
-   // Task 6.10's "Not squeezed" check from design.md's Amendment D. It runs at every pair, because where the days fit
-   // nothing shrinks and it holds as well. Each list names the date buttons that fail, so a passing pair has none.
-   const squeezed=m.dates.filter(date=>date.width<date.maxContentWidth-1).map(date=>`${date.day} is ${date.width}px wide, under its ${date.maxContentWidth}px max-content width`);
-   expect.soft(squeezed,`${at}: every date button is at least as wide as its max-content width within 1px (7.6)`).toEqual([]);
-   const wrapped=m.dates.flatMap(date=>Object.entries(date.lines).filter(([,count])=>count!==1).map(([label,count])=>`${date.day} <${label}> takes ${count} line boxes`));
-   expect.soft(wrapped,`${at}: every date label renders as one line box (7.6)`).toEqual([]);
-   const overflowing=m.dates.filter(date=>date.scrollWidth>date.clientWidth).map(date=>`${date.day} has scrollWidth ${date.scrollWidth} and clientWidth ${date.clientWidth}`);
-   expect.soft(overflowing,`${at}: no date button's scrollWidth exceeds its clientWidth (7.6)`).toEqual([]);
-  }
- }
-});

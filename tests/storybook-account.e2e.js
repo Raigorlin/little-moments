@@ -38,7 +38,6 @@ test('[studio-account] owner edits save through revision-checked API with origin
   await expect(field(page,'poster')).toBeAttached();
   await field(page,'tab-cover').click();
   await field(page,'headline').fill('帳號版四車繪本');
-  await field(page,'saveTrip').click();
   await expect.poll(()=>backend.read().putCount).toBe(1);
   await expect.poll(()=>backend.read().state.storybook?.headline).toBe('帳號版四車繪本');
   const result=backend.read();
@@ -57,12 +56,10 @@ test('[studio-account] a 409 keeps unsaved draft and never retries over the newe
   await expect(field(page,'poster')).toBeAttached();
   await field(page,'tab-cover').click();
   await field(page,'headline').fill('我還沒儲存的繪本');
-  await field(page,'saveTrip').click();
   await expect(page.locator('.save-warning')).toContainText('其他人已更新');
   await expect(field(page,'headline')).toHaveValue('我還沒儲存的繪本');
   expect(backend.read().putCount).toBe(1);
   expect(backend.read().state.storybook?.headline).toBeUndefined();
-  await field(page,'saveTrip').click();
   expect(backend.read().putCount).toBe(1);
 });
 

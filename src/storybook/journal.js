@@ -188,7 +188,7 @@ export function renderJournal(container, plan, ctx) {
   const head = el('header', { class: 'j-head' },
     el('div', { class: 'j-head-copy' },
       el('span', { class: 'j-eyebrow' }, el('span', { class: 'j-eye-light', text: 'CAMPING JOURNAL' }), el('span', { class: 'j-eye-dark', text: 'UNDER THE STARS' })),
-      el('h2', { class: 'j-title', text: plan.headline || plan.title || '未命名旅程' }),
+      el('div', { class: 'j-title', text: plan.headline || plan.title || '未命名旅程' }),
       el('p', { class: 'j-dates', text: plan.days.map(d => mdw(d.date, false)).join('・') || '日期未填' }),
       el('p', { class: 'j-sub', text: `露營行程手帖 ／ 地點：${dest ? placeName(dest) : '未指定'}` }),
       plan.vehicles.length ? el('ul', { class: 'j-cars', 'aria-label': '車輛' }, plan.vehicles.map(v => el('li', {}, carIcon(v.color), el('span', { text: v.name })))) : null),
@@ -250,5 +250,5 @@ export function renderJournal(container, plan, ctx) {
     el('button', { type: 'button', id: 'copyItinerary', class: 'j-copy', title: '複製文字版行程', 'aria-label': '複製文字版行程', onclick: onCopy, html: SVG(ICONS.copy) }, el('span', { class: 'copy-label', text: '複製文字' })));
 
   container.replaceChildren(el('span', { html: WOBBLE }), tools, head, el('div', { class: 'j-days' }, days), shop,
-    el('footer', { class: 'j-foot' }, el('span', { text: '時間未填的項目，之後再補上就好。' }), el('span', { text: 'HAVE A LITTLE GOOD DAY' })));
+    el('div', { class: 'j-foot' }, el('span', { text: '時間未填的項目，之後再補上就好。' }), el('span', { text: 'HAVE A LITTLE GOOD DAY' })));
 }

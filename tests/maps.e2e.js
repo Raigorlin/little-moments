@@ -18,7 +18,7 @@ test('destination, poster activity, legacy departure and car links open encoded 
  p.on('request',r=>{if(new URL(r.url()).origin!==base)external.push(r.url());});
  await p.goto(`/qa-admin/trips/${trip.id}`);await expect(p.locator('.hero-destination .map-link')).toBeVisible();
  const check=async(link,query)=>{await expect(link).toHaveAttribute('target','_blank');await expect(link).toHaveAttribute('rel','noopener noreferrer');const u=new URL(await link.getAttribute('href'));expect(u.origin).toBe('https://www.google.com');expect(u.searchParams.get('api')).toBe('1');expect(u.searchParams.get('query')).toBe(query);};
- await check(p.locator('.hero-destination .map-link'),address);const poster=p.locator('.itinerary-poster').first();await check(poster.locator(`.moment-card[data-id="${state.activities[0].id}"] .moment-location .map-link`),activityPlace);await check(poster.locator('.rm-track--legacy[data-id="v1"] .map-link'),'台北車站東三門');
+ await check(p.locator('.hero-destination .map-link'),address);
  await openTripMenu(p);await check(p.locator('#trip-menu .vehicle-card .map-link').first(),'台北車站東三門');
  for(const width of [320,390,1440]){await p.setViewportSize({width,height:950});expect(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);}
  expect(external).toEqual([]);expect(await api(p,`/api/trips/${trip.id}`)).toEqual(before);

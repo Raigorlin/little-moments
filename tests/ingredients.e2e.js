@@ -85,8 +85,12 @@ test('manual details and purchased items survive deleting their recipe and later
   await nav(page,'shopping');await expect(row(page,'菠菜')).toContainText('保留採買品項');await page.getByRole('checkbox',{name:'菠菜已買齊',exact:true}).uncheck();await page.reload();await nav(page,'shopping');await expect(row(page,'菠菜')).toBeVisible();
 });
 test('duplicate manual items and linked deletions explain how to edit the existing ingredient',async({page})=>{
-  await page.goto('/demo/');await nav(page,'shopping');await page.getByRole('button',{name:'移除 牛肉片',exact:true}).click();await expect(page.locator('#toasts')).toContainText('請先到料理菜單移除食材');await expect(page.locator('#dialog')).toBeHidden();await page.getByRole('button',{name:'編輯 牛肉片',exact:true}).click();await page.getByRole('button',{name:'移除項目',exact:true}).click();await expect(page.locator('.form-error')).toContainText('請先到料理菜單移除食材');await page.getByRole('button',{name:'取消',exact:true}).click();
+  await page.goto('/demo/');await nav(page,'shopping');await page.getByRole('button',{name:'移除 牛肉片',exact:true}).click();await expect(page.locator('#dialog')).toContainText('移除這項食材？');await page.getByRole('button',{name:'取消',exact:true}).click();await expect(page.locator('#dialog')).toBeHidden();
   await page.getByRole('button',{name:'新增品項',exact:true}).click();await page.getByLabel('品項名稱',{exact:true}).fill('牛肉片');await saveDialog(page);await expect(page.locator('.form-error')).toContainText('已有同名品項');expect((await read(page)).shopping.filter(s=>s.name==='牛肉片')).toHaveLength(1);
+});
+test('deleting a linked ingredient removes it from the meal menu too',async({page})=>{
+  await page.goto('/demo/');await nav(page,'shopping');await page.getByRole('button',{name:'移除 牛肉片',exact:true}).click();await expect(page.locator('#dialog')).toContainText('料理菜單上的這項食材也會一併刪除');await page.getByRole('button',{name:'確認移除',exact:true}).click();
+  const s=await read(page);expect(s.shopping.some(x=>x.name==='牛肉片')).toBe(false);expect(s.meals.every(m=>!m.ingredients.includes('牛肉片'))).toBe(true);
 });
 test('[TC-SHOP-002] shopping rows can be removed with the matching close icon and confirmation',async({page})=>{
   await page.goto('/demo/');await nav(page,'shopping');await page.getByRole('button',{name:'新增品項',exact:true}).click();await page.getByLabel('品項名稱',{exact:true}).fill('單獨採買品');await saveDialog(page);

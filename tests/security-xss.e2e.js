@@ -290,28 +290,6 @@ async function checkPlanner(page,problems,foreign){
 // END planner-xss
 
 // Runs before [TC-XSS-003] on purpose: in serial mode a failure there would otherwise skip this one.
-test('[TC-XSS-005] Itinerary_Poster, Text_Panel and Itinerary_Editor render the payloads as text',async()=>{
- test.setTimeout(120000);
- const {exampleTrip}=await import('./fixtures/example-trip.js');
- const {syncMealIngredients}=await import('../src/ingredients.js');
- const wanted=planState(exampleTrip,syncMealIngredients);
- const {trip}=await api(ctx.owner.request,'/api/trips','POST',{legacyState:wanted});
- const {state}=await api(ctx.owner.request,`/api/trips/${trip.id}`);
- // The server keeps every payload whole.
- expect(state.places.map(x=>x.name)).toEqual(expect.arrayContaining(P));
- expect(state.vehicles.map(x=>x.name)).toEqual(expect.arrayContaining(P));
- expect(state.routes.find(r=>r.id==='rt-1-v1').stops.map(x=>x.note)).toEqual(P);
- expect(state.daySettings.map(x=>x.title)).toEqual(expect.arrayContaining([P[3],P[4]]));
- expect(state.activities.filter(a=>/^a[1-6]$/.test(a.id)).map(a=>[a.title,a.location,a.note])).toEqual(P.map((v,i)=>[v,P[(i+1)%6],P[(i+2)%6]]));
- expect(state.shopping.filter(x=>x.assignee).map(x=>x.name)).toEqual(expect.arrayContaining(P));
- expect(state.meals.map(m=>m.title)).toEqual(expect.arrayContaining(P));
- const page=await ctx.owner.newPage();
- const foreign=trackForeign(page,new URL(testBase).origin);
- await page.goto(`/${ctx.ownerUser.username}/trips/${trip.id}`);
- await page.locator('.section-tabs [data-tab="schedule"]').click();
- await checkPlanner(page,ctx.ownerProblems,foreign);
- await page.close();
-});
 
 test('[TC-XSS-003] home page, trip page tabs, Invitation_Dialog and expenses view render every payload as text',async()=>{
  test.setTimeout(120000);

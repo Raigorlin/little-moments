@@ -28,7 +28,7 @@ test('Taipei midnight refreshes only the note and preserves an open meal draft',
  p.once('dialog',d=>d.accept());await p.getByRole('button',{name:'取消',exact:true}).click();
 });
 test('daily note fits mobile and dark mode and remains available offline in the demo',async({page:p,context})=>{
- await p.goto('/demo/#/trip');const quote=await p.locator('[data-daily-quote]').textContent();
+ await p.goto('/demo/#/trip');await p.locator('[data-tab="meals"]').click();const quote=await p.locator('[data-daily-quote]').textContent();
  for(const theme of ['light','dark']){await p.evaluate(t=>document.documentElement.dataset.theme=t,theme);for(const width of [320,390,1440]){
   await p.setViewportSize({width,height:950});await p.locator('.daily-note').scrollIntoViewIfNeeded();await expect(p.locator('[data-daily-quote]')).toHaveText(quote);expect(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   if(width===390)await p.locator('.daily-note').screenshot({path:`previews/daily-note-${theme}.png`});
