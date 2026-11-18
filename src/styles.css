@@ -363,3 +363,14 @@ select option,select optgroup{font-family:var(--font-ui);background:var(--paper)
   .hero:not(.hero-home) .hero-pin .icon{width:18px;height:18px}
   .hero:not(.hero-home) .trip-title-row{gap:8px}
 }
+@media(max-width:600px){
+  .section-tabs>button .tab-icon{width:38px;height:38px;border-radius:50%;border:2px solid transparent;color:#3e3a39;background:var(--chip,var(--soft))}
+  .section-tabs>button .tab-icon .icon{width:21px;height:21px}
+  .section-tabs>button[data-tab="schedule"]{--chip:var(--coral)}
+  .section-tabs>button[data-tab="meals"]{--chip:var(--yellow)}
+  .section-tabs>button[data-tab="shopping"]{--chip:var(--green)}
+  .section-tabs>button[data-tab="gear"]{--chip:var(--blue)}
+  .section-tabs>button[data-tab="expenses"]{--chip:var(--lavender)}
+  .section-tabs>button[aria-current] .tab-icon{border-color:var(--ink)}
+  .section-tabs>button:not([aria-current]) .tab-icon{opacity:.75}
+}
