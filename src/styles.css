@@ -356,3 +356,10 @@ select option,select optgroup{font-family:var(--font-ui);background:var(--paper)
   .paper-note .eyebrow{display:none}
   .side-footnote{margin-top:16px}
 }
+.hero-pin{display:none}
+@media(max-width:600px){
+  .hero:not(.hero-home) .hero-tags>.hero-destination{display:none}
+  .hero:not(.hero-home) .hero-pin{display:inline-grid;place-items:center;width:44px;height:44px;border:2px solid var(--ink);border-radius:10px;background:var(--paper);color:var(--ink);flex:none}
+  .hero:not(.hero-home) .hero-pin .icon{width:18px;height:18px}
+  .hero:not(.hero-home) .trip-title-row{gap:8px}
+}
