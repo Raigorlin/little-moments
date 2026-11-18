@@ -12,7 +12,7 @@ import { parseIngredients } from './ingredients.js';
 import { inferDishKind } from './recipes.js';
 import { mealSlotRank } from './meal-order.js';
 import {
-  CAR_COLOR_COUNT, DESTINATION_REF, STOP_KINDS, categoryLabel, chineseNumeral, cleanText, mealLabel, mealTime,
+  DESTINATION_REF, STOP_KINDS, categoryLabel, chineseNumeral, cleanText, mealLabel, mealTime,
   mealTitle, placeKey, trimWhite
 } from './itinerary-model.js';
 
@@ -585,11 +585,4 @@ export function vehicleRouteDays(state, vehicleId) {
     if (isRecord(route) && route.vehicleId === vehicleId && days.has(route.date)) result.add(days.get(route.date));
   }
   return [...result].sort((a, b) => a - b);
-}
-
-/** Car_Color index (requirements 11.12, 22.6): the vehicle's position in state.vehicles modulo 8, so only
- * the position decides the color, never a name or an id. An unknown vehicle gets 0, a palette color. */
-export function carColorIndex(state, vehicleId) {
-  const index = list(state?.vehicles).findIndex(vehicle => isRecord(vehicle) && vehicle.id === vehicleId);
-  return index < 0 ? 0 : index % CAR_COLOR_COUNT;
 }

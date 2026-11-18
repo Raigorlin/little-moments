@@ -1,6 +1,6 @@
 import { illustration, logo } from './art.js';
 import { animatedIllustration, setupSceneMotion, syncSceneMotion, sceneMotionSettings } from './scene-motion.js';
-import { THEMES_KEY, escape as e, readStorage, isValidState, dateRange, normalizeParticipantName } from './model.js';
+import { THEMES_KEY, escape as e, isValidState, dateRange, normalizeParticipantName } from './model.js';
 import { safeNext, loginPath } from './auth-paths.js';
 
 export { safeNext };
@@ -95,13 +95,6 @@ export function validateTripCard(card) {
   if (!COVERS[card.coverKind]) return '請選擇封面插畫。';
   if (!STATUSES[card.status]) return '請選擇旅行狀態。';
   return '';
-}
-
-export function readLegacyHandbook(storage = { getItem: key => globalThis.localStorage.getItem(key) }) {
-  let result;
-  try { result = readStorage(storage); } catch { return { status: 'unavailable' }; }
-  if (result.status !== 'ok') return { status: result.status };
-  return { status: 'ok', state: result.state, legacy: Boolean(result.migratedFromLegacy) };
 }
 
 const icons = {

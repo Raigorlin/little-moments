@@ -35,10 +35,6 @@ const KIND_TO_TYPE = Object.freeze({
   ...Object.fromEntries(Object.entries(TYPE_TO_KIND).map(([type, kind]) => [kind, type])),
   bbq: 'meal', breakfast: 'meal', noodles: 'meal', hotpot: 'meal', activity: 'camp'
 });
-/** Website activity type that a studio event kind is saved as. */
-export const activityTypeForKind = kind => KIND_TO_TYPE[kind];
-/** Studio kind shown for a website activity type. */
-export const kindForActivityType = type => TYPE_TO_KIND[type];
 
 const MEAL_ID = /^m[-_]/;
 /** True for a studio event that shows a website meal (event id m-<mealId> or m_<hash>). */
