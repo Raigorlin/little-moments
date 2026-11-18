@@ -32,6 +32,8 @@ async function fakeAccount(page,{canDelete=true,canEdit=true,conflict=false}={})
   return {read:()=>({state:copy(state),revision,putCount,lastRequest})};
 }
 
+// The editor starts collapsed by default; these tests drive its fields, so they open it first.
+test.beforeEach(async({page})=>{await page.addInitScript(()=>{try{localStorage.setItem('storybook-editor-hidden-v2','0');}catch{}});});
 test('[studio-account] owner edits save through revision-checked API with original itinerary intact',async({page})=>{
   const backend=await fakeAccount(page);
   await page.goto(url);

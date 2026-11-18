@@ -14,7 +14,7 @@ import STUDIO_CSS from './style.css' with { type: 'text' };
 const M = ModelModule.StudioModel || ModelModule.default || ModelModule;
 // The editor always opens in the wide layout; a width dragged with the splitter is remembered under a new key.
 const WIDTH_KEY = 'storybook-editor-width-v2';
-const HIDDEN_KEY = 'storybook-editor-hidden';
+const HIDDEN_KEY = 'storybook-editor-hidden-v2';
 const MAX_PREVIEW_SIDE = 16000;
 const MAX_PREVIEW_PIXELS = 24e6;
 // A poster taller than this is not drawn: the canvas would be rejected or silently truncated by the browser.
@@ -1342,8 +1342,8 @@ export function mountStudio(host, options = {}) {
     if (destroyed) return;
     ui = createWorkspace();
     applyPermissions();
-    // Restore the collapsed editor across tab switches and reloads.
-    try { if (canEdit && localStorage.getItem(HIDDEN_KEY) === '1' && !editorHidden) $('toggleEditor').click(); } catch (_) { /* preference only */ }
+    // The editor starts collapsed; it opens only when the user expanded it last (stored '0').
+    try { if (canEdit && localStorage.getItem(HIDDEN_KEY) !== '0' && !editorHidden) $('toggleEditor').click(); } catch (_) { /* preference only */ }
     relayout();
     renderEditor();
     renderItinerary();

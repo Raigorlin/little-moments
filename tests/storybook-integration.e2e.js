@@ -7,6 +7,8 @@ const field = (page, id) => studio(page).locator(`#${id}`);
 const savedState = page => page.evaluate(key => JSON.parse(localStorage.getItem(key)), STORAGE_KEY);
 
 // Runs only against a dedicated, isolated /demo instance; never changes the user's account or original tree.
+// The editor starts collapsed by default; these tests drive its fields, so they open it first.
+test.beforeEach(async({page})=>{await page.addInitScript(()=>{try{localStorage.setItem('storybook-editor-hidden-v2','0');}catch{}});});
 test('[studio] old schedule UI is replaced by an itinerary-driven four-car storybook @critical', async ({page}) => {
   await page.goto('/demo');
   await expect(studio(page)).toBeVisible();
