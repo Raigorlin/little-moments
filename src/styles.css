@@ -289,7 +289,7 @@ select option,select optgroup{font-family:var(--font-ui);background:var(--paper)
 /* Account header: desktop keeps the inline links; phones fold them into a menu. */
 .header-collapse{display:contents}
 .header-menu-toggle{display:none}
-.header-home{order:1}.header-admin{order:2}.header-theme{order:3}.header-collapse>.profile-button{order:4}.header-logout{order:5}
+.header-home{order:1}.header-admin{order:2}.header-theme{order:3}.header-logout{order:5}
 .tab-icon{display:none}
 @media(max-width:760px){
   .header-actions{gap:8px;position:relative}
@@ -297,7 +297,7 @@ select option,select optgroup{font-family:var(--font-ui);background:var(--paper)
   .header-menu-toggle{display:inline-grid;order:1;place-items:center;width:42px;min-width:42px;height:42px;padding:0;border:2px solid var(--ink);border-radius:50%;color:#3e3a39;background:var(--coral);font-size:16px;font-weight:700;line-height:1}
   .header-collapse{display:none;position:absolute;right:0;top:calc(100% + 10px);flex-direction:column;align-items:stretch;min-width:190px;background:var(--paper);border:2px solid var(--ink);border-radius:14px;box-shadow:3px 4px 0 var(--shadow);padding:6px;z-index:30}
   .header-collapse.open{display:flex}
-  .header-collapse>*,.header-collapse>.profile-button{order:0;justify-content:flex-start;min-height:44px;width:100%;padding:0 12px;text-decoration:none}
+  .header-collapse>*{order:0;justify-content:flex-start;min-height:44px;width:100%;padding:0 12px;text-decoration:none}
   .header-home{display:none!important}
   .toolbar-actions .button{padding:0;width:46px;min-width:46px;height:46px}
   .toolbar-actions .button span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
@@ -310,3 +310,5 @@ select option,select optgroup{font-family:var(--font-ui);background:var(--paper)
   .section-tabs>button .tab-badge{position:absolute;top:6px;right:calc(50% - 22px);margin:0}
 }
 @media(max-width:480px){.section-tabs{top:72px}}
+
+.sync-status[hidden]{display:none}
