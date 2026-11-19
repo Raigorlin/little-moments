@@ -17,6 +17,16 @@ export function pickEncoding(header){
  const ok=name=>(accepted.get(name)??accepted.get('*')??0)>0;
  return ok('br')?'br':ok('gzip')?'gzip':null;
 }
+// Cache policy for static assets. Chunk names carry a content hash (scripts/build.mjs: [name]-[hash]), so a chunk
+// never changes under the same URL and can be cached for a year. Fonts keep fixed names but change almost never, so
+// browsers reuse them for 7 days and then revalidate with the ETag. Everything else revalidates on every use.
+export const HASHED_CHUNK=/^\/chunks\/[a-zA-Z0-9_.-]+-[a-z0-9]{8}\.js$/;
+export const FONT_ASSET=/^\/assets\/[a-zA-Z0-9_./-]+\.(?:ttf|otf|woff2?)$/;
+export function assetCacheControl(pathname){
+ if(HASHED_CHUNK.test(pathname))return 'public, max-age=31536000, immutable';
+ if(FONT_ASSET.test(pathname))return 'public, max-age=604800';
+ return 'no-cache';
+}
 const ifNoneMatch=(header,etag)=>!!header&&header.split(',').some(tag=>{const t=tag.trim();return t==='*'||t===etag||t==='W/'+etag;});
 const HEALTH_OK={status:'ok',database:'ok'},HEALTH_FAIL={status:'error',database:'unavailable'};
 // 以 2 秒逾時呼叫 health()；回傳 false、拋出例外或逾時皆視為失敗（Req 11.6）。
@@ -65,7 +75,7 @@ export function createHttpHandler({root,accounts,allowedHosts=DEFAULT_ALLOWED_HO
    const path=resolve(root,route?'index.html':'.'+pathname);
    if(!path.startsWith(root+sep))return new Response('Forbidden',{status:403,headers:SECURITY_HEADERS});
    const file=Bun.file(path);if(!await file.exists())return new Response('Not found',{status:404,headers:SECURITY_HEADERS});
-   const headers={...SECURITY_HEADERS,'Content-Type':file.type,...(asset&&pathname!='/index.html'?{'Cache-Control':'no-cache'}:{})};
+   const headers={...SECURITY_HEADERS,'Content-Type':file.type,...(asset&&pathname!='/index.html'?{'Cache-Control':assetCacheControl(pathname)}:{})};
    if(route)return new Response(req.method==='HEAD'?null:file,{headers});
    // Static assets: a validator lets no-cache revalidate with 304 instead of re-sending the bytes, and a
    // precompressed copy (scripts/build.mjs) is sent when the client accepts it.

@@ -1,6 +1,7 @@
 import {test,expect} from 'bun:test';
 import {resolve} from 'node:path';
-import {createHttpHandler,SECURITY_HEADERS,pickEncoding} from '../server/http.js';
+import {createHttpHandler,SECURITY_HEADERS,pickEncoding,assetCacheControl} from '../server/http.js';
+import {readdirSync} from 'node:fs';
 import {gunzipSync,brotliDecompressSync} from 'node:zlib';
 import {cookieHeader} from '../server/accounts.js';
 import {parseCidrList} from '../server/config.js';
@@ -122,4 +123,16 @@ test('static assets are sent precompressed with a per-encoding ETag and revalida
  expect((await handler(req('http://127.0.0.1:5181/precompressed/styles.css.br'))).status).toBe(404);
  // The shell stays no-store and uncompressed.
  const shell=await handler(req('http://127.0.0.1:5181/login',{headers:{'accept-encoding':'br'}}));expect(shell.headers.get('content-encoding')).toBe(null);expect(shell.headers.get('cache-control')).toBe('no-store');
+});
+test('content-hashed chunks are immutable, fonts cache for 7 days, everything else revalidates',async()=>{
+ expect(assetCacheControl('/chunks/app-d9pr9hvt.js')).toBe('public, max-age=31536000, immutable');
+ expect(assetCacheControl('/chunks/app.js')).toBe('no-cache');
+ expect(assetCacheControl('/assets/fonts/jf-openhuninn-2.1.ttf')).toBe('public, max-age=604800');
+ for(const p of ['/entry.js','/styles.css','/sw.js','/favicon.svg','/assets/fonts/OFL.txt'])expect(assetCacheControl(p)).toBe('no-cache');
+ const chunk=readdirSync(resolve(root,'chunks')).find(n=>/-[a-z0-9]{8}\.js$/.test(n));
+ const res=await handler(req('http://127.0.0.1:5181/chunks/'+chunk));expect(res.status).toBe(200);expect(res.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+ const font=await handler(req('http://127.0.0.1:5181/assets/fonts/jf-openhuninn-2.1.ttf',{method:'HEAD'}));expect(font.headers.get('cache-control')).toBe('public, max-age=604800');
+ // Errors and the shell are never cacheable.
+ expect((await handler(req('http://127.0.0.1:5181/chunks/missing-aaaaaaaa.js'))).headers.get('cache-control')).toBe('no-store');
+ expect((await handler(req('http://127.0.0.1:5181/ena/home'))).headers.get('cache-control')).toBe('no-store');
 });
