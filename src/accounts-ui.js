@@ -418,15 +418,18 @@ function openTripDialog({ mode, trip = {}, legacyState = null, sourceLabel = '',
       if (problem) return showFormError(form, problem);
       showFormError(form, '');
       setBusy(form, true, '儲存中…');
+      let created = null;
       try {
         const active = await api(ENDPOINTS.session);
         if (active.user?.id !== user.id) throw new ApiError('登入帳號已變更，請先複製需要的文字，再重新登入原帳號。', 409);
         if (mode === 'edit') await api(`${ENDPOINTS.trips}/${encodeURIComponent(trip.id)}`, { method: 'PATCH', body: { revision: trip.revision, expectedUserId: user.id, ...card } });
-        else await api(ENDPOINTS.trips, { method: 'POST', body: imported ? { ...card, expectedUserId: user.id, legacyState: structuredClone(legacyState) } : { ...card, expectedUserId: user.id } });
+        else created = (await api(ENDPOINTS.trips, { method: 'POST', body: imported ? { ...card, expectedUserId: user.id, legacyState: structuredClone(legacyState) } : { ...card, expectedUserId: user.id } }))?.trip?.id;
         setBusy(form, false);
         closeModal();
         toast(mode === 'edit' ? '旅行卡片已更新' : imported ? '已匯入成新的旅行，原本的資料保持不變' : '旅行已建立');
         await onDone?.();
+        // Bring the new card into view; on a phone it is usually below the fold.
+        if (created) app.querySelector(`[data-trip-id="${CSS.escape(created)}"]`)?.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
       } catch (err) {
         setBusy(form, false);
         showFormError(form, err.status === 409

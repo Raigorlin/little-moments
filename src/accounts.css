@@ -193,3 +193,15 @@
   .acct-hero .hero-art>.illustration>svg{position:absolute;left:0;top:50%;width:100%;height:auto;translate:0 -50%}
   .acct-hero .postcard-sticker{display:none}
 }
+/* Phone trip cards: edit and delete live in the swipe panel, so their hidden originals must not leave blank space. */
+@media(max-width:760px){
+  .acct-trip-card .acct-actions>[data-swipe-original]{display:none}
+  .acct-trip-art{height:110px}
+  .acct-trip-body{padding:14px 16px 16px;gap:8px}
+  .acct-trip-body h3{font-size:19px;padding-right:28px}
+  .acct-trip-meta{gap:4px;font-size:14px}
+  .acct-trip-meta>div{grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center}
+  .acct-trip-meta dt>span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .acct-trip-body>.acct-actions{padding-top:4px}
+  .acct-trip-body .acct-actions>.button{min-height:42px}
+}
