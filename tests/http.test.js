@@ -1,6 +1,7 @@
 import {test,expect} from 'bun:test';
 import {resolve} from 'node:path';
-import {createHttpHandler,SECURITY_HEADERS} from '../server/http.js';
+import {createHttpHandler,SECURITY_HEADERS,pickEncoding} from '../server/http.js';
+import {gunzipSync,brotliDecompressSync} from 'node:zlib';
 import {cookieHeader} from '../server/accounts.js';
 import {parseCidrList} from '../server/config.js';
 const root=resolve(import.meta.dir,'..',process.env.CAMPING_DIST||'dist');
@@ -95,4 +96,30 @@ test('a thrown error answers 500 with a generic body and logs no message, query 
 test('cookieHeader sets hardened attributes and Secure only for https',()=>{
  expect(cookieHeader(new URL('http://127.0.0.1/'),'tok',604800)).toBe('ggc_session=tok; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800');
  expect(cookieHeader(new URL('https://lan.example/'),'',0)).toBe('ggc_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0; Secure');
+});
+test('pickEncoding prefers br, then gzip, and honours q=0',()=>{
+ expect(pickEncoding('gzip, deflate, br, zstd')).toBe('br');
+ expect(pickEncoding('gzip')).toBe('gzip');
+ expect(pickEncoding('br;q=0, gzip')).toBe('gzip');
+ expect(pickEncoding('*')).toBe('br');
+ expect(pickEncoding('*;q=0')).toBe(null);
+ expect(pickEncoding('')).toBe(null);
+ expect(pickEncoding(null)).toBe(null);
+});
+test('static assets are sent precompressed with a per-encoding ETag and revalidate with 304',async()=>{
+ const plain=await handler(req('http://127.0.0.1:5181/styles.css'));const bytes=new Uint8Array(await plain.arrayBuffer());
+ expect(plain.headers.get('content-encoding')).toBe(null);expect(plain.headers.get('cache-control')).toBe('no-cache');expect(plain.headers.get('vary')).toBe('Accept-Encoding');
+ for(const [coding,decode] of [['br',brotliDecompressSync],['gzip',gunzipSync]]){
+  const res=await handler(req('http://127.0.0.1:5181/styles.css',{headers:{'accept-encoding':coding}}));
+  expect(res.status).toBe(200);expect(res.headers.get('content-encoding')).toBe(coding);expect(res.headers.get('content-type')).toContain('text/css');hasSecurityHeaders({headers:{get:k=>k.toLowerCase()==='cache-control'?'no-store':res.headers.get(k)}});
+  expect(new Uint8Array(decode(new Uint8Array(await res.arrayBuffer())))).toEqual(bytes);
+  const etag=res.headers.get('etag');expect(etag).not.toBe(plain.headers.get('etag'));
+  const again=await handler(req('http://127.0.0.1:5181/styles.css',{headers:{'accept-encoding':coding,'if-none-match':etag}}));
+  expect(again.status).toBe(304);expect(await again.text()).toBe('');expect(again.headers.get('etag')).toBe(etag);
+ }
+ const stale=await handler(req('http://127.0.0.1:5181/styles.css',{headers:{'if-none-match':'"other"'}}));expect(stale.status).toBe(200);
+ // The precompressed directory itself is never servable.
+ expect((await handler(req('http://127.0.0.1:5181/precompressed/styles.css.br'))).status).toBe(404);
+ // The shell stays no-store and uncompressed.
+ const shell=await handler(req('http://127.0.0.1:5181/login',{headers:{'accept-encoding':'br'}}));expect(shell.headers.get('content-encoding')).toBe(null);expect(shell.headers.get('cache-control')).toBe('no-store');
 });

@@ -2,6 +2,7 @@ import {mkdir,copyFile,readFile,writeFile,readdir,cp} from 'node:fs/promises';
 import {resolve,dirname,relative} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
+import {brotliCompressSync,gzipSync,constants as zlib} from 'node:zlib';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),out=resolve(root,process.env.CAMPING_DIST||'dist');
 await mkdir(out,{recursive:true});
 const build=await Bun.build({entrypoints:[resolve(root,'src/entry.js')],outdir:out,minify:true,target:'browser',splitting:true,naming:{entry:'entry.js',chunk:'chunks/[name]-[hash].[ext]'}});
@@ -21,6 +22,20 @@ const files=['index.html','styles.css','favicon.svg',...outputs,...assetPaths];
 const digest=createHash('sha256');let total=0;
 for(const file of files){const bytes=await readFile(resolve(out,file));digest.update(file).update(bytes);total+=bytes.length;console.log(`${file}: ${(bytes.length/1024).toFixed(1)} KB`);}
 const hash=digest.digest('hex').slice(0,12);
+// Precompressed copies for server/http.js, which serves them by Accept-Encoding. They live outside every
+// servable path (the server's asset allowlist never matches precompressed/), so they cannot be fetched directly.
+const COMPRESSIBLE=/\.(?:js|css|html|svg|ttf|otf|txt|json)$/i;
+let packed=0;
+for(const file of files){
+ if(!COMPRESSIBLE.test(file))continue;
+ const bytes=await readFile(resolve(out,file));if(bytes.length<1024)continue;
+ const target=resolve(out,'precompressed',file);await mkdir(dirname(target),{recursive:true});
+ // Large fonts use a lower Brotli level so the build stays fast; the ratio difference is a few percent.
+ const br=brotliCompressSync(bytes,{params:{[zlib.BROTLI_PARAM_QUALITY]:bytes.length>1024*1024?7:11,[zlib.BROTLI_PARAM_SIZE_HINT]:bytes.length}});
+ const gz=gzipSync(bytes,{level:9});
+ await writeFile(target+'.br',br);await writeFile(target+'.gz',gz);packed+=br.length;
+}
+console.log(`Precompressed: ${(packed/1024).toFixed(1)} KB brotli.`);
 const urls=paths=>paths.map(p=>new URL(p,'http://localhost/').pathname);
 // server/http.js serves this file unchanged; there is no deployment-mode flag.
 await writeFile(resolve(out,'sw.js'),`const CACHE='ggc-accounts-${hash}';

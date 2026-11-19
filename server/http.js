@@ -10,6 +10,14 @@ export const SECURITY_HEADERS={
  'Cross-Origin-Opener-Policy':'same-origin','Cross-Origin-Resource-Policy':'same-origin'
 };
 export const HEALTH_TIMEOUT_MS=2000;
+// Accept-Encoding: prefer br, then gzip; a q=0 entry refuses that coding.
+export function pickEncoding(header){
+ const accepted=new Map();
+ for(const part of String(header||'').toLowerCase().split(',')){const [name,...params]=part.trim().split(';');if(!name)continue;const q=params.map(x=>x.trim()).find(x=>x.startsWith('q='));accepted.set(name.trim(),q?Number(q.slice(2)):1);}
+ const ok=name=>(accepted.get(name)??accepted.get('*')??0)>0;
+ return ok('br')?'br':ok('gzip')?'gzip':null;
+}
+const ifNoneMatch=(header,etag)=>!!header&&header.split(',').some(tag=>{const t=tag.trim();return t==='*'||t===etag||t==='W/'+etag;});
 const HEALTH_OK={status:'ok',database:'ok'},HEALTH_FAIL={status:'error',database:'unavailable'};
 // 以 2 秒逾時呼叫 health()；回傳 false、拋出例外或逾時皆視為失敗（Req 11.6）。
 async function checkHealth(health,timeoutMs){
@@ -57,7 +65,18 @@ export function createHttpHandler({root,accounts,allowedHosts=DEFAULT_ALLOWED_HO
    const path=resolve(root,route?'index.html':'.'+pathname);
    if(!path.startsWith(root+sep))return new Response('Forbidden',{status:403,headers:SECURITY_HEADERS});
    const file=Bun.file(path);if(!await file.exists())return new Response('Not found',{status:404,headers:SECURITY_HEADERS});
-   return new Response(req.method==='HEAD'?null:file,{headers:{...SECURITY_HEADERS,'Content-Type':file.type,...(asset&&pathname!='/index.html'?{'Cache-Control':'no-cache'}:{})}});
+   const headers={...SECURITY_HEADERS,'Content-Type':file.type,...(asset&&pathname!='/index.html'?{'Cache-Control':'no-cache'}:{})};
+   if(route)return new Response(req.method==='HEAD'?null:file,{headers});
+   // Static assets: a validator lets no-cache revalidate with 304 instead of re-sending the bytes, and a
+   // precompressed copy (scripts/build.mjs) is sent when the client accepts it.
+   const encoding=pickEncoding(req.headers.get('accept-encoding'));
+   const packed=encoding?Bun.file(resolve(root,'precompressed','.'+pathname)+(encoding==='br'?'.br':'.gz')):null;
+   const body=packed&&await packed.exists()?packed:file,coding=body===file?'':encoding;
+   // Each representation gets its own ETag, so a cached gzip copy never validates a request for the identity bytes.
+   headers.ETag=`"${file.size.toString(36)}-${Math.trunc(file.lastModified).toString(36)}${coding?'-'+coding:''}"`;headers.Vary='Accept-Encoding';
+   if(coding)headers['Content-Encoding']=coding;
+   if(ifNoneMatch(req.headers.get('if-none-match'),headers.ETag))return new Response(null,{status:304,headers});
+   return new Response(req.method==='HEAD'?null:body,{headers});
   }catch(err){
    // 錯誤日誌只含時間、方法、不含查詢字串的路徑與錯誤名稱（server/safe-log.js），不含錯誤訊息或請求內容。
    logRequestError({method:req.method,url:req.url,error:err});
