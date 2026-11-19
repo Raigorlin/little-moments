@@ -64,6 +64,27 @@
       "reason": "oven/bun:1.4.4-distroless（Debian 13 trixie）的 libc6 2.41-12+deb13u4；Debian security tracker 2026-11-14 顯示 trixie 尚無修正版本（vulnerable, no DSA），重建映像無法消除。regexec 遞迴（上游有爭議，Debian 長期未修正）。由 Release_Approver 核准至到期日；到期後 Image Scan 重新阻擋，須重新檢查 Debian 修正或更換基底映像。",
       "approver": "jacklin",
       "expires": "2027-11-14"
+    },
+    {
+      "id": "CVE-2026-121757",
+      "location": "libc6",
+      "reason": "oven/bun:1.4.4-distroless（Debian 13 trixie）的 libc6 2.41-12+deb13u4；Debian security tracker 2026-11-19 顯示 bookworm、trixie、forky、sid 皆尚無修正版本（vulnerable），重建映像或更換 Debian 版本都無法消除。iconv 的 CP949 轉 UTF-8 並使用 //IGNORE 時越界讀取（Debian bug #1154284）。須攻擊者同時控制輸入內容與編碼。由 Release_Approver 核准至到期日；到期後 Image Scan 重新阻擋，須重新檢查 Debian 修正或更換基底映像。",
+      "approver": "jacklin",
+      "expires": "2027-11-14"
+    },
+    {
+      "id": "CVE-2026-121758",
+      "location": "libc6",
+      "reason": "oven/bun:1.4.4-distroless（Debian 13 trixie）的 libc6 2.41-12+deb13u4；Debian security tracker 2026-11-19 顯示 bookworm、trixie、forky、sid 皆尚無修正版本（vulnerable），重建映像或更換 Debian 版本都無法消除。iconv 的 ISO-2022-CN-EXT 轉 UTF-8 時越界讀取（Debian bug #1154285）。須攻擊者同時控制輸入內容與編碼。由 Release_Approver 核准至到期日；到期後 Image Scan 重新阻擋，須重新檢查 Debian 修正或更換基底映像。",
+      "approver": "jacklin",
+      "expires": "2027-11-14"
+    },
+    {
+      "id": "CVE-2026-124024",
+      "location": "libc6",
+      "reason": "oven/bun:1.4.4-distroless（Debian 13 trixie）的 libc6 2.41-12+deb13u4；Debian security tracker 2026-11-19 顯示 bookworm、trixie、forky、sid 皆尚無修正版本（vulnerable），重建映像或更換 Debian 版本都無法消除。iconv 的 UCS-4 轉 IBM1390／IBM1399 時越界讀取（Debian bug #1154286）。須攻擊者同時控制輸入內容與編碼。由 Release_Approver 核准至到期日；到期後 Image Scan 重新阻擋，須重新檢查 Debian 修正或更換基底映像。",
+      "approver": "jacklin",
+      "expires": "2027-11-14"
     }
   ]
 }
