@@ -124,14 +124,18 @@ test('static assets are sent precompressed with a per-encoding ETag and revalida
  // The shell stays no-store and uncompressed.
  const shell=await handler(req('http://127.0.0.1:5181/login',{headers:{'accept-encoding':'br'}}));expect(shell.headers.get('content-encoding')).toBe(null);expect(shell.headers.get('cache-control')).toBe('no-store');
 });
-test('content-hashed chunks are immutable, fonts cache for 7 days, everything else revalidates',async()=>{
+test('content-hashed chunks and fonts are immutable, unhashed fonts cache for 7 days, everything else revalidates',async()=>{
  expect(assetCacheControl('/chunks/app-d9pr9hvt.js')).toBe('public, max-age=31536000, immutable');
  expect(assetCacheControl('/chunks/app.js')).toBe('no-cache');
- expect(assetCacheControl('/assets/fonts/jf-openhuninn-2.1.ttf')).toBe('public, max-age=604800');
+ expect(assetCacheControl('/assets/fonts/jf-openhuninn-common-5cb3dfbe.woff2')).toBe('public, max-age=31536000, immutable');
+ expect(assetCacheControl('/assets/storybook/fonts/PatrickHand-32c1a2bb.woff2')).toBe('public, max-age=31536000, immutable');
+ expect(assetCacheControl('/assets/fonts/jf-openhuninn-common.woff2')).toBe('public, max-age=604800');
+ expect(assetCacheControl('/assets/fonts/legacy.ttf')).toBe('public, max-age=604800');
  for(const p of ['/entry.js','/styles.css','/sw.js','/favicon.svg','/assets/fonts/OFL.txt'])expect(assetCacheControl(p)).toBe('no-cache');
  const chunk=readdirSync(resolve(root,'chunks')).find(n=>/-[a-z0-9]{8}\.js$/.test(n));
  const res=await handler(req('http://127.0.0.1:5181/chunks/'+chunk));expect(res.status).toBe(200);expect(res.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
- const font=await handler(req('http://127.0.0.1:5181/assets/fonts/jf-openhuninn-2.1.ttf',{method:'HEAD'}));expect(font.headers.get('cache-control')).toBe('public, max-age=604800');
+ const fontFile=readdirSync(resolve(root,'assets/fonts')).find(n=>/^jf-openhuninn-common-[a-f0-9]{8}\.woff2$/.test(n));
+ const font=await handler(req('http://127.0.0.1:5181/assets/fonts/'+fontFile,{method:'HEAD'}));expect(font.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
  // Errors and the shell are never cacheable.
  expect((await handler(req('http://127.0.0.1:5181/chunks/missing-aaaaaaaa.js'))).headers.get('cache-control')).toBe('no-store');
  expect((await handler(req('http://127.0.0.1:5181/ena/home'))).headers.get('cache-control')).toBe('no-store');

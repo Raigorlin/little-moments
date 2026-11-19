@@ -10,6 +10,13 @@ import { STUDIO_TEMPLATE } from './template.js';
 import { renderJournal } from './journal.js';
 // Bundled as text (Bun text loader) so the ShadowRoot can adopt it; the website's own CSS never applies inside.
 import STUDIO_CSS from './style.css' with { type: 'text' };
+// Parsing the 40 KB sheet costs tens of ms, and the studio is remounted each time the schedule tab returns, so every
+// mount shares one constructed sheet (a constructed sheet can be adopted by any shadow root in the same document).
+let STUDIO_SHEET = null;
+function studioSheet() {
+  if (!STUDIO_SHEET) { STUDIO_SHEET = new CSSStyleSheet(); STUDIO_SHEET.replaceSync(STUDIO_CSS); }
+  return STUDIO_SHEET;
+}
 
 const M = ModelModule.StudioModel || ModelModule.default || ModelModule;
 // The editor always opens in the wide layout; a width dragged with the splitter is remembered under a new key.
@@ -63,9 +70,7 @@ export function mountStudio(host, options = {}) {
 
   const root = host.shadowRoot || host.attachShadow({ mode: 'open' });
   root.replaceChildren();
-  const sheet = new CSSStyleSheet();
-  sheet.replaceSync(STUDIO_CSS);
-  root.adoptedStyleSheets = [sheet];
+  root.adoptedStyleSheets = [studioSheet()];
   root.append(document.createRange().createContextualFragment(STUDIO_TEMPLATE));
   const studio = root.querySelector('[data-studio-root]');
   const $ = id => root.getElementById(id);
@@ -96,6 +101,14 @@ export function mountStudio(host, options = {}) {
   let zoomActual = false, editorHidden = false, previewScaled = false;
   // The host page reads this attribute to show its side panel only while the editor is collapsed.
   const syncHostEditor = () => host.toggleAttribute('data-editor-hidden', editorHidden);
+  // Collapse or expand the editor pane; persist=true remembers the choice as the user's preference.
+  function setEditorHidden(hidden, persist = false) {
+    editorHidden = hidden; syncHostEditor();
+    if (persist) { try { localStorage.setItem(HIDDEN_KEY, hidden ? '1' : '0'); } catch (_) { /* preference only */ } }
+    $('layout').classList.toggle('editor-hidden', hidden);
+    $('toggleEditor').setAttribute('aria-expanded', String(!hidden));
+    $('toggleEditor').textContent = hidden ? '展開編輯器' : '收起編輯器';
+  }
   let statusText = '', statusKind = '';
   const openStops = new Set();
   const invalid = new Set();
@@ -245,7 +258,8 @@ export function mountStudio(host, options = {}) {
   }
 
   // ---------- poster ----------
-  function relayout() {
+  // draw=false lays the poster out and sizes the canvas without painting it, for callers that paint right after.
+  function relayout(draw = true) {
     layoutError = '';
     const c = $('poster');
     try {
@@ -269,7 +283,7 @@ export function mountStudio(host, options = {}) {
     c.style.width = zoomActual ? layout.width + 'px' : '';
     c.setAttribute('aria-label', `${plan.title} 旅程海報，共 ${plan.days.length} 天；文字版請展開下方「文字版完整行程」`);
     showFallback();
-    drawNow();
+    if (draw !== false) drawNow();
   }
   function showFallback() {
     const box = $('renderFallback');
@@ -278,8 +292,11 @@ export function mountStudio(host, options = {}) {
     $('posterScroller').hidden = !!layoutError;
     if (layoutError) { pause(); $('itinerary').open = true; }
   }
-  function drawNow() {
+  // On screen the canvas poster is display:none (the journal view replaced it, see POSTER_ON); only print styles show
+  // it, and beforeprint paints it with force=true. Painting it on every start and edit cost ~50 ms of main thread.
+  function drawNow(force = false) {
     if (!layout) return null;
+    if (!POSTER_ON && force !== true) return null;
     try { return StudioRenderer.draw($('poster'), plan, layout, t); }
     catch (e) { layoutError = '海報繪製失敗：' + (e && e.message ? e.message : e) + ' 文字版行程仍完整。'; showFallback(); return null; }
   }
@@ -1056,11 +1073,7 @@ export function mountStudio(host, options = {}) {
       $('zoom').textContent = zoomActual ? '符合寬度' : '實際大小';
     });
     $('toggleEditor').addEventListener('click', () => {
-      editorHidden = !editorHidden; syncHostEditor();
-      try { localStorage.setItem(HIDDEN_KEY, editorHidden ? '1' : '0'); } catch (_) { /* preference only */ }
-      $('layout').classList.toggle('editor-hidden', editorHidden);
-      $('toggleEditor').setAttribute('aria-expanded', String(!editorHidden));
-      $('toggleEditor').textContent = editorHidden ? '展開編輯器' : '收起編輯器';
+      setEditorHidden(!editorHidden, true);
       if (ui) ui.setMobileView(editorHidden ? 'preview' : 'editor');
       if (ui) { ui.applyWidthClass(); relayout(); }
     });
@@ -1090,7 +1103,7 @@ export function mountStudio(host, options = {}) {
     }
     // An invalid, uncommitted field counts as unsaved work: isDirty() covers it, so the warning fires for it too.
     listen(window, 'beforeunload', e => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
-    listen(window, 'beforeprint', () => { if (playing) { resumeOnVisible = true; pause(); } t = 6; updateSeek(); drawNow(); });
+    listen(window, 'beforeprint', () => { if (playing) { resumeOnVisible = true; pause(); } t = 6; updateSeek(); drawNow(true); });
     listen(window, 'afterprint', () => { if (resumeOnVisible && !reduced.matches && !userPaused && !destroyed && !suspended) play(); resumeOnVisible = false; });
   }
 
@@ -1140,21 +1153,30 @@ export function mountStudio(host, options = {}) {
   }
 
   // ---------- workspace chrome ----------
+  // The host's width is set by the page column, not by anything inside the studio, so after the first measurement it
+  // only changes when the ResizeObserver in createWorkspace says so. Caching it means toggling studio classes and then
+  // asking for the width again does not force a fresh layout.
+  let cachedHostWidth = 0;
   function hostWidth() {
+    if (cachedHostWidth > 0) return cachedHostWidth;
     const r = host.getBoundingClientRect();
-    return Math.max(320, Math.round(r.width || host.clientWidth || 960));
+    const w = r.width || host.clientWidth;
+    if (w > 0) cachedHostWidth = Math.round(w);
+    return Math.max(320, Math.round(w || 960));
   }
   function createWorkspace() {
-    let tab = 'plan', section = curDay().routes.length ? 'routes' : 'events', mobileView = 'editor';
+    // Phones show either the editor or the preview; a collapsed editor means the preview.
+    let tab = 'plan', section = curDay().routes.length ? 'routes' : 'events', mobileView = editorHidden ? 'preview' : 'editor';
     let daySignature = '', targetSignature = '';
     let width = 480, narrow = false, userSized = false;
     const container = $('layout'), splitter = $('editorSplitter');
     container.classList.add('editor-wide');
     try { const pref = Number(localStorage.getItem(WIDTH_KEY)); if (pref >= 360 && pref <= 900) { width = pref; userSized = true; } } catch (_) {}
-    const wideWidth = () => Math.floor(hostWidth() * .53);
+    const wideWidth = (hw = hostWidth()) => Math.floor(hw * .53);
 
-    function setWidth(value, persist = false) {
-      const max = narrow ? 900 : Math.max(360, Math.min(900, hostWidth() - 380));
+    // hw: the host width when the caller already measured it, so one layout pass reads geometry only once.
+    function setWidth(value, persist = false, hw = hostWidth()) {
+      const max = narrow ? 900 : Math.max(360, Math.min(900, hw - 380));
       width = Math.round(Math.min(max, Math.max(360, value)));
       container.style.setProperty('--editor-width', width + 'px');
       splitter.setAttribute('aria-valuemin', '360'); splitter.setAttribute('aria-valuemax', String(max));
@@ -1175,13 +1197,16 @@ export function mountStudio(host, options = {}) {
       }
     }
     // The host, not the viewport, decides the layout: the studio sits in a page column that can be any width.
-    function applyWidthClass() {
+    // Measure once, before any class change: reading again after the toggles below would force a second layout.
+    // The ResizeObserver passes the width it already measured, so resizes read no geometry at all.
+    function applyWidthClass(measured) {
+      const hw = measured > 0 ? Math.max(320, Math.round(measured)) : hostWidth();
       // With the editor collapsed only the poster is shown, so the side-by-side split is not needed: stay in the
       // normal layout unless the host is phone-narrow.
-      const next = hostWidth() < (editorHidden ? 560 : 900);
+      const next = hw < (editorHidden ? 560 : 900);
       if (next !== narrow) { narrow = next; studio.classList.toggle('narrow', narrow); }
       studio.classList.toggle('collapsed', editorHidden && !narrow); // phones keep their edit/preview switch
-      setWidth(userSized ? width : wideWidth());
+      setWidth(userSized ? width : wideWidth(hw), false, hw);
     }
     function showTab(value, guarded = true) {
       if (guarded && (busy || saving || !flushDraft())) return false;
@@ -1294,7 +1319,15 @@ export function mountStudio(host, options = {}) {
       if ((e.ctrlKey || e.metaKey) && key === 's') { e.preventDefault(); save(); }
       if ((e.ctrlKey || e.metaKey) && key === 'z' && !(e.target && e.target.matches && e.target.matches('input,textarea,[contenteditable]'))) { e.preventDefault(); travelHistory(!e.shiftKey); }
     });
-    const ro = new ResizeObserver(() => { if (!destroyed) applyWidthClass(); });
+    // hostWidth() reads the border box, so use the observer's border-box size (content rect as a fallback).
+    const ro = new ResizeObserver(entries => {
+      if (destroyed) return;
+      const entry = entries[entries.length - 1];
+      const w = entry?.borderBoxSize?.[0]?.inlineSize ?? entry?.contentRect?.width;
+      // A detached host reports 0: drop the cache so the next read measures again (as before, that yields 960).
+      cachedHostWidth = w > 0 ? Math.round(w) : 0;
+      applyWidthClass(w);
+    });
     ro.observe(host);
     cleanups.push(() => ro.disconnect());
     applyWidthClass();
@@ -1307,14 +1340,14 @@ export function mountStudio(host, options = {}) {
   async function fontsReady() {
     if (!document.fonts) return;
     const load = Promise.all([
-      document.fonts.load('32px "WenKai"', '旅行繪本'),
+      document.fonts.load('32px "jf open 粉圓"', '旅行繪本'),
       document.fonts.load('32px "Patrick Hand"', 'Trip')
     ]).then(() => document.fonts.ready);
     let timer = 0;
     try { await Promise.race([load, new Promise(res => { timer = setTimeout(res, 8000); })]); } catch (_) {}
     clearTimeout(timer);
     if (destroyed) return;
-    if (!document.fonts.check('32px "WenKai"', '旅')) notice('字型尚未載入，海報可能以系統字型顯示。', 'error');
+    if (!document.fonts.check('32px "jf open 粉圓"', '旅')) notice('字型尚未載入，海報可能以系統字型顯示。', 'error');
   }
 
   function applyPermissions() {
@@ -1337,26 +1370,42 @@ export function mountStudio(host, options = {}) {
     setupStatic();
     bind();
     updateButtons();
+    // Give the studio its final shape before the page's first layout, so nothing jumps when the fonts arrive: the
+    // editor starts collapsed (it opens only when the user expanded it last, stored '0'), phones get the narrow
+    // layout, read-only viewers get theirs, and the host reserves room (data-loading, see storybook-host.css) so the
+    // side panel and footer stay below the fold until the journal is rendered. Laying out the open editor during the
+    // font wait only to collapse it afterwards cost ~40 ms of main thread on a phone and then shifted the whole page.
+    let hiddenPref = null;
+    try { hiddenPref = localStorage.getItem(HIDDEN_KEY); } catch (_) { /* preference only */ }
+    if (canEdit && hiddenPref !== '0') setEditorHidden(true);
+    studio.classList.toggle('readonly', !canEdit);
+    // Estimate narrow from the viewport rather than measuring the host: measuring now (getBoundingClientRect, even
+    // window.innerWidth) would force the page's first layout before these class changes settle, and then a second
+    // one. A media query needs no layout. createWorkspace corrects a wrong guess once it measures the host.
+    studio.classList.toggle('narrow', matchMedia(`(max-width:${(editorHidden ? 560 : 900) + 60}px)`).matches);
+    host.dataset.loading = 'true';
     notice('正在載入字型…');
     await fontsReady();
     if (destroyed) return;
     ui = createWorkspace();
     applyPermissions();
-    // The editor starts collapsed; it opens only when the user expanded it last (stored '0').
-    try { if (canEdit && localStorage.getItem(HIDDEN_KEY) !== '0' && !editorHidden) $('toggleEditor').click(); } catch (_) { /* preference only */ }
-    relayout();
+    // Lay out once; the poster is painted below (directly, or by play()'s first animation frame before the next
+    // paint), so painting here as well would draw it twice.
+    relayout(false);
     renderEditor();
     renderItinerary();
     updateDirty();
     updateExportInfo();
     checkCache();
     if (statusText === '正在載入字型…') notice('');
-    if (reduced.matches || !canEdit) { t = 6; updateSeek(); drawNow(); } else play();
+    if (reduced.matches || !canEdit) { t = 6; updateSeek(); drawNow(); } else { play(); if (!playing) drawNow(); }
     updatePlayButton();
     studio.dataset.ready = 'true';
+    delete host.dataset.loading;
   }
 
   const ready = start().catch(e => {
+    delete host.dataset.loading;
     if (!destroyed) notice('繪本編輯器啟動失敗：' + (e && e.message ? e.message : e), 'error');
     throw e;
   });

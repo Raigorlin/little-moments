@@ -214,13 +214,13 @@ export function renderJournal(container, plan, ctx) {
     // Return day: routes set to run after the day's activities, or the last day where every car leaves from where it stayed.
     const after = d.routePosition === 'after' || (i === plan.days.length - 1 && i > 0 && d.routes.length > 0 && !!d.locationId && d.routes.every(r => r.from === d.locationId));
     const routes = d.routes.length ? el('section', { class: 'j-col' },
-      el('h4', { class: 'j-col-title', text: after ? '回程路線' : '去程路線' }),
+      el('h3', { class: 'j-col-title', text: after ? '回程路線' : '去程路線' }),
       el('ul', { class: 'j-list' }, d.routes.map(routeItem)),
       d.arrivalLabel ? el('p', { class: 'j-small', text: `抵達：${d.arrivalLabel}` }) : null,
       (() => { const miss = plan.vehicles.filter(v => !d.routes.some(r => r.vehicleId === v.id)).map(v => v.name);
         return miss.length ? el('p', { class: 'j-small', text: `${miss.join('、')}：還沒有${after ? '回程' : '去程'}路線` }) : null; })()) : null;
     const events = el('section', { class: 'j-col' },
-      el('h4', { class: 'j-col-title', text: after ? '收帳與返程' : d.routes.length ? '營地活動' : '今天的安排' }),
+      el('h3', { class: 'j-col-title', text: after ? '收帳與返程' : d.routes.length ? '營地活動' : '今天的安排' }),
       d.events.length ? el('ul', { class: 'j-list' }, d.events.map(eventItem)) : el('p', { class: 'j-small', text: '這一天留白，慢慢安排。' }));
     const art = el('div', { class: 'j-art', html: d.routes.length ? (after ? '' : campScene(R('camp' + i))) : lifeScene(R('life' + i)) });
     if (after && d.routes.length) art.classList.add('cars');
@@ -231,7 +231,7 @@ export function renderJournal(container, plan, ctx) {
       el('header', { class: 'j-day-head' },
         el('span', { class: 'j-day-no', text: `DAY ${i + 1}` }), el('span', { class: 'j-day-date', text: mdw(d.date) }),
         canEdit && onEditDay ? el('button', { type: 'button', class: 'j-edit', title: '編輯這一天', 'aria-label': `編輯第 ${i + 1} 天`, onclick: () => onEditDay(i), html: SVG(ICONS.pencil) }) : null),
-      el('h3', { class: 'j-day-title', id: `j-day-${i}`, text: d.title || '未命名的一天' }),
+      el('h2', { class: 'j-day-title', id: `j-day-${i}`, text: d.title || '未命名的一天' }),
       el('p', { class: 'j-small', text: `地點：${d.locationId ? placeName(d.locationId) : '未指定'}` }),
       el('div', { class: 'j-cols' }, cols.filter(Boolean), art),
       el('div', { class: 'j-strip', html: doodleStrip(R('strip' + i), after ? 4 : 5) }));
@@ -241,7 +241,7 @@ export function renderJournal(container, plan, ctx) {
   const shop = plan.shopping.length ? el('section', { class: 'j-shop', 'aria-labelledby': 'j-shop-title' },
     el('span', { class: 'j-tape right', 'aria-hidden': 'true' }),
     el('div', { class: 'j-shop-head' }, icon('basket', 'j-shop-icon'),
-      el('div', {}, el('h3', { id: 'j-shop-title', text: '未分配採買清單' }), el('p', { class: 'j-small', text: '先把清單帶上，再一起分工。' }))),
+      el('div', {}, el('h2', { id: 'j-shop-title', text: '未分配採買清單' }), el('p', { class: 'j-small', text: '先把清單帶上，再一起分工。' }))),
     el('ul', { class: 'j-shop-list' }, plan.shopping.map(s => el('li', {}, el('span', { class: 'j-box', 'aria-hidden': 'true' }), el('span', { text: s }))))) : null;
 
   const tools = el('div', { class: 'j-tools' },

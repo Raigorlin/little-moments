@@ -18,12 +18,14 @@ export function pickEncoding(header){
  return ok('br')?'br':ok('gzip')?'gzip':null;
 }
 // Cache policy for static assets. Chunk names carry a content hash (scripts/build.mjs: [name]-[hash]), so a chunk
-// never changes under the same URL and can be cached for a year. Fonts keep fixed names but change almost never, so
-// browsers reuse them for 7 days and then revalidate with the ETag. Everything else revalidates on every use.
+// never changes under the same URL and can be cached for a year. WOFF2 fonts built by scripts/subset-fonts.py carry an
+// 8-hex content hash ([name]-[hash].woff2) and are cached the same way. Any other font changes almost never, so
+// browsers reuse it for 7 days and then revalidate with the ETag. Everything else revalidates on every use.
 export const HASHED_CHUNK=/^\/chunks\/[a-zA-Z0-9_.-]+-[a-z0-9]{8}\.js$/;
+export const HASHED_FONT=/^\/assets\/[a-zA-Z0-9_./-]+-[a-f0-9]{8}\.woff2$/;
 export const FONT_ASSET=/^\/assets\/[a-zA-Z0-9_./-]+\.(?:ttf|otf|woff2?)$/;
 export function assetCacheControl(pathname){
- if(HASHED_CHUNK.test(pathname))return 'public, max-age=31536000, immutable';
+ if(HASHED_CHUNK.test(pathname)||HASHED_FONT.test(pathname))return 'public, max-age=31536000, immutable';
  if(FONT_ASSET.test(pathname))return 'public, max-age=604800';
  return 'no-cache';
 }

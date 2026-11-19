@@ -8,7 +8,7 @@ function line(d,color=C.ink,width=2.6){shape(d,null,color,width)}
 function oval(x,y,rx,ry,fill,stroke=C.ink,width=2.6){c.beginPath();c.ellipse(x,y,rx,ry,0,0,TAU);if(fill){c.fillStyle=fill;c.fill()}if(stroke){c.strokeStyle=stroke;c.lineWidth=width;c.stroke()}}
 function box(x,y,w,h,r,fill,stroke=C.ink,width=2.6){c.beginPath();c.roundRect(x,y,w,h,r);if(fill){c.fillStyle=fill;c.fill()}if(stroke){c.strokeStyle=stroke;c.lineWidth=width;c.stroke()}}
 function local(x,y,scale,rotation,fn){c.save();c.translate(x,y);c.scale(scale,scale);c.rotate(rotation);fn();c.restore()}
-function txt(s,x,y,size=22,color=C.ink,align='left',english=false){c.fillStyle=color;c.textAlign=align;c.font=`${size}px "${english?'Patrick Hand':'WenKai'}",sans-serif`;c.fillText(s,x,y);const w=c.measureText(s).width;labels.push({s,x:x-(align==='center'?w/2:align==='right'?w:0),y:y-size,w,h:size})}
+function txt(s,x,y,size=22,color=C.ink,align='left',english=false){c.fillStyle=color;c.textAlign=align;c.font=`${size}px "${english?'Patrick Hand':'jf open 粉圓'}",sans-serif`;c.fillText(s,x,y);const w=c.measureText(s).width;labels.push({s,x:x-(align==='center'?w/2:align==='right'?w:0),y:y-size,w,h:size})}
 function grass(x,y,s=1){local(x,y,s,0,()=>line('M-9 0q-2-8-7-10M-2 0q1-11 5-15M6 0q5-8 10-8',C.leaf,2))}
 function sparkle(x,y,s=1,col=C.yellow){local(x,y,s,0,()=>{shape('M0-10Q2-2 9 0Q2 2 0 10Q-2 2-9 0Q-2-2 0-10Z',col,null)})}
 function cloud(x,y,s=1){local(x+wave(1,x)*8,y,s,0,()=>{shape('M-59 14Q-78 12-71-4Q-66-19-46-15Q-52-43-27-46Q-4-50 5-27Q24-44 41-28Q50-20 46-9Q78-13 74 9Q73 22 45 21L-50 22Z','#FFFCF3','#DDD4BF',1.8);line('M-49 26q53 5 95-1','#E4DDCA',1.1)})}

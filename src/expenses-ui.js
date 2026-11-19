@@ -2,6 +2,18 @@ import { parseAmount, formatMoney, summarizeLedger } from './expense-model.js';
 import { parseReceiptText } from './receipt-parser.js';
 import { EXPENSE_CATEGORIES, suggestExpenseCategory } from './expense-categories.js';
 import { escape as e } from './model.js';
+import EXPENSES_CSS from './expenses.css' with { type: 'text' };
+
+// app.js loads this module only when the expenses tab opens, so its styles travel with it instead of sitting in the
+// render-blocking styles.css. Every rule in expenses.css is scoped to .xp-*, and an adopted sheet comes after the
+// document's own sheets in the cascade, which matches its old place at the end of styles.css.
+let expensesSheet = null;
+function adoptExpensesStyles() {
+  if (expensesSheet || typeof document === 'undefined' || !('adoptedStyleSheets' in document) || typeof CSSStyleSheet !== 'function') return;
+  expensesSheet = new CSSStyleSheet();
+  expensesSheet.replaceSync(EXPENSES_CSS);
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, expensesSheet];
+}
 
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const IMAGE_EXT_RE = /\.(jpe?g|png|webp)$/i;
@@ -89,6 +101,7 @@ function validLedger(ledger) {
 const fileSafe = name => String(name || '旅行').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '-').slice(0, 60);
 
 export function createExpensePanel({ getState, account, assertSession, onDirty } = {}) {
+  adoptExpensesStyles();
   const pfx = `xp${++instances}`;
   const id = name => `${pfx}-${name}`;
   const element = document.createElement('section');

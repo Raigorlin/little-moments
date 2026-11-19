@@ -1,4 +1,4 @@
-@font-face{font-family:WenKai;src:url('/assets/storybook/fonts/LXGWWenKaiTC-Regular.ttf') format('truetype');font-display:swap}@font-face{font-family:'Patrick Hand';src:url('/assets/storybook/fonts/PatrickHand-Regular.ttf') format('truetype');font-display:swap}
+@font-face{font-family:'Patrick Hand';src:url('/assets/storybook/fonts/PatrickHand-32c1a2bb.woff2') format('woff2');font-display:swap;unicode-range:U+20-7E,U+A0-B4,U+B6-17F,U+192,U+1A0-1A1,U+1AF-1B0,U+1CD-1D4,U+1F0,U+1FA-1FF,U+218-21B,U+237,U+300-301,U+303,U+309,U+30F,U+31B,U+323,U+325-326,U+2013-2014,U+2018-201A,U+201C-201E,U+2020-2022,U+2026,U+2030,U+2039-203A,U+2044,U+20AC,U+2122}
 /* The schedule tab keeps the site's normal page chrome (hero, toolbar, tabs, footer). The studio is embedded straight under the tabs:
    no .workspace wrapper, no frame, and a height that fits the viewport so the poster never needs its own scrollbar. */
 .story-schedule-page{max-width:1780px}
@@ -12,3 +12,6 @@
 .story-schedule-layout:not(:has(>.story-studio-host[data-editor-hidden]))>.sidebar{display:none}
 .story-schedule-page:has(.story-studio-host[data-editor-hidden]){max-width:1220px}
 .story-schedule-page:has(.story-studio-host[data-editor-hidden]) .section-tabs{margin-bottom:29px}.story-studio-host[data-editor-hidden]{height:auto;min-height:0;overflow:visible}
+/* While the studio loads its fonts the journal is still empty; this keeps the side panel and footer below the fold until it
+   is rendered, so they do not appear and then jump down (a layout shift). The studio sets and clears data-loading. */
+.story-studio-host[data-loading]{min-height:50vh}

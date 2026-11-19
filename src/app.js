@@ -1,5 +1,4 @@
 import { activityForPerson, activityParticipantLabel } from './vehicle-itinerary.js';
-import { createExpensePanel } from './expenses-ui.js';
 import { mapLink, googleMapsUrl } from './maps.js';
 
 import { dailyNote, setupDailyNote } from './daily-notes.js';
@@ -33,6 +32,26 @@ let baseRevision = state.revision, originalBackup = initial.raw || '';
 let dialogDirty = false;
 let inviteDraft={name:'',role:''}, inviteError='';
 let expensePanel = null;
+// The expenses panel (and its styles) is a separate chunk, loaded the first time the expenses tab renders.
+let expensesModule = null, expensesLoading = null;
+function mountExpenses() {
+  const mount = app.querySelector('#expenses-mount');
+  if (!mount) return;
+  if (!expensesModule) {
+    mount.innerHTML = '<p class="xp-loading" role="status">正在載入分帳…</p>';
+    expensesLoading ??= import('./expenses-ui.js').then(m => { expensesModule = m; }, err => { expensesLoading = null; throw err; });
+    expensesLoading.then(mountExpenses, err => {
+      const current = app.querySelector('#expenses-mount');
+      if (current) current.innerHTML = `<p class="save-warning" role="alert">分帳功能無法載入：${e(err?.message || '網路錯誤')}。請重新整理頁面。</p>`;
+    });
+    return;
+  }
+  if (mount.contains(expensePanel?.element)) return;
+  mount.replaceChildren();
+  expensePanel ??= expensesModule.createExpensePanel({getState:()=>state,account,assertSession:()=>assertAccountSession(),onDirty:()=>{}});
+  mount.append(expensePanel.element);
+  if (accountSessionChanged) expensePanel.lock('登入帳號已在其他分頁變更。請匯出分帳草稿，再重新登入原帳號。');
+}
 let presenceField = null; const presenceClientId = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now()).replace(/[^A-Za-z0-9_-]/g, '');
 let studioHost = null, studioMount = null, studioFailed = false, studioRetryAllowed = false, studioBaseRevision = null, studioBasePlan = null;
 const studioDirty = () => Boolean(studioMount?.isDirty());
@@ -155,7 +174,9 @@ function softChrome(){
 }
 function render(opts={}) {
   if(opts.soft&&studioInUse()){softChrome();return;}
-  const scrollX=window.scrollX,scrollY=window.scrollY;
+  // While an earlier render's scroll restore is still pending, reading window.scroll* would force a layout of
+  // half-written DOM; that pending position is the one to keep anyway.
+  const scrollX=pendingScroll?pendingScroll.x:window.scrollX,scrollY=pendingScroll?pendingScroll.y:window.scrollY;
   const active=document.activeElement?.dataset.focus||deferredFocus;
   deferredFocus=accountSaving?(active||''):'';
   const page=route();
@@ -167,26 +188,36 @@ function render(opts={}) {
   if(page==='trip'&&resolveTab(tab)==='schedule')document.body.dataset.printScope='itinerary';else delete document.body.dataset.printScope;
   if(account)applyAccountChrome();
   if(page==='trip'&&tab==='schedule') {mountStoryAfterRender();studioMount?.resume?.();} else if(studioMount){studioMount.suspend?.();if(!studioDirty())dropStudio();}
-  const expenseMount=app.querySelector('#expenses-mount');
-  if(expenseMount){expensePanel??=createExpensePanel({getState:()=>state,account,assertSession:()=>assertAccountSession(),onDirty:()=>{}});expenseMount.append(expensePanel.element);if(accountSessionChanged)expensePanel.lock('登入帳號已在其他分頁變更。請匯出分帳草稿，再重新登入原帳號。');}
+  mountExpenses();
   syncSceneMotion();
   if(active){const target=active.startsWith(':css:')?document.querySelector(active.slice(5)):[...document.querySelectorAll('[data-focus]')].find(el=>el.dataset.focus===active);target?.focus({preventScroll:true});if(target&&active.startsWith('meal-edit-'))target.scrollIntoView({block:'center'});}
-  const activeTab=app.querySelector('.section-tabs [aria-current="page"]');
-  if(activeTab&&matchMedia('(max-width:760px)').matches){
-    const tabs=activeTab.parentElement,tabRect=activeTab.getBoundingClientRect(),tabsRect=tabs.getBoundingClientRect();
-    if(tabRect.left<tabsRect.left||tabRect.right>tabsRect.right)tabs.scrollLeft+=tabRect.left<tabsRect.left?tabRect.left-tabsRect.left:tabRect.right-tabsRect.right;
-  }
-  const activeDay=app.querySelector('.date-tabs button[aria-pressed="true"]');
-  if(activeDay){
-    const days=activeDay.parentElement,dayRect=activeDay.getBoundingClientRect(),daysRect=days.getBoundingClientRect();
-    if(dayRect.left<daysRect.left||dayRect.right>daysRect.right)days.scrollLeft+=dayRect.left<daysRect.left?dayRect.left-daysRect.left:dayRect.right-daysRect.right;
-  }
-  if(window.scrollY!==scrollY||window.scrollX!==scrollX)window.scrollTo({left:scrollX,top:scrollY,behavior:'instant'});
+  afterRenderLayout(scrollX,scrollY);
+}
+// Geometry reads after a render force the browser to lay out the new page synchronously, in the middle of the
+// render's own DOM writes (and the storybook mount that follows). Doing them in the next animation frame lets that
+// layout happen once, after all writes and still before the first paint. Several renders in one frame share one
+// callback and keep the scroll position from before the first of them.
+let layoutFrame=0,pendingScroll=null;
+function afterRenderLayout(x,y){
+  pendingScroll??={x,y};
+  if(layoutFrame)return;
+  layoutFrame=requestAnimationFrame(()=>{
+    layoutFrame=0;const {x:left,y:top}=pendingScroll;pendingScroll=null;
+    revealActive(app.querySelector('.section-tabs [aria-current="page"]'),matchMedia('(max-width:760px)').matches);
+    revealActive(app.querySelector('.date-tabs button[aria-pressed="true"]'),true);
+    if(window.scrollY!==top||window.scrollX!==left)window.scrollTo({left,top,behavior:'instant'});
+  });
+}
+// Scroll a horizontal tab strip just enough to show its active item.
+function revealActive(item,enabled){
+  if(!item||!enabled||!item.isConnected)return;
+  const strip=item.parentElement,r=item.getBoundingClientRect(),s=strip.getBoundingClientRect();
+  if(r.left<s.left||r.right>s.right)strip.scrollLeft+=r.left<s.left?r.left-s.left:r.right-s.right;
 }
 function header() {
   if(account)return accountHeader();
   const user=state.people.find(p=>p.id===state.currentUser);
-  return `<header class="topbar"><div class="topbar-inner"><a class="brand" href="#/home" aria-label="日子拾光首頁">${logo()}<span>日子拾光<small>LITTLE MOMENTS</small></span></a><div class="header-actions"><span class="demo-badge"><i></i> 本機模式</span><button class="icon-button theme-button" data-action="theme" aria-label="切換${theme==='light'?'深色':'淺色'}模式">${icon(theme==='light'?'moon':'sun')}</button><button class="profile-button" data-action="profile" aria-label="切換旅伴身分">${avatar(user,true)}<span>${e(user.name)}</span><span class="chevron">⌄</span></button></div></div></header>`;
+  return `<header class="topbar"><div class="topbar-inner"><a class="brand" href="#/home" >${logo()}<span>日子拾光 <small>LITTLE MOMENTS</small><span class="visually-hidden"> 首頁</span></span></a><div class="header-actions"><span class="demo-badge"><i></i> 本機模式</span><button class="icon-button theme-button" data-action="theme" aria-label="切換${theme==='light'?'深色':'淺色'}模式">${icon(theme==='light'?'moon':'sun')}</button><button class="profile-button" data-action="profile" aria-label="切換旅伴身分">${avatar(user,true)}<span>${e(user.name)}</span><span class="chevron">⌄</span></button></div></div></header>`;
 }
 function footer() { if(account)return `<footer class="footer"><span>日子拾光 · 帳號版</span><span>資料儲存在本機伺服器，尚未公開部署。</span></footer>`;return `<footer class="footer"><div class="footer-brand">${icon('tent')} <span>日子拾光<span class="footer-dot">·</span>把平凡的日子，留成喜歡的回憶。</span></div><div><span>本機版 · 資料只儲存在此瀏覽器</span><a href="#/privacy">資料與隱私</a></div></footer>`; }
 function hero(compact=false) {
@@ -549,11 +580,11 @@ document.addEventListener('keydown',event=>{
   event.preventDefault();closeTripMenu();
 });
 let lastPage=route();
-window.addEventListener('hashchange',()=>{const page=route();lastPage=page;if(dialog.open)closeDialog();tripMenuOpen=false;render();window.scrollTo({top:0,behavior:'instant'});});
+window.addEventListener('hashchange',()=>{const page=route();lastPage=page;if(dialog.open)closeDialog();tripMenuOpen=false;render();if(pendingScroll)pendingScroll={x:0,y:0};window.scrollTo({top:0,behavior:'instant'});});
 window.addEventListener('storage',event=>{if(account)return;if(event.key!==STORAGE_KEY||!event.newValue)return;let incoming;try{incoming=JSON.parse(event.newValue);}catch{return;}if(!isValidState(incoming)||incoming.revision===baseRevision)return;if(!saved||studioDirty()||dialog.open||(route()==='invite'&&(inviteDraft.name||inviteDraft.role))){pendingRemote=incoming;storageLocked=true;saved=false;render();notify('另一分頁有更新。已保留你的修改，請先匯出備份。');return;}state=incoming;baseRevision=incoming.revision;render();notify('已載入另一個分頁的本機更新');});
 window.addEventListener('beforeunload',event=>{if(expensePanel?.isDirty()||studioDirty()||dialogDirty||!saved||(route()==='invite'&&(inviteDraft.name||inviteDraft.role))){event.preventDefault();event.returnValue='';}});
 function accountTripPath(){return `/${account.user.username}/trips/${account.trip.id}`;}
-function accountHeader(){const home=`/${e(account.user.username)}/home`;return `<header class="topbar"><div class="topbar-inner"><a class="brand" href="${home}" aria-label="日子拾光首頁">${logo()}<span>日子拾光<small>LITTLE MOMENTS</small></span></a><div class="header-actions"><button class="icon-button header-theme" data-action="theme" aria-label="切換${theme==='light'?'深色':'淺色'}模式">${icon(theme==='light'?'moon':'sun')}</button><button type="button" class="icon-button header-menu-toggle" data-action="header-menu" aria-expanded="false" aria-controls="header-menu" aria-label="帳號選單：${e(account.user.displayName)}" title="${e(account.user.displayName)}"><span class="header-avatar-mark" aria-hidden="true">${e(Array.from(account.user.displayName.trim())[0]||'?')}</span></button><div class="header-collapse" id="header-menu"><a class="text-link header-home" href="${home}">我的首頁</a>${account.user.role==='admin'?'<a class="text-link header-admin" href="/admin">管理後台</a>':''}<button class="text-button header-logout" data-action="account-logout">登出</button></div></div></div></header>`;}
+function accountHeader(){const home=`/${e(account.user.username)}/home`;return `<header class="topbar"><div class="topbar-inner"><a class="brand" href="${home}" >${logo()}<span>日子拾光 <small>LITTLE MOMENTS</small><span class="visually-hidden"> 首頁</span></span></a><div class="header-actions"><button class="icon-button header-theme" data-action="theme" aria-label="切換${theme==='light'?'深色':'淺色'}模式">${icon(theme==='light'?'moon':'sun')}</button><button type="button" class="icon-button header-menu-toggle" data-action="header-menu" aria-expanded="false" aria-controls="header-menu" aria-label="帳號選單：${e(account.user.displayName)}" title="${e(account.user.displayName)}"><span class="header-avatar-mark" aria-hidden="true">${e(Array.from(account.user.displayName.trim())[0]||'?')}</span></button><div class="header-collapse" id="header-menu"><a class="text-link header-home" href="${home}">我的首頁</a>${account.user.role==='admin'?'<a class="text-link header-admin" href="/admin">管理後台</a>':''}<button class="text-button header-logout" data-action="account-logout">登出</button></div></div></div></header>`;}
 function allowAccountAction(action){
   if(['delete','confirm-delete','confirm-delete-linked'].includes(action)&&account.permissions.canDelete!==true){notify('只有旅行建立者與管理員可以刪除內容。');return false;}
   if(INVITE_ACTIONS.includes(action)&&account.permissions.canInvite!==true){notify(INVITE_DENIED);return false;}

@@ -8,4 +8,8 @@ Official release: https://github.com/justfont/open-huninn-font/releases/tag/v2.1
 Font: https://github.com/justfont/open-huninn-font/releases/download/v2.1/jf-openhuninn-2.1.ttf
 License: https://raw.githubusercontent.com/justfont/open-huninn-font/master/LICENSE
 Self-hosted inside this project only. No system font installation.
-Huninn-Regular.ttf is retained for older cached clients.
+Huninn-Regular.ttf is no longer shipped.
+Served files are WOFF2 slices of jf-openhuninn-2.1.ttf (kept in fonts-src/, not served) built with scripts/subset-fonts.py.
+File names carry an 8-hex content hash (e.g. jf-openhuninn-ui-1a2b3c4d.woff2) so the server can cache them for a year.
+The storybook accent font Patrick Hand is served as a Latin-only WOFF2 (assets/storybook/fonts/PatrickHand-<hash>.woff2),
+built by the same script from fonts-src/PatrickHand-Regular.ttf.

@@ -14,7 +14,7 @@ const label=v=>v&&typeof v==='object'?(v.label||''):String(v??'');
 const evLabel=e=>[e.time,e.title].filter(Boolean).join(' ')||'未命名活動';
 const depLabel=r=>r.departure||'出發時間未填';
 function dayDate(d){if(!d||!d.date)return'日期未填';try{return StudioModel.dateText(d.date)}catch(_){return d.date}}
-function font(c,size,english=false){c.font=`${size}px "${english?'Patrick Hand':'WenKai'}",sans-serif`}
+function font(c,size,english=false){c.font=`${size}px "${english?'Patrick Hand':'jf open 粉圓'}",sans-serif`}
 function lines(text,width,size,english=false){const m=measure();font(m,size,english);const out=[];for(const p of String(text||'').split('\n')){let current='';for(const ch of Array.from(p)){if(current&&m.measureText(current+ch).width>width){out.push(current);current=''}current+=ch}out.push(current)}return out}
 // Website text may contain tabs/CR/control characters that canvas would draw as boxes.
 const clean=v=>String(v??'').replace(/\r\n?/g,'\n').replace(/\t/g,' ').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,'');

@@ -9,7 +9,7 @@ async function api(page,path,method='GET',body){
 }
 async function admin(page){await api(page,'/api/login','POST',{username:'qa-admin',password:'Local-Only-Test-Pass-2026'});}
 async function brand(page,href){
- const link=page.getByRole('link',{name:'日子拾光首頁',exact:true});
+ const link=page.getByRole('link',{name:'日子拾光 LITTLE MOMENTS 首頁',exact:true});
  await expect(link).toBeVisible();await expect(link).toHaveAttribute('href',href);
  await expect(link).toContainText('日子拾光');await expect(link.locator('small')).toHaveText('LITTLE MOMENTS');
  // 帳號頁（登入、首頁、管理後台、邀請）的頁尾已改為 acct-footer 標語與畫面偏好，不再重複品牌名稱

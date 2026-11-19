@@ -30,7 +30,7 @@ test.beforeAll(async({browser,baseURL})=>{
 test('[TC-HOME-001] account home clean URL, multiple cards, edit history and no demo storage writes @critical',async({page})=>{
  const user=await member(page);await page.goto(`/${user.username}/home`);await expect(page.getByRole('heading',{name:/旅行|故事|露營/}).first()).toBeVisible();
  await expect(page.getByText('你的首頁網址：',{exact:false})).toHaveCount(0);await expect(page.locator('.acct-url')).toHaveCount(0);
- await expect(page.getByRole('link',{name:'日子拾光首頁',exact:true})).toHaveAttribute('href',`/${user.username}/home`);
+ await expect(page.getByRole('link',{name:'日子拾光 LITTLE MOMENTS 首頁',exact:true})).toHaveAttribute('href',`/${user.username}/home`);
  expect(await page.evaluate(key=>localStorage.getItem(key),STORAGE_KEY)).toBeNull();
  await page.locator('[data-action="acct-new-trip"]').first().click();const form=page.locator('#dialog form');
  await form.locator('[name="trip-title"]').fill('第一次，松林露營');await form.locator('[name="trip-destination"]').fill('松林營地');await form.locator('[name="trip-start"]').fill('2026-10-02');await form.locator('[name="trip-end"]').fill('2026-10-04');await form.locator('[name="trip-status"]').selectOption('completed');await form.locator('button[type="submit"]').click();

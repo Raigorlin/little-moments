@@ -7,10 +7,32 @@ const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),out=resolve(roo
 await mkdir(out,{recursive:true});
 const build=await Bun.build({entrypoints:[resolve(root,'src/entry.js')],outdir:out,minify:true,target:'browser',splitting:true,naming:{entry:'entry.js',chunk:'chunks/[name]-[hash].[ext]'}});
 if(!build.success){console.error(build.logs);process.exit(1);}
-const css=await Promise.all(['styles.css','accounts.css','scene-motion.css','storybook-host.css','expenses.css'].map(file=>readFile(resolve(root,'src',file),'utf8'))).then(parts=>parts.join('\n'));
+// expenses.css is not here: src/expenses-ui.js carries it and adopts it when the expenses tab first opens.
+const css=await Promise.all(['styles.css','accounts.css','scene-motion.css','storybook-host.css'].map(file=>readFile(resolve(root,'src',file),'utf8'))).then(parts=>parts.join('\n'));
 await writeFile(resolve(out,'styles.css'),css);
 let html=await readFile(resolve(root,'index.html'),'utf8');
 html=html.replace('./src/app.js','/entry.js').replace('./src/styles.css','/styles.css').replace('./favicon.svg','/favicon.svg');
+// Resource hints. The module graph is entry.js -> shared chunks -> accounts-ui -> app, so without hints the browser
+// discovers each level only after downloading the previous one: four round trips before the page can render. The
+// hints let it fetch them all at once. The app chunk is hinted too: every page but login/home needs it, and the
+// trip page is where people spend their time. The storybook's Latin font is hinted because the studio waits for it.
+// Hinted set: the accounts-ui and app chunks plus every chunk they or entry.js import statically. Chunks used only
+// by lazily loaded features (expenses, receipt AI, GIF export) are left out.
+const outputText=new Map(await Promise.all(build.outputs.map(async x=>[relative(out,x.path).replaceAll('\\','/'),await readFile(x.path,'utf8')])));
+const staticImports=file=>[...(outputText.get(file)||'').matchAll(/(?:^|[;\s}])import\s*(?:[^'"()]*?from\s*)?["'](\.\/[^"']+)["']/g)].map(m=>('chunks/'+m[1].replace(/^\.\//,'').replace(/^chunks\//,'')));
+const roots=[...outputText.keys()].filter(p=>/^chunks\/(accounts-ui|app)-[a-z0-9]{8}\.js$/.test(p));
+const preloadChunks=[];const seen=new Set();
+const visit=file=>{for(const dep of staticImports(file))if(!seen.has(dep)&&outputText.has(dep)){seen.add(dep);preloadChunks.push('/'+dep);visit(dep);}};
+visit('entry.js');for(const r of roots){if(!seen.has(r)){seen.add(r);preloadChunks.push('/'+r);}visit(r);}
+// Fonts: the "ui" slice of the site font (every page's Latin and interface text) and the storybook's Latin font. Without
+// hints the ui slice is requested only once the stylesheet has arrived and text needs it, and the page's first full
+// layout then runs with the system CJK fallback font, whose first use is slow; the storybook waits for both fonts.
+const uiFont=(await readdir(resolve(root,'assets/fonts'))).find(n=>/^jf-openhuninn-ui-[a-f0-9]{8}\.woff2$/.test(n));
+const accentFont=(await readdir(resolve(root,'assets/storybook/fonts'))).find(n=>/^PatrickHand-[a-f0-9]{8}\.woff2$/.test(n));
+const fontHint=path=>`<link rel="preload" href="${path}" as="font" type="font/woff2" crossorigin />`;
+const hints=[...preloadChunks.map(p=>`<link rel="modulepreload" href="${p}" />`),...(uiFont?[fontHint('/assets/fonts/'+uiFont)]:[]),...(accentFont?[fontHint('/assets/storybook/fonts/'+accentFont)]:[])].map(h=>'    '+h).join('\n');
+html=html.replace('    <link rel="stylesheet" href="/styles.css" />',`    <link rel="stylesheet" href="/styles.css" />\n${hints}`);
+if(!html.includes('modulepreload'))throw new Error('build: resource hints were not inserted into index.html');
 await writeFile(resolve(out,'index.html'),html);
 await copyFile(resolve(root,'favicon.svg'),resolve(out,'favicon.svg'));
 await cp(resolve(root,'assets'),resolve(out,'assets'),{recursive:true});

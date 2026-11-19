@@ -143,7 +143,7 @@ function header(user, current = '') {
   const nav = user
     ? `${themeButton}<button type="button" class="icon-button acct-menu-toggle" data-act="acct-menu" aria-expanded="false" aria-controls="acct-menu" aria-label="帳號選單：${e(user.displayName)}" title="${e(user.displayName)}"><span aria-hidden="true">${initialOf(user.displayName)}</span></button><div class="acct-collapse" id="acct-menu"><a class="acct-home-link" href="${e(homePath(user))}"${cur('home')}>我的旅行</a>${user.role === 'admin' ? `<a class="acct-admin-link" href="/admin"${cur('admin')}>管理後台</a>` : ''}<span class="acct-user"><span class="avatar small yellow" aria-hidden="true">${initialOf(user.displayName)}</span><span class="acct-user-name"><b>${e(user.displayName)}</b><small>@${e(user.username)}</small></span></span><button type="button" class="button small acct-logout" data-act="logout">登出</button></div>`
     : themeButton;
-  return `<header class="acct-topbar"><div class="acct-topbar-inner"><a class="brand" href="${user ? e(homePath(user)) : '/login'}" aria-label="日子拾光首頁">${logo()}<span>日子拾光<small>LITTLE MOMENTS</small></span></a><nav class="acct-nav" aria-label="帳號選單">${nav}</nav></div></header>`;
+  return `<header class="acct-topbar"><div class="acct-topbar-inner"><a class="brand" href="${user ? e(homePath(user)) : '/login'}" >${logo()}<span>日子拾光 <small>LITTLE MOMENTS</small><span class="visually-hidden"> 首頁</span></span></a><nav class="acct-nav" aria-label="帳號選單">${nav}</nav></div></header>`;
 }
 
 function footer() {
@@ -824,6 +824,9 @@ async function main() {
   const route = parseRoute(location.pathname);
   app.innerHTML = '<main id="main" class="acct-page"><p class="acct-loading" role="status">正在確認登入狀態…</p></main>';
 
+  // The trip request does not depend on the session result, so start it now instead of after the session round trip.
+  // The server still authorizes it; the result is used only after the session confirms the user owns this route.
+  const tripRequest = route.name === 'trip' ? api(`${ENDPOINTS.trips}/${encodeURIComponent(route.tripId)}`).then(value => ({ value }), error => ({ error })) : null;
   let session;
   try { session = await api(ENDPOINTS.session); }
   catch (err) {
@@ -844,9 +847,9 @@ async function main() {
   if (route.name === 'trip') {
     if (!user) return go(loginPath(location.pathname));
     if (route.slug !== user.username) { setupChrome(); return permissionPage(user, '旅行網址必須使用你自己的帳號名稱。請從你的首頁打開旅行。'); }
-    let detail;
-    try { detail = await api(`${ENDPOINTS.trips}/${encodeURIComponent(route.tripId)}`); }
-    catch (err) { setupChrome(); return renderTripError(user, err); }
+    const outcome = await tripRequest;
+    if (outcome.error) { setupChrome(); return renderTripError(user, outcome.error); }
+    const detail = outcome.value;
     globalThis.campingAccountContext = { user, ...detail, api };
     await import('./app.js');
     return;
