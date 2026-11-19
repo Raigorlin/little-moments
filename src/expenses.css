@@ -145,3 +145,19 @@
   .xp-row.is-new{background:none}
   .xp-section-head{border-bottom-color:#222}
 }
+/* Compact layout: one summary line, one row of actions, export tucked under a quiet link. */
+.xp-head{margin-bottom:6px}
+.xp-toolbar{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px 16px;padding:14px 0;margin:8px 0 14px}
+.xp-total{display:flex;align-items:baseline;gap:10px;margin:0;font-size:14px;color:var(--muted)}
+.xp-total-amount{font-size:26px;line-height:1.1;color:var(--ink);font-family:var(--font-ui)}
+.xp-toolbar>.xp-actions{grid-column:1/-1}
+.xp-more{grid-column:2;grid-row:1;flex-basis:auto;justify-self:end}
+.xp-more>summary{min-height:36px;font-size:13px}
+.xp-more[open]{grid-column:1/-1;grid-row:auto;justify-self:stretch}
+.xp-empty-ledger{text-align:center;padding:28px 8px;border:1.5px dashed var(--line);border-radius:14px}
+.xp-section{margin-top:20px}
+@media(max-width:600px){
+  .xp-toolbar>.xp-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .xp-toolbar>.xp-actions>.button{padding:8px 6px;font-size:14px;white-space:nowrap}
+}
+.xp-transfer{grid-template-columns:minmax(0,1fr) auto auto;padding:8px 4px}.xp-transfer>.button.xp-settle{grid-column:auto;justify-self:end;min-height:36px;padding:4px 12px;font-size:13px;box-shadow:1px 2px 0 var(--shadow)}

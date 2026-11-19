@@ -615,7 +615,7 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
   }
 
   function view() {
-    const head = `<header class="xp-head"><span class="eyebrow">SHARE THE COST, KEEP THE MOMENT</span><h2 id="${id('title')}">分帳與收據</h2><p class="help xp-intro">記錄大家先墊付的花費，平均分攤並算出誰該還誰。這裡只做記錄，不會轉帳，也不會連結任何付款服務。</p></header>`;
+    const head = `<header class="xp-head"><h2 id="${id('title')}">分帳與收據</h2></header>`;
     if (S.status === 'demo') return `${head}<div class="xp-alert xp-alert-info" data-xp-state="demo"><p><b>分帳需要登入帳號。</b>金額紀錄存放在本機伺服器的帳號資料庫；單機本機模式不會儲存任何分帳資料。請登入帳號並開啟旅行後使用。</p><div class="xp-actions"><a class="button small" href="/login">前往登入</a></div></div>`;
     if (S.status === 'loading') return `${head}<p class="xp-loading" data-xp-state="loading">正在讀取分帳帳本…</p>`;
     if (S.status === 'unavailable') return `${head}<div class="xp-alert" role="alert" data-xp-state="unavailable"><p><b>${BACKEND_OFF}</b></p><p class="help">也可能是這趟旅行已刪除或你沒有存取權限${S.loadError?.message ? `（伺服器訊息：${e(S.loadError.message)}）` : ''}。目前沒有任何金額被儲存或送出。</p><div class="xp-actions">${btn('重新檢查', 'reload', { disabled: S.reloading || Boolean(S.locked), bid: 'reload' })}</div></div>`;
@@ -623,7 +623,8 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
       const err = S.loadError;
       return `${head}<div class="xp-alert" role="alert" data-xp-state="error"><p>${e(err?.status === 401 ? '登入狀態已失效，請重新登入後再開啟帳本。' : `讀取分帳帳本失敗：${err?.message || '未知錯誤'}`)}</p><div class="xp-actions">${btn('重試讀取', 'reload', { disabled: S.reloading || Boolean(S.locked), bid: 'reload' })}${err?.status === 401 ? '<a class="button small" href="/login">重新登入</a>' : ''}</div></div>`;
     }
-    return `${head}${banners()}${toolbar()}${editorHtml()}${balancesHtml()}${expensesHtml()}${settlementsHtml()}${discardPromptHtml()}`;
+    const empty = !S.ledger.expenses.length && !S.ledger.settlements.length;
+    return `${head}${banners()}${toolbar()}${editorHtml()}${empty ? '<p class="xp-empty xp-empty-ledger" data-xp-state="empty">還沒有支出。</p>' : `${balancesHtml()}${expensesHtml()}${settlementsHtml()}`}${discardPromptHtml()}`;
   }
 
   function banners() {
@@ -639,7 +640,7 @@ export function createExpensePanel({ getState, account, assertSession, onDirty }
   function toolbar() {
     const off = !canMutate();
     const total = S.ledger.expenses.reduce((a, x) => a + (Number.isSafeInteger(x.amountCents) ? x.amountCents : 0), 0);
-    return `<div class="xp-toolbar"><p class="xp-total">共 <b>${S.ledger.expenses.length}</b> 筆支出，合計 <b>${e(money(total))}</b></p><div class="xp-actions">${btn('＋ 新增支出', 'new-expense', { cls: 'small primary', disabled: off, bid: 'new-expense' })}${btn('掃描收據', 'open-receipt', { disabled: off, bid: 'open-receipt' })}${btn('記錄已還款', 'new-settlement', { disabled: off, bid: 'new-settlement' })}</div><details class="xp-more"><summary>匯出與重新載入</summary><div class="xp-actions">${btn('匯出 CSV', 'export-csv', { bid: 'export-csv' })}${btn('匯出帳本 JSON', 'export-json', { bid: 'export-json' })}${isDirty() ? btn('匯出未存內容', 'export-draft', { bid: 'export-draft' }) : ''}${btn(S.reloading ? '載入中…' : '重新載入帳本', 'reload', { disabled: S.reloading || S.busy || Boolean(S.locked), bid: 'reload' })}</div></details></div>`;
+    return `<div class="xp-toolbar"><p class="xp-total"><b class="xp-total-amount">${e(money(total))}</b><span>${S.ledger.expenses.length} 筆支出</span></p><div class="xp-actions">${btn('＋ 新增支出', 'new-expense', { cls: 'small primary', disabled: off, bid: 'new-expense' })}${btn('掃描收據', 'open-receipt', { disabled: off, bid: 'open-receipt' })}${btn('記錄還款', 'new-settlement', { disabled: off, bid: 'new-settlement' })}</div><details class="xp-more"><summary>匯出・重新載入</summary><div class="xp-actions">${btn('匯出 CSV', 'export-csv', { bid: 'export-csv' })}${btn('匯出帳本 JSON', 'export-json', { bid: 'export-json' })}${isDirty() ? btn('匯出未存內容', 'export-draft', { bid: 'export-draft' }) : ''}${btn(S.reloading ? '載入中…' : '重新載入帳本', 'reload', { disabled: S.reloading || S.busy || Boolean(S.locked), bid: 'reload' })}</div></details></div>`;
   }
   function editorHtml() {
     if (S.editor === 'expense' && S.form) return expenseFormHtml();
@@ -752,10 +753,10 @@ ${R.parseWarnings.length ? `<ul class="xp-warn-list">${R.parseWarnings.map(w => 
     const balances = (s.balances || []).filter(b => b.paidCents || b.shareCents || b.sentCents || b.receivedCents);
     const transfers = s.transfers || [];
     const off = !canMutate();
-    return `<section class="xp-section" aria-labelledby="${id('bal-title')}" data-xp-section="balances"><div class="xp-section-head"><h3 id="${id('bal-title')}">誰該還誰</h3><p class="help">支出 ${e(money(s.totalCents || 0))} · 已記錄還款 ${e(money(s.totalSettledCents || 0))}</p></div>
+    return `<section class="xp-section" aria-labelledby="${id('bal-title')}" data-xp-section="balances"><div class="xp-section-head"><h3 id="${id('bal-title')}">誰該還誰</h3></div>
 ${balances.length ? `<ul class="xp-balances">${balances.map(b => `<li class="xp-balance" data-xp-person="${e(b.personId)}"><span class="xp-balance-name">${e(b.name || nameOf(b.personId))}</span><span class="xp-balance-net${b.netCents > 0 ? ' is-in' : b.netCents < 0 ? ' is-out' : ''}">${b.netCents > 0 ? `應收回 ${e(money(b.netCents))}` : b.netCents < 0 ? `需補 ${e(money(-b.netCents))}` : '已結清'}</span><small class="xp-balance-meta">已付 ${e(money(b.paidCents))} · 分攤 ${e(money(b.shareCents))}${b.sentCents ? ` · 已還出 ${e(money(b.sentCents))}` : ''}${b.receivedCents ? ` · 已收回 ${e(money(b.receivedCents))}` : ''}</small></li>`).join('')}</ul>` : '<p class="xp-empty">還沒有支出，新增第一筆後就能看到每個人的結餘。</p>'}
-<h4 class="xp-subhead">建議還款 <small>僅供參考，不會自動轉帳</small></h4>
-${transfers.length ? `<ul class="xp-transfers">${transfers.map((t, i) => `<li class="xp-transfer" data-xp-transfer="${i}"><span><b>${e(nameOf(t.fromId))}</b> → <b>${e(nameOf(t.toId))}</b></span><span class="xp-money">${e(money(t.amountCents))}</span>${btn('記錄已還款', 'settle-suggested', { disabled: off, attrs: `data-xp-index="${i}" aria-label="記錄 ${e(nameOf(t.fromId))} 已還給 ${e(nameOf(t.toId))} ${e(money(t.amountCents))}"`, bid: `settle-${i}` })}</li>`).join('')}</ul>` : '<p class="xp-empty">目前沒有需要還款的人。</p>'}</section>`;
+${transfers.length ? `<h4 class="xp-subhead">建議還款</h4>` : ''}
+${transfers.length ? `<ul class="xp-transfers">${transfers.map((t, i) => `<li class="xp-transfer" data-xp-transfer="${i}"><span><b>${e(nameOf(t.fromId))}</b> → <b>${e(nameOf(t.toId))}</b></span><span class="xp-money">${e(money(t.amountCents))}</span>${btn('已還款', 'settle-suggested', { cls: 'small xp-settle', disabled: off, attrs: `data-xp-index="${i}" aria-label="記錄 ${e(nameOf(t.fromId))} 已還給 ${e(nameOf(t.toId))} ${e(money(t.amountCents))}"`, bid: `settle-${i}` })}</li>`).join('')}</ul>` : ''}</section>`;
   }
   function confirmRow(kind, rid, text) {
     return `<li class="xp-row is-confirm" data-xp-${kind}="${e(rid)}"><p>${e(text)}</p><div class="xp-actions">${btn('取消', 'cancel-confirm', { bid: 'confirm-cancel' })}${btn('確認移除', 'confirm-remove', { cls: 'small danger', disabled: !canMutate({ remove: true }), bid: 'confirm-remove' })}</div></li>`;
@@ -777,11 +778,12 @@ ${transfers.length ? `<ul class="xp-transfers">${transfers.map((t, i) => `<li cl
   }
   function settlementsHtml() {
     const list = [...S.ledger.settlements].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    if (!list.length) return '';
     const offDel = !canMutate({ remove: true });
     const row = x => (S.confirm?.kind === 'settlement' && S.confirm.id === x.id
       ? confirmRow('settlement', x.id, '確定移除這筆還款紀錄？只會修改帳本，不會退回或取消任何實際付款。')
       : `<li class="xp-row" data-swipe-row data-xp-settlement="${e(x.id)}"><div class="xp-row-main"><b class="xp-row-title">${e(nameOf(x.fromId))} → ${e(nameOf(x.toId))}</b></div><span class="xp-money">${e(money(x.amountCents))}</span><small class="xp-row-meta"><time datetime="${e(x.date)}">${e(shortDate(x.date))}</time>${x.note ? ` · ${e(x.note)}` : ''}</small><div class="xp-row-actions">${S.perms.canDelete ? btn('移除', 'ask-remove-settlement', { cls: 'small quiet danger', disabled: offDel, attrs: `data-xp-id="${e(x.id)}" aria-label="移除 ${e(nameOf(x.fromId))} 給 ${e(nameOf(x.toId))} 的還款紀錄"`, bid: `sdel-${x.id}` }) : ''}</div></li>`);
-    return `<section class="xp-section" aria-labelledby="${id('set-title')}" data-xp-section="settlements"><div class="xp-section-head"><h3 id="${id('set-title')}">已記錄的還款</h3><p class="help">實際已交付的金額紀錄</p></div>${list.length ? `<ul class="xp-rows">${list.map(row).join('')}</ul>` : '<p class="xp-empty">還沒有記錄任何還款。</p>'}</section>`;
+    return `<section class="xp-section" aria-labelledby="${id('set-title')}" data-xp-section="settlements"><div class="xp-section-head"><h3 id="${id('set-title')}">還款紀錄</h3><p class="help">${list.length} 筆</p></div><ul class="xp-rows">${list.map(row).join('')}</ul></section>`;
   }
 
   function render() {
