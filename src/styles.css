@@ -378,3 +378,4 @@ select option,select optgroup{font-family:var(--font-ui);background:var(--paper)
 @media(max-width:600px){.mode-switch .icon,.toolbar-actions .icon{width:24px;height:24px}.hero:not(.hero-home) .hero-pin .icon{width:24px;height:24px}}
 .visually-hidden{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .shopping-where.is-unrouted{color:var(--danger)}
+.departure-food{margin-top:28px}.departure-food h2 small{font-size:14px;color:var(--muted);font-weight:400;margin-left:6px}.departure-food .packing-item .shopping-where{display:block}
