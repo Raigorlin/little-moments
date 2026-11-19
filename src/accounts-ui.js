@@ -141,7 +141,7 @@ function header(user, current = '') {
   const themeButton = `<button type="button" class="icon-button acct-theme" data-act="theme" aria-label="${theme === 'dark' ? '切換為淺色模式' : '切換為深色模式'}">${icon(theme === 'dark' ? 'sun' : 'moon')}</button>`;
   const cur = name => (current === name ? ' aria-current="page"' : '');
   const nav = user
-    ? `<a href="${e(homePath(user))}"${cur('home')}>我的旅行</a>${user.role === 'admin' ? `<a href="/admin"${cur('admin')}>管理後台</a>` : ''}<span class="acct-user"><span class="avatar small yellow" aria-hidden="true">${initialOf(user.displayName)}</span><span class="acct-user-name"><b>${e(user.displayName)}</b><small>@${e(user.username)}</small></span></span>${themeButton}<button type="button" class="button small" data-act="logout">登出</button>`
+    ? `${themeButton}<button type="button" class="icon-button acct-menu-toggle" data-act="acct-menu" aria-expanded="false" aria-controls="acct-menu" aria-label="帳號選單：${e(user.displayName)}" title="${e(user.displayName)}"><span aria-hidden="true">${initialOf(user.displayName)}</span></button><div class="acct-collapse" id="acct-menu"><a class="acct-home-link" href="${e(homePath(user))}"${cur('home')}>我的旅行</a>${user.role === 'admin' ? `<a class="acct-admin-link" href="/admin"${cur('admin')}>管理後台</a>` : ''}<span class="acct-user"><span class="avatar small yellow" aria-hidden="true">${initialOf(user.displayName)}</span><span class="acct-user-name"><b>${e(user.displayName)}</b><small>@${e(user.username)}</small></span></span><button type="button" class="button small acct-logout" data-act="logout">登出</button></div>`
     : themeButton;
   return `<header class="acct-topbar"><div class="acct-topbar-inner"><a class="brand" href="${user ? e(homePath(user)) : '/login'}" aria-label="日子拾光首頁">${logo()}<span>日子拾光<small>LITTLE MOMENTS</small></span></a><nav class="acct-nav" aria-label="帳號選單">${nav}</nav></div></header>`;
 }
@@ -225,6 +225,9 @@ function setupChrome() {
   document.documentElement.dataset.theme = theme;
   document.addEventListener('click', event => {
     const target = event.target.closest?.('[data-act]');
+    const menu = document.getElementById('acct-menu');
+    if (target?.dataset.act === 'acct-menu') { const open = !!menu?.classList.toggle('open'); target.setAttribute('aria-expanded', String(open)); return; }
+    if (menu?.classList.contains('open') && !event.target.closest?.('#acct-menu')) { menu.classList.remove('open'); document.querySelector('.acct-menu-toggle')?.setAttribute('aria-expanded', 'false'); }
     if (target?.dataset.act === 'theme') return setTheme(theme === 'dark' ? 'light' : 'dark');
     if (target?.dataset.act === 'logout') return void logout(target);
     if (target?.dataset.act === 'reload') return location.reload();
