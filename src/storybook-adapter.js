@@ -156,7 +156,7 @@ function project(state, ids) {
   return {
     schemaVersion: 1, title: state.trip.title,
     headline: state.storybook?.headline ?? '', caption: state.storybook?.caption ?? '',
-    places, vehicles, shopping: plan.unassigned.map(u => u.code === 'unassigned' ? itemName(u.item) : `${itemName(u.item)}（${u.reason}）`), days
+    places, vehicles, shopping: plan.unassigned.filter(u => u.code === 'unassigned').map(u => itemName(u.item)), days
   };
 }
 

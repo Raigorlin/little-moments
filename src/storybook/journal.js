@@ -241,7 +241,7 @@ export function renderJournal(container, plan, ctx) {
   const shop = plan.shopping.length ? el('section', { class: 'j-shop', 'aria-labelledby': 'j-shop-title' },
     el('span', { class: 'j-tape right', 'aria-hidden': 'true' }),
     el('div', { class: 'j-shop-head' }, icon('basket', 'j-shop-icon'),
-      el('div', {}, el('h2', { id: 'j-shop-title', text: '未分配採買清單' }), el('p', { class: 'j-small', text: '先把清單帶上，再一起分工。' }))),
+      el('div', {}, el('h2', { id: 'j-shop-title', text: '未分配採買清單' }), el('p', { class: 'j-small', text: '還沒有人負責，記得到採買清單分工。' }))),
     el('ul', { class: 'j-shop-list' }, plan.shopping.map(s => el('li', {}, el('span', { class: 'j-box', 'aria-hidden': 'true' }), el('span', { text: s }))))) : null;
 
   const tools = el('div', { class: 'j-tools' },

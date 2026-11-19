@@ -123,7 +123,7 @@ export const STUDIO_TEMPLATE = `
         </section>
 
         <details class="disclosure" id="unassignedSection">
-          <summary>未分配採買清單 <span class="hint">來自網站的採買清單，這裡唯讀</span></summary>
+          <summary>未分配採買清單 <span class="hint">採買清單中「待分配」的品項，這裡唯讀</span></summary>
           <div class="disclosure-body">
             <p class="hint">要修改採買項目，請到網站的採買頁；各車途中任務的清單可在路線中編輯。</p>
             <label for="shopping">目前清單</label>
