@@ -1,0 +1,5 @@
+# lm-web 以 trunk 建成 wasm32-unknown-unknown；檢查點會執行 cargo fmt 與 cargo clippy
+[toolchain]
+channel = "stable"
+targets = ["wasm32-unknown-unknown"]
+components = ["rustfmt", "clippy"]

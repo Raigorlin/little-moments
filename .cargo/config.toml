@@ -1,0 +1,4 @@
+# 只對 wasm32 目標：讓 getrandom 0.3 在瀏覽器以 crypto.getRandomValues 產生亂數（wasm_js 後端，lm-web 產生 UUID 時使用）；原生建置不受影響。
+# 這個 cfg 不能取代 feature：wasm32 建置中的 getrandom 0.3 仍要啟用 `wasm_js` feature。getrandom 0.3.4 起只啟用 feature 就夠了，這個 cfg 仍被接受。
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", 'getrandom_backend="wasm_js"']

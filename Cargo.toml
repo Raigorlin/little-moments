@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/supabase", "crates/server", "crates/web"]
+# lm-web 只以 trunk 建成 wasm32；cargo build／test 預設不建它
+default-members = ["crates/core", "crates/supabase", "crates/server"]
+# 不讓 workspace 碰到舊的 worktree
+exclude = [".worktrees"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+publish = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+# 只讓前端 crate 以體積為優先；trunk 另以 wasm-opt（index.html 的 data-wasm-opt="z"）縮小輸出
+[profile.release.package.lm-web]
+opt-level = "z"
