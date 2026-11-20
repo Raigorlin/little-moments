@@ -106,7 +106,7 @@
     - 不使用網路、檔案、系統時間與執行緒
     - _Requirements: 1.3, 1.4, 8.4, 8.6_
 
-  - [ ]* 4.3 撰寫文字與時間規則的範例測試（`crates/core/tests/text_time_examples.rs`）
+  - [ ] 4.3 撰寫文字與時間規則的範例測試（`crates/core/tests/text_time_examples.rs`）
     - 移植 `tests/itinerary-time-input.test.js` 與 `tests/itinerary-numerals.test.js` 的每個固定輸入案例
     - 需求 33.10 的 Participant_Name 案例：「小」加 U+FEFF 加「安」正規化為「小 安」
     - _Requirements: 33.1, 33.10_
@@ -118,7 +118,7 @@
     - `remove_ingredient_from_meals()` 的食材文字處理（需求 25.16），以及每個切出的食材最多 100 字的檢查（需求 25.18）
     - _Requirements: 25.3, 25.4, 25.5, 25.16, 25.17, 25.18_
 
-  - [ ]* 5.2 撰寫 Property 17 的 property test（`crates/core/tests/prop_parse_ingredients.rs`）
+  - [ ] 5.2 撰寫 Property 17 的 property test（`crates/core/tests/prop_parse_ingredients.rs`）
     - **Property 17: 食材切分再切一次不變**
     - **Validates: Requirements 25.4, 25.5**
 
@@ -133,29 +133,29 @@
     - 移植 `src/meal-order.js` 的餐次順序與 `group_meals_by_date()`，以及 `src/gear-presets.js` 的 `PERSONAL_GEAR_GROUPS`
     - _Requirements: 24.1, 24.4, 24.5, 24.11_
 
-  - [ ]* 5.5 建立屬性測試的共用產生器（`crates/core/tests/support/`）
+  - [ ] 5.5 建立屬性測試的共用產生器（`crates/core/tests/support/`）
     - `arb_state()` 依 design「Correctness Properties」的共用產生器範圍（1–5 天、部分綁定帳號的旅伴、車輛、地點、路線與停靠點、活動、料理與採買品項、裝備、支出與還款）產生滿足 I1–I8、I10–I12 的狀態；食材文字由包含各種分隔符號、`1.5`、`1,000`、全形數字、U+3000、U+FEFF、U+0085、大小寫與重複名稱的詞彙組成
     - 依序產生 id 的決定性 `IdSource`；`support/mod.rs` 以 `#[allow(dead_code)]` 讓只用到一部分的測試檔不產生警告；確認 `proptest-regressions/` 沒有被 `.gitignore` 排除
     - _Requirements: 33.5, 33.6_
 
-  - [ ]* 5.6 撰寫 Property 4 的 property test（`crates/core/tests/prop_sync_idempotent.rs`）
+  - [ ] 5.6 撰寫 Property 4 的 property test（`crates/core/tests/prop_sync_idempotent.rs`）
     - **Property 4: 採買同步冪等**
     - **Validates: Requirements 25.14**
 
-  - [ ]* 5.7 撰寫 Property 5 的 property test（`crates/core/tests/prop_sync_preserves.rs`）
+  - [ ] 5.7 撰寫 Property 5 的 property test（`crates/core/tests/prop_sync_preserves.rs`）
     - **Property 5: 採買同步不刪除手動與已買的品項，也不改使用者管理的欄位**
     - **Validates: Requirements 25.10, 25.11, 25.19, 29.13**
 
-  - [ ]* 5.8 撰寫 Property 6 的 property test（`crates/core/tests/prop_sync_coverage.rs`）
+  - [ ] 5.8 撰寫 Property 6 的 property test（`crates/core/tests/prop_sync_coverage.rs`）
     - **Property 6: 採買同步涵蓋每一個需要的食材**
     - **Validates: Requirements 9.10, 25.6, 25.7, 25.8**
 
-  - [ ]* 5.9 撰寫食材與採買同步的範例測試（`crates/core/tests/ingredients_examples.rs`）
+  - [ ] 5.9 撰寫食材與採買同步的範例測試（`crates/core/tests/ingredients_examples.rs`）
     - 移植 `tests/ingredients.test.js` 的每個固定輸入案例（切分、分類、Shopping_Sync、從料理移除食材）
     - 需求 33.10 的案例：U+FEFF 加「雞蛋」切出「雞蛋」；「雞」加 U+FEFF 加「蛋」切出「雞 蛋」，它的 Ingredient_Key 為「雞蛋」；U+0085 加「雞蛋」切出的名稱仍以 U+0085 開頭；「鹽」加 U+0663 分類為「其他」
     - _Requirements: 33.1, 33.10_
 
-  - [ ]* 5.10 撰寫料理範本與餐次順序的範例測試（`crates/core/tests/recipes_examples.rs`）
+  - [ ] 5.10 撰寫料理範本與餐次順序的範例測試（`crates/core/tests/recipes_examples.rs`）
     - 移植 `tests/meal-order.test.js`，以及 `tests/recipes-invites.test.js` 中料理範本、插圖種類推斷與合併食材的案例（旅伴名字的案例在任務 8.15）
     - _Requirements: 33.1_
 
@@ -173,7 +173,7 @@
     - `shorten_blocked_message()` 產生需求 18.7 的訊息
     - _Requirements: 18.5, 18.6, 18.7, 18.8, 18.9_
 
-  - [ ]* 6.3 撰寫 Property 16 的 property test（`crates/core/tests/prop_retime.rs`）
+  - [ ] 6.3 撰寫 Property 16 的 property test（`crates/core/tests/prop_retime.rs`）
     - **Property 16: 改日期保留「第 N 天」**
     - **Validates: Requirements 18.5, 18.6, 18.7, 18.8**
 
@@ -182,21 +182,21 @@
     - 固定標點使用需求 31.18 的碼位；使用者文字一律經 `clean_text()`；不輸出行程繪本的標語、說明與停靠點自訂品項；第一行之前與最後一行之後都沒有換行字元
     - _Requirements: 22.8, 22.12, 31.1, 31.2, 31.3, 31.4, 31.5, 31.6, 31.7, 31.8, 31.9, 31.10, 31.11, 31.12, 31.13, 31.14, 31.18_
 
-  - [ ]* 6.5 撰寫 Property 13 的 property test（`crates/core/tests/prop_itinerary_text.rs`）
+  - [ ] 6.5 撰寫 Property 13 的 property test（`crates/core/tests/prop_itinerary_text.rs`）
     - **Property 13: 文字版是決定性的**
     - **Validates: Requirements 31.1, 31.3, 31.5**
 
-  - [ ]* 6.6 撰寫文字版的 golden 測試（`crates/core/tests/itinerary_text_golden.rs`）
+  - [ ] 6.6 撰寫文字版的 golden 測試（`crates/core/tests/itinerary_text_golden.rs`）
     - 在 `crates/core/tests/support/example_trip.rs` 移植 `tests/fixtures/example-trip.js` 的 `exampleTrip()`（陣列順序改以 Ordinal 表示；第 1 天的每日設定有預計抵達時間 12:00）
     - 預期文字檔 `crates/core/tests/fixtures/example-itinerary.txt` 依需求 31 逐行撰寫，可以對照現行行程繪本「複製文字」對同一份資料的輸出（`src/storybook/app.js` 的 `renderItinerary()` 與 `copyItinerary()`），只多出「預計 12:00 抵達夕淞度日營區」一行；不使用 `EXAMPLE_TEXT`，也不以 `itinerary_text()` 的輸出產生預期檔；最後一行之後沒有換行字元
     - 在 `crates/core/tests/fixtures/` 新增 `.gitattributes`（例如 `*.txt -text`），使 Windows 檢出時不改變行尾；測試逐字比較整段文字
     - _Requirements: 33.2_
 
-  - [ ]* 6.7 撰寫文字版的其他範例測試（`crates/core/tests/itinerary_text_examples.rs`）
+  - [ ] 6.7 撰寫文字版的其他範例測試（`crates/core/tests/itinerary_text_examples.rs`）
     - 需求 33.11 列出的每一種情況各一個小型旅行，比對完整輸出
     - _Requirements: 33.11_
 
-  - [ ]* 6.8 撰寫行程推導與改日期的範例測試（`crates/core/tests/itinerary_examples.rs`、`crates/core/tests/dates_examples.rs`）
+  - [ ] 6.8 撰寫行程推導與改日期的範例測試（`crates/core/tests/itinerary_examples.rs`、`crates/core/tests/dates_examples.rs`）
     - 移植 `tests/itinerary-model.test.js`、`tests/itinerary-place-name.test.js`、`tests/itinerary-shopping.test.js`、`tests/itinerary-derive.test.js`（Shopping_Plan 的部分），以及 `tests/itinerary-dates.test.js` 中 `retimeByDayIndex()` 與 `shortenBlockedMessage()` 的案例；行程圖、規劃提醒、舊的出發欄位 `meeting` 與 `shiftByOffset()` 的案例不移植
     - _Requirements: 33.1_
 
@@ -205,11 +205,11 @@
     - 移植 `src/expense-model.js` 與 `src/expense-categories.js`：`parse_amount()`（需求 29.5 的格式與訊息）、`format_money()`、`split_evenly()`（餘數依旅伴 id 遞增，各 1 分給排在前面的人）、`summarize()`（每位旅伴的已付、分攤、已還出、已收回與淨額）與建議轉帳（需求 29.7 的排序與配對）、`EXPENSE_CATEGORIES`（18 種）與 `suggest_expense_category()`
     - _Requirements: 29.5, 29.6, 29.7, 29.8, 29.11_
 
-  - [ ]* 7.2 撰寫 Property 15 的 property test（`crates/core/tests/prop_ledger.rs`）
+  - [ ] 7.2 撰寫 Property 15 的 property test（`crates/core/tests/prop_ledger.rs`）
     - **Property 15: 分帳金額守恆**
     - **Validates: Requirements 29.6, 29.7**
 
-  - [ ]* 7.3 撰寫分帳計算的範例測試（`crates/core/tests/ledger_examples.rs`）
+  - [ ] 7.3 撰寫分帳計算的範例測試（`crates/core/tests/ledger_examples.rs`）
     - 移植 `tests/expense-model.test.js` 與 `tests/ledger.test.js` 中計算部分的案例；收據 AI、帳本的伺服器儲存與 HTTP 的案例不移植
     - _Requirements: 33.1_
 
@@ -224,11 +224,11 @@
     - 移植 `src/model.js` 的 `my_gear()`、`can_depart()` 與 `unassigned_gear()`，以及 Gear_Progress 與 Packing_Progress
     - _Requirements: 6.4, 6.6, 6.7, 6.8, 6.9, 6.10, 6.11, 27.9, 28.1_
 
-  - [ ]* 8.3 擴充共用產生器：`arb_command()` 與 `arb_caps()`（`crates/core/tests/support/`）
+  - [ ] 8.3 擴充共用產生器：`arb_command()` 與 `arb_caps()`（`crates/core/tests/support/`）
     - `arb_command(state)` 多數引用既有的列，也產生不存在的 id、超過上限的文字、別人的旅伴與邊界值；`arb_caps(state)` 涵蓋擁有者、Admin、綁定旅伴的 Collaborator、Unbound_Admin 與非成員
     - _Requirements: 33.5_
 
-  - [ ]* 8.4 撰寫 Property 8 的 property test（`crates/core/tests/prop_permissions.rs`）
+  - [ ] 8.4 撰寫 Property 8 的 property test（`crates/core/tests/prop_permissions.rs`）
     - **Property 8: 權限判斷與規則表一致**
     - 在測試中以查表另外實作 Permission_Table，比對 `authorize()` 是否允許，以及拒絕的種類（404 或 403）
     - **Validates: Requirements 6.1, 6.2, 6.4, 6.6, 6.7, 6.8, 6.9, 6.10, 6.11**
@@ -266,34 +266,34 @@
     - 支出與還款：需求 29.2–29.4 的檢查（標題與備註先 NFC 再 Trim_White，分攤旅伴以加入與移除套用）；刪除時其他帳目與採買品項不變
     - _Requirements: 22.13, 24.2, 24.7, 24.8, 25.16, 25.18, 25.20, 26.2, 26.3, 26.4, 26.5, 26.6, 26.7, 26.8, 26.9, 26.10, 26.11, 26.12, 26.13, 26.16, 27.2, 27.3, 27.4, 27.5, 27.6, 27.7, 27.8, 27.10, 27.12, 28.2, 28.3, 28.4, 29.2, 29.3, 29.4, 29.9, 29.13_
 
-  - [ ]* 8.10 撰寫 Property 7 的 property test（`crates/core/tests/prop_check_commands.rs`）
+  - [ ] 8.10 撰寫 Property 7 的 property test（`crates/core/tests/prop_check_commands.rs`）
     - **Property 7: 勾選是冪等的集合操作**
     - 也涵蓋要刪除的列已不存在時，通過權限檢查的刪除命令回傳 `is_noop()`
     - **Validates: Requirements 7.11, 7.12, 7.13, 23.6, 26.9, 27.6, 28.2, 28.4**
 
-  - [ ]* 8.11 撰寫 Property 9 的 property test（`crates/core/tests/prop_invariants.rs`）
+  - [ ] 8.11 撰寫 Property 9 的 property test（`crates/core/tests/prop_invariants.rs`）
     - **Property 9: 成功的命令一定保持不變式**
     - 輸入狀態先以 `sync_meal_ingredients()` 套用一次，並確認它滿足 `validate::state(…, Mode::Commit)`
     - **Validates: Requirements 7.15, 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 9.8, 9.9, 9.10, 9.11, 9.12, 9.13, 19.10**
 
-  - [ ]* 8.12 撰寫 Property 10 的 property test（`crates/core/tests/prop_predict_commit.rs`）
+  - [ ] 8.12 撰寫 Property 10 的 property test（`crates/core/tests/prop_predict_commit.rs`）
     - **Property 10: 前端預測與伺服器的主要效果相同**
     - **Validates: Requirements 13.4, 13.5, 25.2**
 
-  - [ ]* 8.13 撰寫 Property 12 的 property test（`crates/core/tests/prop_patch_commute.rs`）
+  - [ ] 8.13 撰寫 Property 12 的 property test（`crates/core/tests/prop_patch_commute.rs`）
     - **Property 12: 不同欄位的 patch 可交換，同一欄位以提交順序決定**
     - **Validates: Requirements 7.5, 7.6, 7.7**
 
-  - [ ]* 8.14 撰寫規則的範例測試（`crates/core/tests/rules_examples.rs`）
+  - [ ] 8.14 撰寫規則的範例測試（`crates/core/tests/rules_examples.rs`）
     - 移植 `tests/model.test.js` 中 My_Gear、Can_Depart、打包進度、日期範圍與 Trip_State 驗證的案例；localStorage、主題與舊資料格式的案例不移植
     - _Requirements: 33.1_
 
-  - [ ]* 8.15 撰寫旅伴名字規則的範例測試（`crates/core/tests/people_examples.rs`）
+  - [ ] 8.15 撰寫旅伴名字規則的範例測試（`crates/core/tests/people_examples.rs`）
     - 以 `AddPerson` 與 `UpdatePerson` 移植 `tests/recipes-invites.test.js` 中 Participant_Name 的正規化、同名與 100 位上限的案例
     - 需求 33.10：新增名字為「小」加 U+0085 加「安」的旅伴時，以「名字不能包含隱藏控制字元。」拒絕
     - _Requirements: 33.1, 33.10_
 
-  - [ ]* 8.16 撰寫權限拒絕的範例測試（`crates/core/tests/permissions_examples.rs`）
+  - [ ] 8.16 撰寫權限拒絕的範例測試（`crates/core/tests/permissions_examples.rs`）
     - 需求 33.12 列出的每一種拒絕，以 `apply()` 比對拒絕的種類與訊息
     - _Requirements: 33.12_
 
@@ -308,24 +308,24 @@
     - design 1.8 的請求與回應型別：`CommandRequest`、`CommandResponse`（沒有變化時 `changeset` 為 `null`）、`ChangesResponse`（以 `status` 區分 `changes` 與 `snapshot_required`）、`ApiError`（只有 `code`、`message`、`field`）、註冊、登入、換發、`SessionDto`、`SignupResponse`、`JoinResponse`、`ProfileDto`、`TripSummary`、`CreateTripRequest`，以及邀請的建立、列表與預覽
     - _Requirements: 1.3, 5.5, 7.1, 12.5, 12.15, 17.8, 30.5, 30.16_
 
-  - [ ]* 9.3 建立 `ModelServer`（`crates/core/tests/support/model_server.rs`）
+  - [ ] 9.3 建立 `ModelServer`（`crates/core/tests/support/model_server.rs`）
     - 以 `apply(Mode::Commit)` 依序執行一串 `(身分, Command)`，並與 design A1 的 `execute()` 一樣指定 Seq、Row_Version 與 Ordinal（新列依 `Outcome.created` 的順序），記錄每個 Seq 的 Change_Set 與 Snapshot
     - `arb_script()` 與 `arb_delivery_plan()`：排列、重複、在任意位置插入任意 Seq 的 Snapshot，並保證最後一個 Snapshot 之後的每個 Change_Set 至少送達一次
     - _Requirements: 33.5_
 
-  - [ ]* 9.4 撰寫 Property 1 的 property test（`crates/core/tests/prop_replica_convergence.rs`）
+  - [ ] 9.4 撰寫 Property 1 的 property test（`crates/core/tests/prop_replica_convergence.rs`）
     - **Property 1: 任意送達順序都收斂到伺服器狀態**
     - **Validates: Requirements 12.10, 12.12, 12.14**
 
-  - [ ]* 9.5 撰寫 Property 2 的 property test（`crates/core/tests/prop_watermark.rs`）
+  - [ ] 9.5 撰寫 Property 2 的 property test（`crates/core/tests/prop_watermark.rs`）
     - **Property 2: 水位線與缺號回報正確**
     - **Validates: Requirements 12.3, 12.11**
 
-  - [ ]* 9.6 撰寫 Property 3 的 property test（`crates/core/tests/prop_changed_slots.rs`）
+  - [ ] 9.6 撰寫 Property 3 的 property test（`crates/core/tests/prop_changed_slots.rs`）
     - **Property 3: 只回報內容真的改變的列**
     - **Validates: Requirements 14.1**
 
-  - [ ]* 9.7 撰寫 Property 11 的 property test（`crates/core/tests/prop_overlay_revert.rs`）
+  - [ ] 9.7 撰寫 Property 11 的 property test（`crates/core/tests/prop_overlay_revert.rs`）
     - **Property 11: 回復不留下殘留**
     - **Validates: Requirements 13.6, 13.8**
 
@@ -334,7 +334,7 @@
     - design 1.7 的 `EditTarget`、`PresenceMeta`（Account id、Display_Name、Bound_Person 與 Edit_Target）、`ThrottleAction` 與 `PresenceThrottle`（design A11：任兩次送出至少相隔 6,500 毫秒，重新加入也不例外；只保留最後一筆；與這次加入之後上次送出的相同時不送並捨棄保留的那一筆；`on_rejoin()` 清除上次送出與保留的內容，但保留上次送出的時間）；目前時間由呼叫端傳入
     - _Requirements: 1.4, 15.1, 15.3, 15.4, 15.5, 15.6_
 
-  - [ ]* 10.2 撰寫 Property 14 的 property test（`crates/core/tests/prop_presence_throttle.rs`）
+  - [ ] 10.2 撰寫 Property 14 的 property test（`crates/core/tests/prop_presence_throttle.rs`）
     - **Property 14: Presence 節流遵守 Realtime 的限制且不遺失最後狀態**
     - **Validates: Requirements 15.3, 15.4, 15.5, 15.6**
 
@@ -343,16 +343,16 @@
     - `EditorAvatar`（`label()`、`tooltip()`）、`EditorStack`（最多 3 個頭像、`total()`、`overflow_label()`、`overflow_tooltip()`、`notice()`）與 `editor_stacks()`：同一個 Account 只算一位、不含檢視者自己、依 Account id 遞增、顯示用的名稱經 Trim_White 後截到 30 個字元、空的名稱依需求 16.11–16.13 寫成「有人」或「未設定顯示名稱」
     - _Requirements: 16.4, 16.5, 16.6, 16.7, 16.9, 16.10, 16.11, 16.12, 16.13, 16.14, 16.18_
 
-  - [ ]* 10.4 撰寫 Property 18 的 property test（`crates/core/tests/prop_avatar_initial.rs`）
+  - [ ] 10.4 撰寫 Property 18 的 property test（`crates/core/tests/prop_avatar_initial.rs`）
     - **Property 18: 頭像的字是修剪後顯示名稱的第一個字素叢集**
     - 在 `crates/core/tests/support/` 加入 design 所列的 `arb_display_name()` 與 `arb_user_id()`
     - **Validates: Requirements 16.4, 16.5, 16.18**
 
-  - [ ]* 10.5 撰寫 Property 19 的 property test（`crates/core/tests/prop_avatar_color.rs`）
+  - [ ] 10.5 撰寫 Property 19 的 property test（`crates/core/tests/prop_avatar_color.rs`）
     - **Property 19: 頭像顏色由帳號 id 決定，文字對比至少 4.5:1**
     - **Validates: Requirements 16.6, 16.7, 16.18**
 
-  - [ ]* 10.6 撰寫編輯者頭像與堆疊的範例測試（`crates/core/tests/presence_avatar.rs`）
+  - [ ] 10.6 撰寫編輯者頭像與堆疊的範例測試（`crates/core/tests/presence_avatar.rs`）
     - 需求 33.3 的 Avatar_Initial 案例、12 色的對比重算、FNV-1a 的公開測試向量（空輸入與「a」），以及至少 3 個固定 Account id（包括 16 個位元組全為 0 與全為 255）的色盤索引常數
     - 需求 33.4 的 Editor_Stack 案例與各段文字
     - _Requirements: 33.3, 33.4_
@@ -373,7 +373,7 @@
     - 退避：連續的第 1–4 次分別等 1、2、5、10 秒，之後每次 10 秒，各加 0–20%；同時發生的多個中斷只算一次；重新加入成功後從 1 秒重新開始；`rejoin_now()`、`rejoin_after_backoff()`、`leave()`、`track()`，以及 `set_access_token()` 對每個已加入的頻道送出新 token，之後的 `phx_join` 也帶新 token
     - _Requirements: 1.6, 4.5, 11.6, 11.7, 15.13_
 
-  - [ ]* 12.3 撰寫 Realtime 的單元測試（`crates/supabase/tests/protocol.rs`、`crates/supabase/tests/socket.rs`）
+  - [ ] 12.3 撰寫 Realtime 的單元測試（`crates/supabase/tests/protocol.rs`、`crates/supabase/tests/socket.rs`）
     - 以記錄送出內容的假 `RealtimeTransport`，以及測試指定的時間與抖動執行，不等待實際時間；逐項驗證需求 33.7 的 (a) 至 (g)，(b) 的輸入是 Supabase Realtime 協定文件的範例訊框
     - _Requirements: 33.7_
 
@@ -632,7 +632,7 @@
 
 ## Notes
 
-- 標記 `*` 的子任務為選用（範例測試、屬性測試與它們的共用產生器），可為加快 MVP 而略過；需求 33 的條款只由這些選用任務驗證，略過時對應的 33.x 條款不會被驗證。屬性測試都依賴任務 5.5 的產生器；Property 7、8、9、10 與 12 另依賴任務 8.3，Property 1、2、3 與 11 依賴任務 9.3，Property 19 依賴任務 10.4 加入的 `arb_user_id()`。
+- 所有任務都必須完成，包括範例測試、屬性測試與它們的共用產生器。屬性測試都依賴任務 5.5 的產生器；Property 7、8、9、10 與 12 另依賴任務 8.3，Property 1、2、3 與 11 依賴任務 9.3，Property 19 依賴任務 10.4 加入的 `arb_user_id()`。
 - 任務 1 的暫存 Supabase 專案與探測程式都在 Repository 之外，不提交；記下的 CLI 版本寫進任務 26 的 README，收到的訊框原文供任務 12.1 對照。任務 1.4 判定任一項失敗時，任務 2 之後的工作等使用者決定備案後才繼續。
 - 每個任務都標註需求編號；Property 的編號與標題對應 design.md「Correctness Properties」。
 - Local_Stack 使用 Sample_Secrets，第一版只在開發機上執行；lm-server 在非 loopback 位址偵測到範例金鑰時拒絕啟動（任務 13.1）。
