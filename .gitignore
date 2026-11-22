@@ -37,3 +37,8 @@ coverage/
 Thumbs.db
 
 align.png
+/target
+/crates/web/dist
+/supabase/.branches
+/supabase/.temp
+.env
