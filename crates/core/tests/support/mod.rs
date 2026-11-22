@@ -1,9 +1,11 @@
-//! 屬性測試的共用產生器（design「Correctness Properties」的共用產生器，需求 33.5）。
+//! 屬性測試的共用產生器（design「Correctness Properties」的共用產生器，需求 33.5），以及範例測試共用的範例旅行。
 //!
 //! - [`state::arb_state()`]：滿足不變式 I1–I8、I10–I12 的 Trip_State。
 //! - [`vocab`]：產生器使用的詞彙，以及食材文字 [`vocab::arb_ingredients()`] 與採買品項名稱
 //!   [`vocab::arb_item_name()`]。
 //! - [`ids`]：產生器的 id 配置，以及依序產生採買品項 id 的決定性 `IdSource`（[`ids::SeqIds`]）。
+//! - [`example_trip::example_trip()`]：範例測試共用的範例旅行，移植自 `tests/fixtures/example-trip.js` 的
+//!   `exampleTrip()`（需求 33.2）。
 //!
 //! 每個測試檔以 `mod support;` 引入，通常只用到其中一部分，所以整個模組允許沒有用到的項目。
 //!
@@ -14,6 +16,7 @@
 
 #![allow(dead_code)]
 
+pub mod example_trip;
 pub mod ids;
 pub mod state;
 pub mod vocab;

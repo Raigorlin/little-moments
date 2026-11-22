@@ -1,0 +1,3 @@
+# 這個目錄的 .txt 是逐字比較的預期文字（例如 example-itinerary.txt，以 LF 分隔、最後一行之後沒有換行字元）：
+# 不轉換行尾，Windows 以 core.autocrlf 檢出時也得到與提交時相同的位元組。
+*.txt -text
