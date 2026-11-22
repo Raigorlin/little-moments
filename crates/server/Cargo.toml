@@ -1,0 +1,29 @@
+[package]
+name = "lm-server"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "little-moments-server"
+path = "src/main.rs"
+
+# 伺服器端的 TLS 一律使用 native-tls（design「Dependencies」；Linux 上是 OpenSSL，以 pkg-config 找到 libssl-dev）：
+# 連到 https:// 與 wss:// 的 Supabase，以及依 DATABASE_URL 的 sslmode 以 TLS 連到 Database。
+# sqlx 只使用執行期檢查的 query／query_as，不啟用需要編譯期連線的 macros（需求 1.7）。
+[dependencies]
+lm-core = { path = "../core" }
+lm-supabase = { path = "../supabase", features = ["server"] }
+axum = { version = "0.8", features = ["ws"] }
+dotenvy = "0.15"
+futures-util = { version = "0.3", features = ["sink"] }
+hex = "0.4"
+rand = "0.8"
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["chrono", "json", "postgres", "runtime-tokio", "tls-native-tls", "uuid"] }
+tokio = { version = "1", features = ["full"] }
+# 與 axum 0.8 的 ws 使用同一版；native-tls 讓 SUPABASE_URL 為 https:// 時也能以 wss:// 連上游
+tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

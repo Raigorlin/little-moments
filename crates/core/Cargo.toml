@@ -1,0 +1,27 @@
+[package]
+name = "lm-core"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+# 共用規則只做純計算，同時編成原生與 wasm32-unknown-unknown：
+# 不依賴 lm-supabase、lm-server、lm-web，也不使用網路、檔案、系統時間與執行緒（需求 1.3、1.4）。
+[dependencies]
+# 不啟用 clock：日期只由輸入計算，不讀系統時間與時區
+chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
+indexmap = { version = "2", features = ["serde"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_with = "3"
+thiserror = "2"
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# wasm32 以瀏覽器的 crypto.getRandomValues 產生 UUID
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { version = "1", features = ["js"] }
+
+[dev-dependencies]
+proptest = "1"

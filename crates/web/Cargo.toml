@@ -1,0 +1,27 @@
+[package]
+name = "lm-web"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+# 前端只以 trunk 建成 wasm32-unknown-unknown（trunk build --release --config crates/web/Trunk.toml）。
+# cargo clippy --workspace 也以原生目標檢查這個 crate，所以這裡的程式在原生目標也要能編譯；
+# 只有瀏覽器的 WebSocket 傳輸（lm-supabase 的 realtime::web）以 cfg(target_arch = "wasm32") 隔開。
+[dependencies]
+lm-core = { path = "../core" }
+lm-supabase = { path = "../supabase", features = ["web"] }
+# gloo 套件與 Leptos 0.8 內部使用的版本相同（gloo-net 0.6、gloo-utils 0.2），wasm 不會編進兩份。
+# REST 呼叫只需要 http 與 json；Realtime 的 WebSocket 由 lm-supabase 處理
+gloo-net = { version = "0.6", default-features = false, features = ["http", "json"] }
+gloo-storage = "0.3"
+gloo-timers = "0.3"
+js-sys = "0.3"
+leptos = { version = "0.8", features = ["csr"] }
+leptos_router = "0.8"
+uuid = { version = "1", features = ["v4"] }
+wasm-bindgen = "0.2"
+web-sys = "0.3"
+
+# wasm32 以瀏覽器的 crypto.getRandomValues 產生 UUID
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { version = "1", features = ["js"] }

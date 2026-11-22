@@ -1,0 +1,20 @@
+# lm-web 的建置與開發伺服器（design 4.7）。在 Repository 根目錄執行：
+#   trunk build --release --config crates/web/Trunk.toml   # 輸出到 crates/web/dist
+#   trunk serve --config crates/web/Trunk.toml             # http://127.0.0.1:8081
+[build]
+target = "index.html"
+dist = "dist"
+
+# 只在 127.0.0.1:8081 監聽，不在 0.0.0.0、:: 或其他位址監聽（需求 2.5）
+[serve]
+addresses = ["127.0.0.1"]
+port = 8081
+
+# /api/ 之下的請求以相同的路徑與查詢字串轉送到 lm-server
+[[proxy]]
+backend = "http://127.0.0.1:8080/api/"
+
+# Realtime 的 WebSocket 轉送到 lm-server，再由 lm-server 轉送到 Supabase Realtime
+[[proxy]]
+backend = "ws://127.0.0.1:8080/realtime/v1/websocket"
+ws = true

@@ -1,0 +1,31 @@
+[package]
+name = "lm-supabase"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+# 自寫的精簡 Supabase 用戶端（需求 1.6、1.10）。不啟用 feature 的部分是 Realtime 協定 1.0.0 的
+# 訊框編解碼與連線狀態機，不依賴瀏覽器，可以在原生目標測試；可以使用 lm-core 的型別，lm-core 不反向依賴。
+[features]
+# 只由 lm-server 啟用：Auth_Service 的 REST 呼叫（gotrue）與 HS256／ES256 的 access token 驗證（jwt）
+server = ["dep:async-trait", "dep:jsonwebtoken", "dep:reqwest", "dep:tokio"]
+# 只由 lm-web 啟用：以瀏覽器的 WebSocket 實作 RealtimeTransport（realtime::web，只在 wasm32 編譯）
+web = ["dep:gloo-timers", "dep:wasm-bindgen", "dep:web-sys"]
+
+[dependencies]
+lm-core = { path = "../core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# feature server。TLS 依 design「Dependencies」使用 native-tls（Linux 上是 OpenSSL，以 pkg-config 找到 libssl-dev），
+# 不用 reqwest 預設的 rustls；jsonwebtoken 使用純 Rust 的 rust_crypto 後端（HS256 與 ES256），不建置 aws-lc-rs。
+async-trait = { version = "0.1", optional = true }
+jsonwebtoken = { version = "12", default-features = false, features = ["rust_crypto"], optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"], optional = true }
+tokio = { version = "1", features = ["sync"], optional = true }
+
+# feature web：瀏覽器的 WebSocket 與計時器，只在 wasm32 編譯
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+gloo-timers = { version = "0.3", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+web-sys = { version = "0.3", features = ["CloseEvent", "MessageEvent", "WebSocket"], optional = true }
