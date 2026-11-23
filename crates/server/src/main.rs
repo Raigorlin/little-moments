@@ -4,14 +4,33 @@
 //!
 //! 1. 讀取設定、2. 檢查格式：`Config::from_env()`（需求 2.7、2.11、3.12）。
 //! 3. 範例金鑰：`Config::refuse_sample_secrets_off_loopback()`（需求 2.6）。
-//! 4. 連上 Database：`db::connect_within()`，30 秒內每秒嘗試一次（需求 2.12）。
-//! 5. 監聽 `LM_BIND`（需求 2.4、2.12）。
+//! 4. 建立 Supabase 的用戶端：`SupabaseClients::new()`。design 3.5 沒有這一步：它只檢查 `SUPABASE_URL` 與金鑰能否用於
+//!    HTTP 請求，不連線，所以放在連上 Database 之前，設定有誤時不必等待。
+//! 5. 連上 Database：`db::connect_within()`，30 秒內每秒嘗試一次（需求 2.12）。
+//! 6. 監聽 `LM_BIND`（需求 2.4、2.12）。
+//!
+//! 監聽之前另以 `static_files::check()` 確認 `LM_STATIC_DIR` 中有 index.html，沒有時只記下警告。收到 Ctrl-C（SIGINT）或
+//! SIGTERM 時不再接受新的連線，等進行中的請求完成、關閉連線池之後以結束代碼 0 結束；已升級成 WebSocket 的連線不等待。
 //!
 //! 記錄以 tracing 寫到 stdout，層級由 `RUST_LOG` 決定（未設定時是 info）。記錄與訊息都不含 token、密碼，以及
-//! `DATABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_KEY`、`SUPABASE_JWT_SECRET` 的值（需求 2.9、5.10）。
+//! `DATABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_KEY`、`SUPABASE_JWT_SECRET` 的值（需求 2.9、5.10）。不加
+//! tower-http 的 `TraceLayer`：它記下完整的網址，而邀請連結的 token 就在路徑中（`/invite/<token>`、
+//! `/api/invites/<token>`）。
 //!
-//! `app()` 由任務 13.3 加入 `AppState`、`/api` 路由器與靜態檔；HTTP API、命令執行器、登入代理與 Realtime 轉送由
-//! 之後的任務依 design「Components and Interfaces」3 實作。
+//! # 路由（design 3.1 與「伺服器：路由」）
+//!
+//! | 路徑 | 處理 |
+//! | --- | --- |
+//! | `/api`、`/api/` 與 `/api/<路徑>` | `api_router()`：`api_routes()` 中的端點（由任務 14 至 16 加入）；沒有這個路徑時 404 `api_not_found`，路徑存在但不支援這個方法時 405 `method_not_allowed`，都是 JSON，不回傳 index.html（需求 5.5、5.9） |
+//! | `/realtime/v1/websocket` | Realtime 轉送，由任務 16.2 換成 `gateway::realtime_proxy`；在那之前 `GET` 回應 501 的 JSON 錯誤（`not_implemented`），其他方法 405，都不回傳 index.html |
+//! | 其他 | `LM_STATIC_DIR` 的靜態檔，找不到時回傳 index.html（`static_files`，需求 32.2） |
+//!
+//! `/api` 本身與 `/api/` 也屬於 API：`api` 是保留的帳號名稱（需求 3.3），LM_Web 沒有這兩個網址的畫面。axum 0.8 的
+//! `nest("/api", …)` 涵蓋 `/api` 與 `/api/<路徑>`，但不涵蓋 `/api/`，所以另以 `/api/` 的路由回應同樣的 404。axum 以
+//! 請求原本的路徑比對路由，不先正規化 `..` 或百分比編碼，所以 `/api/../login` 仍屬於 `/api`（404 `api_not_found`）。
+//!
+//! 路由器的狀態是 `AppState`（`state`）：連線池、Auth_Service 的用戶端、access token 的驗證器、設定與時鐘；登入狀態與
+//! 旅行資料都不保存在記憶體中（需求 1.11）。
 
 mod config;
 mod db;
@@ -21,17 +40,27 @@ mod db;
 mod error;
 #[expect(dead_code, reason = "任務 13.3 至 16 的路由才會使用")]
 mod extract;
+mod state;
+mod static_files;
 
 use std::fmt::Display;
 use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
+use axum::extract::Request;
+use axum::http::StatusCode;
+use axum::routing::{any, get};
 use axum::Router;
-use sqlx::PgPool;
 use tokio::net::TcpListener;
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 
 use crate::config::Config;
+use crate::error::ApiError;
+use crate::state::{AppState, SupabaseClients};
+use crate::static_files::StaticFiles;
+
+/// Realtime 轉送的路徑（需求 11.2）。
+const REALTIME_PATH: &str = "/realtime/v1/websocket";
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -48,16 +77,23 @@ async fn main() -> ExitCode {
     }
     tracing::info!(?config, "configuration loaded");
 
-    // 4：連上 Database
+    // 4：建立 Supabase 的用戶端（不連線）
+    let clients = match SupabaseClients::new(&config) {
+        Ok(clients) => clients,
+        Err(error) => return startup_failed(error),
+    };
+
+    // 5：連上 Database
     let pool = match db::connect_within(&config.database, db::CONNECT_WITHIN).await {
         Ok(pool) => pool,
         Err(error) => return startup_failed(error),
     };
 
+    static_files::check(&config.static_dir);
     let bind = config.bind;
-    let app = app(config, pool);
+    let app = app(AppState::new(config, pool.clone(), clients));
 
-    // 5：監聽
+    // 6：監聽
     let listener = match TcpListener::bind(bind).await {
         Ok(listener) => listener,
         Err(error) => {
@@ -66,8 +102,15 @@ async fn main() -> ExitCode {
     };
     tracing::info!(address = %bind, "listening");
 
-    match axum::serve(listener, app).await {
-        Ok(()) => ExitCode::SUCCESS,
+    let served = axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await;
+    pool.close().await;
+    match served {
+        Ok(()) => {
+            tracing::info!("stopped");
+            ExitCode::SUCCESS
+        }
         Err(error) => {
             eprintln!("lm-server 停止：{error}");
             ExitCode::FAILURE
@@ -75,10 +118,75 @@ async fn main() -> ExitCode {
     }
 }
 
-/// HTTP 服務。任務 13.3 在這裡建立 `AppState`，加入 `/api` 路由器、`/realtime/v1/websocket` 與 `LM_STATIC_DIR` 的
-/// 靜態檔；在那之前每個路徑都回應 404。
-fn app(_config: Config, pool: PgPool) -> Router {
-    Router::new().with_state(pool)
+/// HTTP 服務（見模組說明的「路由」）。
+fn app(state: AppState) -> Router {
+    let static_files = StaticFiles::new(&state.config.static_dir);
+    Router::new()
+        .nest("/api", api_router())
+        .route("/api/", any(api_not_found))
+        .route(REALTIME_PATH, get(realtime_not_implemented))
+        .fallback(move |request: Request| static_files.clone().serve(request))
+        .with_state(state)
+}
+
+/// `/api` 路由器：`api_routes()` 的端點，加上自己的 fallback 與 method-not-allowed fallback（design 3.1 的步驟 1）。
+/// axum 的 `method_not_allowed_fallback()` 只套用到已經加入的路由，所以端點一律加在 `api_routes()` 中。
+fn api_router() -> Router<AppState> {
+    api_routes()
+        .fallback(api_not_found)
+        .method_not_allowed_fallback(api_method_not_allowed)
+}
+
+/// `/api` 之下的端點（design 3.1 的表）：任務 14 至 16 在這裡以 `.route(…)` 加入，路徑不含 `/api`（例如
+/// `.route("/me", get(auth::me))`），含旅行 id 的路徑參數一律寫成 `{id}`（`TripPath`）。
+fn api_routes() -> Router<AppState> {
+    Router::new()
+}
+
+/// 404 `api_not_found`：`/api/*` 下沒有這個路徑（需求 5.9）。
+async fn api_not_found() -> ApiError {
+    ApiError::api_not_found()
+}
+
+/// 405 `method_not_allowed`：路徑存在，但不支援這個方法（需求 5.9）。
+async fn api_method_not_allowed() -> ApiError {
+    ApiError::method_not_allowed()
+}
+
+/// `/realtime/v1/websocket` 在任務 16.2 之前的回應：501 的 JSON 錯誤，不回傳 index.html。任務 16.2 以
+/// `gateway::realtime_proxy` 取代這個處理函式。
+async fn realtime_not_implemented() -> ApiError {
+    ApiError::new(
+        StatusCode::NOT_IMPLEMENTED,
+        "not_implemented",
+        "即時同步尚未提供。",
+    )
+}
+
+/// 等到 Ctrl-C（SIGINT）或 SIGTERM。無法註冊其中一種時只等另一種。
+async fn shutdown_signal() {
+    let interrupt = async {
+        if tokio::signal::ctrl_c().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                terminate.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        () = interrupt => {}
+        () = terminate => {}
+    }
+    tracing::info!("shutting down after the requests in progress finish");
 }
 
 /// tracing 的記錄寫到 stdout；層級由 `RUST_LOG` 決定，未設定或無法解析的部分以 info 代替。

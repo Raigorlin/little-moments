@@ -690,8 +690,9 @@ fn without_userinfo(url: &str) -> String {
     }
 }
 
-/// 百分比解碼（`%XX`）：後面不是兩個十六進位數字的 `%` 原樣保留；解碼後不是 UTF-8 的位元組以 U+FFFD 代替。
-fn percent_decode(text: &str) -> String {
+/// 百分比解碼（`%XX`）：後面不是兩個十六進位數字的 `%` 原樣保留；解碼後不是 UTF-8 的位元組以 U+FFFD 代替。靜態檔
+/// 也以它檢查請求的路徑（`static_files`）。
+pub fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;
