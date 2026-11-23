@@ -2,14 +2,15 @@
 
 ## Overview
 
-依設計文件以 Rust 實作：後端 `lm-server`（axum 0.8、sqlx 0.8、tokio）、前端 `lm-web`（Leptos 0.8 CSR，以 trunk 建置成 `wasm32-unknown-unknown`）、不做 IO 的共用規則 `lm-core`，以及精簡的 Supabase 用戶端 `lm-supabase`；資料庫結構以 SQL 遷移檔描述。工作在已建立並切換好的分支 `rust-supabase-rewrite` 上進行，依下列順序推進：
+依設計文件以 Rust 實作：後端 `lm-server`（axum 0.8、sqlx 0.8、tokio）、前端 `lm-web`（Leptos 0.8 CSR，以 trunk 建置成 `wasm32-unknown-unknown`）、不做 IO 的共用規則 `lm-core`，以及精簡的 Supabase 用戶端 `lm-supabase`；資料庫結構以 SQL 遷移檔描述。工作在已建立並切換好的分支 `rust-supabase-rewrite` 上進行。開發改在 Windows 的 WSL 2（Ubuntu）中進行（design D14，工作慣例見 Notes）：Windows 原生的 Rust 工具鏈（windows-gnu）無法建置使用 `raw-dylib` 的 crate，新建置的 .exe 會被公司的應用程式控制擋下，Windows 上也沒有 Docker；建置工具、Rust 與 Docker Engine 都安裝在 WSL 中。使用者決定先做不需要 Docker 的 Cargo_Workspace 與 LM_Core，Spike 等 WSL 中的 Docker Engine 可以使用後再做，排在 Local_Stack、LM_Supabase 與 LM_Server 之前。依下列順序推進：
 
-1. Spike（任務 1）：在本機 Supabase CLI 堆疊上確認兩個風險假設。R2：Broadcast from Database（`realtime.send()`）送到私有頻道 `trip:<id>`，而且 `realtime.messages` 的 RLS 政策對兩個用戶端都有效。R3：Auth_Service 接受 `.invalid` 網域的合成 email。兩者都通過才繼續；任一項失敗時依任務 1.4 的備案停下來，與使用者決定。
-2. Cargo_Workspace 與工具鏈（任務 2），以及 Local_Stack 的 `supabase/` 設定與三個遷移檔（任務 3）。
-3. LM_Core（任務 4 至 10）：文字與型別、採買同步、行程推導與文字版、分帳、命令與權限、同步模型、Presence 與編輯者頭像。任務 11 為檢查點。
-4. LM_Supabase（任務 12）與 LM_Server（任務 13 至 16）。任務 17 為檢查點。
-5. LM_Web（任務 18 至 24）：外觀資源與登入、首頁與邀請頁、同步引擎與旅行頁外框、五個分頁、旅行選單與出發清單、Presence 與編輯者頭像。任務 25 為檢查點。
-6. README（任務 26）與最後的檢查點（任務 27）。
+1. Cargo_Workspace 與工具鏈（任務 2）。
+2. LM_Core（任務 4 至 10）：文字與型別、採買同步、行程推導與文字版、分帳、命令與權限、同步模型、Presence 與編輯者頭像。任務 11 為檢查點。
+3. Spike（任務 1）：在本機 Supabase CLI 堆疊上確認兩個風險假設。R2：Broadcast from Database（`realtime.send()`）送到私有頻道 `trip:<id>`，而且 `realtime.messages` 的 RLS 政策對兩個用戶端都有效。R3：Auth_Service 接受 `.invalid` 網域的合成 email。兩者都通過才開始任務 3；任一項失敗時依任務 1.4 的備案停下來，與使用者決定。
+4. Local_Stack 的 `supabase/` 設定與三個遷移檔（任務 3）。
+5. LM_Supabase（任務 12）與 LM_Server（任務 13 至 16）。任務 17 為檢查點。
+6. LM_Web（任務 18 至 24）：外觀資源與登入、首頁與邀請頁、同步引擎與旅行頁外框、五個分頁、旅行選單與出發清單、Presence 與編輯者頭像。任務 25 為檢查點。
+7. README（任務 26）與最後的檢查點（任務 27）。
 
 實作注意事項：
 
@@ -25,13 +26,13 @@
 
 - [ ] 1. Spike：在本機 Supabase CLI 堆疊上確認 R2 與 R3
   - [ ] 1.1 準備暫存的 Supabase 專案與只綁 127.0.0.1 的 Docker 網路
-    - 在 Repository 之外建立暫存目錄（例如 `$env:TEMP\lm-spike`）並執行 `supabase init`；`config.toml` 先套用 design「Repository 配置」的 `[auth]`、`[auth.email]` 設定，並關閉 Storage、Edge Runtime、Analytics 與本機郵件服務。這個任務不新增或修改 Repository 中的任何檔案
-    - 沒有 `lm-local` 網路時以 `docker network create -o "com.docker.network.bridge.host_binding_ipv4=127.0.0.1" lm-local` 建立，再以 `supabase start --network-id lm-local` 啟動；確認 `docker ps` 的每個埠都以 `127.0.0.1:` 開頭，並記下 `supabase --version` 與 Realtime、Auth 映像的標籤
+    - 在 Repository 之外、WSL 的 Linux 檔案系統中準備暫存的 Supabase 專案（例如 `~/lm-spike`）：先前在 Windows 的 `%TEMP%\lm-spike` 建立的暫存專案可以整個複製過來，沒有時在新目錄執行 `supabase init`；`config.toml` 先套用 design「Repository 配置」的 `[auth]`、`[auth.email]` 設定，並關閉 Storage、Edge Runtime、Analytics 與本機郵件服務。這個任務不新增或修改 Repository 中的任何檔案
+    - 在 WSL 中執行（`supabase` 指 Supabase CLI 3.2.0 的 Linux 版）：沒有 `lm-local` 網路時以 `docker network create -o "com.docker.network.bridge.host_binding_ipv4=127.0.0.1" lm-local` 在 WSL 的 Docker Engine 中建立，再以 `supabase start --network-id lm-local` 啟動；確認 `docker ps` 的每個埠都以 `127.0.0.1:` 開頭，並記下 `supabase --version` 與 Realtime、Auth 映像的標籤
     - 暫存的遷移檔只放確認需要的最小結構：`app.profiles`、`app.trips`、`app.people`、`app.trip_changes` 的必要欄位，以及照抄 design「Realtime 授權」的 `app.can_use_trip_topic()` 與兩個政策、「推送」的 `app.publish_trip_change()` 與 trigger；以 `supabase db reset` 套用
     - _Requirements: 2.1, 2.2, 3.13, 11.4, 11.5_
 
   - [ ] 1.2 確認 Auth_Service 接受合成 email（R3）
-    - 在暫存目錄以 `cargo new` 建立探測程式（reqwest、tokio、serde_json、tokio-tungstenite）；它不加入 Cargo_Workspace，也不提交
+    - 在 WSL 的暫存目錄以 `cargo new` 建立探測程式（reqwest、tokio、serde_json、tokio-tungstenite），在 WSL 中建置與執行；它不加入 Cargo_Workspace，也不提交
     - 以 service_role key 呼叫 `POST /auth/v1/admin/users` 建立 `spike-a@users.little-moments.invalid`（`email_confirm: true`），再以 `POST /auth/v1/token?grant_type=password` 取得 Session；同樣建立 B、C 兩個帳號供任務 1.3 使用
     - 確認直接呼叫 `POST /auth/v1/signup` 被拒絕而且沒有建立使用者；記下 access token 標頭的 `alg`、`kid`，以及 `/auth/v1/.well-known/jwks.json` 的回應，供任務 12.6 對照
     - _Requirements: 3.1, 3.11, 3.12, 3.13, 5.3_
@@ -43,19 +44,19 @@
     - _Requirements: 10.1, 10.2, 10.4, 10.7, 11.3, 11.4, 11.5_
 
   - [ ] 1.4 判讀結果、決定是否繼續，並停止暫存堆疊
-    - 兩項都通過：在暫存目錄執行 `supabase stop --no-backup`（任務 3 的 Local_Stack 使用相同的埠），再開始任務 2；記下的版本號在任務 26 寫進 README，暫存目錄在任務 12 完成後可以刪除
+    - 兩項都通過：在 WSL 的暫存目錄執行 `supabase stop --no-backup`（任務 3 的 Local_Stack 使用相同的埠），再開始任務 3；記下的版本號在任務 26 寫進 README，暫存目錄在任務 12 完成後可以刪除
     - R3 不通過（例如 Auth_Service 以 `email_address_invalid` 拒收）：改以操作者控制的網域作為 `LM_AUTH_EMAIL_DOMAIN` 再試（design R3）；可行時停止，請使用者確認是否修改需求 3.12 的預設網域；任何網域都不行時停止，與使用者討論 design A7 的「email 加密碼」選項（帳號名稱登入是使用者已確認的 U4，不自行改變）
     - R2 不通過：先改用較新的 Supabase CLI 重試並記下版本（design R2）；仍不行時停止，請使用者決定是否改用 design A2 的「lm-server 提交後呼叫 Realtime REST broadcast」：推送不在同一個交易中，遺失的推送由水位線、跳號偵測與 Head 比對補齊（design D6、R9），需要修改需求 10.1 與 10.2
-    - 使用者決定之前不開始任務 2
+    - 使用者決定之前不開始任務 3 與任務 12 之後的任務
     - _Requirements: 2.10, 3.12, 10.1, 10.2_
 
-- [ ] 2. 建立 Cargo_Workspace 與工具鏈
-  - [ ] 2.1 建立 workspace 與工具鏈設定
+- [x] 2. 建立 Cargo_Workspace 與工具鏈
+  - [x] 2.1 建立 workspace 與工具鏈設定
     - 根目錄 `Cargo.toml` 依 design「Repository 配置」：`members` 只有 `crates/core`、`crates/supabase`、`crates/server`、`crates/web`，`default-members` 不含 `crates/web`，`exclude = [".worktrees"]`；`[workspace.package]` 與 release profile（`lto = true`、`codegen-units = 1`，lm-web 為 `opt-level = "z"`）
     - `rust-toolchain.toml` 指定 stable、`wasm32-unknown-unknown` 目標、rustfmt 與 clippy；`.cargo/config.toml` 只為 wasm32 目標加上 getrandom 0.3 的 `getrandom_backend="wasm_js"` cfg
     - _Requirements: 1.7, 1.8_
 
-  - [ ] 2.2 建立四個 crate 的骨架
+  - [x] 2.2 建立四個 crate 的骨架
     - `crates/core`（lm-core）：只依賴 design「Dependencies」列出的套件（chrono 不啟用 clock；測試另加 proptest），不依賴其他三個 crate；`lib.rs` 先宣告 design 1.1 的每個模組，內容由之後的任務填入
     - `crates/supabase`（lm-supabase）：feature `server`（reqwest、jsonwebtoken、tokio、async-trait）與 feature `web`（wasm-bindgen、web-sys 的 WebSocket、MessageEvent、CloseEvent、gloo-timers）；`lib.rs` 宣告 `realtime::protocol`、`realtime::socket`、只在 `feature = "web"` 而且 `target_arch = "wasm32"` 時編譯的 `realtime::web`，以及 feature `server` 的 `gotrue` 與 `jwt`；可以使用 lm-core 的型別，lm-core 不反向依賴
     - `crates/server`（lm-server，執行檔 `little-moments-server`）：design 列出的相依套件，以 feature `server` 引用 lm-supabase
@@ -63,7 +64,7 @@
     - `cargo clippy --workspace` 也會以原生目標檢查 lm-web，所以 lm-web 的程式在原生目標也要能編譯，只有瀏覽器 WebSocket 傳輸以 `cfg(target_arch = "wasm32")` 隔開
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.6, 1.10, 2.5_
 
-  - [ ] 2.3 新增 `.env.example`、更新 `.gitignore` 並鎖定相依版本
+  - [x] 2.3 新增 `.env.example`、更新 `.gitignore` 並鎖定相依版本
     - `.env.example`：除了以 `#` 開頭的註解與空行，只有需求 2.7 的 9 個環境變數各一行 `<名稱>=`，等號後沒有值（註解可以說明值來自 `supabase status -o env` 的哪一項）
     - 在 `.gitignore` 檔尾新增 `/target`、`/crates/web/dist`、`/supabase/.branches`、`/supabase/.temp` 與 `.env` 五行，既有的行不變；既有的 `!.env.example` 使 `.env.example` 不被忽略
     - 產生並提交涵蓋四個成員的 `Cargo.lock`，確認下列指令都成功：`cargo build --locked`（不建置 lm-web）、`cargo build -p lm-core --target wasm32-unknown-unknown`、`cargo build -p lm-web --target wasm32-unknown-unknown --locked`、`cargo test`、`cargo clippy --workspace -- -D warnings`、`cargo fmt --check` 與 `trunk build --release --config crates/web/Trunk.toml`（輸出到 `crates/web/dist`）
@@ -71,7 +72,7 @@
 
 - [ ] 3. Local_Stack：`supabase/` 設定與三個遷移檔
   - [ ] 3.1 `supabase/config.toml` 與空的種子檔
-    - 在 Repository 根目錄執行 `supabase init`，依 design「Repository 配置」調整 `supabase/config.toml`：API 埠 54321 而且 `api.schemas` 不含 `app`、Database 埠 54322、Studio 與 Realtime 開啟；`[auth]` 的 `site_url`、`enable_signup = false`、`jwt_expiry = 3600`、`enable_refresh_token_rotation = true`、`refresh_token_reuse_interval = 10`，`[auth.email] enable_confirmations = false`；關閉 Storage、Edge Runtime、Analytics 與本機郵件服務（較舊的 CLI 為 `[inbucket]`）；`project_id` 與任務 1 的暫存專案不同
+    - 在 WSL 中、Repository 根目錄（`/mnt/d/path/to/little-moments`）執行 `supabase init`，依 design「Repository 配置」調整 `supabase/config.toml`：API 埠 54321 而且 `api.schemas` 不含 `app`、Database 埠 54322、Studio 與 Realtime 開啟；`[auth]` 的 `site_url`、`enable_signup = false`、`jwt_expiry = 3600`、`enable_refresh_token_rotation = true`、`refresh_token_reuse_interval = 10`，`[auth.email] enable_confirmations = false`；關閉 Storage、Edge Runtime、Analytics 與本機郵件服務（較舊的 CLI 為 `[inbucket]`）；`project_id` 與任務 1 的暫存專案不同
     - `supabase/seed.sql` 是 0 位元組的空檔
     - 以 `supabase start --network-id lm-local` 啟動，確認 `docker ps` 的每個埠都以 `127.0.0.1:` 開頭，而且沒有 Storage、Edge Runtime、Analytics 與郵件服務的容器
     - _Requirements: 2.1, 2.2, 2.3, 3.13, 4.4, 8.9_
@@ -92,75 +93,75 @@
     - 以 `supabase db reset` 確認三個遷移依檔名順序套用，重設後 Auth_Service 沒有使用者、`app` 的每張表都沒有資料列；以 SQL 確認 `anon` 與 `authenticated` 對 `app` 的資料表沒有任何權限
     - _Requirements: 2.3, 6.14, 10.1, 10.2, 10.4_
 
-- [ ] 4. LM_Core：文字、時間、識別碼與資料型別
-  - [ ] 4.1 `text` 與 `time`
+- [x] 4. LM_Core：文字、時間、識別碼與資料型別
+  - [x] 4.1 `text` 與 `time`
     - `text`：`trim_white`（Unicode White_Space）、`is_js_whitespace`／`trim_js_whitespace`／`collapse_js_whitespace`（JS_Whitespace：U+FEFF 算空白、U+0085 不算）、`char_count`、`has_control_chars`（Cc 與 Cf，連接兩個 Extended_Pictographic 的 U+200D 除外，與現行 `hasControlChars()` 相同）、`participant_name`、`participant_key`、`place_key`、`clean_text`（需求 31.14）與 `normalize_time_input`（Time_Value；只填一部分、`8:30`、`24:00` 都不是）
     - Unicode 類別與屬性可以用 `regex` 的 `\p{…}` 實作（例如 `\p{Cf}`、`\p{Default_Ignorable_Code_Point}`、`\p{Extended_Pictographic}`），不新增相依套件
     - `time`：`date_range`（1–31 天）、`date_text`（`10/20（週二）`）、不補零的月日與星期（由日期計算，不讀系統時間與時區）、`chinese_numeral`、`duration_text`
     - _Requirements: 1.3, 1.4, 3.4, 9.3, 19.1, 19.2, 19.3, 21.1, 22.5, 31.3, 31.14_
 
-  - [ ] 4.2 `ids`、`model` 與 `limits`
+  - [x] 4.2 `ids`、`model` 與 `limits`
     - design 1.2 的 UUID newtype、`Seq`、`Hm`（0..1440 的分鐘數，序列化為 `"HH:MM"`，以 `normalize_time_input()` 解析）、每一種列的型別、`PlaceRef`、`Participation`、`Entity`、`RowKey`、`Slot`、`Row`（`slot`、`version`、`with_version`、`has_ordinal`、`with_ordinal`）與 `TripState`（`get`、`put`、`remove`、`slots`、依 Ordinal 的走訪、`max_ordinal`）；序列化格式依 design「線上格式」
     - 列舉的序列化值與 Enum_Table 及現行字串相同，例如餐次與採買分類是中文，`ExpenseCategory` 包含 11 種「食材／{分類}」
     - `limits` 收錄 Limits_Table 與 design「列舉與上限」的每個數字
     - 不使用網路、檔案、系統時間與執行緒
     - _Requirements: 1.3, 1.4, 8.4, 8.6_
 
-  - [ ] 4.3 撰寫文字與時間規則的範例測試（`crates/core/tests/text_time_examples.rs`）
+  - [x] 4.3 撰寫文字與時間規則的範例測試（`crates/core/tests/text_time_examples.rs`）
     - 移植 `tests/itinerary-time-input.test.js` 與 `tests/itinerary-numerals.test.js` 的每個固定輸入案例
     - 需求 33.10 的 Participant_Name 案例：「小」加 U+FEFF 加「安」正規化為「小 安」
     - _Requirements: 33.1, 33.10_
 
-- [ ] 5. LM_Core：食材切分、採買同步與料理範本
-  - [ ] 5.1 `ingredients` 的切分、鍵、分類與移除食材
+- [x] 5. LM_Core：食材切分、採買同步與料理範本
+  - [x] 5.1 `ingredients` 的切分、鍵、分類與移除食材
     - `parse_ingredients()` 依 design A4：整串 NFKC 後逐字掃描，「、」「;」「/」「。」與 CR、LF 一律切開，半形「,」「.」只在前後都是 ASCII 數字時保留；每段經 `collapse_js_whitespace()`，捨棄空段，以 Ingredient_Key 去重並保持第一次出現的順序；`ingredient_key()`
     - `classify_ingredient()`：依現行 `classifyIngredient()` 的單字表與規則表順序比對 Ingredient_Key；`地瓜(?!葉)` 改寫成 `地瓜(?:[^葉]|$)`，`\d` 改寫成 `[0-9]`，`\s` 改寫成 JS_Whitespace 的字元類別；`SHOPPING_CATEGORIES` 的順序
     - `remove_ingredient_from_meals()` 的食材文字處理（需求 25.16），以及每個切出的食材最多 100 字的檢查（需求 25.18）
     - _Requirements: 25.3, 25.4, 25.5, 25.16, 25.17, 25.18_
 
-  - [ ] 5.2 撰寫 Property 17 的 property test（`crates/core/tests/prop_parse_ingredients.rs`）
+  - [x] 5.2 撰寫 Property 17 的 property test（`crates/core/tests/prop_parse_ingredients.rs`）
     - **Property 17: 食材切分再切一次不變**
     - **Validates: Requirements 25.4, 25.5**
 
-  - [ ] 5.3 `sync_meal_ingredients()` 與 `SyncPlan`
+  - [x] 5.3 `sync_meal_ingredients()` 與 `SyncPlan`
     - 逐行移植 design A3：依料理的 Ordinal 與食材順序建立需要的鍵；手動或已買的品項優先負責；刪除未買而且沒有負責任何鍵的 Meal_Item；已買而失去料理的 Meal_Item 改為 Manual_Item；「料理已移除」的三態；新增的 Meal_Item 為「數量待確認」、Ingredient_Classifier 的分類、待分配、未買，並依新增順序記入 `created`
     - 品項總數超過 1000 時回傳 409「採買品項最多 1,000 項，請減少食材或整理採買清單後再儲存。」，不產生部分結果；`unlinked_expenses` 列出連結被刪除品項的支出，`SyncPlan::apply_to()` 一併清除它們的採買連結
     - 新品項的 id 由呼叫端的 `IdSource` 提供
     - _Requirements: 7.19, 9.10, 9.15, 25.6, 25.7, 25.8, 25.9, 25.10, 25.11, 25.12, 25.13, 25.14, 25.15, 25.19, 29.13_
 
-  - [ ] 5.4 `recipes`：料理範本、常用食材、插圖推斷與餐次順序
+  - [x] 5.4 `recipes`：料理範本、常用食材、插圖推斷與餐次順序
     - 移植 `src/recipes.js`：`RECIPE_TEMPLATES`（8 道）、`COMMON_INGREDIENTS`（9 組 57 個）、`merge_ingredients()`、`apply_recipe_template()` 與 `infer_dish_kind()`（先依名稱、再依食材，都不符合時為 custom）
     - 移植 `src/meal-order.js` 的餐次順序與 `group_meals_by_date()`，以及 `src/gear-presets.js` 的 `PERSONAL_GEAR_GROUPS`
     - _Requirements: 24.1, 24.4, 24.5, 24.11_
 
-  - [ ] 5.5 建立屬性測試的共用產生器（`crates/core/tests/support/`）
+  - [x] 5.5 建立屬性測試的共用產生器（`crates/core/tests/support/`）
     - `arb_state()` 依 design「Correctness Properties」的共用產生器範圍（1–5 天、部分綁定帳號的旅伴、車輛、地點、路線與停靠點、活動、料理與採買品項、裝備、支出與還款）產生滿足 I1–I8、I10–I12 的狀態；食材文字由包含各種分隔符號、`1.5`、`1,000`、全形數字、U+3000、U+FEFF、U+0085、大小寫與重複名稱的詞彙組成
     - 依序產生 id 的決定性 `IdSource`；`support/mod.rs` 以 `#[allow(dead_code)]` 讓只用到一部分的測試檔不產生警告；確認 `proptest-regressions/` 沒有被 `.gitignore` 排除
     - _Requirements: 33.5, 33.6_
 
-  - [ ] 5.6 撰寫 Property 4 的 property test（`crates/core/tests/prop_sync_idempotent.rs`）
+  - [x] 5.6 撰寫 Property 4 的 property test（`crates/core/tests/prop_sync_idempotent.rs`）
     - **Property 4: 採買同步冪等**
     - **Validates: Requirements 25.14**
 
-  - [ ] 5.7 撰寫 Property 5 的 property test（`crates/core/tests/prop_sync_preserves.rs`）
+  - [x] 5.7 撰寫 Property 5 的 property test（`crates/core/tests/prop_sync_preserves.rs`）
     - **Property 5: 採買同步不刪除手動與已買的品項，也不改使用者管理的欄位**
     - **Validates: Requirements 25.10, 25.11, 25.19, 29.13**
 
-  - [ ] 5.8 撰寫 Property 6 的 property test（`crates/core/tests/prop_sync_coverage.rs`）
+  - [x] 5.8 撰寫 Property 6 的 property test（`crates/core/tests/prop_sync_coverage.rs`）
     - **Property 6: 採買同步涵蓋每一個需要的食材**
     - **Validates: Requirements 9.10, 25.6, 25.7, 25.8**
 
-  - [ ] 5.9 撰寫食材與採買同步的範例測試（`crates/core/tests/ingredients_examples.rs`）
+  - [x] 5.9 撰寫食材與採買同步的範例測試（`crates/core/tests/ingredients_examples.rs`）
     - 移植 `tests/ingredients.test.js` 的每個固定輸入案例（切分、分類、Shopping_Sync、從料理移除食材）
     - 需求 33.10 的案例：U+FEFF 加「雞蛋」切出「雞蛋」；「雞」加 U+FEFF 加「蛋」切出「雞 蛋」，它的 Ingredient_Key 為「雞蛋」；U+0085 加「雞蛋」切出的名稱仍以 U+0085 開頭；「鹽」加 U+0663 分類為「其他」
     - _Requirements: 33.1, 33.10_
 
-  - [ ] 5.10 撰寫料理範本與餐次順序的範例測試（`crates/core/tests/recipes_examples.rs`）
+  - [x] 5.10 撰寫料理範本與餐次順序的範例測試（`crates/core/tests/recipes_examples.rs`）
     - 移植 `tests/meal-order.test.js`，以及 `tests/recipes-invites.test.js` 中料理範本、插圖種類推斷與合併食材的案例（旅伴名字的案例在任務 8.15）
     - _Requirements: 33.1_
 
-- [ ] 6. LM_Core：行程推導、改日期與文字版
-  - [ ] 6.1 `itinerary`
+- [x] 6. LM_Core：行程推導、改日期與文字版
+  - [x] 6.1 `itinerary`
     - `ACTIVITY_CATEGORIES`（13 類與中文名稱）與 `presets_for()`（第一天、中間的日子、最後一天與一日遊，內容依需求 23.2）
     - `STOP_KINDS`、`STOP_TASK_KINDS`、預設任務與任務名稱（需求 22.8）；`MEAL_DEFAULT_TIMES`、`meal_time()`、`meal_title()` 與文字版的料理類別（需求 31.11）
     - `sorted_routes()`（依出發時間，沒有出發時間的排最後，同時間依車輛的 Ordinal）、`day_routes_by_ordinal()`、`day_events()`（活動與料理依時間，同時間活動在前，再各依 Ordinal）
@@ -168,196 +169,196 @@
     - `day_place()`、`place_usages()` 與需求 21.4 的訊息、`place_name_error()`（需求 21.1 的順序）、`destination_conflict()`、`CAR_PALETTE`（8 色、原順序）與依位置取色、Person_Activity 與下一個未完成的活動（需求 28.5）
     - _Requirements: 18.3, 18.4, 20.4, 21.1, 21.4, 22.2, 22.8, 22.12, 22.14, 23.2, 24.3, 28.5, 31.5, 31.7, 31.9, 31.11_
 
-  - [ ] 6.2 `dates`：Retime
+  - [x] 6.2 `dates`：Retime
     - 依 design A9 移植 `retime_by_day_index()`：路線與每日設定保持第 N 天，活動與料理到第 min(N, 新天數) 天，不在舊範圍內的到第 1 天，只改日期；被刪掉的日子有路線，或有標題、地點的每日設定時回傳 `BlockedDay` 清單而且不改變狀態；其餘被刪掉日子的每日設定一併刪除
     - `shorten_blocked_message()` 產生需求 18.7 的訊息
     - _Requirements: 18.5, 18.6, 18.7, 18.8, 18.9_
 
-  - [ ] 6.3 撰寫 Property 16 的 property test（`crates/core/tests/prop_retime.rs`）
+  - [x] 6.3 撰寫 Property 16 的 property test（`crates/core/tests/prop_retime.rs`）
     - **Property 16: 改日期保留「第 N 天」**
     - **Validates: Requirements 18.5, 18.6, 18.7, 18.8**
 
-  - [ ] 6.4 `itinerary_text()`
+  - [x] 6.4 `itinerary_text()`
     - 依 design A10 與需求 31.2–31.14：旅行名稱、車輛行、每一天的標題行與「地點」行、路線區塊（依建立順序；停靠點的寫法；只有 Shopping_Stop 有品項，超過 8 項時列前 7 項再加「等另外 N 項」）與抵達行、活動區塊（不是空白的備註另起一行，以兩個半形空格開頭）、路線位置為 after 時活動區塊在前、只列待分配品項的「未分配採買清單」
     - 固定標點使用需求 31.18 的碼位；使用者文字一律經 `clean_text()`；不輸出行程繪本的標語、說明與停靠點自訂品項；第一行之前與最後一行之後都沒有換行字元
     - _Requirements: 22.8, 22.12, 31.1, 31.2, 31.3, 31.4, 31.5, 31.6, 31.7, 31.8, 31.9, 31.10, 31.11, 31.12, 31.13, 31.14, 31.18_
 
-  - [ ] 6.5 撰寫 Property 13 的 property test（`crates/core/tests/prop_itinerary_text.rs`）
+  - [x] 6.5 撰寫 Property 13 的 property test（`crates/core/tests/prop_itinerary_text.rs`）
     - **Property 13: 文字版是決定性的**
     - **Validates: Requirements 31.1, 31.3, 31.5**
 
-  - [ ] 6.6 撰寫文字版的 golden 測試（`crates/core/tests/itinerary_text_golden.rs`）
+  - [x] 6.6 撰寫文字版的 golden 測試（`crates/core/tests/itinerary_text_golden.rs`）
     - 在 `crates/core/tests/support/example_trip.rs` 移植 `tests/fixtures/example-trip.js` 的 `exampleTrip()`（陣列順序改以 Ordinal 表示；第 1 天的每日設定有預計抵達時間 12:00）
     - 預期文字檔 `crates/core/tests/fixtures/example-itinerary.txt` 依需求 31 逐行撰寫，可以對照現行行程繪本「複製文字」對同一份資料的輸出（`src/storybook/app.js` 的 `renderItinerary()` 與 `copyItinerary()`），只多出「預計 12:00 抵達夕淞度日營區」一行；不使用 `EXAMPLE_TEXT`，也不以 `itinerary_text()` 的輸出產生預期檔；最後一行之後沒有換行字元
     - 在 `crates/core/tests/fixtures/` 新增 `.gitattributes`（例如 `*.txt -text`），使 Windows 檢出時不改變行尾；測試逐字比較整段文字
     - _Requirements: 33.2_
 
-  - [ ] 6.7 撰寫文字版的其他範例測試（`crates/core/tests/itinerary_text_examples.rs`）
+  - [x] 6.7 撰寫文字版的其他範例測試（`crates/core/tests/itinerary_text_examples.rs`）
     - 需求 33.11 列出的每一種情況各一個小型旅行，比對完整輸出
     - _Requirements: 33.11_
 
-  - [ ] 6.8 撰寫行程推導與改日期的範例測試（`crates/core/tests/itinerary_examples.rs`、`crates/core/tests/dates_examples.rs`）
+  - [x] 6.8 撰寫行程推導與改日期的範例測試（`crates/core/tests/itinerary_examples.rs`、`crates/core/tests/dates_examples.rs`）
     - 移植 `tests/itinerary-model.test.js`、`tests/itinerary-place-name.test.js`、`tests/itinerary-shopping.test.js`、`tests/itinerary-derive.test.js`（Shopping_Plan 的部分），以及 `tests/itinerary-dates.test.js` 中 `retimeByDayIndex()` 與 `shortenBlockedMessage()` 的案例；行程圖、規劃提醒、舊的出發欄位 `meeting` 與 `shiftByOffset()` 的案例不移植
     - _Requirements: 33.1_
 
-- [ ] 7. LM_Core：分帳計算
-  - [ ] 7.1 `ledger`
+- [x] 7. LM_Core：分帳計算
+  - [x] 7.1 `ledger`
     - 移植 `src/expense-model.js` 與 `src/expense-categories.js`：`parse_amount()`（需求 29.5 的格式與訊息）、`format_money()`、`split_evenly()`（餘數依旅伴 id 遞增，各 1 分給排在前面的人）、`summarize()`（每位旅伴的已付、分攤、已還出、已收回與淨額）與建議轉帳（需求 29.7 的排序與配對）、`EXPENSE_CATEGORIES`（18 種）與 `suggest_expense_category()`
     - _Requirements: 29.5, 29.6, 29.7, 29.8, 29.11_
 
-  - [ ] 7.2 撰寫 Property 15 的 property test（`crates/core/tests/prop_ledger.rs`）
+  - [x] 7.2 撰寫 Property 15 的 property test（`crates/core/tests/prop_ledger.rs`）
     - **Property 15: 分帳金額守恆**
     - **Validates: Requirements 29.6, 29.7**
 
-  - [ ] 7.3 撰寫分帳計算的範例測試（`crates/core/tests/ledger_examples.rs`）
+  - [x] 7.3 撰寫分帳計算的範例測試（`crates/core/tests/ledger_examples.rs`）
     - 移植 `tests/expense-model.test.js` 與 `tests/ledger.test.js` 中計算部分的案例；收據 AI、帳本的伺服器儲存與 HTTP 的案例不移植
     - _Requirements: 33.1_
 
-- [ ] 8. LM_Core：命令、權限、不變式與 `apply()`
-  - [ ] 8.1 `command` 與 `Rejection`
+- [x] 8. LM_Core：命令、權限、不變式與 `apply()`
+  - [x] 8.1 `command` 與 `Rejection`
     - design 1.3 的每一種 `Command`、各 Patch（`None` 為不改、`Some(None)` 為清空；乘客、活動參加者與分攤旅伴以加入與移除表示）與 Draft、`DateSpan`，以及 `Input<T>`：能解析成 `T` 時為 `Ok`，其他 JSON 值保留為 `Bad`，由處理函式依各需求的順序與訊息回應 400；時刻以使用者輸入的文字送出，選填的時刻以 `null` 或空字串表示留空
     - `Rejection`（400、403、404、409，含 `code`、`field` 與可以直接顯示的訊息）與共用文案常數（`TRIP_NOT_FOUND`、`DENY_REMOVAL`、`DENY_PACKING`、`DENY_LEDGER_REMOVAL` 等，沿用現行文字）
     - _Requirements: 1.3, 5.5, 7.1, 7.10, 7.20_
 
-  - [ ] 8.2 `rules`
+  - [x] 8.2 `rules`
     - design 1.4 的 `Capabilities`、`capabilities()`、`Right`、`required_right()` 與 `authorize()`，結果與 Permission_Table 相同（Collaborator 修改綁定其他 Account 的旅伴時 403「只能修改自己的旅伴資料。」）
     - 移植 `src/model.js` 的 `my_gear()`、`can_depart()` 與 `unassigned_gear()`，以及 Gear_Progress 與 Packing_Progress
     - _Requirements: 6.4, 6.6, 6.7, 6.8, 6.9, 6.10, 6.11, 27.9, 28.1_
 
-  - [ ] 8.3 擴充共用產生器：`arb_command()` 與 `arb_caps()`（`crates/core/tests/support/`）
+  - [x] 8.3 擴充共用產生器：`arb_command()` 與 `arb_caps()`（`crates/core/tests/support/`）
     - `arb_command(state)` 多數引用既有的列，也產生不存在的 id、超過上限的文字、別人的旅伴與邊界值；`arb_caps(state)` 涵蓋擁有者、Admin、綁定旅伴的 Collaborator、Unbound_Admin 與非成員
     - _Requirements: 33.5_
 
-  - [ ] 8.4 撰寫 Property 8 的 property test（`crates/core/tests/prop_permissions.rs`）
+  - [x] 8.4 撰寫 Property 8 的 property test（`crates/core/tests/prop_permissions.rs`）
     - **Property 8: 權限判斷與規則表一致**
     - 在測試中以查表另外實作 Permission_Table，比對 `authorize()` 是否允許，以及拒絕的種類（404 或 403）
     - **Validates: Requirements 6.1, 6.2, 6.4, 6.6, 6.7, 6.8, 6.9, 6.10, 6.11**
 
-  - [ ] 8.5 `validate`
+  - [x] 8.5 `validate`
     - `validate::state(state, mode)` 依序檢查 design「不變式」的 I1–I12，`Mode::Predict` 不檢查 I9
     - `Violation::into_rejection()` 依需求 9.16 決定回應：違反的條件有對應的拒絕規則時回應那條規則的狀態與訊息（例如需求 19.6、19.7、21.1、21.2、22.4、23.5、24.7、25.15、26.4、27.3、28.3、29.4），否則回應 409「資料驗證未通過，沒有儲存。」
     - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 9.8, 9.9, 9.10, 9.11, 9.12, 9.13, 9.16_
 
-  - [ ] 8.6 `apply()` 與命令共同的規則
+  - [x] 8.6 `apply()` 與命令共同的規則
     - `Mode`、`Ctx`、`Effect`、`Outcome`（`effects()` 主要效果在前、衍生效果在後，同一個 Slot 只留最後一筆；`is_noop()`）、前端用的 `NoDerivedIds`、`diff()` 與 `TripState::apply_effects()`
     - `apply()` 依 design A2：先 `authorize()`（在找目標、驗證與判斷有沒有變化之前），再在可寫副本上執行處理函式並 `diff()`；沒有變化時回傳空的 `Outcome`，也不執行採買同步；`Mode::Commit` 而且命令會影響食材時執行 `sync_meal_ingredients()`，新增的 Meal_Item 排在主要效果的新列之後；最後以 `validate::state()` 檢查
     - 處理函式的共用規則（design 1.5）：只合併 patch 帶有的欄位，集合欄位以加入與移除套用；新列的暫時 Ordinal 從 `max_ordinal() + 1` 依 `created` 的順序遞增；新列的 id 已被同一種列使用時 409 `duplicate_id`；要修改或勾選的列不存在時回應該種項目的 404，要刪除的列不存在時沒有變化；文字含 U+0000 時依需求 8.12 回應 400
     - 前端預測與伺服器提交使用同一個 `apply()`，所以 Primary_Effect 相同
     - _Requirements: 6.4, 7.5, 7.6, 7.7, 7.11, 7.12, 7.18, 7.19, 7.21, 7.22, 8.12, 9.1, 13.4, 13.5, 25.1, 25.2_
 
-  - [ ] 8.7 處理函式：旅行、旅伴、車輛與地點
+  - [x] 8.7 處理函式：旅行、旅伴、車輛與地點
     - `UpdateTrip`：合併帶有的欄位（起訖日期一起生效）後依需求 17.5 與 18.2 的順序檢查，再依需求 18.3、18.4 回應 409；改日期時以 `retime_by_day_index()` 搬動，縮短被阻擋時以 `shorten_blocked_message()` 回應 409；另提供建立旅行用的 Trip_Card 與建立者名字的檢查（需求 17.5），給 lm-server 與 lm-web 共用
     - `AddPerson`、`UpdatePerson`、`RemovePerson`：Participant_Name 正規化、預設角色與需求 19.2–19.7 的檢查順序、依人數取色、新增時刪除所有出發確認；移除依 design 1.5 清除駕駛、乘客、活動參加者、負責人與打包勾選中的引用，並依需求 19.12 刪除出發確認；已綁定帳號或仍有帳目時 409
     - 以邀請加入用的 `join_trip()`：不經 `authorize()`，名字與角色依需求 19.1–19.7 檢查，新增綁定帳號的旅伴（顏色依需求 19.8），並刪除所有出發確認
     - 車輛：以新增或套用到當下狀態之後的車輛依需求 20.1–20.3 的順序檢查，刪除時依需求 20.6、20.7 回應 409；地點：需求 21.1 的檢查順序（`place_name_error()`）、100 個上限、仍有 Place_Usage 時以需求 21.4 的訊息拒絕刪除、改名不改變位置
     - _Requirements: 17.5, 18.1, 18.2, 18.3, 18.4, 18.5, 18.6, 18.7, 18.8, 18.9, 19.1, 19.2, 19.3, 19.4, 19.5, 19.6, 19.7, 19.8, 19.9, 19.10, 19.11, 19.12, 19.13, 19.14, 19.16, 20.1, 20.2, 20.3, 20.5, 20.6, 20.7, 20.9, 20.10, 21.1, 21.2, 21.3, 21.4, 21.6, 21.7, 30.15_
 
-  - [ ] 8.8 處理函式：路線、每日設定與活動
+  - [x] 8.8 處理函式：路線、每日設定與活動
     - `SaveRoute`：依需求 22.4–22.7 的順序檢查；整條取代並保留路線與既有停靠點的 id；路線不存在時新增；不改變採買品項。`RemoveRoute`：刪除路線與停靠點，已不存在時沒有變化
     - `SaveDaySetting`：只合併帶有的欄位，依需求 22.10 檢查；合併後標題、地點與預計抵達時間都未設定時刪除這一天的設定
     - `AddActivities`、`UpdateActivity`、`RemoveActivity`、`SetActivityDone`：Trim_White 之後依需求 23.10 的順序與訊息檢查；一次加入的多筆全部成功或全部拒絕；超過 1000 筆時 409；指定旅伴或指定車輛變成空的時改為全體
     - 命令指定的日期不在當下的旅行範圍內時依各需求回應 400，不依 Retime 改動
     - _Requirements: 7.9, 18.10, 22.3, 22.4, 22.5, 22.6, 22.7, 22.9, 22.10, 22.11, 22.15, 23.1, 23.3, 23.4, 23.5, 23.6, 23.7, 23.9, 23.10, 23.11_
 
-  - [ ] 8.9 處理函式：料理、採買品項、裝備、出發確認與帳目
+  - [x] 8.9 處理函式：料理、採買品項、裝備、出發確認與帳目
     - 料理：需求 24.2 的檢查順序（修改的料理不存在時先回應 404）、每個食材最多 100 字、1000 道上限；只改用餐時間時其他欄位不變；`RemoveIngredientFromMeals` 依需求 25.16 與 25.20
     - 採買品項：需求 26.2–26.8 的檢查與來源規則；`SetShoppingPurchased` 設定指定的值，Collaborator 取消已買的 Meal_Item 時改為 Manual_Item；Linked_Item 不能改名或直接刪除；刪除品項時清除支出的採買連結
     - 裝備：需求 27.2–27.5 的檢查、清空打包勾選與刪除出發確認；`SetGearPacked` 只能勾 My_Gear 中的項目，取消時刪除自己的出發確認；`RemoveGear` 刪除打包勾選與所有出發確認；`SetDeparted` 確認時必須滿足 Can_Depart，取消時不檢查
     - 支出與還款：需求 29.2–29.4 的檢查（標題與備註先 NFC 再 Trim_White，分攤旅伴以加入與移除套用）；刪除時其他帳目與採買品項不變
     - _Requirements: 22.13, 24.2, 24.7, 24.8, 25.16, 25.18, 25.20, 26.2, 26.3, 26.4, 26.5, 26.6, 26.7, 26.8, 26.9, 26.10, 26.11, 26.12, 26.13, 26.16, 27.2, 27.3, 27.4, 27.5, 27.6, 27.7, 27.8, 27.10, 27.12, 28.2, 28.3, 28.4, 29.2, 29.3, 29.4, 29.9, 29.13_
 
-  - [ ] 8.10 撰寫 Property 7 的 property test（`crates/core/tests/prop_check_commands.rs`）
+  - [x] 8.10 撰寫 Property 7 的 property test（`crates/core/tests/prop_check_commands.rs`）
     - **Property 7: 勾選是冪等的集合操作**
     - 也涵蓋要刪除的列已不存在時，通過權限檢查的刪除命令回傳 `is_noop()`
     - **Validates: Requirements 7.11, 7.12, 7.13, 23.6, 26.9, 27.6, 28.2, 28.4**
 
-  - [ ] 8.11 撰寫 Property 9 的 property test（`crates/core/tests/prop_invariants.rs`）
+  - [x] 8.11 撰寫 Property 9 的 property test（`crates/core/tests/prop_invariants.rs`）
     - **Property 9: 成功的命令一定保持不變式**
     - 輸入狀態先以 `sync_meal_ingredients()` 套用一次，並確認它滿足 `validate::state(…, Mode::Commit)`
     - **Validates: Requirements 7.15, 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 9.8, 9.9, 9.10, 9.11, 9.12, 9.13, 19.10**
 
-  - [ ] 8.12 撰寫 Property 10 的 property test（`crates/core/tests/prop_predict_commit.rs`）
+  - [x] 8.12 撰寫 Property 10 的 property test（`crates/core/tests/prop_predict_commit.rs`）
     - **Property 10: 前端預測與伺服器的主要效果相同**
     - **Validates: Requirements 13.4, 13.5, 25.2**
 
-  - [ ] 8.13 撰寫 Property 12 的 property test（`crates/core/tests/prop_patch_commute.rs`）
+  - [x] 8.13 撰寫 Property 12 的 property test（`crates/core/tests/prop_patch_commute.rs`）
     - **Property 12: 不同欄位的 patch 可交換，同一欄位以提交順序決定**
     - **Validates: Requirements 7.5, 7.6, 7.7**
 
-  - [ ] 8.14 撰寫規則的範例測試（`crates/core/tests/rules_examples.rs`）
+  - [x] 8.14 撰寫規則的範例測試（`crates/core/tests/rules_examples.rs`）
     - 移植 `tests/model.test.js` 中 My_Gear、Can_Depart、打包進度、日期範圍與 Trip_State 驗證的案例；localStorage、主題與舊資料格式的案例不移植
     - _Requirements: 33.1_
 
-  - [ ] 8.15 撰寫旅伴名字規則的範例測試（`crates/core/tests/people_examples.rs`）
+  - [x] 8.15 撰寫旅伴名字規則的範例測試（`crates/core/tests/people_examples.rs`）
     - 以 `AddPerson` 與 `UpdatePerson` 移植 `tests/recipes-invites.test.js` 中 Participant_Name 的正規化、同名與 100 位上限的案例
     - 需求 33.10：新增名字為「小」加 U+0085 加「安」的旅伴時，以「名字不能包含隱藏控制字元。」拒絕
     - _Requirements: 33.1, 33.10_
 
-  - [ ] 8.16 撰寫權限拒絕的範例測試（`crates/core/tests/permissions_examples.rs`）
+  - [x] 8.16 撰寫權限拒絕的範例測試（`crates/core/tests/permissions_examples.rs`）
     - 需求 33.12 列出的每一種拒絕，以 `apply()` 比對拒絕的種類與訊息
     - _Requirements: 33.12_
 
-- [ ] 9. LM_Core：同步模型與 API 型別
-  - [ ] 9.1 `sync`
+- [x] 9. LM_Core：同步模型與 API 型別
+  - [x] 9.1 `sync`
     - design 1.6 的 `Change`、`ChangeSet`（`without_ledger()` 與 `for_viewer()` 移除 Ledger_Rows 的每一筆變化，包括刪除，但保留 Seq）、`Broadcast`（完整的 Change_Set 或 Thin_Notice）、`Viewer`（`hides_ledger()`）、`Snapshot` 與 `PendingCmd`
     - `Replica` 與 `ApplyReport` 依 design A5：重複與不大於水位線的整則忽略、每一列只保留 Row_Version 最大的內容、刪除留下墓碑直到不大於水位線、`ahead` 與水位線的推進、回報第一段缺號；`apply_snapshot()` 把 Replica 中有、Snapshot 中沒有、而且版本不大於 Snapshot 的 Seq 的列視為已刪除
     - `overlay()` 依 design A6：在已確認狀態上依序以 `Mode::Predict` 疊上成立的 Pending_Command，不成立的暫時不顯示
     - _Requirements: 6.12, 6.13, 10.3, 10.4, 12.3, 12.10, 12.11, 12.12, 12.14, 13.6, 13.7, 14.1_
 
-  - [ ] 9.2 `api`
+  - [x] 9.2 `api`
     - design 1.8 的請求與回應型別：`CommandRequest`、`CommandResponse`（沒有變化時 `changeset` 為 `null`）、`ChangesResponse`（以 `status` 區分 `changes` 與 `snapshot_required`）、`ApiError`（只有 `code`、`message`、`field`）、註冊、登入、換發、`SessionDto`、`SignupResponse`、`JoinResponse`、`ProfileDto`、`TripSummary`、`CreateTripRequest`，以及邀請的建立、列表與預覽
     - _Requirements: 1.3, 5.5, 7.1, 12.5, 12.15, 17.8, 30.5, 30.16_
 
-  - [ ] 9.3 建立 `ModelServer`（`crates/core/tests/support/model_server.rs`）
+  - [x] 9.3 建立 `ModelServer`（`crates/core/tests/support/model_server.rs`）
     - 以 `apply(Mode::Commit)` 依序執行一串 `(身分, Command)`，並與 design A1 的 `execute()` 一樣指定 Seq、Row_Version 與 Ordinal（新列依 `Outcome.created` 的順序），記錄每個 Seq 的 Change_Set 與 Snapshot
     - `arb_script()` 與 `arb_delivery_plan()`：排列、重複、在任意位置插入任意 Seq 的 Snapshot，並保證最後一個 Snapshot 之後的每個 Change_Set 至少送達一次
     - _Requirements: 33.5_
 
-  - [ ] 9.4 撰寫 Property 1 的 property test（`crates/core/tests/prop_replica_convergence.rs`）
+  - [x] 9.4 撰寫 Property 1 的 property test（`crates/core/tests/prop_replica_convergence.rs`）
     - **Property 1: 任意送達順序都收斂到伺服器狀態**
     - **Validates: Requirements 12.10, 12.12, 12.14**
 
-  - [ ] 9.5 撰寫 Property 2 的 property test（`crates/core/tests/prop_watermark.rs`）
+  - [x] 9.5 撰寫 Property 2 的 property test（`crates/core/tests/prop_watermark.rs`）
     - **Property 2: 水位線與缺號回報正確**
     - **Validates: Requirements 12.3, 12.11**
 
-  - [ ] 9.6 撰寫 Property 3 的 property test（`crates/core/tests/prop_changed_slots.rs`）
+  - [x] 9.6 撰寫 Property 3 的 property test（`crates/core/tests/prop_changed_slots.rs`）
     - **Property 3: 只回報內容真的改變的列**
     - **Validates: Requirements 14.1**
 
-  - [ ] 9.7 撰寫 Property 11 的 property test（`crates/core/tests/prop_overlay_revert.rs`）
+  - [x] 9.7 撰寫 Property 11 的 property test（`crates/core/tests/prop_overlay_revert.rs`）
     - **Property 11: 回復不留下殘留**
     - **Validates: Requirements 13.6, 13.8**
 
-- [ ] 10. LM_Core：Presence 節流與編輯者頭像
-  - [ ] 10.1 Presence 節流
+- [x] 10. LM_Core：Presence 節流與編輯者頭像
+  - [x] 10.1 Presence 節流
     - design 1.7 的 `EditTarget`、`PresenceMeta`（Account id、Display_Name、Bound_Person 與 Edit_Target）、`ThrottleAction` 與 `PresenceThrottle`（design A11：任兩次送出至少相隔 6,500 毫秒，重新加入也不例外；只保留最後一筆；與這次加入之後上次送出的相同時不送並捨棄保留的那一筆；`on_rejoin()` 清除上次送出與保留的內容，但保留上次送出的時間）；目前時間由呼叫端傳入
     - _Requirements: 1.4, 15.1, 15.3, 15.4, 15.5, 15.6_
 
-  - [ ] 10.2 撰寫 Property 14 的 property test（`crates/core/tests/prop_presence_throttle.rs`）
+  - [x] 10.2 撰寫 Property 14 的 property test（`crates/core/tests/prop_presence_throttle.rs`）
     - **Property 14: Presence 節流遵守 Realtime 的限制且不遺失最後狀態**
     - **Validates: Requirements 15.3, 15.4, 15.5, 15.6**
 
-  - [ ] 10.3 編輯者頭像與堆疊
+  - [x] 10.3 編輯者頭像與堆疊
     - design A13：`avatar_initial()`（Trim_White 之後的第一個 Grapheme_Cluster，以 `unicode-segmentation` 的 `graphemes(true)` 切分；空的時候為「・」）、`Rgb`、`AvatarColor`、`INK`、`WHITE`、design 1.7 的 12 色 `AVATAR_PALETTE`（依原順序）、以 FNV-1a 64 位元雜湊 16 個位元組的 `avatar_color()`（只用整數運算與查表）、`readable_text_on()`、`relative_luminance()` 與 `contrast_ratio()`
     - `EditorAvatar`（`label()`、`tooltip()`）、`EditorStack`（最多 3 個頭像、`total()`、`overflow_label()`、`overflow_tooltip()`、`notice()`）與 `editor_stacks()`：同一個 Account 只算一位、不含檢視者自己、依 Account id 遞增、顯示用的名稱經 Trim_White 後截到 30 個字元、空的名稱依需求 16.11–16.13 寫成「有人」或「未設定顯示名稱」
     - _Requirements: 16.4, 16.5, 16.6, 16.7, 16.9, 16.10, 16.11, 16.12, 16.13, 16.14, 16.18_
 
-  - [ ] 10.4 撰寫 Property 18 的 property test（`crates/core/tests/prop_avatar_initial.rs`）
+  - [x] 10.4 撰寫 Property 18 的 property test（`crates/core/tests/prop_avatar_initial.rs`）
     - **Property 18: 頭像的字是修剪後顯示名稱的第一個字素叢集**
     - 在 `crates/core/tests/support/` 加入 design 所列的 `arb_display_name()` 與 `arb_user_id()`
     - **Validates: Requirements 16.4, 16.5, 16.18**
 
-  - [ ] 10.5 撰寫 Property 19 的 property test（`crates/core/tests/prop_avatar_color.rs`）
+  - [x] 10.5 撰寫 Property 19 的 property test（`crates/core/tests/prop_avatar_color.rs`）
     - **Property 19: 頭像顏色由帳號 id 決定，文字對比至少 4.5:1**
     - **Validates: Requirements 16.6, 16.7, 16.18**
 
-  - [ ] 10.6 撰寫編輯者頭像與堆疊的範例測試（`crates/core/tests/presence_avatar.rs`）
+  - [x] 10.6 撰寫編輯者頭像與堆疊的範例測試（`crates/core/tests/presence_avatar.rs`）
     - 需求 33.3 的 Avatar_Initial 案例、12 色的對比重算、FNV-1a 的公開測試向量（空輸入與「a」），以及至少 3 個固定 Account id（包括 16 個位元組全為 0 與全為 255）的色盤索引常數
     - 需求 33.4 的 Editor_Stack 案例與各段文字
     - _Requirements: 33.3, 33.4_
 
-- [ ] 11. Checkpoint - LM_Core
+- [x] 11. Checkpoint - LM_Core
   - 在 Repository 根目錄執行 `cargo test`、`cargo clippy --workspace -- -D warnings`、`cargo fmt --check` 與 `trunk build --release --config crates/web/Trunk.toml`，結束碼都是 0，`cargo test` 不連網路與 Database；另以 `cargo build -p lm-core --target wasm32-unknown-unknown` 確認 lm-core 仍能編成 wasm32。Ensure all tests pass, ask the user if questions arise.
   - _Requirements: 1.3, 1.4, 33.8_
 
@@ -618,7 +619,7 @@
   - _Requirements: 1.2, 32.7, 33.8_
 
 - [ ] 26. README：第一版的開發步驟與手動確認
-  - 在 `README.md` 檔尾新增第一版的章節，既有的每一行都不變；寫出需求 2.10 的 Windows（PowerShell、Docker Desktop）開發步驟：安裝 `wasm32-unknown-unknown` 目標、trunk 與 Supabase CLI；建立 `lm-local` 網路，以 `supabase start --network-id lm-local` 啟動並以 `docker ps` 確認，以及出現 `0.0.0.0`、`[::]` 或 `:::` 時的處理；以 `netsh interface ipv4 show excludedportrange protocol=tcp` 檢查 54321、54322 與 54323；`supabase db reset` 會清除全部資料（包括每個 Account）；`.env` 的填法與四個範例值；啟動 `cargo run -p lm-server` 與 `trunk serve --config crates/web/Trunk.toml` 的指令；任務 1 記下的 `supabase --version`
+  - 在 `README.md` 檔尾新增第一版的章節，既有的每一行都不變；寫出需求 2.10 在 Windows 的 WSL 2（Ubuntu）中開發的步驟：Repository 在 WSL 中的路徑（例如 `/mnt/d/path/to/little-moments`）、cargo、trunk、docker 與 Supabase CLI 都在 WSL 中執行、`CARGO_TARGET_DIR` 指向 Linux 檔案系統，以及 git 只在 Windows 的 PowerShell 執行；在 WSL 中安裝 `build-essential`、`pkg-config`、`libssl-dev`、rustup 與 `wasm32-unknown-unknown` 目標、trunk、Docker Engine（不使用 Docker Desktop，並讓使用者不必 sudo 就能執行 `docker`）與 Supabase CLI 3.2.0 的 Linux 版；建立 `lm-local` 網路，以 `supabase start --network-id lm-local` 啟動並以 `docker ps` 確認，以及出現 `0.0.0.0`、`[::]` 或 `:::` 時的處理；WSL 的 localhost 轉送讓 Windows 的瀏覽器開啟這些埠，區網連不到；在 Windows 的 PowerShell 以 `netsh interface ipv4 show excludedportrange protocol=tcp` 檢查 54321、54322 與 54323；`supabase db reset` 會清除全部資料（包括每個 Account）；`.env` 的填法與四個範例值；在 WSL 中啟動 `cargo run -p lm-server` 與 `trunk serve --poll --config crates/web/Trunk.toml` 的指令（在 Windows 修改的檔案要靠 `--poll` 才會觸發重建）；任務 1 記下的 `supabase --version`
   - 寫出需求 33.9 的三個手動確認步驟與預期結果
   - 新增的內容要讓 `tests/readme.test.js` 照常通過（需求 1.12）：不寫入 Supabase 的範例金鑰或其他長的十六進位、Base64 字串；連線字串的帳號與密碼只用 `<user>`、`<password>` 這類佔位符；名稱以 `PASSWORD`、`SECRET`、`TOKEN` 或 `API_KEY` 結尾的變數後面不接 `=` 或 `:` 與實際的值（行尾的 `=` 接著下一行也算）；不使用該測試禁止的舊英文片語與 `Vehicle_Dialog`
   - _Requirements: 1.9, 1.12, 2.10, 33.9_
@@ -633,7 +634,9 @@
 ## Notes
 
 - 所有任務都必須完成，包括範例測試、屬性測試與它們的共用產生器。屬性測試都依賴任務 5.5 的產生器；Property 7、8、9、10 與 12 另依賴任務 8.3，Property 1、2、3 與 11 依賴任務 9.3，Property 19 依賴任務 10.4 加入的 `arb_user_id()`。
-- 任務 1 的暫存 Supabase 專案與探測程式都在 Repository 之外，不提交；記下的 CLI 版本寫進任務 26 的 README，收到的訊框原文供任務 12.1 對照。任務 1.4 判定任一項失敗時，任務 2 之後的工作等使用者決定備案後才繼續。
+- 任務 1 的暫存 Supabase 專案與探測程式都在 Repository 之外，不提交；記下的 CLI 版本寫進任務 26 的 README，收到的訊框原文供任務 12.1 對照。任務 2 與任務 4 至 11 不依賴 Spike 的結果，依使用者的決定先做；任務 3 與任務 12 至 27 等 Spike 通過才開始，任務 1.4 判定任一項失敗時則等使用者決定備案。
+- Supabase CLI 固定使用 3.2.0 的 Linux 版（例如把 GitHub Releases 上的 Linux 執行檔放在 WSL 的 `~/.local/bin`），在 WSL 中以 `supabase` 執行；在 Windows 上時是以 `bunx supabase@3.2.0` 執行。Spike 改在 WSL 中執行：先前建立在 Windows `%TEMP%\lm-spike` 的暫存專案可以複製到 WSL 的家目錄（例如 `~/lm-spike`）。Docker 使用安裝在 WSL 2 的 Ubuntu 中的 Docker Engine，不使用 Docker Desktop，也就不受它的授權限制。
+- WSL 2 的工作慣例：Repository 留在 Windows 的 `d:\path\to\little-moments`，在 WSL 中是 `/mnt/d/path/to/little-moments`；cargo、trunk、docker 與 Supabase CLI 都在 WSL 中、從這個目錄執行。在 `/mnt/d` 上建置很慢，所以環境變數 `CARGO_TARGET_DIR` 指向 Linux 檔案系統中的目錄（例如 `$HOME/.cache/lm-target`），不寫進 Repository 的 `.cargo/config.toml`。git 只在 Windows 的 PowerShell 執行、不在 WSL 中執行，因為 Windows 的 git 使用 `core.autocrlf`；每個頂層任務的提交，以及任務 27 的 `git diff` 與 `git worktree`，都在 PowerShell 進行。WSL 中綁在 127.0.0.1 的埠經 WSL 的 localhost 轉送，Windows 的瀏覽器可以開啟、區網連不到，需求 2 的 127.0.0.1 規則照樣成立；轉送的埠也綁在 Windows 上，所以仍在 PowerShell 以 `netsh interface ipv4 show excludedportrange protocol=tcp` 檢查保留的埠。WSL 的必要工具不含 Bun：任務 18.1 的 `scripts/export-art.mjs` 與任務 27 的 `bun run test` 沿用 Windows 上已安裝的 Bun，在 PowerShell 執行。在 Windows 修改 `/mnt/d` 中的檔案時，WSL 收不到檔案變更的通知，`trunk serve` 要加 `--poll` 才會自動重建。
 - 每個任務都標註需求編號；Property 的編號與標題對應 design.md「Correctness Properties」。
 - Local_Stack 使用 Sample_Secrets，第一版只在開發機上執行；lm-server 在非 loopback 位址偵測到範例金鑰時拒絕啟動（任務 13.1）。
 - 波次的安排：同一個檔案的任務放在不同的波次；每個頂層任務的測試子任務排在它全部的實作子任務之後，以免測試在模組修改途中編譯；共用產生器（任務 5.5、8.3、9.3、10.4）排在使用它們的測試之前。lm-web 的五個分頁、Trip_Menu 與 Departure_Page 在任務 20.5 先有各自的佔位檔，所以任務 22 的四個子任務與任務 23 的兩個子任務可以平行；它們需要的新元件放在各自的檔案中。
@@ -643,50 +646,50 @@
 ```json
 {
   "waves": [
-    { "id": 0, "tasks": ["1.1"] },
-    { "id": 1, "tasks": ["1.2"] },
-    { "id": 2, "tasks": ["1.3"] },
-    { "id": 3, "tasks": ["1.4"] },
-    { "id": 4, "tasks": ["2.1"] },
-    { "id": 5, "tasks": ["2.2"] },
-    { "id": 6, "tasks": ["2.3"] },
-    { "id": 7, "tasks": ["3.1"] },
-    { "id": 8, "tasks": ["3.2"] },
-    { "id": 9, "tasks": ["3.3"] },
-    { "id": 10, "tasks": ["3.4"] },
-    { "id": 11, "tasks": ["4.1"] },
-    { "id": 12, "tasks": ["4.2"] },
-    { "id": 13, "tasks": ["4.3"] },
-    { "id": 14, "tasks": ["5.1"] },
-    { "id": 15, "tasks": ["5.3"] },
-    { "id": 16, "tasks": ["5.4"] },
-    { "id": 17, "tasks": ["5.5"] },
-    { "id": 18, "tasks": ["5.2", "5.6", "5.7", "5.8", "5.9", "5.10"] },
-    { "id": 19, "tasks": ["6.1"] },
-    { "id": 20, "tasks": ["6.2"] },
-    { "id": 21, "tasks": ["6.4"] },
-    { "id": 22, "tasks": ["6.6"] },
-    { "id": 23, "tasks": ["6.3", "6.5", "6.7", "6.8"] },
-    { "id": 24, "tasks": ["7.1"] },
-    { "id": 25, "tasks": ["7.2", "7.3"] },
-    { "id": 26, "tasks": ["8.1"] },
-    { "id": 27, "tasks": ["8.2"] },
-    { "id": 28, "tasks": ["8.5"] },
-    { "id": 29, "tasks": ["8.6"] },
-    { "id": 30, "tasks": ["8.7"] },
-    { "id": 31, "tasks": ["8.8"] },
-    { "id": 32, "tasks": ["8.9"] },
-    { "id": 33, "tasks": ["8.3"] },
-    { "id": 34, "tasks": ["8.4", "8.10", "8.11", "8.12", "8.13", "8.14", "8.15", "8.16"] },
-    { "id": 35, "tasks": ["9.1"] },
-    { "id": 36, "tasks": ["9.2"] },
-    { "id": 37, "tasks": ["9.3"] },
-    { "id": 38, "tasks": ["9.4", "9.5", "9.6", "9.7"] },
-    { "id": 39, "tasks": ["10.1"] },
-    { "id": 40, "tasks": ["10.3"] },
-    { "id": 41, "tasks": ["10.4"] },
-    { "id": 42, "tasks": ["10.2", "10.5", "10.6"] },
-    { "id": 43, "tasks": ["11"] },
+    { "id": 0, "tasks": ["2.1"] },
+    { "id": 1, "tasks": ["2.2"] },
+    { "id": 2, "tasks": ["2.3"] },
+    { "id": 3, "tasks": ["4.1"] },
+    { "id": 4, "tasks": ["4.2"] },
+    { "id": 5, "tasks": ["4.3"] },
+    { "id": 6, "tasks": ["5.1"] },
+    { "id": 7, "tasks": ["5.3"] },
+    { "id": 8, "tasks": ["5.4"] },
+    { "id": 9, "tasks": ["5.5"] },
+    { "id": 10, "tasks": ["5.2", "5.6", "5.7", "5.8", "5.9", "5.10"] },
+    { "id": 11, "tasks": ["6.1"] },
+    { "id": 12, "tasks": ["6.2"] },
+    { "id": 13, "tasks": ["6.4"] },
+    { "id": 14, "tasks": ["6.6"] },
+    { "id": 15, "tasks": ["6.3", "6.5", "6.7", "6.8"] },
+    { "id": 16, "tasks": ["7.1"] },
+    { "id": 17, "tasks": ["7.2", "7.3"] },
+    { "id": 18, "tasks": ["8.1"] },
+    { "id": 19, "tasks": ["8.2"] },
+    { "id": 20, "tasks": ["8.5"] },
+    { "id": 21, "tasks": ["8.6"] },
+    { "id": 22, "tasks": ["8.7"] },
+    { "id": 23, "tasks": ["8.8"] },
+    { "id": 24, "tasks": ["8.9"] },
+    { "id": 25, "tasks": ["8.3"] },
+    { "id": 26, "tasks": ["8.4", "8.10", "8.11", "8.12", "8.13", "8.14", "8.15", "8.16"] },
+    { "id": 27, "tasks": ["9.1"] },
+    { "id": 28, "tasks": ["9.2"] },
+    { "id": 29, "tasks": ["9.3"] },
+    { "id": 30, "tasks": ["9.4", "9.5", "9.6", "9.7"] },
+    { "id": 31, "tasks": ["10.1"] },
+    { "id": 32, "tasks": ["10.3"] },
+    { "id": 33, "tasks": ["10.4"] },
+    { "id": 34, "tasks": ["10.2", "10.5", "10.6"] },
+    { "id": 35, "tasks": ["11"] },
+    { "id": 36, "tasks": ["1.1"] },
+    { "id": 37, "tasks": ["1.2"] },
+    { "id": 38, "tasks": ["1.3"] },
+    { "id": 39, "tasks": ["1.4"] },
+    { "id": 40, "tasks": ["3.1"] },
+    { "id": 41, "tasks": ["3.2"] },
+    { "id": 42, "tasks": ["3.3"] },
+    { "id": 43, "tasks": ["3.4"] },
     { "id": 44, "tasks": ["12.1"] },
     { "id": 45, "tasks": ["12.2"] },
     { "id": 46, "tasks": ["12.4"] },

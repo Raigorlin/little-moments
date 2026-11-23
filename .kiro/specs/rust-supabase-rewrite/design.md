@@ -53,9 +53,10 @@
 | D8 | Supabase 用戶端 | 自寫精簡用戶端：伺服器端 GoTrue REST（reqwest）、瀏覽器端 Realtime Phoenix 協定（web-sys WebSocket），以 trait 隔離 | 官方沒有 Rust 函式庫；社群 crate 多半依賴 tokio 與 native-tls，無法編成 wasm32 |
 | D9 | 登入 | Supabase Auth；`lm-server` 代理註冊、登入與換發（BFF），帳號名稱對應到合成 email `<username>@<LM_AUTH_EMAIL_DOMAIN>` | 保留現行「帳號名稱 + 密碼」（已確認 1）；帳號名稱規則與邀請註冊只在一處 |
 | D10 | 對外入口 | 瀏覽器只連 `lm-server`：`/api/*` 與 `/realtime/v1/websocket`（由 `lm-server` 轉送給 Supabase，並補上 `apikey`） | Supabase 永遠只綁 127.0.0.1；同源，不需要 CORS；之後要在區網測試只需開放一個埠 |
-| D11 | 本機開發 | Supabase CLI 本機堆疊（`supabase start`），以只綁 127.0.0.1 的 Docker 網路啟動；自架 Docker Compose 留到部署階段 | Windows 上最容易安裝；`supabase db reset` 直接套用 `supabase/migrations` |
+| D11 | 本機開發 | Supabase CLI 本機堆疊（`supabase start`），以只綁 127.0.0.1 的 Docker 網路啟動；自架 Docker Compose 留到部署階段 | 在 WSL 2 中只需要 Docker Engine 與 CLI 的 Linux 執行檔（D14）；`supabase db reset` 直接套用 `supabase/migrations` |
 | D12 | 舊程式 | Bun 版留在原處，只新增 Rust workspace 與 `supabase/` | 移植時逐條對照規則與既有測試案例；兩者互不干擾 |
 | D13 | 「誰正在編輯」的呈現 | 被編輯的卡片或列上顯示圓形頭像：字是帳號顯示名稱修剪前後空白後的第一個擴充字素叢集（`unicode-segmentation`），名稱是空的時候用中性符號；底色由帳號 id 決定（FNV-1a 雜湊後查 12 色的色盤），文字色在設計時選好、對比至少 4.5:1；多人時依帳號 id 排序，最多 3 個頭像加「+N」；每個頭像有無障礙名稱與完整名稱的提示 | 使用者確認的要求（已確認 3）。顯示名稱屬於帳號，所以同一個人在每趟旅行、每台裝置都是同一個字與顏色；以字素叢集切字，emoji 序列、國旗與組合字元不會被切開；查表只用整數運算，瀏覽器與原生環境結果相同 |
+| D14 | 開發環境 | 在 Windows 的 WSL 2（Ubuntu）中開發：cargo、trunk、Docker Engine 與 Supabase CLI 都在 WSL 中執行；Repository 留在 Windows 的磁碟，瀏覽器與 git 留在 Windows（見「本機開發」） | 任務執行中發現：Windows 原生的 Rust 工具鏈（windows-gnu）無法建置使用 `raw-dylib` 的 crate（`dlltool` 找不到 GNU 組譯器，也沒有 MSVC、MinGW 或 clang）；新建置的 .exe 會被公司的應用程式控制擋下；Windows 上沒有 Docker。WSL 中可以安裝建置工具、Rust 與 Docker Engine，也避開 Docker Desktop 的授權 |
 
 ### 第一版的範圍
 
@@ -120,7 +121,7 @@ flowchart LR
   subgraph Browser["瀏覽器（每位旅伴、每個分頁）"]
     W["lm-web<br/>Leptos CSR（wasm32）"]
   end
-  subgraph Host["開發機或自架主機"]
+  subgraph Host["開發機的 WSL 2（Ubuntu）或自架主機"]
     S["lm-server（axum）<br/>/api/*、前端靜態檔、/realtime/v1/websocket 轉送"]
     subgraph SB["Supabase（Docker，只綁 127.0.0.1）"]
       G["API gateway :54321"]
@@ -282,7 +283,9 @@ sequenceDiagram
 
 ### 本機開發
 
-拓撲：
+開發在 Windows 的 WSL 2（Ubuntu）中進行（D14）。Repository 留在 Windows 的磁碟 `d:\path\to\little-moments`，在 WSL 中的路徑是 `/mnt/d/path/to/little-moments`；cargo、trunk、docker 與 Supabase CLI 都在 WSL 中、從這個目錄執行，瀏覽器與 git 留在 Windows。
+
+拓撲（瀏覽器在 Windows，其餘都在 WSL 中）：
 
 ```
 瀏覽器 ── http://127.0.0.1:8081 ──▶ trunk serve（改畫面時用；/api 與 /realtime 代理到 8080）
@@ -291,25 +294,43 @@ lm-server ── sqlx ──────────────▶ 127.0.0.1:54
 lm-server ── HTTP 與 WebSocket ─▶ 127.0.0.1:54321（API gateway → Auth、Realtime）
 ```
 
-Windows（PowerShell、Docker Desktop）上的步驟：
+瀏覽器的兩條連線經 WSL 的 localhost 轉送，到達 WSL 中的 8081 與 8080；lm-server 與 Supabase 之間的連線都在 WSL 之內。
 
-```powershell
+在 WSL 中的步驟：
+
+```bash
 # 一次性
+sudo apt update && sudo apt install -y build-essential pkg-config libssl-dev   # C 工具鏈；native-tls 在 Linux 使用 OpenSSL
+# 依 https://rustup.rs 安裝 rustup；rust-toolchain.toml 指定 stable、wasm32 目標、rustfmt 與 clippy
 rustup target add wasm32-unknown-unknown
 cargo install trunk --locked
-scoop install supabase                      # 或使用 npx supabase
+# 依 Docker 文件在 Ubuntu 安裝 Docker Engine（不使用 Docker Desktop），並完成讓使用者不必 sudo 就能執行 docker 的安裝後步驟
+# Supabase CLI 固定使用 3.2.0 的 Linux 版：把 GitHub Releases 上 v3.2.0 的 Linux 執行檔放在 ~/.local/bin
 docker network create -o "com.docker.network.bridge.host_binding_ipv4=127.0.0.1" lm-local
 
 # 每次開發
+export CARGO_TARGET_DIR="$HOME/.cache/lm-target"   # 建置輸出放在 Linux 檔案系統；也可以寫進 ~/.bashrc
+cd /mnt/d/path/to/little-moments
 supabase start --network-id lm-local        # 之後以 docker ps 確認埠顯示為 127.0.0.1:543xx
 supabase db reset                           # 套用 supabase/migrations（會清空本機資料）
 supabase status -o env                      # 取得 API URL、anon／service_role key、JWT secret，填入 .env
-cargo run -p lm-server                      # http://127.0.0.1:8080
-trunk serve --config crates/web/Trunk.toml  # 需要即時重載畫面時
+cargo run -p lm-server                      # Windows 的瀏覽器開啟 http://127.0.0.1:8080
+trunk serve --poll --config crates/web/Trunk.toml  # 需要即時重載畫面時；--poll 的原因見下方
+```
+
+在 Windows 的 PowerShell 中：
+
+```powershell
+netsh interface ipv4 show excludedportrange protocol=tcp   # 確認 54321、54322 與 54323 不在保留範圍內
+# git 的每個指令（status、add、commit 等）也只在這裡執行
 ```
 
 - `docker network create` 與 `--network-id` 是 [Supabase 本機開發文件](https://supabase.com/docs/guides/resources/supabase-cli/local-development) 建議的做法，讓 CLI 堆疊只綁 127.0.0.1（B12）。Supabase 也說明 CLI 堆疊沒有加固、使用預設憑證，不可對外開放。
-- Windows 的 Hyper-V 保留埠範圍可能包含 543xx（[CLI issue #4128](https://github.com/supabase/cli/issues/4128) 的錯誤即為此情形）；遇到時以 `netsh interface ipv4 show excludedportrange protocol=tcp` 確認，並在 `supabase/config.toml` 改埠。
+- WSL 2 預設的 NAT 網路模式會把 WSL 中監聽的埠轉送到 Windows 的 localhost（[Accessing network applications with WSL](https://learn.microsoft.com/en-us/windows/wsl/networking)），所以 Windows 的瀏覽器可以開啟 `http://127.0.0.1:8081` 與 `http://127.0.0.1:8080`；區網中的其他電腦連不到這些只綁 127.0.0.1 的埠，只綁 127.0.0.1 的規則（B12）照樣成立。
+- 轉送的埠也綁在 Windows 上，所以仍要檢查 Windows 的 Hyper-V 保留埠範圍：它可能包含 543xx（[CLI issue #4128](https://github.com/supabase/cli/issues/4128) 是 Windows 上的例子）；遇到時在 PowerShell 以 `netsh interface ipv4 show excludedportrange protocol=tcp` 確認，並在 `supabase/config.toml` 改埠，同時修改 `.env` 的 `SUPABASE_URL` 與 `DATABASE_URL`。
+- `/mnt/d` 上的檔案要經過 WSL 與 Windows 之間的檔案系統轉譯，大量小檔案的讀寫很慢（[Working across file systems](https://learn.microsoft.com/en-us/windows/wsl/filesystems)），所以 `CARGO_TARGET_DIR` 指向 Linux 檔案系統中的目錄。它以環境變數設定，不寫進 Repository 的 `.cargo/config.toml`。
+- 在 Windows 中修改 `/mnt/d` 的檔案時，WSL 中的程式收不到檔案變更的通知（inotify），`trunk serve` 因此不會自動重建；加上 `--poll`（[trunk 的 watch 選項](https://github.com/trunk-rs/trunk/blob/main/src/cmd/watch.rs)）改以輪詢偵測變更，預設每 5 秒一次。cargo 依檔案的修改時間判斷要不要重建，不受影響。
+- git 只在 Windows 的 PowerShell 執行，不在 WSL 中執行：Windows 的 git 使用 `core.autocrlf`，在 WSL 中以 Linux 的 git 操作同一個工作目錄，會因為行尾的設定不同而把檔案看成已修改。
 - 區網測試（手機）需要讓 `lm-server` 綁定非 loopback 位址。只要 `lm-server` 偵測到它使用的是 CLI 的範例 JWT 密鑰或範例金鑰，就拒絕在非 loopback 位址啟動（見「設定與啟動檢查」）。區網測試因此要改用自架 Docker Compose，並以 `utils/generate-keys.sh` 產生新的密鑰；這屬於部署階段，第一版只在本機開發。
 
 ### Repository 配置
@@ -448,8 +469,8 @@ enabled = false
 
 | 選項 | 優點 | 缺點 | 結論 |
 |---|---|---|---|
-| Supabase CLI 本機堆疊 | Windows 可以用 scoop 或 npx 安裝；`supabase db reset` 套用遷移；`config.toml` 可以關閉不需要的服務 | 使用公開已知的範例金鑰；官方說明它沒有加固，不可對外開放 | **開發用**，配合只綁 127.0.0.1 的 Docker 網路 |
-| [自架 Docker Compose](https://supabase.com/docs/guides/self-hosting/docker) | 與日後部署相同；`utils/generate-keys.sh` 產生新密鑰；可移除 Storage、imgproxy、Edge Runtime 等服務 | 要用 bash 執行腳本，手動步驟較多；沒有遷移工具 | 部署階段（不在第一版）；遷移檔是純 SQL，兩者都能套用 |
+| Supabase CLI 本機堆疊 | 在 WSL 2 中只要放一個 Linux 執行檔（固定 3.2.0），使用 WSL 中的 Docker Engine；`supabase db reset` 套用遷移；`config.toml` 可以關閉不需要的服務 | 使用公開已知的範例金鑰；官方說明它沒有加固，不可對外開放 | **開發用**，配合只綁 127.0.0.1 的 Docker 網路 |
+| [自架 Docker Compose](https://supabase.com/docs/guides/self-hosting/docker) | 與日後部署相同；`utils/generate-keys.sh` 產生新密鑰；可移除 Storage、imgproxy、Edge Runtime 等服務 | 手動步驟較多；沒有遷移工具 | 部署階段（不在第一版）；遷移檔是純 SQL，兩者都能套用 |
 
 第一版需要的服務：PostgreSQL、Auth、Realtime、API gateway；Studio 與 postgres-meta 只為了開發時檢視資料。PostgREST 是堆疊內建的，App 不使用。Storage、imgproxy、Edge Runtime、Analytics（Logflare、Vector）與本機郵件服務都關閉。
 
@@ -1582,7 +1603,7 @@ pub async fn realtime_proxy(ws: WebSocketUpgrade, State(st): State<AppState>, Ra
 2. **檢查格式**（需求 2.11、3.12）：一次列出每個未設定的必要變數，以及格式不符的變數名稱與原因；訊息不含 `DATABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_KEY` 與 `SUPABASE_JWT_SECRET` 的值。
 3. **範例金鑰**（需求 2.6，B12）：`LM_BIND` 不是 Loopback_Address（`0.0.0.0` 與 `::` 也不是），而 `SUPABASE_JWT_SECRET`、`SUPABASE_ANON_KEY` 或 `SUPABASE_SERVICE_KEY` 與 Supabase CLI 公開的範例值完全相同時，印出 `LM_BIND` 的值與這些變數的名稱（不含值）。範例值在實作時從 CLI 的 `supabase status` 輸出複製成常數。
 4. **連上 Database**（需求 2.12）：30 秒內每秒重試一次；仍連不上時（例如 Local_Stack 還沒啟動），印出 Database 的主機、埠與原因，不含 `DATABASE_URL` 中的密碼。
-5. **監聽**（需求 2.12）：無法在 `LM_BIND` 監聽時（埠已被使用、落在 Windows 保留的範圍，或位址不屬於這台電腦），印出位址與原因。
+5. **監聽**（需求 2.12）：無法在 `LM_BIND` 監聽時（埠已被使用，或位址不屬於 lm-server 所在的系統，包括在 WSL 2 中使用 Windows 網路介面的位址），印出位址與原因。
 
 ### 4. `lm-web`
 
@@ -3980,7 +4001,7 @@ proptest! {
 
 資安強化是另一個工作流，第一版不處理。下列幾點不需要額外成本，或是功能本身就需要，因此放在第一版：
 
-- 本機 Supabase 只綁 127.0.0.1（Docker 網路的 `host_binding_ipv4`）；`lm-server` 與 `trunk serve` 預設也只綁 127.0.0.1（B12）。
+- 本機 Supabase 只綁 127.0.0.1（Docker 網路的 `host_binding_ipv4`）；`lm-server` 與 `trunk serve` 預設也只綁 127.0.0.1（B12）。這些埠在 WSL 2 中只經 localhost 轉送給同一台電腦的 Windows，區網連不到（「本機開發」）。
 - `lm-server` 在非 loopback 位址上偵測到 CLI 的範例 JWT 密鑰或金鑰時拒絕啟動；要讓其他機器連入，必須改用以 `generate-keys.sh` 產生新密鑰的自架堆疊（B12）。
 - service key 只存在 `lm-server` 的環境變數；瀏覽器只拿到使用者自己的 JWT；Realtime 的 `apikey` 由 `lm-server` 轉送時補上。
 - 旅行資料只透過 `lm-server` 的命令與快照存取；`app` schema 不在 PostgREST 的 `api.schemas` 中，全部啟用 RLS 且不授權給 `anon`、`authenticated`（B6）。
@@ -3996,16 +4017,18 @@ proptest! {
 |---|---|---|
 | 工具 | Rust stable、`wasm32-unknown-unknown`、rustfmt、clippy（`rust-toolchain.toml`） | 編譯 |
 | 工具 | trunk | 建置與開發伺服器（`lm-web`） |
-| 工具 | Supabase CLI、Docker Desktop（WSL2） | 本機 Supabase 堆疊與遷移 |
-| 工具 | Bun（已有） | 只用於一次性的 `scripts/export-art.mjs` |
+| 工具 | WSL 2 的 Ubuntu 套件：`build-essential`、`pkg-config`、`libssl-dev` | 編譯原生相依套件的 C 工具鏈；native-tls 在 Linux 使用 OpenSSL，openssl-sys 以 pkg-config 找到 `libssl-dev` |
+| 工具 | Supabase CLI 3.2.0 的 Linux 版、Docker Engine（都安裝在 WSL 2 的 Ubuntu 中，不使用 Docker Desktop） | 本機 Supabase 堆疊與遷移 |
+| 工具 | Bun（Windows 上已有） | 只用於一次性的 `scripts/export-art.mjs` |
 | `lm-core` | serde、serde_json、serde_with、uuid（v4、serde，wasm 加 `js`）、chrono（不含 clock）、unicode-normalization、unicode-segmentation（頭像的字）、regex、indexmap、thiserror；dev：proptest | 型別與規則 |
 | `lm-supabase` | serde_json；feature `server`：reqwest、jsonwebtoken、tokio、async-trait；feature `web`：wasm-bindgen、web-sys（WebSocket、MessageEvent、CloseEvent）、gloo-timers | 用戶端 |
 | `lm-server` | axum 0.8（ws）、tokio、tower-http（fs、trace）、sqlx 0.8（postgres、runtime-tokio、uuid、chrono、json）、tokio-tungstenite、futures-util、sha2、rand、hex、tracing、tracing-subscriber、dotenvy | 服務 |
 | `lm-web` | leptos 0.8（csr）、leptos_router 0.8、wasm-bindgen、web-sys、js-sys、gloo-net、gloo-timers、gloo-storage、uuid（js） | 前端 |
 | 服務 | Supabase：PostgreSQL、Auth、Realtime、API gateway；Studio 與 postgres-meta（開發用） | 平台 |
 | 設定 | `.cargo/config.toml` 為 wasm32 加上 `--cfg getrandom_backend="wasm_js"`（getrandom 0.3 的瀏覽器後端） | 產生 UUID |
+| 設定 | 伺服器端的 TLS 使用 native-tls（reqwest、sqlx 與 tokio-tungstenite 的 native-tls feature）；native-tls 在 Linux 使用 OpenSSL，所以在 WSL 中建置之前要安裝 `pkg-config` 與 `libssl-dev` | 連到 `https://` 與 `wss://` 的 Supabase_Stack，以及依 `DATABASE_URL` 的 `sslmode` 以 TLS 連到 Database |
 
-版本在建立 workspace 時鎖在 `Cargo.lock`；Supabase 各服務的映像版本由使用的 CLI 版本決定，README 記錄 `supabase --version`。
+版本在建立 workspace 時鎖在 `Cargo.lock`；Supabase 各服務的映像版本由使用的 CLI 版本（固定為 3.2.0）決定，README 記錄 `supabase --version`。
 
 ## 風險與緩解
 
@@ -4018,12 +4041,13 @@ proptest! {
 | R5 | Leptos 0.8 的 API 仍在演進 | 升級時要改程式 | 鎖定版本；畫面元件與同步引擎分開，引擎不依賴 Leptos 以外的反應式細節 |
 | R6 | 重用現有 CSS 要求 DOM 結構相同 | 版面跑掉 | 元件照抄現行模板的結構與 class；逐頁以眼睛比對 Bun 版 |
 | R7 | NFKC、空白與小寫的細節和 JavaScript 不完全相同 | 採買同步結果與舊版不同 | golden 測試移植自現行測試；Property 17 |
-| R8 | Windows 的 Docker 綁定與保留埠 | 無法啟動，或意外開放到區網 | 文件化 `docker network create` 與 `netsh` 檢查；以 `docker ps` 確認 127.0.0.1 |
+| R8 | WSL 2 中 Docker Engine 的埠綁定，以及 Windows 的保留埠（WSL 轉送的埠也綁在 Windows 上） | 無法啟動、Windows 的瀏覽器連不到，或意外開放到區網 | 文件化 `docker network create` 與 `netsh` 檢查；以 `docker ps` 確認 127.0.0.1；綁在 127.0.0.1 的埠只經 WSL 的 localhost 轉送給 Windows，區網連不到 |
 | R9 | broadcast 最多送達一次，且沒有連線者時會被丟棄 | 畫面暫時不是最新 | 水位線、跳號偵測、`head` 比對與重連後補齊（B7）；正確性不依賴推送 |
 | R10 | JWT 在登出或失去權限後仍有效到過期（預設 1 小時） | 撤銷延遲 | 第一版接受；資安工作流再縮短有效時間 |
 | R11 | 每個命令重讀整趟旅行 | 大旅行時延遲增加 | 預估仍在數十毫秒；必要時加入以 `(trip, seq)` 為鍵的快取 |
 | R12 | 一次性的插畫輸出依賴現有 JavaScript | 之後改插畫要重新輸出 | 輸出結果提交進版本庫；之後若要改插畫，再決定是否把產生器移植成 Rust |
 | R13 | 頭像的字是 emoji，或是內建字型沒有的罕用字 | 同一個人的頭像在不同裝置上字形略有不同（改用系統字型） | 字（同一個字素叢集）與顏色在每台裝置都相同，只有字形依系統字型而異；第一版接受 |
+| R14 | Repository 在 Windows 的磁碟（WSL 中的 `/mnt/d`），工具在 WSL 中執行 | 建置變慢；在 Windows 修改的檔案不會觸發 WSL 中的檔案監看，`trunk serve` 不自動重建；在 WSL 中執行 git 會因為行尾的設定不同而把檔案看成已修改 | `CARGO_TARGET_DIR` 指向 Linux 檔案系統；`trunk serve --poll`；git 只在 Windows 的 PowerShell 執行（「本機開發」） |
 
 ## 擴充點（之後的功能）
 
@@ -4054,6 +4078,9 @@ proptest! {
 | CLI 只綁 127.0.0.1 的 Docker 網路、CLI 堆疊不可對外 | [Supabase：Local Development & CLI](https://supabase.com/docs/guides/resources/supabase-cli/local-development) |
 | CLI `config.toml` 的服務開關與埠 | [Supabase：CLI configuration](https://supabase.com/docs/guides/local-development/cli/config) |
 | Windows 保留埠造成 CLI 無法綁定 | [supabase/cli #4128](https://github.com/supabase/cli/issues/4128) |
+| WSL 2 預設的 NAT 模式：Windows 以 localhost 連到 WSL 中的服務，區網要另外設定 port proxy 才能連入 | [Microsoft：Accessing network applications with WSL](https://learn.microsoft.com/en-us/windows/wsl/networking) |
+| 專案檔放在 `/mnt/` 之下時 WSL 中的讀寫較慢 | [Microsoft：Working across file systems](https://learn.microsoft.com/en-us/windows/wsl/filesystems) |
+| `trunk serve` 與 `trunk watch` 的 `--poll`（預設每 5 秒） | [trunk-rs/trunk：src/cmd/watch.rs](https://github.com/trunk-rs/trunk/blob/main/src/cmd/watch.rs) |
 | GoTrue 的密碼 72 字元上限 | [Supabase Discussion #34207](https://github.com/orgs/supabase/discussions/34207) |
 | GoTrue 的 email 網域格式檢查 | [supabase/auth #2252](https://github.com/supabase/auth/issues/2252) |
 | Leptos + Supabase 的 CSR 範例（以 REST 呼叫 GoTrue） | [leptos-community/csr-example-leptos-supabase](https://github.com/leptos-community/csr-example-leptos-supabase) |
