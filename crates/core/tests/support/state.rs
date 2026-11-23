@@ -484,7 +484,7 @@ prop_compose! {
 }
 
 /// 時刻：多數取自 [`CLOCK_MINUTES`]（同一時間的活動與料理因此常見），其餘是 00:00–23:59 的任意分鐘。
-fn arb_hm() -> impl Strategy<Value = Hm> {
+pub fn arb_hm() -> impl Strategy<Value = Hm> {
     prop_oneof![
         3 => select(CLOCK_MINUTES),
         1 => 0..24 * 60_u16,
@@ -493,7 +493,7 @@ fn arb_hm() -> impl Strategy<Value = Hm> {
 }
 
 /// 金額（分）：NT$0.01 與 NT$1,000,000 兩個邊界，多數是 NT$2,000 以內的金額，其餘是範圍內的任意金額。
-fn arb_amount_cents() -> impl Strategy<Value = i64> {
+pub fn arb_amount_cents() -> impl Strategy<Value = i64> {
     prop_oneof![
         1 => Just(1_i64),
         1 => Just(100_000_000_i64),

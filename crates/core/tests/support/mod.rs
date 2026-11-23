@@ -6,6 +6,9 @@
 //! - [`ids`]：產生器的 id 配置，以及依序產生採買品項 id 的決定性 `IdSource`（[`ids::SeqIds`]）。
 //! - [`example_trip::example_trip()`]：範例測試共用的範例旅行，移植自 `tests/fixtures/example-trip.js` 的
 //!   `exampleTrip()`（需求 33.2）。
+//! - [`commands`]：命令與身分的產生器 [`commands::arb_command()`] 與 [`commands::arb_caps()`]，以及套用過一次採買
+//!   同步、滿足 I1–I12 的狀態 [`commands::arb_valid_state()`]（任務 8.3）。
+//! - [`seed::seed()`]：規則與旅伴的範例測試共用的示範旅行，移植自 `src/model.js` 的 `seed()`。
 //!
 //! 每個測試檔以 `mod support;` 引入，通常只用到其中一部分，所以整個模組允許沒有用到的項目。
 //!
@@ -16,7 +19,9 @@
 
 #![allow(dead_code)]
 
+pub mod commands;
 pub mod example_trip;
 pub mod ids;
+pub mod seed;
 pub mod state;
 pub mod vocab;
