@@ -32,6 +32,8 @@
 //! 路由器的狀態是 `AppState`（`state`）：連線池、Auth_Service 的用戶端、access token 的驗證器、設定與時鐘；登入狀態與
 //! 旅行資料都不保存在記憶體中（需求 1.11）。
 
+mod account_rules;
+mod auth;
 mod config;
 mod db;
 // `/api/*` 的錯誤回應與請求擷取器（任務 13.2），由任務 13.3 至 16 的路由使用。一個模組的項目全部用上之後，它的
@@ -40,6 +42,7 @@ mod db;
 mod error;
 #[expect(dead_code, reason = "任務 13.3 至 16 的路由才會使用")]
 mod extract;
+mod repo;
 mod state;
 mod static_files;
 
@@ -49,7 +52,7 @@ use std::process::ExitCode;
 
 use axum::extract::Request;
 use axum::http::StatusCode;
-use axum::routing::{any, get};
+use axum::routing::{any, get, post};
 use axum::Router;
 use tokio::net::TcpListener;
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
@@ -140,7 +143,7 @@ fn api_router() -> Router<AppState> {
 /// `/api` 之下的端點（design 3.1 的表）：任務 14 至 16 在這裡以 `.route(…)` 加入，路徑不含 `/api`（例如
 /// `.route("/me", get(auth::me))`），含旅行 id 的路徑參數一律寫成 `{id}`（`TripPath`）。
 fn api_routes() -> Router<AppState> {
-    Router::new()
+    Router::new().route("/auth/signup", post(auth::signup_handler))
 }
 
 /// 404 `api_not_found`：`/api/*` 下沒有這個路徑（需求 5.9）。
