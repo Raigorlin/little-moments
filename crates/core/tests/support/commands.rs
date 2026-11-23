@@ -140,6 +140,22 @@ pub fn arb_caps(state: &TripState) -> BoxedStrategy<(Identity, Capabilities)> {
         .boxed()
 }
 
+/// 送出一連串命令的身分（命令腳本與 Pending_Command）：多半可以編輯（擁有者、管理員與受邀成員的權重為 3、2、2），
+/// 也有沒有綁定旅伴的管理員與非成員（權重各 1），使一連串的命令多數有機會成立。
+pub fn arb_sender_caps(state: &TripState) -> BoxedStrategy<Capabilities> {
+    let state = state.clone();
+    let identity = prop_oneof![
+        3 => Just(Identity::Owner),
+        2 => Just(Identity::Admin),
+        2 => Just(Identity::Collaborator),
+        1 => Just(Identity::UnboundAdmin),
+        1 => Just(Identity::Outsider),
+    ];
+    (identity, any::<Index>())
+        .prop_map(move |(identity, me)| caps_of(&state, identity, me))
+        .boxed()
+}
+
 /// 以 `caps` 執行命令的 `Ctx`。
 pub fn ctx_of(caps: Capabilities) -> Ctx {
     Ctx {

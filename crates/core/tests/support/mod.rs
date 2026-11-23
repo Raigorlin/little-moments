@@ -9,6 +9,8 @@
 //! - [`commands`]：命令與身分的產生器 [`commands::arb_command()`] 與 [`commands::arb_caps()`]，以及套用過一次採買
 //!   同步、滿足 I1–I12 的狀態 [`commands::arb_valid_state()`]（任務 8.3）。
 //! - [`seed::seed()`]：規則與旅伴的範例測試共用的示範旅行，移植自 `src/model.js` 的 `seed()`。
+//! - [`model_server`]：以 `apply(Mode::Commit)` 依序執行命令、記錄每個 Seq 的 Change_Set 與 Snapshot 的
+//!   [`model_server::ModelServer`]，以及命令腳本與送達計畫的產生器（任務 9.3）。
 //!
 //! 每個測試檔以 `mod support;` 引入，通常只用到其中一部分，所以整個模組允許沒有用到的項目。
 //!
@@ -22,6 +24,7 @@
 pub mod commands;
 pub mod example_trip;
 pub mod ids;
+pub mod model_server;
 pub mod seed;
 pub mod state;
 pub mod vocab;
