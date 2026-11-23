@@ -8,7 +8,7 @@ publish.workspace = true
 # 訊框編解碼與連線狀態機，不依賴瀏覽器，可以在原生目標測試；可以使用 lm-core 的型別，lm-core 不反向依賴。
 [features]
 # 只由 lm-server 啟用：Auth_Service 的 REST 呼叫（gotrue）與 HS256／ES256 的 access token 驗證（jwt）
-server = ["dep:async-trait", "dep:jsonwebtoken", "dep:reqwest", "dep:tokio"]
+server = ["dep:async-trait", "dep:jsonwebtoken", "dep:reqwest", "dep:tokio", "dep:uuid"]
 # 只由 lm-web 啟用：以瀏覽器的 WebSocket 實作 RealtimeTransport（realtime::web，只在 wasm32 編譯）
 web = ["dep:gloo-timers", "dep:wasm-bindgen", "dep:web-sys"]
 
@@ -23,6 +23,8 @@ async-trait = { version = "0.1", optional = true }
 jsonwebtoken = { version = "12", default-features = false, features = ["rust_crypto"], optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"], optional = true }
 tokio = { version = "1", features = ["sync"], optional = true }
+# access token 的 session_id（Claims）；與 lm-core 使用同一個版本
+uuid = { version = "1", features = ["serde"], optional = true }
 
 # feature web：瀏覽器的 WebSocket 與計時器，只在 wasm32 編譯
 [target.'cfg(target_arch = "wasm32")'.dependencies]
