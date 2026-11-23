@@ -15,6 +15,12 @@
 
 mod config;
 mod db;
+// `/api/*` 的錯誤回應與請求擷取器（任務 13.2），由任務 13.3 至 16 的路由使用。一個模組的項目全部用上之後，它的
+// expect 不再成立，編譯器會警告，屆時移除那一個 expect。
+#[expect(dead_code, reason = "任務 13.3 至 16 的路由才會使用")]
+mod error;
+#[expect(dead_code, reason = "任務 13.3 至 16 的路由才會使用")]
+mod extract;
 
 use std::fmt::Display;
 use std::io::{self, IsTerminal};
