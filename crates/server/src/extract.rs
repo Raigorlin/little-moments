@@ -210,8 +210,8 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     (!token.is_empty()).then_some(token)
 }
 
-/// `app.profiles` 中 `user_id` 是 `id` 的帳號；沒有這一列時是 `None`。登入與換發 Session 取得帳號資料時也可以使用
-/// （任務 14.2）。
+/// `app.profiles` 中 `user_id` 是 `id` 的帳號；沒有這一列時是 `None`。登入與換發 Session 也以它讀取 Session 的
+/// 帳號資料（`auth`）。
 pub async fn load_profile(db: &PgPool, id: UserId) -> sqlx::Result<Option<ProfileDto>> {
     let row = sqlx::query_as::<_, (String, String, String)>(
         "select username, display_name, role from app.profiles where user_id = $1",

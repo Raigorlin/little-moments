@@ -142,7 +142,12 @@ fn api_router() -> Router<AppState> {
 /// `/api` 之下的端點（design 3.1 的表）：任務 14 至 16 在這裡以 `.route(…)` 加入，路徑不含 `/api`（例如
 /// `.route("/me", get(auth::me))`），含旅行 id 的路徑參數一律寫成 `{id}`（`TripPath`）。
 fn api_routes() -> Router<AppState> {
-    Router::new().route("/auth/signup", post(auth::signup_handler))
+    Router::new()
+        .route("/auth/signup", post(auth::signup_handler))
+        .route("/auth/login", post(auth::login_handler))
+        .route("/auth/refresh", post(auth::refresh_handler))
+        .route("/auth/logout", post(auth::logout_handler))
+        .route("/me", get(auth::me))
 }
 
 /// 404 `api_not_found`：`/api/*` 下沒有這個路徑（需求 5.9）。
