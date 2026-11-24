@@ -273,6 +273,17 @@ test('[studio] desktop: edits, 復原 and 重做 in one LM window reach a second
 
     await expect(pa.locator('#saveStatus')).toHaveText('已儲存', { timeout: 15000 });
     await shoot(pb, 'lm', '1440-synced', testInfo);
+
+    // The edits are stored by lm-server: a reload of window B reads them back (stop items are a storybook field, D1).
+    await pb.reload();
+    await expect(pb.locator('#j-day-0')).toHaveText('出發囉', within);
+    await expect(pb.locator('.j-day').first().locator('.j-event-title', { hasText: '營火晚會' })).toHaveCount(1, within);
+    await pb.locator('#section-routes').click();
+    const routeOpenB = await pb.locator('#route-entry-0').evaluate(el => el.open);
+    if (!routeOpenB) await pb.locator('#route-entry-0 > summary').click();
+    const stopB = pb.locator('#stop-entry-0-1');
+    if (!(await stopB.evaluate(el => el.open))) await stopB.locator(':scope > summary').click();
+    await expect(pb.locator('#stop-0-1-items')).toHaveValue('冰塊\n炭', within);
   } finally {
     await closeAll(a, b);
   }
