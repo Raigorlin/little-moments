@@ -39,6 +39,12 @@ pub enum ChangesResponse {
     },
 }
 
+/// `GET /api/trips/{id}/head` 的回應：這趟旅行目前的 Head，還沒有任何有變化的提交時是 0（需求 12.9）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeadResponse {
+    pub seq: Seq,
+}
+
 /// 錯誤回應只有這三個欄位（需求 5.5）。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiError {
@@ -95,6 +101,14 @@ pub struct SignupResponse {
     #[serde(flatten)]
     pub session: SessionDto,
     pub trip_id: Option<TripId>,
+}
+
+/// 以目前的 Account 經邀請連結加入（`POST /api/invites/{token}/join`，需求 30.10）：旅伴名字與選填的角色。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinRequest {
+    pub name: String,
+    #[serde(default)]
+    pub role: String,
 }
 
 /// 以邀請連結加入的回應（需求 30.10、30.11）。

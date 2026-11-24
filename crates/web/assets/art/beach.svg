@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 250" preserveAspectRatio="xMidYMid meet" class="illustration illustration--beach" aria-hidden="true" focusable="false" fill="none" style="display:block;max-width:100%;height:auto">
+  <rect x="0" y="0" width="680" height="250" fill="#fffcf6"/>
+  
+  <g class="scene-layer scene-sun"><g stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="540" cy="56" r="27" fill="#f6d27a"/>
+    <line x1="575.0" y1="56.0" x2="585.0" y2="56.0"/><line x1="564.7" y1="80.7" x2="571.8" y2="87.8"/><line x1="540.0" y1="91.0" x2="540.0" y2="101.0"/><line x1="515.3" y1="80.7" x2="508.2" y2="87.8"/><line x1="505.0" y1="56.0" x2="495.0" y2="56.0"/><line x1="515.3" y1="31.3" x2="508.2" y2="24.2"/><line x1="540.0" y1="21.0" x2="540.0" y2="11.0"/><line x1="564.7" y1="31.3" x2="571.8" y2="24.2"/>
+  </g></g>
+  <g stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M-10 140 Q140 120 270 142 T690 136 V210 H-10 Z" fill="#b7dbe5"/>
+    <path d="M-10 154 Q120 140 250 158 T690 150 M-10 178 Q130 164 280 181 T690 174" fill="none"/>
+    <path d="M-10 188 Q180 166 330 190 T690 178 V260 H-10 Z" fill="#f6d27a"/>
+    <path d="M510 250 Q532 202 568 180 Q607 202 628 250 Z" fill="#efa28f"/>
+    <path d="M568 180 V250" fill="none"/>
+    <path d="M62 192 Q68 172 74 192 M56 196 H80" fill="#b9cda5"/>
+    <path d="M600 100 Q586 145 604 178 M600 126 Q574 116 568 103 M600 139 Q626 122 639 112 M596 124 Q590 105 596 91" fill="none"/>
+  </g>
+  <path d="M600 101 Q578 93 568 103 Q582 118 599 118 M600 126 Q622 110 639 112 Q633 130 600 141 M598 124 Q582 103 596 91 Q608 105 602 126" fill="#b9cda5" stroke="#3e3a39" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="142" cy="210" r="13" fill="#fffcf6" stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M130 210 H154 M142 197 V223" stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M264 215 Q280 197 296 215 M280 201 V229" stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M260 230 H300" stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>

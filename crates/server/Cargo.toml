@@ -15,10 +15,13 @@ path = "src/main.rs"
 lm-core = { path = "../core" }
 lm-supabase = { path = "../supabase", features = ["server"] }
 axum = { version = "0.8", features = ["ws"] }
+# 邀請連結的時間以 RFC 3339 回應（與 lm-core、sqlx 使用同一版）
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 dotenvy = "0.15"
 futures-util = { version = "0.3", features = ["sink"] }
 hex = "0.4"
 rand = "0.8"
+serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["chrono", "json", "postgres", "runtime-tokio", "tls-native-tls", "uuid"] }
 tokio = { version = "1", features = ["full"] }

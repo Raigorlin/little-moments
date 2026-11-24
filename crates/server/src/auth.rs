@@ -22,26 +22,29 @@
 //! 1. lm-core 的 `account::check_signup()`：帳號名稱的格式與保留字、顯示名稱、密碼（需求 3.2 至 3.5）。LM_Web 的
 //!    註冊表單以同一份規則檢查（需求 3.14）。
 //! 2. 沒有邀請而 `LM_PUBLIC_SIGNUP` 是 `false`：不呼叫 Auth_Service（需求 3.7）。
-//! 3. 附邀請：任務 16.1 改成檢查連結（需求 30.13），並在步驟 5 的交易中加入旅行；在那之前一律回應 501，不呼叫
-//!    Auth_Service，所以 `LM_PUBLIC_SIGNUP` 是 `false` 時也不能以任意的邀請註冊。
+//! 3. 附邀請：`invites::check_usable()` 不加鎖檢查連結是 Active_Invite、旅行沒有被刪除（需求 30.13）；不通過時不呼叫
+//!    Auth_Service。這個註冊不受 `LM_PUBLIC_SIGNUP` 影響（需求 30.12）。
 //! 4. 以 admin API 建立 email 為 Synthetic_Email、email 已確認的使用者：密碼原樣，`user_metadata` 是
 //!    `{"username": <帳號名稱>}`（需求 3.1）。
 //! 5. 一個交易：取得 advisory lock，`app.profiles` 沒有任何一列時角色是 admin、否則是 member（需求 3.8、3.9），新增
-//!    `app.profiles`（顯示名稱是經 Participant_Name 的值），提交。
-//! 6. 交易失敗時（沒有提交）刪除步驟 4 的使用者，使這個帳號名稱可以再註冊，回應原本的錯誤；刪除也失敗時在記錄中寫下
+//!    `app.profiles`（顯示名稱是經 Participant_Name 的值）；附邀請時以 `invites::join_in_tx()` 鎖住旅行、再驗證連結、
+//!    檢查旅伴名字與角色、新增綁定這個帳號的旅伴、標記連結已使用並寫入 Change_Set（需求 30.10、30.12）；提交。
+//! 6. 交易失敗時（沒有提交，所以也沒有旅伴、Change_Set 與連結的使用紀錄，不推送）刪除步驟 4 的使用者，使這個帳號
+//!    名稱可以再註冊，回應原本的錯誤（例如「邀請連結無效或已過期。」）；刪除也失敗時在記錄中寫下
 //!    使用者的 id（需求 3.10）。COMMIT 的結果不明時（例如連線在送出 COMMIT 之後中斷），刪除使用者也經
 //!    `on delete cascade` 刪除已提交的 `app.profiles`，所以同樣不留下帳號。
-//! 7. 以 Synthetic_Email 與原樣的密碼登入取得 Session，回應 200 的 `SignupResponse`；`trip_id` 在任務 16.1 之前一律
-//!    是 `null`。
+//! 7. 以 Synthetic_Email 與原樣的密碼登入取得 Session，回應 200 的 `SignupResponse`；`trip_id` 是附邀請時加入的旅行，
+//!    沒有邀請時是 `null`。
 //!
 //! | 情況 | 狀態 | `code` | `field` | 訊息 |
 //! | --- | --- | --- | --- | --- |
 //! | 請求內容的格式不正確（需求 5.9） | 400 | `invalid_request` | `null` | 資料格式不正確。 |
 //! | 需求 3.2 至 3.5 | 400 | 見 lm-core 的 `account` | 見 lm-core 的 `account` | 見 lm-core 的 `account` |
 //! | 沒有邀請而 `LM_PUBLIC_SIGNUP` 是 `false`（需求 3.7） | 403 | `signup_invite_only` | `null` | 目前只接受以邀請連結註冊。 |
-//! | 附邀請（任務 16.1 之前） | 501 | `not_implemented` | `null` | 以邀請連結註冊尚未提供。 |
+//! | 附邀請，連結不存在、已撤銷、已過期、已使用或旅行已被刪除（需求 30.13，步驟 3 或 5） | 404 | `invite_invalid` | `null` | 邀請連結無效或已過期。 |
+//! | 附邀請，旅伴名字或角色不符合需求 19.1–19.7（需求 30.15，步驟 5） | 400 或 409 | 見 lm-core 的 `Rejection` | 見 lm-core | 見 lm-core |
 //! | Auth_Service 已有這個 email，包括同時進行、先建立使用者的另一個註冊；或 `app.profiles` 已有這個帳號名稱（需求 3.6） | 409 | `username_taken` | `username` | 這個帳號名稱已被使用。 |
-//! | Auth_Service 拒收 email、無法連線或回報其他錯誤（需求 3.11）；步驟 5 的 Database 錯誤（需求 3.10） | 500 | `signup_unavailable` | `null` | 註冊暫時無法使用，請聯絡管理員。 |
+//! | Auth_Service 拒收 email、無法連線或回報其他錯誤（需求 3.11）；步驟 3 或 5 的 Database 錯誤（需求 3.10） | 500 | `signup_unavailable` | `null` | 註冊暫時無法使用，請聯絡管理員。 |
 //! | 已提交，但無法取得 Session（需求 3.16） | 503 | `signup_login_unavailable` | `null` | 帳號已建立，但暫時無法登入，請稍後到登入頁登入。 |
 //!
 //! 409 的 `field` 是 `username`，因為錯誤所指的是帳號名稱這個欄位（需求 5.5）。
@@ -127,7 +130,9 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 use lm_core::account::{self, Violation};
-use lm_core::api::{ProfileDto, RefreshRequest, SessionDto, SignupRequest, SignupResponse};
+use lm_core::api::{
+    InviteJoin, ProfileDto, RefreshRequest, SessionDto, SignupRequest, SignupResponse,
+};
 use lm_core::ids::UserId;
 use lm_core::model::Role;
 use lm_supabase::gotrue::{AuthError, GoTrueSession};
@@ -138,6 +143,7 @@ use sqlx::types::JsonValue;
 use crate::config::Config;
 use crate::error::ApiError;
 use crate::extract::{load_profile, ApiJson, AuthUser};
+use crate::invites::{self, JoinError, Joined};
 use crate::repo;
 use crate::state::AppState;
 
@@ -171,13 +177,11 @@ async fn signup(st: &AppState, request: SignupRequest) -> Result<SignupResponse,
             "目前只接受以邀請連結註冊。",
         ));
     }
-    // 3. 任務 16.1 換成 invites::check_usable()（需求 30.13），並在 create_profile() 的交易中加入旅行
-    if invite.is_some() {
-        return Err(ApiError::new(
-            StatusCode::NOT_IMPLEMENTED,
-            "not_implemented",
-            "以邀請連結註冊尚未提供。",
-        ));
+    // 3. 需求 30.13：先不加鎖檢查連結，步驟 5 的交易中會再驗證一次
+    if let Some(invite) = &invite {
+        invites::check_usable(&st.db, &invite.token)
+            .await
+            .map_err(join_failed)?;
     }
 
     // 4. 需求 3.1、3.6、3.11
@@ -189,9 +193,11 @@ async fn signup(st: &AppState, request: SignupRequest) -> Result<SignupResponse,
         .await
         .map_err(|error| create_user_failed(&st.config, error))?;
 
-    // 5、6. 需求 3.8、3.9、3.10
-    let role = match create_profile(st, user, &username, &display_name).await {
-        Ok(role) => role,
+    // 5、6. 需求 3.8、3.9、3.10、30.12
+    let (role, joined) = match create_profile(st, user, &username, &display_name, invite.as_ref())
+        .await
+    {
+        Ok(created) => created,
         Err(error) => {
             if let Err(delete_error) = st.auth.delete_user(user).await {
                 tracing::error!(
@@ -205,6 +211,9 @@ async fn signup(st: &AppState, request: SignupRequest) -> Result<SignupResponse,
         }
     };
     tracing::info!(%user, %username, role = role.as_str(), "account created");
+    if let Some(Joined::Added { trip, seq }) = joined {
+        tracing::info!(%trip, %user, seq, "joined a trip with an invite while signing up");
+    }
 
     // 7. 交易已提交：取得 Session 失敗時保留帳號（需求 3.16）
     let session = st
@@ -231,19 +240,21 @@ async fn signup(st: &AppState, request: SignupRequest) -> Result<SignupResponse,
     };
     Ok(SignupResponse {
         session: session_dto(st, session, profile),
-        trip_id: None,
+        trip_id: joined.map(Joined::trip),
     })
 }
 
-/// 步驟 5：在一個交易中新增 `user` 的 `app.profiles`，回傳角色（需求 3.8、3.9）。失敗時交易沒有提交（sqlx 在
-/// `Transaction` 被丟棄時回滾），錯誤已轉成回應（`transaction_failed()`）。
+/// 步驟 5：在一個交易中新增 `user` 的 `app.profiles`（需求 3.8、3.9），附邀請時以這個帳號加入旅行（需求 30.12），
+/// 回傳角色與加入的結果。失敗時交易沒有提交（sqlx 在 `Transaction` 被丟棄時回滾），錯誤已轉成回應
+/// （`join_failed()`）。
 async fn create_profile(
     st: &AppState,
     user: UserId,
     username: &str,
     display_name: &str,
-) -> Result<Role, ApiError> {
-    let committed: sqlx::Result<Role> = async {
+    invite: Option<&InviteJoin>,
+) -> Result<(Role, Option<Joined>), ApiError> {
+    let committed: Result<(Role, Option<Joined>), JoinError> = async {
         let mut tx = st.db.begin().await?;
         repo::lock_first_admin(&mut tx).await?;
         let role = if repo::profile_count(&mut tx).await? == 0 {
@@ -252,11 +263,25 @@ async fn create_profile(
             Role::Member
         };
         repo::insert_profile(&mut tx, user, username, display_name, role).await?;
+        let joined = match invite {
+            Some(invite) => Some(
+                invites::join_in_tx(
+                    &mut tx,
+                    st.clock.as_ref(),
+                    user,
+                    &invite.token,
+                    &invite.name,
+                    &invite.role,
+                )
+                .await?,
+            ),
+            None => None,
+        };
         tx.commit().await?;
-        Ok(role)
+        Ok((role, joined))
     }
     .await;
-    committed.map_err(transaction_failed)
+    committed.map_err(join_failed)
 }
 
 /// `POST /api/auth/login`（見模組說明的「登入」）。
@@ -437,7 +462,16 @@ fn create_user_failed(config: &Config, error: AuthError) -> ApiError {
     }
 }
 
-/// 步驟 5 的 Database 錯誤：`app.profiles` 已有這個帳號名稱時 409（需求 3.6）；其他記下 SQLSTATE 與約束名稱後 500
+/// 步驟 3 或步驟 5 失敗：連結無效或旅伴名字、角色不通過時回應原本的錯誤；Database 錯誤見 `transaction_failed()`
+/// （需求 3.10）。
+fn join_failed(error: JoinError) -> ApiError {
+    match error {
+        JoinError::Rejected(error) => error,
+        JoinError::Database(error) => transaction_failed(error),
+    }
+}
+
+/// 步驟 3 或步驟 5 的 Database 錯誤：`app.profiles` 已有這個帳號名稱時 409（需求 3.6）；其他記下 SQLSTATE 與約束名稱後 500
 /// （需求 3.10）。
 fn transaction_failed(error: sqlx::Error) -> ApiError {
     if repo::is_username_taken(&error) {

@@ -1,0 +1,481 @@
+{
+  "pbtResults": {
+    "7.2 Write the Style_Comparison_Check": {
+      "status": "passed",
+      "lastRunTimestamp": 1795518897625
+    },
+    "7.3 Write the selector check": {
+      "status": "passed",
+      "lastRunTimestamp": 1795519149285
+    }
+  },
+  "executionHistory": {
+    "1.1 Copy Bun's stylesheets into LM_Web and fix the link order": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516024450
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516082843
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516337960
+      }
+    ],
+    "1.2 Implement the CSS rule parser and parity checker": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516026790
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516085640
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516340565
+      }
+    ],
+    "1.3 Write the stylesheet rule-parity test": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516028833
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516484837
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516651424
+      }
+    ],
+    "2.1 Add the header and toolbar icons": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516030809
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516087743
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516342898
+      }
+    ],
+    "2.2 Add `HeaderKind` and `TripHeader` to the shell": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516032798
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516487639
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516648959
+      }
+    ],
+    "2.3 Update the Trip_Page chrome in `pages/trip.rs`": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516034756
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516667071
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516885937
+      }
+    ],
+    "3.1 Restructure the unassigned shopping row": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516036714
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516090049
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516345174
+      }
+    ],
+    "3.2 Make activity cards swipe rows": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516038749
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516359841
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516468302
+      }
+    ],
+    "3.3 Make route cards swipe rows": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516040683
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516362721
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516470647
+      }
+    ],
+    "3.4 Make place rows swipe rows": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516042652
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516364879
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516473001
+      }
+    ],
+    "3.5 Add the `swipe` prop to the vehicle list": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516044587
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516489687
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516658173
+      }
+    ],
+    "4.1 Create the swipe module skeleton and dependencies": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516046601
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516092193
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516347450
+      }
+    ],
+    "4.2 Implement `physics.rs`": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516048570
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516491744
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516655811
+      }
+    ],
+    "4.4 Implement `rows.rs`": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516050525
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516669457
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516890385
+      }
+    ],
+    "4.5 Implement `controller.rs`": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516052497
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516896535
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795517340342
+      }
+    ],
+    "4.6 Mount the Swipe_Controller on the workspace": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516054499
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795517346419
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795517433977
+      }
+    ],
+    "5. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516056453
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795517441769
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795517699962
+      }
+    ],
+    "6.1 Register the parity Playwright projects": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516058446
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795517707382
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795518684270
+      }
+    ],
+    "6.2 Implement the Comparison_Fixture loaders": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516060411
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795517710138
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795518686812
+      }
+    ],
+    "6.3 Implement the capture helpers": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516062397
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795517712210
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795518689102
+      }
+    ],
+    "6.4 Implement the executable Selector_Map": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516064365
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795517714375
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795518691532
+      }
+    ],
+    "7.1 Write the Chrome_Comparison_Test": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516066333
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795518701224
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795519424685
+      }
+    ],
+    "7.2 Write the Style_Comparison_Check": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516068307
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795518703746
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795519427196
+      }
+    ],
+    "7.3 Write the selector check": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516070287
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795518705868
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795519429547
+      }
+    ],
+    "9. Final checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516072284
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795519437976
+      },
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795519660614
+      }
+    ],
+    "1. Restore stylesheet parity": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516653452
+      }
+    ],
+    "3. Mark up the planner for Bun's selectors and swipe rows": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516660228
+      }
+    ],
+    "2. Rebuild the Page_Chrome to Bun's structure": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795516888086
+      }
+    ],
+    "4. Port the Swipe_Controller": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795517435980
+      }
+    ],
+    "6. Build the parity test harness": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795518693497
+      }
+    ],
+    "7. Implement the parity checks": [
+      {
+        "executionId": "49050bb0-aec9-46aa-b1e1-05fa1170e6f7",
+        "chatSessionId": "sess_27c7d671-90ec-47b9-89a2-7dc49d709980",
+        "timestamp": 1795519431515
+      }
+    ]
+  }
+}

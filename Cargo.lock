@@ -1154,6 +1154,8 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbb143cf96099802033e0d4f4963b19fd2e0b728bcf076cd9cf7f6634f092994"
 dependencies = [
+ "futures-channel",
+ "futures-core",
  "js-sys",
  "wasm-bindgen",
 ]
@@ -1985,12 +1987,14 @@ name = "lm-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "dotenvy",
  "futures-util",
  "hex",
  "lm-core",
  "lm-supabase",
  "rand 0.8.8",
+ "serde",
  "sha2 0.10.9",
  "sqlx",
  "tokio",
@@ -2021,6 +2025,7 @@ dependencies = [
 name = "lm-web"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "gloo-net",
  "gloo-storage",
  "gloo-timers",
@@ -2029,8 +2034,11 @@ dependencies = [
  "leptos_router",
  "lm-core",
  "lm-supabase",
+ "serde",
+ "serde_json",
  "uuid",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 

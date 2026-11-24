@@ -28,9 +28,24 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   projects: [
-    { name: 'desktop', use: { viewport: { width: 1440, height: 1000 } } },
+    { name: 'desktop', testIgnore: 'schedule-parity/**', use: { viewport: { width: 1440, height: 1000 } } },
     // 重要頁面另於手機視窗執行（Req 5.7）；以測試標題中的 @critical 標記選取。
-    { name: 'mobile', grep: /@critical/, use: { viewport: { width: 390, height: 844 } } },
+    { name: 'mobile', testIgnore: 'schedule-parity/**', grep: /@critical/, use: { viewport: { width: 390, height: 844 } } },
+    // 行程分頁 CSS 對等測試（schedule-tab-css-parity Requirement 7.12）；Bun 截圖存於 test-results，不進入原始碼樹。
+    {
+      name: 'parity-desktop',
+      testDir: './tests/schedule-parity',
+      testMatch: '**/*.e2e.js',
+      snapshotPathTemplate: 'test-results/schedule-parity-snapshots/{projectName}/{arg}{ext}',
+      use: { viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 },
+    },
+    {
+      name: 'parity-mobile',
+      testDir: './tests/schedule-parity',
+      testMatch: '**/*.e2e.js',
+      snapshotPathTemplate: 'test-results/schedule-parity-snapshots/{projectName}/{arg}{ext}',
+      use: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, hasTouch: true, isMobile: true },
+    },
   ],
   outputDir: './test-results',
 });

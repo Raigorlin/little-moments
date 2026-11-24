@@ -24,26 +24,26 @@
 
 ## Tasks
 
-- [ ] 1. Spike：在本機 Supabase CLI 堆疊上確認 R2 與 R3
-  - [ ] 1.1 準備暫存的 Supabase 專案與只綁 127.0.0.1 的 Docker 網路
+- [x] 1. Spike：在本機 Supabase CLI 堆疊上確認 R2 與 R3
+  - [x] 1.1 準備暫存的 Supabase 專案與只綁 127.0.0.1 的 Docker 網路
     - 在 Repository 之外、WSL 的 Linux 檔案系統中準備暫存的 Supabase 專案（例如 `~/lm-spike`）：先前在 Windows 的 `%TEMP%\lm-spike` 建立的暫存專案可以整個複製過來，沒有時在新目錄執行 `supabase init`；`config.toml` 先套用 design「Repository 配置」的 `[auth]`、`[auth.email]` 設定，並關閉 Storage、Edge Runtime、Analytics 與本機郵件服務。這個任務不新增或修改 Repository 中的任何檔案
     - 在 WSL 中執行（`supabase` 指 Supabase CLI 3.2.0 的 Linux 版）：沒有 `lm-local` 網路時以 `docker network create -o "com.docker.network.bridge.host_binding_ipv4=127.0.0.1" lm-local` 在 WSL 的 Docker Engine 中建立，再以 `supabase start --network-id lm-local` 啟動；確認 `docker ps` 的每個埠都以 `127.0.0.1:` 開頭，並記下 `supabase --version` 與 Realtime、Auth 映像的標籤
     - 暫存的遷移檔只放確認需要的最小結構：`app.profiles`、`app.trips`、`app.people`、`app.trip_changes` 的必要欄位，以及照抄 design「Realtime 授權」的 `app.can_use_trip_topic()` 與兩個政策、「推送」的 `app.publish_trip_change()` 與 trigger；以 `supabase db reset` 套用
     - _Requirements: 2.1, 2.2, 3.13, 11.4, 11.5_
 
-  - [ ] 1.2 確認 Auth_Service 接受合成 email（R3）
+  - [x] 1.2 確認 Auth_Service 接受合成 email（R3）
     - 在 WSL 的暫存目錄以 `cargo new` 建立探測程式（reqwest、tokio、serde_json、tokio-tungstenite），在 WSL 中建置與執行；它不加入 Cargo_Workspace，也不提交
     - 以 service_role key 呼叫 `POST /auth/v1/admin/users` 建立 `spike-a@users.little-moments.invalid`（`email_confirm: true`），再以 `POST /auth/v1/token?grant_type=password` 取得 Session；同樣建立 B、C 兩個帳號供任務 1.3 使用
     - 確認直接呼叫 `POST /auth/v1/signup` 被拒絕而且沒有建立使用者；記下 access token 標頭的 `alg`、`kid`，以及 `/auth/v1/.well-known/jwks.json` 的回應，供任務 12.6 對照
     - _Requirements: 3.1, 3.11, 3.12, 3.13, 5.3_
 
-  - [ ] 1.3 以兩個用戶端確認 Broadcast from Database 與私有頻道授權（R2）
+  - [x] 1.3 以兩個用戶端確認 Broadcast from Database 與私有頻道授權（R2）
     - 以 SQL 建立一趟旅行：A 與 B 是綁定旅伴，C 只有 `app.profiles` 的資料；三個帳號各以 WebSocket 連到 `ws://127.0.0.1:54321/realtime/v1/websocket?apikey=<anon key>&vsn=1.0.0`，以 design 2.1 的 `phx_join` 設定（`private: true`、presence key、access token）加入 `realtime:trip:<旅行 id>`
     - 依序確認：A 與 B 加入成功；C 的加入以 `Unauthorized` 開頭的原因被拒絕；名稱不是 `trip:` 加小寫 UUID 的頻道被拒絕；提交一列 `app.trip_changes` 後 A 與 B 都收到 `changeset` 事件，C 沒有；回滾的交易不推送；payload 超過 65,536 位元組時收到 thin 通知；沒有任何連線者時提交照常成功；A 自己送出的 broadcast 不會送到 B；A 的 presence track 使 B 收到 `presence_state` 或 `presence_diff`
     - 把收到的訊框原文（加入成功與失敗、broadcast、presence、system、heartbeat 的回覆）存成暫存目錄中的文字檔，供任務 12.1 對照
     - _Requirements: 10.1, 10.2, 10.4, 10.7, 11.3, 11.4, 11.5_
 
-  - [ ] 1.4 判讀結果、決定是否繼續，並停止暫存堆疊
+  - [x] 1.4 判讀結果、決定是否繼續，並停止暫存堆疊
     - 兩項都通過：在 WSL 的暫存目錄執行 `supabase stop --no-backup`（任務 3 的 Local_Stack 使用相同的埠），再開始任務 3；記下的版本號在任務 26 寫進 README，暫存目錄在任務 12 完成後可以刪除
     - R3 不通過（例如 Auth_Service 以 `email_address_invalid` 拒收）：改以操作者控制的網域作為 `LM_AUTH_EMAIL_DOMAIN` 再試（design R3）；可行時停止，請使用者確認是否修改需求 3.12 的預設網域；任何網域都不行時停止，與使用者討論 design A7 的「email 加密碼」選項（帳號名稱登入是使用者已確認的 U4，不自行改變）
     - R2 不通過：先改用較新的 Supabase CLI 重試並記下版本（design R2）；仍不行時停止，請使用者決定是否改用 design A2 的「lm-server 提交後呼叫 Realtime REST broadcast」：推送不在同一個交易中，遺失的推送由水位線、跳號偵測與 Head 比對補齊（design D6、R9），需要修改需求 10.1 與 10.2
@@ -70,25 +70,25 @@
     - 產生並提交涵蓋四個成員的 `Cargo.lock`，確認下列指令都成功：`cargo build --locked`（不建置 lm-web）、`cargo build -p lm-core --target wasm32-unknown-unknown`、`cargo build -p lm-web --target wasm32-unknown-unknown --locked`、`cargo test`、`cargo clippy --workspace -- -D warnings`、`cargo fmt --check` 與 `trunk build --release --config crates/web/Trunk.toml`（輸出到 `crates/web/dist`）
     - _Requirements: 1.2, 1.7, 1.8, 1.9, 2.7, 2.8_
 
-- [ ] 3. Local_Stack：`supabase/` 設定與三個遷移檔
-  - [ ] 3.1 `supabase/config.toml` 與空的種子檔
+- [x] 3. Local_Stack：`supabase/` 設定與三個遷移檔
+  - [x] 3.1 `supabase/config.toml` 與空的種子檔
     - 在 WSL 中、Repository 根目錄（`/mnt/d/path/to/little-moments`）執行 `supabase init`，依 design「Repository 配置」調整 `supabase/config.toml`：API 埠 54321 而且 `api.schemas` 不含 `app`、Database 埠 54322、Studio 與 Realtime 開啟；`[auth]` 的 `site_url`、`enable_signup = false`、`jwt_expiry = 3600`、`enable_refresh_token_rotation = true`、`refresh_token_reuse_interval = 10`，`[auth.email] enable_confirmations = false`；關閉 Storage、Edge Runtime、Analytics 與本機郵件服務（較舊的 CLI 為 `[inbucket]`）；`project_id` 與任務 1 的暫存專案不同
     - `supabase/seed.sql` 是 0 位元組的空檔
     - 以 `supabase start --network-id lm-local` 啟動，確認 `docker ps` 的每個埠都以 `127.0.0.1:` 開頭，而且沒有 Storage、Edge Runtime、Analytics 與郵件服務的容器
     - _Requirements: 2.1, 2.2, 2.3, 3.13, 4.4, 8.9_
 
-  - [ ] 3.2 應用資料表遷移 `supabase/migrations/20260101000000_app_schema.sql`
+  - [x] 3.2 應用資料表遷移 `supabase/migrations/20260101000000_app_schema.sql`
     - 依 design「Data Models」的 SQL 建立 `app` schema 與每張資料表：Trip_Content_Table 的主鍵與彼此之間的外鍵都包含 `trip_id`；外鍵，以及 Participant_Key、Place_Key、每台車每天一條路線、停靠點位置四個唯一鍵，都是 `DEFERRABLE INITIALLY DEFERRED`；`unique (trip_id, user_id)`；刪除父列時只連帶刪除它自己的子表列與停靠點
     - 文字長度以 `char_length()` 檢查，時刻只接受 00:00–23:59 的 `HH:MM`，長度、範圍與列舉值與 Limits_Table、Enum_Table 相同；`app.invites` 只保存 `token_hash`；`app.trip_changes` 以 `(trip_id, seq)` 為主鍵、`(trip_id, command_id)` 唯一
     - 每張表啟用 RLS 且不建立政策，並撤銷 `anon` 與 `authenticated` 的資料表權限；不新增任何資料列
     - _Requirements: 6.14, 8.1, 8.2, 8.3, 8.5, 8.6, 8.7, 8.9_
 
-  - [ ] 3.3 Realtime 授權遷移 `supabase/migrations/20260101000100_realtime_authorization.sql`
+  - [x] 3.3 Realtime 授權遷移 `supabase/migrations/20260101000100_realtime_authorization.sql`
     - 依 design「Realtime 授權」，並以任務 1.3 確認過的寫法為準：`grant usage on schema app to authenticated`；`app.can_use_trip_topic()`（`security definer`、`search_path = ''`，名稱不是 `trip:` 加小寫 UUID 時不轉型，旅行已刪除時拒絕，只允許 Trip_Member 與 Admin）與它的 execute 權限
     - `realtime.messages` 的兩個政策：select 允許 broadcast 與 presence，insert 只允許 presence；不對 `realtime.messages` 執行 `ENABLE ROW LEVEL SECURITY`
     - _Requirements: 6.14, 11.4, 11.5_
 
-  - [ ] 3.4 推送遷移 `supabase/migrations/20260101000200_publish_changes.sql`
+  - [x] 3.4 推送遷移 `supabase/migrations/20260101000200_publish_changes.sql`
     - 依 design「推送」建立 `app.publish_trip_change()` 與 `app.trip_changes` 的 AFTER INSERT trigger：`octet_length(payload::text)` 不超過 65,536 時送出完整的 Change_Set，否則送出 `{ trip, seq, thin: true }`；事件為 `changeset`，topic 為 `trip:<旅行 id>`，私有頻道
     - 以 `supabase db reset` 確認三個遷移依檔名順序套用，重設後 Auth_Service 沒有使用者、`app` 的每張表都沒有資料列；以 SQL 確認 `anon` 與 `authenticated` 對 `app` 的資料表沒有任何權限
     - _Requirements: 2.3, 6.14, 10.1, 10.2, 10.4_
@@ -362,269 +362,269 @@
   - 在 Repository 根目錄執行 `cargo test`、`cargo clippy --workspace -- -D warnings`、`cargo fmt --check` 與 `trunk build --release --config crates/web/Trunk.toml`，結束碼都是 0，`cargo test` 不連網路與 Database；另以 `cargo build -p lm-core --target wasm32-unknown-unknown` 確認 lm-core 仍能編成 wasm32。Ensure all tests pass, ask the user if questions arise.
   - _Requirements: 1.3, 1.4, 33.8_
 
-- [ ] 12. LM_Supabase：Realtime 協定、連線狀態機、Auth_Service 與 JWT
-  - [ ] 12.1 Realtime 協定（`crates/supabase/src/realtime/protocol.rs`）
+- [x] 12. LM_Supabase：Realtime 協定、連線狀態機、Auth_Service 與 JWT
+  - [x] 12.1 Realtime 協定（`crates/supabase/src/realtime/protocol.rs`）
     - design 2.1 的 `Frame`、`join_frame()`（`private: true`、presence key、access token、`broadcast.self = false`）、離開頻道、heartbeat（topic `phoenix`）、`access_token` 與 presence track 的訊框，以及 `encode()`
     - `decode()` 把加入成功與失敗（保留原因）、broadcast、presence 的完整狀態與增減、`phx_close`、`phx_error`、`system` 與 heartbeat 的回覆解成對應的 `Inbound`，不認得的事件為 `Other`，無法解析的文字回傳錯誤；對照 Supabase Realtime 協定文件與任務 1.3 收到的訊框
     - _Requirements: 1.6, 1.10, 11.3_
 
-  - [ ] 12.2 連線狀態機（`crates/supabase/src/realtime/socket.rs`）
+  - [x] 12.2 連線狀態機（`crates/supabase/src/realtime/socket.rs`）
     - `RealtimeTransport`、`SocketEvent`、`Conn` 與 `PhoenixSocket`（design 2.1）：不依賴瀏覽器；時間由呼叫端以 `now_ms` 傳入，抖動來源在建立時傳入，測試可以指定
     - 連上後（包括每次重新連線）對每個登記的頻道各送出一次 `phx_join`；從連線開啟起每 20 秒送 heartbeat，下一次該送時仍沒有回覆就關閉連線並開始退避；`phx_join` 送出後 10 秒內沒有回覆時回報 `JoinTimeout`
     - 退避：連續的第 1–4 次分別等 1、2、5、10 秒，之後每次 10 秒，各加 0–20%；同時發生的多個中斷只算一次；重新加入成功後從 1 秒重新開始；`rejoin_now()`、`rejoin_after_backoff()`、`leave()`、`track()`，以及 `set_access_token()` 對每個已加入的頻道送出新 token，之後的 `phx_join` 也帶新 token
     - _Requirements: 1.6, 4.5, 11.6, 11.7, 15.13_
 
-  - [ ] 12.3 撰寫 Realtime 的單元測試（`crates/supabase/tests/protocol.rs`、`crates/supabase/tests/socket.rs`）
+  - [x] 12.3 撰寫 Realtime 的單元測試（`crates/supabase/tests/protocol.rs`、`crates/supabase/tests/socket.rs`）
     - 以記錄送出內容的假 `RealtimeTransport`，以及測試指定的時間與抖動執行，不等待實際時間；逐項驗證需求 33.7 的 (a) 至 (g)，(b) 的輸入是 Supabase Realtime 協定文件的範例訊框
     - _Requirements: 33.7_
 
-  - [ ] 12.4 瀏覽器 WebSocket 傳輸（`crates/supabase/src/realtime/web.rs`）
+  - [x] 12.4 瀏覽器 WebSocket 傳輸（`crates/supabase/src/realtime/web.rs`）
     - 只在 feature `web` 與 `wasm32` 編譯：以 `web_sys::WebSocket` 實作 `RealtimeTransport`，把 `onopen`、`onmessage`、`onclose` 與 `onerror` 轉成 `SocketEvent` 放進佇列，由 lm-web 取出後交給 `PhoenixSocket::on_event()`
     - _Requirements: 1.10, 11.1_
 
-  - [ ] 12.5 Auth_Service 用戶端（`crates/supabase/src/gotrue.rs`，feature `server`）
+  - [x] 12.5 Auth_Service 用戶端（`crates/supabase/src/gotrue.rs`，feature `server`）
     - `AuthBackend` 與 `GoTrueHttp` 的五種呼叫（design 2.2）：建立使用者（`email_confirm: true`）與刪除使用者使用 service key，密碼登入與換發使用 anon key，登出以使用者的 access token 呼叫 `scope=local`；每個呼叫 10 秒逾時
     - `AuthError` 的對應：密碼或 refresh token 無效為 `InvalidCredentials`、email 已存在為 `AlreadyExists`、拒收 email 為 `InvalidEmail`、429 為 `RateLimited`，無法連線、逾時、5xx 或無法解析的回應為 `Upstream`；錯誤與記錄不含密碼與 token
     - _Requirements: 1.6, 1.10, 3.1, 3.6, 3.11, 4.1, 4.9, 4.11, 4.15_
 
-  - [ ] 12.6 access token 驗證（`crates/supabase/src/jwt.rs`，feature `server`）
+  - [x] 12.6 access token 驗證（`crates/supabase/src/jwt.rs`，feature `server`）
     - `Claims`、`TokenVerifier`、`Hs256Verifier`（`SUPABASE_JWT_SECRET`）、`JwksVerifier`（讀取 `{SUPABASE_URL}/auth/v1/.well-known/jwks.json` 並快取 10 分鐘；沒有快取、已滿 10 分鐘或 `kid` 不在快取中時立即重讀一次，每個 token 最多一次；沒有 `kid` 或重讀後仍找不到時拒絕）與 `AnyVerifier`（依標頭的 `alg` 只接受 HS256 與 ES256；沒有設定 `SUPABASE_JWT_SECRET` 時拒絕所有 HS256）
     - 宣告檢查：`aud` 與 `role` 都是 `authenticated`、`sub` 是 UUID、有 `exp` 而且允許 30 秒誤差；JWKS 無法讀取或無法解析時回報與「token 無效」不同的錯誤，讓 lm-server 回應 500
     - _Requirements: 1.10, 5.2, 5.3, 5.4, 5.10_
 
-- [ ] 13. LM_Server：設定、啟動檢查與 HTTP 骨架
-  - [ ] 13.1 設定與啟動檢查（`crates/server/src/config.rs`、`crates/server/src/main.rs`）
+- [x] 13. LM_Server：設定、啟動檢查與 HTTP 骨架
+  - [x] 13.1 設定與啟動檢查（`crates/server/src/config.rs`、`crates/server/src/main.rs`）
     - 依 design 3.5 的順序：以 `dotenvy` 讀工作目錄或上層目錄中最近的 `.env`，只補環境中沒有設定的變數；每個值先經 Trim_White，空字串視同未設定；一次列出每個未設定的必要變數，以及格式不符的變數與原因，訊息不含 `DATABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_KEY` 與 `SUPABASE_JWT_SECRET` 的值
     - `LM_BIND` 只接受 `<IPv4>:<埠>` 或 `[<IPv6>]:<埠>`（埠 1–65535，不接受主機名稱），未設定時為 `127.0.0.1:8080`；`LM_AUTH_EMAIL_DOMAIN` 未設定時為 `users.little-moments.invalid`；`LM_PUBLIC_SIGNUP` 只接受 `true` 與 `false`，未設定時為 `true`
     - `LM_BIND` 不是 Loopback_Address（`0.0.0.0` 與 `::` 也不是），而三個 Supabase 金鑰變數中任一個等於 Sample_Secrets 中任一個值時拒絕啟動，列出 `LM_BIND` 的值與這些變數的名稱；範例值從 Supabase CLI 的 `supabase status -o env` 輸出複製成常數
     - 30 秒內每秒重試連線 Database，仍失敗時只印主機、埠與原因；無法在 `LM_BIND` 監聽時印出位址與原因；每一種失敗都在開始監聽之前以非 0 的結束代碼結束；tracing 的記錄不含 token、密碼與上述四個變數的值
     - _Requirements: 2.4, 2.6, 2.7, 2.9, 2.11, 2.12, 3.12, 5.10_
 
-  - [ ] 13.2 錯誤回應與請求擷取器（`crates/server/src/error.rs`、`crates/server/src/extract.rs`）
+  - [x] 13.2 錯誤回應與請求擷取器（`crates/server/src/error.rs`、`crates/server/src/extract.rs`）
     - `ApiError`：一律 `Content-Type: application/json`，內容只有 `code`、`message`、`field`；`Rejection` 對應 400、403、404、409，保留它的 `code` 與 `field`，沒有 `code` 的種類使用固定的代碼（例如「找不到這趟旅行。」為 `trip_not_found`）；sqlx 與其他未預期的錯誤為 500 `internal_error`，記錄錯誤但不記錄 token 與密碼
     - 依 design 3.1 的判斷順序：`AuthUser`（只接受 `Authorization: Bearer <token>`，以 `AnyVerifier` 驗證，`sub` 必須是 `app.profiles` 中的帳號，帳號名稱、Display_Name 與角色讀 Database；JWKS 讀取失敗為 500；不讀 cookie 與查詢參數）先於路徑中的旅行 id（不是 UUID 時 404「找不到這趟旅行。」），再先於包裝 axum `Json`、`Query`、`Path` 的擷取器（格式錯誤時 400 `invalid_request`）
     - 任何回應都不含 `Set-Cookie`
     - _Requirements: 5.1, 5.2, 5.5, 5.6, 5.9, 5.10, 6.2, 7.20_
 
-  - [ ] 13.3 路由、`AppState` 與靜態檔（`crates/server/src/main.rs`、`crates/server/src/state.rs`）
+  - [x] 13.3 路由、`AppState` 與靜態檔（`crates/server/src/main.rs`、`crates/server/src/state.rs`）
     - `AppState`：連線池、`Arc<dyn AuthBackend>`、`Arc<dyn TokenVerifier>`、設定與時鐘；不在記憶體保存登入狀態或旅行資料，所以重新啟動後未過期的 access token 與已提交的資料照常可用
     - `/api` 路由器有自己的 fallback（404 `api_not_found`）與 method-not-allowed fallback（405 `method_not_allowed`），不落到 `index.html`；各端點由任務 14 至 16 加入
     - `/api/` 與 `/realtime/v1/websocket` 以外的路徑回傳 `LM_STATIC_DIR` 的檔案，找不到時回傳 `index.html`；含 `..` 或 `%2e%2e` 的路徑也不回傳目錄之外的檔案；回應不含任何秘密變數的值
     - _Requirements: 1.1, 1.11, 2.9, 5.5, 5.9, 32.2_
 
-- [ ] 14. LM_Server：帳號端點
-  - [ ] 14.1 註冊（`crates/server/src/auth.rs`）
+- [x] 14. LM_Server：帳號端點
+  - [x] 14.1 註冊（`crates/server/src/auth.rs`）
     - 依 design A8 與 3.3：帳號名稱原樣比對格式（不轉大小寫、不去空白，`field` 為 `username`）、保留字（另加 `invite`）、顯示名稱經 Participant_Name 後檢查、原樣的密碼為 12–72 個字元而且 UTF-8 不超過 72 位元組，只回應第一個不通過的檢查；`LM_PUBLIC_SIGNUP` 為 `false` 而且沒有邀請時 403，不呼叫 Auth_Service
     - 以 admin API 建立 email 已確認的使用者：email 已存在時 409「這個帳號名稱已被使用。」；拒收 email、無法連線或其他錯誤時 500「註冊暫時無法使用，請聯絡管理員。」並記錄原因（拒收時指出 `LM_AUTH_EMAIL_DOMAIN`）
     - 同一個交易以 advisory lock 讓空資料庫的第一個帳號成為 admin，並建立 `app.profiles`（帳號名稱重複轉成 409）；交易失敗時刪除剛建立的 Auth_Service 使用者（刪除也失敗時記錄使用者 id）並回應原本的錯誤；提交後以密碼取得 Session，失敗時保留帳號並回應 503
     - 回應 `SignupResponse`；附邀請的分支在任務 16.1 接上
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 3.16_
 
-  - [ ] 14.2 登入、換發、登出與 `/api/me`
+  - [x] 14.2 登入、換發、登出與 `/api/me`
     - 登入：帳號名稱 Trim_White 並把 A–Z 轉成小寫，組成 Synthetic_Email，密碼原樣；需求 4.2 的每一種情況都回應同樣的 401「帳號或密碼不正確。」；Auth_Service 無法使用時 503 `auth_unavailable`，限流時 429 `auth_rate_limited`
     - 換發：refresh token 無效、已撤銷、超過重用間隔或帳號已不存在時 401；Auth_Service 無法使用時與登入相同的 503 與 429
     - 登出（需要 Valid_Access_Token）：以 `scope=local` 撤銷這個裝置的 refresh token；Auth_Service 回應錯誤、無法連線或逾時也回應 200 `{}`
     - `GET /api/me` 回應 Database 中這個 Account 目前的 `ProfileDto`；四個 Public_Endpoint 忽略 `Authorization` 標頭
     - _Requirements: 4.1, 4.2, 4.9, 4.11, 4.15, 5.1, 5.7, 5.8_
 
-- [ ] 15. LM_Server：儲存層、旅行、Command_Executor、Snapshot 與增量
-  - [ ] 15.1 儲存層（`crates/server/src/repo/`）
+- [x] 15. LM_Server：儲存層、旅行、Command_Executor、Snapshot 與增量
+  - [x] 15.1 儲存層（`crates/server/src/repo/`）
     - design 3.2 的 `lock_trip()`（`FOR UPDATE`，不含已刪除的旅行）、`person_of()` 與 `load_trip()`（每張表一個 SELECT，子表以 `array_agg` 併入父列；`Person.bound` 由 `user_id` 推得，不送出帳號 id）
     - `write_changes()`：父列以 `ON CONFLICT (trip_id, id) DO UPDATE` 寫入、子表整組替換、依 Slot 刪除；Trip_Card 寫回 `app.trips` 的欄位與 `version`；更新旅伴時不改變 `user_id`；外鍵在 COMMIT 時檢查
     - `finish()` 更新 `seq`、`next_ordinal` 與 `updated_at`，並在 `app.trip_changes` 保存完整的 Change_Set（包括 Ledger_Rows；trigger 負責推送）；`changeset_by_command()` 只比對同一趟旅行
     - `snapshot()`（REPEATABLE READ READ ONLY，Seq 為交易當下的 Head，Unbound_Admin 不含 Ledger_Rows，附 `Viewer`）、`changes_after()`（Head − after > 500 時 `snapshot_required`；否則每個 Seq 恰好一個並依 Seq 遞增，Unbound_Admin 以 `without_ledger()` 回應）與 Head 的讀取
     - _Requirements: 1.11, 6.12, 7.14, 7.17, 8.1, 8.2, 8.3, 8.4, 8.7, 8.10, 12.5, 12.8, 12.9, 12.15_
 
-  - [ ] 15.2 旅行的列表、建立與刪除（`crates/server/src/trips.rs`）
+  - [x] 15.2 旅行的列表、建立與刪除（`crates/server/src/trips.rs`）
     - `GET /api/trips`：只列出請求者是 Trip_Member 而且未刪除的旅行（Admin 也一樣），每趟含 `TripSummary` 的欄位；依建立時間由新到舊回傳，讓 lm-web 以穩定排序處理開始日期相同的旅行
     - `POST /api/trips`：以 LM_Core 檢查旅行資料與建立者的名字；一個交易建立旅行（Seq 0、Trip_Card 的 Row_Version 0）與綁定建立者的旅伴（名字為 Display_Name 經 Participant_Name、角色「這趟的召集人」、顏色 coral、Row_Version 0，以帶 `user_id` 的 INSERT 寫入）；旅行 id 已存在時，請求者是 Trip_Owner 而且旅行未刪除就回傳既有的旅行，否則 409「無法建立這趟旅行，請關閉表單後重新建立。」；兩個同 id 的請求同時送達也只建立一趟
     - `DELETE /api/trips/{id}`：鎖住旅行；Collaborator 403，非成員、不存在或已刪除 404；設定 `deleted_at`，並以 Head + 1 寫入、推送 `trip_deleted` 為真、沒有列變化的 Change_Set；兩個刪除同時送達時，後執行的得到 404
     - _Requirements: 6.2, 6.3, 8.4, 8.8, 8.11, 10.8, 17.3, 17.4, 17.5, 17.6, 17.7, 17.8_
 
-  - [ ] 15.3 Command_Executor（`crates/server/src/commands.rs`）
+  - [x] 15.3 Command_Executor（`crates/server/src/commands.rs`）
     - 依 design A1 實作 `execute()` 與 `POST /api/trips/{id}/commands`：鎖住旅行；以當下 Database 的資料判斷 Trip_Member 與角色，非成員在查重之前就回應 404；Command_Id 已在這趟旅行的 Change_Log 時回傳第一次的 Change_Set 並標示 `replayed`；以 LM_Core 的 `apply(Mode::Commit)` 計算，Meal_Item 的 id 由 `UuidV4Ids` 產生
     - 沒有變化時回傳目前的 Head，不寫入也不記錄 Command_Id；有變化時 Seq 為 Head + 1，每一列的 Row_Version 為這個 Seq，新列的 Ordinal 依 `Outcome.created` 的順序從 `next_ordinal` 起，寫入、`finish()` 並提交
     - `Rejection` 轉成 400、403、404、409；提交時外鍵、唯一鍵或 CHECK 失敗時回應 500 並記錄，Database 不變；檢視者是 Unbound_Admin 時回應中的 Change_Set（包括重送）不含 Ledger_Rows；不讀取 Presence，也不要求用戶端提供版本號
     - _Requirements: 1.5, 6.1, 6.2, 6.3, 6.12, 7.1, 7.2, 7.3, 7.4, 7.12, 7.14, 7.15, 7.16, 7.17, 7.19, 9.1, 9.14, 10.1, 10.3, 10.7, 10.11, 15.11, 25.1, 25.2_
 
-  - [ ] 15.4 Snapshot、增量 Change_Set 與 Head 的端點（`crates/server/src/trips.rs`）
+  - [x] 15.4 Snapshot、增量 Change_Set 與 Head 的端點（`crates/server/src/trips.rs`）
     - `GET /api/trips/{id}/snapshot`、`GET /api/trips/{id}/changes?after=N` 與 `GET /api/trips/{id}/head`：每次請求都以當下的 Database 判斷，只有 Trip_Member 與 Admin 可以讀取；旅行不存在或已刪除時 404；`after` 不是非負整數時 400 `invalid_request`
     - _Requirements: 5.9, 6.1, 6.2, 6.3, 12.5, 12.8, 12.9, 12.15_
 
-- [ ] 16. LM_Server：邀請連結與 Realtime 轉送
-  - [ ] 16.1 邀請連結（`crates/server/src/invites.rs`）
+- [x] 16. LM_Server：邀請連結與 Realtime 轉送
+  - [x] 16.1 邀請連結（`crates/server/src/invites.rs`）
     - 建立：鎖住旅行後以 LM_Core 的 `Capabilities` 判斷，每趟最多 20 個、Collaborator 自己最多 5 個 Active_Invite，同時送達的請求也不超過；隨機 token 只在這個回應中回傳，Database 只保存它的 SHA-256 十六進位；到期時間為建立時間加 7 天；回應 `InviteCreated`（`url_path` 為 `/invite/<token>`）
     - 列出（Trip_Manager 看全部、Collaborator 看自己的，依建立時間由新到舊，附建立者的 Display_Name）與撤銷（Collaborator 撤銷別人的 403；連結屬於其他旅行或不是 Active_Invite 時「邀請連結無效或已過期。」）
     - 預覽（Public_Endpoint，有 Valid_Access_Token 時另回 `already_member`）與加入：鎖住旅行、再次驗證連結；已是成員時直接回傳旅行 id；否則以 LM_Core 的 `join_trip()` 新增綁定的旅伴（帶 `user_id` 寫入）、標記已使用，並以與 `execute()` 相同的方式指定 Seq、Row_Version 與 Ordinal，寫入並推送 Change_Set；連結不存在、已撤銷、已過期、旅行已刪除，或已使用而使用者不是成員時「邀請連結無效或已過期。」
     - 接上任務 14.1 的附邀請註冊：建立 Auth_Service 使用者之前先檢查連結，並在建立 profile 的同一個交易中加入旅行；任何一步失敗時依需求 3.10 回滾並刪除使用者
     - _Requirements: 1.5, 3.1, 3.10, 5.8, 6.5, 6.16, 10.1, 30.1, 30.2, 30.3, 30.4, 30.5, 30.6, 30.7, 30.8, 30.10, 30.11, 30.12, 30.13, 30.14, 30.15, 30.16_
 
-  - [ ] 16.2 Realtime 轉送（`crates/server/src/gateway.rs`）
+  - [x] 16.2 Realtime 轉送（`crates/server/src/gateway.rs`）
     - `/realtime/v1/websocket`：上游網址由 `SUPABASE_URL` 推得（http 對應 ws、https 對應 wss），查詢參數只保留瀏覽器送來的 `vsn`，再加上 `apikey=<SUPABASE_ANON_KEY>`；不檢查登入、不解析內容，雙向轉送文字、二進位、ping、pong 與關閉訊框，任一端關閉就關閉另一端
     - 無法連到上游時關閉瀏覽器的 WebSocket
     - _Requirements: 2.9, 11.2, 11.12_
 
-- [ ] 17. Checkpoint - LM_Supabase 與 LM_Server
+- [x] 17. Checkpoint - LM_Supabase 與 LM_Server
   - 在 Repository 根目錄執行 `cargo test`、`cargo clippy --workspace -- -D warnings`、`cargo fmt --check` 與 `trunk build --release --config crates/web/Trunk.toml`，結束碼都是 0；確認 `cargo build` 與 `cargo test` 不需要 Database 或 Local_Stack 正在執行。Ensure all tests pass, ask the user if questions arise.
   - _Requirements: 1.7, 33.8_
 
-- [ ] 18. LM_Web：外觀資源、路由與登入狀態
-  - [ ] 18.1 輸出靜態插畫（`scripts/export-art.mjs`、`crates/web/assets/art/`、`crates/web/src/art.rs`）
+- [x] 18. LM_Web：外觀資源、路由與登入狀態
+  - [x] 18.1 輸出靜態插畫（`scripts/export-art.mjs`、`crates/web/assets/art/`、`crates/web/src/art.rs`）
     - 新增一次性的 `scripts/export-art.mjs`（以現有的 Bun 執行，不修改 `package.json`）：呼叫 `src/art.js` 的 `illustration()` 與 `logo()`、`src/dish-art.js` 的 `dishIllustration()`，輸出需求 32.5 列出的每個 SVG，通用餐盤的 7 種變化為 `custom-0.svg` 至 `custom-6.svg`；輸出檔提交到 Repository
     - `art.rs` 以 `include_str!` 嵌入這些檔案，提供封面種類到插畫的對應（mountain 使用 travel），以及 custom 料理依料理 id 的固定雜湊選出的變化；建置與執行都不需要 JavaScript
     - _Requirements: 1.2, 24.6, 32.5_
 
-  - [ ] 18.2 樣式與字型（`crates/web/styles/`、`crates/web/index.html`）
+  - [x] 18.2 樣式與字型（`crates/web/styles/`、`crates/web/index.html`）
     - 把 `src/styles.css`、`src/accounts.css`、`src/expenses.css` 複製到 `crates/web/styles/`，只刪除行程繪本、場景動畫與滑動手勢的選擇器，以 `data-trunk rel="css"` 載入
     - 以 `data-trunk rel="copy-dir"` 把 `assets/fonts`（woff2 子集與三個授權檔）複製到輸出的 `assets/fonts/`，`@font-face` 的路徑不用改；不設定 `data-theme`，畫面一律是淺色主題
     - _Requirements: 32.7_
 
-  - [ ] 18.3 App 外框、路由、訊息頁與 Toast（`crates/web/src/app.rs`）
+  - [x] 18.3 App 外框、路由、訊息頁與 Toast（`crates/web/src/app.rs`）
     - 以 leptos_router 提供需求 32.1 的畫面（結尾多出的 `/` 視為相同）；`/` 依 Session 前往自己的 Home_Page 或 `/login`；已有 Session 時開啟 `/login` 或 `/register` 依需求 4.10 前往
     - 沒有 Session 時開啟 Home_Page、Trip_Page 或 Departure_Page 前往 `/login?next=<目前的路徑>`；網址中的帳號名稱不是自己時顯示「沒有權限查看這個頁面」；不對應任何畫面的路徑顯示「找不到這個頁面」；訊息頁沿用 `messagePage()` 的結構與文字
     - Toast：每則 4.5 秒、新的取代舊的、`aria-live="polite"`；In_App_Path 的判斷；使用者文字一律以文字節點或屬性輸出，只有隨 App 提供的 SVG 以 HTML 插入
     - _Requirements: 4.10, 32.1, 32.6, 32.9, 32.10, 32.11_
 
-  - [ ] 18.4 Session 與 API 用戶端（`crates/web/src/session.rs`、`crates/web/src/api.rs`）
+  - [x] 18.4 Session 與 API 用戶端（`crates/web/src/session.rs`、`crates/web/src/api.rs`）
     - localStorage 的 `lm.session.v1`：取得 Session 時覆寫，無法解析時移除並視為未登入；到期前 60 秒換發，載入、回到前景或送出請求時離到期不到 60 秒就先換發；換發前先讀 `lm.session.v1`，是同一個帳號而且還有 60 秒以上時直接採用；同一個分頁同時只有一個換發；`storage` 事件依需求 4.6 處理
     - API 用戶端只連同源的 `/api/*`，帶 `Authorization: Bearer`，解析 `ApiError`；401 時換發一次並重試同一個請求一次（Command 用原本的 Command_Id）；換發被 401 拒絕時依需求 4.9；網路錯誤、429 或 5xx 時保留 Session，依需求 4.13 之後再換發
     - 登出（需求 4.12，5 秒內沒有完成也照樣清除）與切換帳號（需求 4.14）；換發成功後通知已加入的 Trip_Channel 的掛鉤，由任務 20.4 接上
     - _Requirements: 4.3, 4.5, 4.6, 4.7, 4.8, 4.9, 4.12, 4.13, 4.14, 5.6, 6.15_
 
-  - [ ] 18.5 登入與註冊頁
+  - [x] 18.5 登入與註冊頁
     - 沿用 `src/accounts-ui.js` 的表單結構與 class；註冊送出前把帳號名稱 Trim_White 並把 A–Z 轉成小寫，再以 LM_Core 的規則依需求 3.2 至 3.5 的順序檢查，最後確認兩次密碼相同（「兩次輸入的密碼不一致。」），不通過時不送出
     - 成功時保存 Session，依需求 4.10 前往 `next` 或自己的 Home_Page；被拒絕時顯示回應的 `message` 並保留輸入；登入成功後，以新的 Session 依原本的順序送出這個分頁中同一個 Account 保留的 Pending_Command
     - _Requirements: 3.14, 3.15, 4.3, 4.10_
 
-- [ ] 19. LM_Web：首頁與邀請頁
-  - [ ] 19.1 Home_Page（`crates/web/src/pages/home.rs`）
+- [x] 19. LM_Web：首頁與邀請頁
+  - [x] 19.1 Home_Page（`crates/web/src/pages/home.rs`）
     - 沿用 `tripCard()` 與 `coverPicker()`：依 `GET /api/trips` 分成「規劃中的旅行」（開始日期由早到晚）與「已完成的回憶」（由晚到早），開始日期相同時建立較晚的在前；每趟顯示名稱連結、目的地或「尚未填寫地點」、`dateSpan()` 格式的日期、封面、狀態與「{N} 位旅伴」；沒有旅行時顯示「還沒有任何旅行」
     - 「新增旅行」表單（名稱、目的地、起訖日期、介紹、小叮嚀與封面，封面預設 camp）：送出前以 LM_Core 檢查；旅行 id 在開啟表單時產生，每次送出都用同一個；成功時關閉並顯示「旅行已建立」，錯誤時保留內容並顯示訊息，網路錯誤或逾時時顯示「尚未儲存，請檢查網路後再試一次。」
     - _Requirements: 17.1, 17.2, 17.9_
 
-  - [ ] 19.2 Invite_Page（`crates/web/src/pages/invite.rs`）
+  - [x] 19.2 Invite_Page（`crates/web/src/pages/invite.rs`）
     - 沿用 `invite()`：顯示需求 30.9 的預覽，已是成員時顯示說明與前往 Home_Page 的連結；不是成員時顯示加入表單：未登入時有帳號名稱、顯示名稱、兩次密碼、旅伴名字（留空時用顯示名稱）、選填的角色，以及前往 `/login?next=/invite/<token>` 的「已經有帳號？登入後加入」；已登入時有預填 Display_Name 的旅伴名字與選填的角色
     - 以連結註冊時依需求 3.14 檢查並保存 Session；加入或註冊成功後前往 `/<帳號名稱>/trips/<旅行 id>`；連結無效時顯示「邀請連結無效或已過期。」
     - _Requirements: 3.14, 4.3, 6.16, 30.9, 30.13, 30.18_
 
-- [ ] 20. LM_Web：同步引擎與旅行頁外框
-  - [ ] 20.1 `RowStore` 與 `TripStores`（`crates/web/src/sync/store.rs`）
+- [x] 20. LM_Web：同步引擎與旅行頁外框
+  - [x] 20.1 `RowStore` 與 `TripStores`（`crates/web/src/sync/store.rs`）
     - 依 design 4.3 與 A12：每列一個 signal，內容相同時不通知；`keys` 只在新增、刪除或排序鍵改變時更新；每種列的排序鍵依 design 4.3；分組以 `Memo` 由鍵與分組欄位算出，鍵不變時 `<For>` 不動 DOM
     - _Requirements: 14.1, 14.2, 14.3_
 
-  - [ ] 20.2 `TripSync`（`crates/web/src/sync/engine.rs`）
+  - [x] 20.2 `TripSync`（`crates/web/src/sync/engine.rs`）
     - 依 design 4.2 與 A6：`submit()` 先以 `apply(Mode::Predict)` 在目前的畫面上檢查，不成立時把 `Rejection` 交給表單或 Toast；成立時產生 Command_Id、加入 Pending_Command，只更新受影響的列
     - `refresh_view()` 以 `overlay()` 重算，只把內容改變的列交給 `RowStore`，並遞增 `revision`，讓文字版、未分配採買、分帳餘額、裝備進度、出發清單與各種數量在同一次更新中重算
     - 合併命令回應、推送與補齊的 Change_Set：Unbound_Admin 先丟棄 Ledger_Rows；Command_Id 屬於某個 Pending_Command 時視為確認；`trip_deleted` 時離開頁面、前往 Home_Page 並顯示「這趟旅行已被刪除。」；讀取 Snapshot 不移除 Pending_Command
     - `TripSync` 以旅行 id 為鍵保存在 App 層，前往 `/login` 再回來時沿用，切換帳號時捨棄
     - _Requirements: 4.9, 4.10, 4.14, 6.13, 10.5, 12.10, 12.13, 12.14, 13.1, 13.2, 13.4, 13.6, 13.7, 13.8, 13.13, 13.14, 14.1, 14.5_
 
-  - [ ] 20.3 送出佇列（`crates/web/src/sync/sender.rs`）
+  - [x] 20.3 送出佇列（`crates/web/src/sync/sender.rs`）
     - 依 design 4.6：一次只送一個、先進先出；排在最前面的有了結果、而且它的請求已結束，才送下一個；送出後 15 秒沒有回應視為逾時；網路錯誤、逾時或 5xx 時以同一個 Command_Id 在前一次失敗後 1、2、4、8、16 秒重送，第 5 次重送也失敗時移除並以 Toast 顯示「儲存失敗，變更已還原」
     - 離線時暫停送出與重送（不計入次數），`online` 時不等退避，依原順序立即重送並重新計數；推送或補齊先確認時取消尚未進行的重送；400、403、404、409 時移除並以 Toast 顯示訊息
     - _Requirements: 13.3, 13.8, 13.9, 13.10, 13.11, 13.12, 13.13_
 
-  - [ ] 20.4 Trip_Channel 的生命週期與補齊（`crates/web/src/sync/realtime.rs`）
+  - [x] 20.4 Trip_Channel 的生命週期與補齊（`crates/web/src/sync/realtime.rs`）
     - 依 design A7 以 `PhoenixSocket` 與 lm-supabase 的瀏覽器傳輸連到同源的 `/realtime/v1/websocket?vsn=1.0.0`（http 用 ws、https 用 wss），以 `trip:<小寫 UUID>` 與每個分頁的隨機 Presence_Key 加入；以 gloo-timers 定時呼叫 `tick()`
     - 加入成功後才讀取 Snapshot（沒有 Replica 或 Watermark 為 0 時）或 `changes?after=<Watermark>`；跳號、Thin_Notice 或無法解析的 broadcast 立即補齊；`snapshot_required` 改讀 Snapshot；分頁變為可見、`online` 事件與可見時每 60 秒比對 Head
     - 加入被拒：原因以 `Unauthorized` 開頭時離開並顯示「你已無法存取這趟旅行。」；`InvalidJWTExpiration` 時換發後立即重新加入一次；其他原因、10 秒逾時、頻道錯誤或關閉、斷線時依退避重試並顯示「重新連線中，畫面可能不是最新」；連線中 token 過期時換發後立即重新加入並補齊；每次換發成功後以 `set_access_token()` 更新頻道
     - 補齊回應 404 時離開並顯示伺服器的訊息；網路錯誤或 5xx 時 Replica 不變，等下一次事件再補；離開 Trip_Page 與 Departure_Page 時離開頻道而且不再重連；直接開啟 Departure_Page 也走同樣的流程
     - _Requirements: 4.5, 10.6, 10.9, 10.10, 11.1, 11.3, 11.6, 11.7, 11.8, 11.9, 11.10, 11.11, 11.13, 12.1, 12.2, 12.3, 12.4, 12.6, 12.7, 12.16, 12.17, 15.13_
 
-  - [ ] 20.5 Trip_Page 外框與編輯表單的共用元件（`crates/web/src/pages/trip.rs`、`crates/web/src/views/forms.rs`）
+  - [x] 20.5 Trip_Page 外框與編輯表單的共用元件（`crates/web/src/pages/trip.rs`、`crates/web/src/views/forms.rs`）
     - `/<帳號名稱>/trips/<id>`：Snapshot 合併之前顯示載入中；沿用 `hero()` 的頁首（營地的靜態插畫與需求 32.3 的倒數，以台灣時間的今天計算）；五個分頁由 `tab` 決定，切換時以 `replaceState` 只改 `tab`；五個分頁、Trip_Menu 與 Departure_Page 先各有自己的佔位檔，由任務 21 至 23 填入
     - 頂端的提示：「重新連線中，畫面可能不是最新」與「儲存失敗，正在重試」；離線時只顯示「離線中，有 N 項變更尚未送出」（N 為 0 時只顯示「離線中」）
     - `UiState`：以 Slot 為鍵的展開狀態、開啟中的表單與草稿、Trip_Menu 是否開啟、Schedule_Tab 選定的第 N 天；列移到別組時展開狀態不變；捲動位移與焦點中的文字欄位不被覆蓋
     - 編輯表單的共用元件：開啟時記下當時的列，儲存時只送出改過的欄位，集合欄位算出加入與移除，沒有改變時不送出；LM_Core 拒絕時訊息顯示在表單並保留內容；Remote_Change 改了這一項時保留草稿，並以 `role="status"` 顯示「有人剛更新了這一項」（任務 24.3 補上旅伴名稱）；這一項被刪除，或正在編輯的每日設定那一天已不在範圍內時，關閉表單、捨棄草稿並以 Toast 顯示「這個項目已被刪除。」
     - _Requirements: 7.8, 10.5, 11.11, 11.14, 13.2, 13.9, 13.11, 14.4, 14.6, 14.7, 14.8, 14.9, 14.10, 14.11, 32.3_
 
-- [ ] 21. LM_Web：行程表分頁
-  - [ ] 21.1 選日、這一天的設定與路線卡片
+- [x] 21. LM_Web：行程表分頁
+  - [x] 21.1 選日、這一天的設定與路線卡片
     - 選日（「第 {N} 天」「{M}/{D}」「週{X}」，開啟時選第 1 天，改日期後依需求 22.16 保持第 N 天或改選最後一天）；每個 Trip_Day 都有每日設定的區塊，設定被移除時改為顯示未設定的內容
     - 這一天的設定表單：標題、地點（選擇旅行目的地或「不指定地點」時送出清空）、預計幾點抵達與路線位置，只送出改過的欄位
     - 路線卡片依 `sorted_routes()` 排列（沒有出發時間的排最後，同時間依車輛的 Ordinal），「哪一台車」只列出這一天沒有路線的車；停靠點的新增、移除與排序，整張卡片以 `SaveRoute` 送出，新路線與停靠點以隨機 UUID 為 id；「新增路線」停用時顯示需求 22.17 的原因；Collaborator 也有刪除路線與停靠點的操作
     - _Requirements: 6.17, 7.9, 7.18, 14.2, 18.11, 22.1, 22.2, 22.3, 22.15, 22.16, 22.17_
 
-  - [ ] 21.2 活動與當天的料理
+  - [x] 21.2 活動與當天的料理
     - 選定日子的活動依時間與 Ordinal 排列，每列有時間、標題、類別名稱與「完成」勾選（送出想要的值）；常用活動（已加入的停用並標示「已加入」，「加入 N 個活動」在 N 至少為 1 時才能按）；「＋自訂活動」與既有活動的表單（只送出改過的欄位）與刪除
     - 當天的料理以用餐時間或餐次的預設時間顯示，可以修改用餐時間（留空時清除）
     - _Requirements: 7.8, 7.10, 22.13, 23.1, 23.2, 23.8, 23.9, 24.3_
 
-  - [ ] 21.3 地點與車、未分配採買清單
+  - [x] 21.3 地點與車、未分配採買清單
     - 「地點與車」依 Ordinal 列出地點（還沒有回應的新地點排最後），每列有「改名 {地點名稱}」與「刪除 {地點名稱}」；「＋新增地點」與改名共用只有「地點名稱」的表單；LM_Core 拒絕時依需求 21.8 顯示訊息
     - 車輛清單與共用的車輛表單（`crates/web/src/views/vehicle_form.rs`，任務 23.1 的 Trip_Menu 也使用）：「駕駛 {名字或待分配} · {人數} / {座位數} 人」與乘客名字；新增時座位預設 4、駕駛預設為檢視者的 Bound_Person；儲存前從乘客去掉駕駛；未設定顏色時依位置取 Car_Palette；只有 Trip_Manager 看得到移除
     - Unassigned_Shopping 區塊：依採買分類分組、同一分類依建立順序，已買的另外標示「已買」，每項顯示原因
     - _Requirements: 6.17, 20.4, 20.8, 20.11, 21.5, 21.8, 22.14_
 
-  - [ ] 21.4 文字版與「複製文字」
+  - [x] 21.4 文字版與「複製文字」
     - 「文字版」區塊以 `<pre>` 的文字節點顯示由 Optimistic_View 產生的 Itinerary_Text，保留換行與行內的連續空白
     - 「複製文字」把按下當時顯示的文字原樣寫入剪貼簿：成功時按鈕改為「已複製」；失敗時選取整段文字並改為「複製失敗」；1.8 秒後恢復；離線或重新連線中也可以複製
     - _Requirements: 14.5, 31.15, 31.16, 31.17_
 
-- [ ] 22. LM_Web：料理菜單、採買清單、裝備分工與分帳記帳分頁
-  - [ ] 22.1 料理菜單（`crates/web/src/views/meals.rs`）
+- [x] 22. LM_Web：料理菜單、採買清單、裝備分工與分帳記帳分頁
+  - [x] 22.1 料理菜單（`crates/web/src/views/meals.rs`）
     - 只為有料理的日子顯示日期區塊（「{M}/{D} 週{X}」與「DAY {兩位數} · {N} 道料理」），區塊內依餐次、再依 Ordinal；沒有料理時顯示需求 24.1 的兩行文字
     - 料理卡片：插圖（custom 依料理 id 固定變化）、餐次、名稱（空的時候為餐次）、份數與主廚、Ingredient_Parser 切出的食材、可展開的料理筆記與編輯按鈕；刪除只對 Trip_Manager 顯示
     - 料理表單：送出前以 LM_Core 檢查；料理範本與常用食材捷徑只改草稿（以 `merge_ingredients()` 合併、已有的捷徑停用並 `aria-pressed="true"`、套用範本前依需求 24.11 詢問、合併後超過 2,000 字時草稿不變並顯示訊息）；改了餐次而原本有用餐時間時，在同一個 Command 中清空用餐時間
     - _Requirements: 6.17, 24.1, 24.2, 24.4, 24.6, 24.9, 24.10, 24.11, 24.12_
 
-  - [ ] 22.2 採買清單（`crates/web/src/views/shopping.rs`）
+  - [x] 22.2 採買清單（`crates/web/src/views/shopping.rs`）
     - 依採買分類順序分組，只顯示有品項的分類與「{N} 項」；每個品項有名稱、數量（可以直接修改，只送出數量）、「誰負責買」選單（立即送出）、無障礙名稱為「{品項名稱}已買齊」的勾選（送出想要的值）、連動料理的「料理：」與「料理已不需要，保留採買品項」；沒有品項時「目前沒有品項」
     - 新增與編輯品項的表單；移除 Linked_Item 時開啟「移除這項食材？」並列出連動的料理（預設全選，沒有勾選時「請至少勾選一道料理。」）；直接刪除只對 Trip_Manager 顯示
     - _Requirements: 6.17, 7.10, 14.11, 26.1, 26.14, 26.15, 26.17_
 
-  - [ ] 22.3 裝備分工（`crates/web/src/views/gear.rs`）
+  - [x] 22.3 裝備分工（`crates/web/src/views/gear.rs`）
     - 「每個人，都帶一份」與「公用裝備，一起分工」兩組，各依 Ordinal；個人裝備列出每位旅伴的打包勾選，有負責人的共用裝備只有負責人的勾選，只有檢視者自己的 My_Gear 可以點選；「裝備準備 done / total」與待分配的提示；沒有裝備時「這裡已經都分配好了。」
     - 共用裝備的負責人選單立即送出；裝備表單（`PERSONAL_GEAR_GROUPS` 的建議只填入表單；有負責人的共用裝備改為個人時一併清空負責人）；刪除只對 Trip_Manager 顯示
     - _Requirements: 6.17, 27.1, 27.9, 27.11, 27.13_
 
-  - [ ] 22.4 分帳記帳（`crates/web/src/views/ledger.rs`）
+  - [x] 22.4 分帳記帳（`crates/web/src/views/ledger.rs`）
     - Trip_Member：總金額與「{N} 筆支出」、「＋ 新增支出」與「記錄還款」、「誰該還誰」與「建議還款」（「已還款」開啟預填的還款表單）、支出與還款的清單；刪除按鈕只給有 Bound_Person 的 Trip_Manager，按下後在那一列確認；金額以 `format_money()` 顯示，表單以 `parse_amount()` 解析並以 `suggest_expense_category()` 建議分類；沒有帳目時「還沒有支出。」
     - Unbound_Admin 只顯示「你不是這趟旅行的旅伴，無法查看或記錄分帳。」
     - _Requirements: 6.17, 6.18, 29.1, 29.10, 29.11, 29.12_
 
-- [ ] 23. LM_Web：旅行選單與出發清單
-  - [ ] 23.1 Trip_Menu（`crates/web/src/views/trip_menu.rs`）
+- [x] 23. LM_Web：旅行選單與出發清單
+  - [x] 23.1 Trip_Menu（`crates/web/src/views/trip_menu.rs`）
     - 沿用 `tripMenu()`：「編輯旅行」（只送出改過的欄位，起訖日期一起送出）；「旅伴」（依 Ordinal、以「我」標示自己、依權限顯示新增、編輯與移除；移除前以 LM_Core 檢查帳目，再開啟需求 19.17 的確認對話框）；「車輛」（任務 21.3 的共用表單）；「邀請」（列出、建立後顯示完整網址、到期時間、「複製邀請網址」與「連結只會顯示這一次，請現在複製。」、撤銷）
     - 「刪除旅行」只給 Trip_Manager：沿用 `openDeleteTripDialog()` 的文字，輸入與目前的旅行名稱逐字相同之前停用「確認刪除旅行」；成功時只顯示一次「這趟旅行已被刪除。」；失敗時對話框保持開啟並顯示以「尚未刪除：」開頭的原因
     - _Requirements: 6.17, 17.10, 18.1, 19.15, 19.17, 19.18, 20.8, 30.17, 32.4_
 
-  - [ ] 23.2 Departure_Page（`crates/web/src/pages/departure.rs`）
+  - [x] 23.2 Departure_Page（`crates/web/src/pages/departure.rs`）
     - 沿用 `departure()`：依 Optimistic_View 顯示 Packing_Progress、未分配共用裝備的提示與「回去分配」、「自己的小行李」與「我負責的公用裝備」的打包勾選、「我負責的食材」與已買勾選（附 Shopping_Plan 的「第 N 天在{地點名稱}」）、「確認準備完成，出發」，以及下一個未完成的活動
     - 已確認出發時改為「準備好了，一起出發！」與停用的「已準備完成」，並提供「完成這一站」；Unbound_Admin 只看到管理員的說明與「回到規劃手冊」
     - 從 Trip_Page 前往時沿用記憶體中的 Replica 與 Pending_Command；收到 `trip_deleted` 時前往 Home_Page
     - _Requirements: 10.10, 10.12, 28.1, 28.5, 28.6, 28.7, 28.8_
 
-- [ ] 24. LM_Web：誰正在編輯（Presence 與編輯者頭像）
-  - [ ] 24.1 Presence 狀態與這個分頁的回報（`crates/web/src/sync/presence.rs`）
+- [x] 24. LM_Web：誰正在編輯（Presence 與編輯者頭像）
+  - [x] 24.1 Presence 狀態與這個分頁的回報（`crates/web/src/sync/presence.rs`）
     - `presence_state` 取代先前保存的全部內容（包括重新加入之前的）；`presence_diff` 的 `leaves` 只移除 `phx_ref` 相同的那一筆，`joins` 寫入新的一筆；無法解析成 Presence_Meta 的項目忽略；不保存這個分頁自己
     - 開啟與關閉表單時更新這個分頁的 Presence_Meta（`display_name` 取自 Snapshot 的 `viewer`，`person` 取自 `viewer.caps.me`），交給 `PresenceThrottle`，並依 `WakeAt` 以計時器喚醒；每次加入成功先呼叫 `on_rejoin()`，再以目前的 Presence_Meta 呼叫 `offer()`，從未回報過時不送
     - `TripSync.editors` 以 `editor_stacks()` 計算，不含自己的帳號
     - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8, 15.13, 16.10, 16.14, 16.21_
 
-  - [ ] 24.2 `<EditorAvatars>` 與 `presence.css`（`crates/web/src/views/editors.rs`、`crates/web/styles/presence.css`）
+  - [x] 24.2 `<EditorAvatars>` 與 `presence.css`（`crates/web/src/views/editors.rs`、`crates/web/styles/presence.css`）
     - `<EditorAvatars>` 以自己的 `Memo` 取出這個 Edit_Target 的 Editor_Stack，只在它改變時更新；頭像與「+N」以不接受焦點的 `role="img"` 元素輸出，無障礙名稱與滑鼠提示來自 LM_Core，名稱以文字節點或屬性輸出；出現、消失或改變時沒有動畫或轉場
     - `presence.css` 只有 Editor_Stack 與 Editor_Avatar 的規則（卡片上直徑 28px、字 14px，列中 24px、12px，相鄰重疊 6px，外圈 2px 的 `--card`；「+N」為 `--soft` 底與 `--ink` 字），不定義新的 CSS 變數；頭像的底色與文字色以 inline style 套用 Avatar_Palette；在 `index.html` 載入
     - 放在需求 15.12 的每一種 Editable_Item 上：卡片在標題列右側、清單的列在名稱之後與第一個操作按鈕之前、Trip_Card 在旅行標題列右側，Trip_Menu 中的旅伴與車輛也顯示
     - _Requirements: 15.12, 15.14, 16.1, 16.2, 16.3, 16.8, 16.11, 16.12, 16.15, 16.16, 16.17, 16.18, 32.8_
 
-  - [ ] 24.3 表單上的 Editing_Notice 與「仍要編輯」（`crates/web/src/views/forms.rs`）
+  - [x] 24.3 表單上的 Editing_Notice 與「仍要編輯」（`crates/web/src/views/forms.rs`）
     - 開啟 Editable_Item 的編輯表單時回報 Edit_Target，關閉時回報沒有正在編輯的對象；新增項目的表單、勾選與列上直接變更的選單不回報
     - 開啟時這個對象的 Editor_Stack 不是空的：以 `role="status"` 顯示 `notice()` 與「仍要編輯」，欄位唯讀，會改變內容或資料的按鈕停用；按下「仍要編輯」後恢復、移除按鈕、焦點移到第一個欄位，關閉之前不再改回唯讀；表單開著時 Editing_Notice 依 Editor_Stack 出現、更新或移除，但不改變唯讀狀態
     - 「{旅伴名稱}剛更新了這一項」以提交者 Presence_Meta 的 Bound_Person 在 Optimistic_View 中的名字顯示，找不到時沿用「有人剛更新了這一項」；lm-server 不讀 Presence，不需要改動
     - _Requirements: 14.6, 14.7, 15.1, 15.2, 15.9, 15.10, 15.11, 15.12, 15.14, 15.15, 15.16, 16.13, 16.19, 16.20_
 
-- [ ] 25. Checkpoint - LM_Web
+- [x] 25. Checkpoint - LM_Web
   - 在 Repository 根目錄執行 `cargo test`、`cargo clippy --workspace -- -D warnings`、`cargo fmt --check` 與 `trunk build --release --config crates/web/Trunk.toml`，結束碼都是 0；確認 `crates/web/dist` 包含 `assets/fonts/` 的字型與授權檔，而且建置過程沒有用到 Node.js、npm 或 Bun。Ensure all tests pass, ask the user if questions arise.
   - _Requirements: 1.2, 32.7, 33.8_
 
-- [ ] 26. README：第一版的開發步驟與手動確認
+- [x] 26. README：第一版的開發步驟與手動確認
   - 在 `README.md` 檔尾新增第一版的章節，既有的每一行都不變；寫出需求 2.10 在 Windows 的 WSL 2（Ubuntu）中開發的步驟：Repository 在 WSL 中的路徑（例如 `/mnt/d/path/to/little-moments`）、cargo、trunk、docker 與 Supabase CLI 都在 WSL 中執行、`CARGO_TARGET_DIR` 指向 Linux 檔案系統，以及 git 只在 Windows 的 PowerShell 執行；在 WSL 中安裝 `build-essential`、`pkg-config`、`libssl-dev`、rustup 與 `wasm32-unknown-unknown` 目標、trunk、Docker Engine（不使用 Docker Desktop，並讓使用者不必 sudo 就能執行 `docker`）與 Supabase CLI 3.2.0 的 Linux 版；建立 `lm-local` 網路，以 `supabase start --network-id lm-local` 啟動並以 `docker ps` 確認，以及出現 `0.0.0.0`、`[::]` 或 `:::` 時的處理；WSL 的 localhost 轉送讓 Windows 的瀏覽器開啟這些埠，區網連不到；在 Windows 的 PowerShell 以 `netsh interface ipv4 show excludedportrange protocol=tcp` 檢查 54321、54322 與 54323；`supabase db reset` 會清除全部資料（包括每個 Account）；`.env` 的填法與四個範例值；在 WSL 中啟動 `cargo run -p lm-server` 與 `trunk serve --poll --config crates/web/Trunk.toml` 的指令（在 Windows 修改的檔案要靠 `--poll` 才會觸發重建）；任務 1 記下的 `supabase --version`
   - 寫出需求 33.9 的三個手動確認步驟與預期結果
   - 新增的內容要讓 `tests/readme.test.js` 照常通過（需求 1.12）：不寫入 Supabase 的範例金鑰或其他長的十六進位、Base64 字串；連線字串的帳號與密碼只用 `<user>`、`<password>` 這類佔位符；名稱以 `PASSWORD`、`SECRET`、`TOKEN` 或 `API_KEY` 結尾的變數後面不接 `=` 或 `:` 與實際的值（行尾的 `=` 接著下一行也算）；不使用該測試禁止的舊英文片語與 `Vehicle_Dialog`
   - _Requirements: 1.9, 1.12, 2.10, 33.9_
 
-- [ ] 27. Final checkpoint - 全部建置檢查
+- [x] 27. Final checkpoint - 全部建置檢查
   - 在 Repository 根目錄執行 `cargo test`、`cargo clippy --workspace -- -D warnings`、`cargo fmt --check` 與 `trunk build --release --config crates/web/Trunk.toml`，結束碼都是 0
   - 需求 1.9：以 `git diff --numstat 1b925a7` 確認分支起點已存在的檔案中只有 `.gitignore` 與 `README.md` 出現，而且刪除行數為 0；`rust-rewrite` 分支與 `.worktrees/rust-rewrite` 沒有改變
   - 需求 1.12：在同一台開發機、相同的環境變數下（依 README「測試」一節準備 Ephemeral_Database），分別在分支起點的檢出（例如以 `git worktree add` 建立在 Repository 之外，用完以 `git worktree remove` 移除）與目前的 commit 執行 `bun run test`，確認每個測試的結果相同

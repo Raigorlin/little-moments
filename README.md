@@ -424,3 +424,154 @@ Staging 與 Production 是兩個獨立的 Compose 專案（`lm-staging`、`lm-pr
 Self-hosted Huninn fonts retain their SIL Open Font License files in `assets/fonts/`. Font provenance is in `assets/fonts/SOURCE.txt`.
 
 No project-wide open-source license has been selected. Existing third-party license notices remain applicable.
+## 第一版（Rust 與 Supabase）：在 WSL 2 中本機開發
+
+第一版以 Rust 改寫（`crates/core`、`crates/supabase`、`crates/server`、`crates/web`），使用 Supabase CLI 的本機堆疊；上面各章節的 Bun_App 維持不變。第一版只在開發機上執行：本機堆疊使用 Supabase CLI 的範例金鑰，沒有加固，不可對外開放。
+
+開發在 Windows 的 WSL 2（Ubuntu）中進行：
+
+- Repository 留在 Windows 的磁碟，例如 `d:\path\to\little-moments`，在 WSL 中是 `/mnt/d/path/to/little-moments`。cargo、trunk、docker 與 Supabase CLI 都在 WSL 中、從這個目錄執行；瀏覽器留在 Windows。
+- 環境變數 `CARGO_TARGET_DIR` 指向 Linux 檔案系統中、不在 `/mnt/` 之下的目錄，例如 `$HOME/.cache/lm-target`。`/mnt/d` 上的檔案要經過 WSL 與 Windows 之間的轉譯，大量小檔案的讀寫很慢。這個變數以環境變數設定，不寫進 Repository 的 `.cargo/config.toml`。
+- **git 只在 Windows 的 PowerShell 執行，不在 WSL 中執行。** Windows 的 git 使用 `core.autocrlf`；在 WSL 中以 Linux 的 git 操作同一個工作目錄，會因為行尾的設定不同而把檔案看成已修改。
+- WSL 中不需要 Bun。
+
+拓撲（瀏覽器在 Windows，其餘都在 WSL 中）：
+
+```
+瀏覽器 ── http://127.0.0.1:8081 ──▶ trunk serve（改畫面時用；/api 與 /realtime 代理到 8080）
+瀏覽器 ── http://127.0.0.1:8080 ──▶ lm-server（也直接提供 crates/web/dist）
+lm-server ── sqlx ──────────────▶ 127.0.0.1:54322（PostgreSQL）
+lm-server ── HTTP 與 WebSocket ─▶ 127.0.0.1:54321（API gateway → Auth、Realtime）
+```
+
+### 一次性的安裝（在 WSL 中）
+
+1. 建置工具與 OpenSSL 的開發檔（`native-tls` 在 Linux 使用 OpenSSL）：
+   ```bash
+   sudo apt update && sudo apt install -y build-essential pkg-config libssl-dev
+   ```
+2. 依 [rustup.rs](https://rustup.rs) 安裝 rustup，再安裝 `wasm32-unknown-unknown` 目標與 trunk。Repository 根目錄的 `rust-toolchain.toml` 指定 stable 頻道、`wasm32-unknown-unknown` 目標、rustfmt 與 clippy。
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   rustup target add wasm32-unknown-unknown
+   cargo install trunk --locked
+   ```
+3. 依 [Docker 文件](https://docs.docker.com/engine/install/ubuntu/) 在 WSL 的 Ubuntu 中安裝 Docker Engine。**不使用 Docker Desktop。** 接著完成[安裝後步驟](https://docs.docker.com/engine/install/linux-postinstall/)，讓使用者不必 sudo 就能執行 `docker`：
+   ```bash
+   sudo usermod -aG docker "$USER"
+   # 關閉這個 WSL 視窗，在 PowerShell 執行 wsl --shutdown 後重新開啟，群組才會生效
+   docker run --rm hello-world   # 不加 sudo 也能執行
+   ```
+   `systemctl` 無法使用時，在 `/etc/wsl.conf` 的 `[boot]` 區段加上 `systemd=true`，再執行一次 `wsl --shutdown`。
+4. 安裝 Supabase CLI **3.2.0** 的 Linux 版：從 [GitHub Releases 的 v3.2.0](https://github.com/supabase/cli/releases/tag/v3.2.0) 下載 `supabase_3.2.0_linux_amd64.tar.gz`，以 `sha256sum` 與同一頁的 `checksums.txt` 比對，再把執行檔放在 `~/.local/bin`（`~/.local/bin` 要在 `PATH` 中）：
+   ```bash
+   mkdir -p ~/.local/bin
+   tar -xzf supabase_3.2.0_linux_amd64.tar.gz -C ~/.local/bin supabase
+   supabase --version   # 3.2.0
+   ```
+   CLI 會提示有新版本；第一版固定使用 3.2.0，不要更新。開發時使用的 `supabase --version` 是 **`3.2.0`**（Linux amd64）。
+5. 在第一次執行 `supabase start` 之前，建立只綁 127.0.0.1 的 Docker 網路 `lm-local`：
+   ```bash
+   docker network create -o "com.docker.network.bridge.host_binding_ipv4=127.0.0.1" lm-local
+   ```
+6. 在 Windows 的 PowerShell 檢查 Windows 保留的埠範圍：
+   ```powershell
+   netsh interface ipv4 show excludedportrange protocol=tcp
+   ```
+   WSL 2 轉送的埠也綁在 Windows 上，所以 54321（API gateway）、54322（Database）與 54323（Studio）都不能落在列出的任何範圍內。落在範圍內時，在 `supabase/config.toml` 把 `[api]`、`[db]` 或 `[studio]` 的 `port` 改成範圍外的埠，並同步修改 `.env` 的 `SUPABASE_URL` 與 `DATABASE_URL`。
+
+### 啟動本機堆疊（在 WSL 中）
+
+```bash
+export CARGO_TARGET_DIR="$HOME/.cache/lm-target"   # 也可以寫進 ~/.bashrc
+cd /mnt/d/path/to/little-moments
+supabase start --network-id lm-local
+docker ps --format 'table {{.Names}}\t{{.Ports}}'
+```
+
+`docker ps` 的 PORTS 欄中，每個發布的埠都要以 `127.0.0.1:` 開頭。任何埠顯示 `0.0.0.0`、`[::]` 或 `:::` 時：
+
+1. 執行 `supabase stop`。
+2. 以 `docker network inspect lm-local` 確認 `Options` 中有 `com.docker.network.bridge.host_binding_ipv4` 且值為 `127.0.0.1`。
+3. 沒有這個設定時，以 `docker network rm lm-local` 刪除網路，再以上面第 5 步的 `docker network create` 重新建立。
+4. 重新執行 `supabase start --network-id lm-local`，再以 `docker ps` 確認。
+
+本機堆疊不啟動 Storage、Edge Runtime、Analytics 與本機郵件服務，`docker ps` 中不會有這些容器。
+
+WSL 2 的 localhost 轉送讓 Windows 的瀏覽器開啟 WSL 中綁在 127.0.0.1 的埠，例如 `http://127.0.0.1:8081` 與 `http://127.0.0.1:8080`。區網中的其他電腦（包括手機）連不到這些埠。
+
+### 套用遷移：supabase db reset
+
+```bash
+supabase db reset --network-id lm-local
+```
+
+**`supabase db reset` 會清除本機 Database 的全部資料，包括每個 Account（Auth 的使用者）與每趟旅行**，再依檔名順序套用 `supabase/migrations` 的遷移檔。`--network-id lm-local` 不可省略：CLI 3.2.0 沒有這個參數時，會在自動產生的網路重建 Database 的容器，埠變成 `0.0.0.0:54322`，Auth 與 Realtime 也會找不到 Database 而一再重啟。遇到時重新執行一次加上 `--network-id lm-local` 的指令。
+
+### .env
+
+```bash
+cp .env.example .env
+supabase status -o env
+```
+
+把 `supabase status -o env` 印出的值填進 `.env`。`.env` 含金鑰，已被 `.gitignore` 排除，不要提交，也不要貼到 issue 或聊天中。
+
+| `supabase status -o env` | `.env` |
+|---|---|
+| `API_URL` | `SUPABASE_URL` |
+| `DB_URL` | `DATABASE_URL` |
+| `ANON_KEY` | `SUPABASE_ANON_KEY` |
+| `SERVICE_ROLE_KEY` | `SUPABASE_SERVICE_KEY` |
+| `JWT_SECRET` | `SUPABASE_JWT_SECRET` |
+
+其餘四個變數的範例值：
+
+| 變數 | 範例值 |
+|---|---|
+| `LM_BIND` | `127.0.0.1:8080` |
+| `LM_AUTH_EMAIL_DOMAIN` | `users.little-moments.invalid` |
+| `LM_PUBLIC_SIGNUP` | `true` |
+| `LM_STATIC_DIR` | `crates/web/dist` |
+
+填好後的形式如下（角括號是佔位符，換成 `supabase status -o env` 的值）：
+
+```
+LM_BIND=127.0.0.1:8080
+DATABASE_URL=postgresql://<user>:<password>@127.0.0.1:54322/postgres
+SUPABASE_URL=http://127.0.0.1:54321
+SUPABASE_ANON_KEY=<ANON_KEY 的值>
+SUPABASE_SERVICE_KEY=<SERVICE_ROLE_KEY 的值>
+SUPABASE_JWT_SECRET=<JWT_SECRET 的值>
+LM_AUTH_EMAIL_DOMAIN=users.little-moments.invalid
+LM_PUBLIC_SIGNUP=true
+LM_STATIC_DIR=crates/web/dist
+```
+
+### 啟動 lm-server 與 lm-web（在 WSL 中）
+
+```bash
+trunk build --release --config crates/web/Trunk.toml   # 輸出到 crates/web/dist（LM_STATIC_DIR）
+cargo run -p lm-server                                  # Windows 的瀏覽器開啟 http://127.0.0.1:8080
+```
+
+修改畫面時，另開一個 WSL 視窗執行 LM_Web 的開發伺服器，Windows 的瀏覽器改開 `http://127.0.0.1:8081`；`/api/` 與 `/realtime/v1/websocket` 轉送到 8080 的 lm-server：
+
+```bash
+trunk serve --poll --config crates/web/Trunk.toml
+```
+
+在 Windows 中修改 `/mnt/d` 的檔案時，WSL 中的程式收不到檔案變更的通知，所以要加 `--poll`，`trunk serve` 才會偵測到變更並重建。cargo 依檔案的修改時間判斷要不要重建，不受影響。
+
+結束開發時以 `supabase stop` 停止本機堆疊。
+
+### 手動確認
+
+以 `cargo run -p lm-server` 啟動後，在 Windows 的瀏覽器開啟 `http://127.0.0.1:8080`，依序確認：
+
+1. **勾選已買的同步。** 以同一個 Account 開兩個瀏覽器視窗，開啟同一趟旅行的採買清單。在一邊把一個採買品項勾選為已買。
+   預期結果：另一邊在 2 秒內顯示這個品項已買。
+2. **離線後的補齊。** 兩個視窗都開著同一趟旅行的採買清單。在其中一邊的開發者工具（Network 分頁）切換為離線。離線期間，兩邊各把一個不同的採買品項勾選為已買。接著把那一邊恢復上線。
+   預期結果：恢復上線後 15 秒內，兩邊都顯示這兩個品項已買。
+3. **編輯者頭像。** 以兩個不同的 Account 開啟同一趟旅行（例如一個一般視窗加一個無痕視窗，兩者都是這趟旅行的成員）。在一邊開啟某張卡片的表單（例如一個料理或採買品項的編輯表單）。
+   預期結果：另一邊在 7 秒內於那張卡片上看到對方的編輯者頭像；關閉表單後 7 秒內頭像消失。

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 250" preserveAspectRatio="xMidYMid meet" class="illustration illustration--lake" aria-hidden="true" focusable="false" fill="none" style="display:block;max-width:100%;height:auto">
+  <rect x="0" y="0" width="680" height="250" fill="#fffcf6"/>
+  
+  <g class="scene-layer scene-sun"><g stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="548" cy="58" r="25" fill="#f6d27a"/>
+    <line x1="581.0" y1="58.0" x2="591.0" y2="58.0"/><line x1="571.3" y1="81.3" x2="578.4" y2="88.4"/><line x1="548.0" y1="91.0" x2="548.0" y2="101.0"/><line x1="524.7" y1="81.3" x2="517.6" y2="88.4"/><line x1="515.0" y1="58.0" x2="505.0" y2="58.0"/><line x1="524.7" y1="34.7" x2="517.6" y2="27.6"/><line x1="548.0" y1="25.0" x2="548.0" y2="15.0"/><line x1="571.3" y1="34.7" x2="578.4" y2="27.6"/>
+  </g></g>
+  
+  <g class="scene-layer scene-cloud"><path transform="translate(92 40) scale(0.8)" d="M0 20 Q0 6 14 8 Q20 -4 34 2 Q48 -2 50 12 Q62 12 62 22 Q62 30 52 30 H8 Q0 30 0 20 Z" fill="#fffcf6" stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></g>
+  <g stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M-10 172 L112 94 L202 154 L318 76 L430 154 L520 104 L690 176 Z" fill="#b7dbe5"/>
+    <path d="M-10 176 Q150 154 330 174 T690 168 V260 H-10 Z" fill="#b7dbe5"/>
+    <path d="M250 178 Q340 170 430 178 M205 193 Q330 184 470 194 M270 211 Q340 205 410 212 M130 228 Q300 219 520 230" fill="none"/>
+    <path d="M-10 170 Q90 150 178 172 L210 250 H-10 Z" fill="#b9cda5"/>
+    <path d="M690 174 Q588 150 504 172 L470 250 H690 Z" fill="#b9cda5"/>
+  </g>
+  
+  <g class="scene-layer scene-tree"><g stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="82" y1="174" x2="82" y2="160.32"/>
+    <path d="M82 98 L101.7904 129.92000000000002 H92.2144 L113.92 160.32 H50.08 L71.7856 129.92000000000002 H62.2096 Z" fill="#b9cda5"/>
+  </g></g>
+  
+  <g class="scene-layer scene-tree"><g stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="122" y1="168" x2="122" y2="157.92"/>
+    <path d="M122 112 L136.5824 135.52 H129.5264 L145.52 157.92 H98.48 L114.4736 135.52 H107.4176 Z" fill="#b9cda5"/>
+  </g></g>
+  
+  <g class="scene-layer scene-tree"><g stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="596" y1="174" x2="596" y2="161.76"/>
+    <path d="M596 106 L613.7072000000001 134.56 H605.1392 L624.56 161.76 H567.44 L586.8608 134.56 H578.2927999999999 Z" fill="#b9cda5"/>
+  </g></g>
+  <g stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M302 188 Q340 174 378 188 L368 212 H312 Z" fill="#efa28f"/><path d="M302 188 L340 156 L378 188 Z" fill="#f6d27a"/><line x1="340" y1="156" x2="340" y2="212"/></g></svg>

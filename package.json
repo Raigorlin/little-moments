@@ -9,6 +9,7 @@
     "test": "bun test tests/*.test.js",
     "test:unit": "bun test tests/*.test.js",
     "test:e2e": "playwright test",
+    "test:schedule-parity": "playwright test --project=parity-desktop --project=parity-mobile",
     "test:security": "bun tests/security/run.mjs",
     "test:security:local": "bun scripts/security-suite.mjs",
     "start": "bun scripts/serve.mjs",

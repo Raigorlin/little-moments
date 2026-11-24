@@ -1,0 +1,15 @@
+/* 誰正在編輯：Editor_Stack 與 Editor_Avatar（design 4.5；需求 16.2、16.3、16.12、16.16、32.8）。
+   只引用既有的 --card、--soft、--ink，不定義新的變數；頭像的底色與文字色以 inline style 套用 Avatar_Palette。
+   出現、消失或改變時沒有動畫或轉場。 */
+/* 卡片：放在標題列的右側（在 flex 標題列中以 auto 邊界靠右，緊鄰操作按鈕）；直徑 28px、字 14px */
+.editor-stack{display:inline-flex;align-items:center;align-self:center;flex:none;margin-left:auto;vertical-align:middle;transition:none;animation:none}
+.editor-avatar{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:50%;box-shadow:0 0 0 2px var(--card);font-size:14px;font-weight:600;line-height:1;letter-spacing:0;text-decoration:none;white-space:nowrap;cursor:default;user-select:none;transition:none;animation:none}
+/* 相鄰的兩個圓形重疊 6px */
+.editor-avatar+.editor-avatar{margin-left:-6px}
+/* 清單中的列：放在名稱之後；直徑 24px、字 12px */
+.editor-stack-row{margin-left:6px}
+.editor-stack-row .editor-avatar{width:24px;height:24px;font-size:12px}
+/* 「+N」 */
+.editor-avatar-more{background:var(--soft);color:var(--ink)}
+/* 車輛卡片的標題列：操作按鈕原本以 auto 邊界靠右；Editor_Stack 在它們之前時改由 Editor_Stack 靠右，按鈕緊接在後 */
+.vehicle-title>.editor-stack~.icon-button{margin-left:0}

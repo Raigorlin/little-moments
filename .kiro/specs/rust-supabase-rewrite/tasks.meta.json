@@ -1,0 +1,1216 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 準備暫存的 Supabase 專案與只綁 127.0.0.1 的 Docker 網路": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428376929
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428549611
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795429917212
+      }
+    ],
+    "1.2 確認 Auth_Service 接受合成 email（R3）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428379307
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795429935346
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795431395478
+      }
+    ],
+    "1.3 以兩個用戶端確認 Broadcast from Database 與私有頻道授權（R2）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428381360
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795431403899
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795433550784
+      }
+    ],
+    "1.4 判讀結果、決定是否繼續，並停止暫存堆疊": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428383407
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795433558547
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795433898115
+      }
+    ],
+    "3.1 `supabase/config.toml` 與空的種子檔": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428385516
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795433961877
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795434358882
+      }
+    ],
+    "3.2 應用資料表遷移 `supabase/migrations/20260101000000_app_schema.sql`": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428387573
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795434366506
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795435102476
+      }
+    ],
+    "3.3 Realtime 授權遷移 `supabase/migrations/20260101000100_realtime_authorization.sql`": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428389643
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795435109861
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795435490105
+      }
+    ],
+    "3.4 推送遷移 `supabase/migrations/20260101000200_publish_changes.sql`": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428391685
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795435497157
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795442510168
+      }
+    ],
+    "12.1 Realtime 協定（`crates/supabase/src/realtime/protocol.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428393720
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795442568354
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795443808653
+      }
+    ],
+    "12.2 連線狀態機（`crates/supabase/src/realtime/socket.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428395792
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795443815926
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795445275011
+      }
+    ],
+    "12.3 撰寫 Realtime 的單元測試（`crates/supabase/tests/protocol.rs`、`crates/supabase/tests/socket.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428397851
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795452459242
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795454426237
+      }
+    ],
+    "12.4 瀏覽器 WebSocket 傳輸（`crates/supabase/src/realtime/web.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428399940
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795445289339
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795448915816
+      }
+    ],
+    "12.5 Auth_Service 用戶端（`crates/supabase/src/gotrue.rs`，feature `server`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428401998
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795448923324
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795450802522
+      }
+    ],
+    "12.6 access token 驗證（`crates/supabase/src/jwt.rs`，feature `server`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428404068
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795450809940
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795452451527
+      }
+    ],
+    "13.1 設定與啟動檢查（`crates/server/src/config.rs`、`crates/server/src/main.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428406122
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795454493556
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795457067787
+      }
+    ],
+    "13.2 錯誤回應與請求擷取器（`crates/server/src/error.rs`、`crates/server/src/extract.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428408156
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795457075327
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795459076362
+      }
+    ],
+    "13.3 路由、`AppState` 與靜態檔（`crates/server/src/main.rs`、`crates/server/src/state.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428410195
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795459085193
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795476502194
+      }
+    ],
+    "14.1 註冊（`crates/server/src/auth.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428412234
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795476518335
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795478360229
+      }
+    ],
+    "14.2 登入、換發、登出與 `/api/me`": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428414337
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795478367413
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795480355405
+      }
+    ],
+    "15.1 儲存層（`crates/server/src/repo/`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428416393
+      },
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795480391502
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480926765
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795481019889
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795481871291
+      }
+    ],
+    "15.2 旅行的列表、建立與刪除（`crates/server/src/trips.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428418435
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480929166
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795481882791
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795482325153
+      }
+    ],
+    "15.3 Command_Executor（`crates/server/src/commands.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428420476
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480931290
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795482331642
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795482646451
+      }
+    ],
+    "15.4 Snapshot、增量 Change_Set 與 Head 的端點（`crates/server/src/trips.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428422545
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480933391
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795482652878
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795482971304
+      }
+    ],
+    "16.1 邀請連結（`crates/server/src/invites.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428424643
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480935497
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795482984331
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795483474703
+      }
+    ],
+    "16.2 Realtime 轉送（`crates/server/src/gateway.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428426671
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480937727
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795483481025
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795483766792
+      }
+    ],
+    "17. Checkpoint - LM_Supabase 與 LM_Server": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428428716
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480939847
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795483775823
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795483911395
+      }
+    ],
+    "18.1 輸出靜態插畫（`scripts/export-art.mjs`、`crates/web/assets/art/`、`crates/web/src/art.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428430731
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480941959
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795483918547
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795484347318
+      }
+    ],
+    "18.2 樣式與字型（`crates/web/styles/`、`crates/web/index.html`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428432789
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480944054
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795483920904
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795484350398
+      }
+    ],
+    "18.3 App 外框、路由、訊息頁與 Toast（`crates/web/src/app.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428434923
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480946162
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795484357073
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795485407164
+      }
+    ],
+    "18.4 Session 與 API 用戶端（`crates/web/src/session.rs`、`crates/web/src/api.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428436956
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480948294
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795485413827
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795486107921
+      }
+    ],
+    "18.5 登入與註冊頁": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428438979
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480950403
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795486114537
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795486522189
+      }
+    ],
+    "19.1 Home_Page（`crates/web/src/pages/home.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428441034
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480952514
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795486532244
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795487368165
+      }
+    ],
+    "19.2 Invite_Page（`crates/web/src/pages/invite.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428443102
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480954644
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795487375445
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795487789901
+      }
+    ],
+    "20.1 `RowStore` 與 `TripStores`（`crates/web/src/sync/store.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428445146
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480956755
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795487799364
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795488139920
+      }
+    ],
+    "20.2 `TripSync`（`crates/web/src/sync/engine.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428447198
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480958963
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795488147457
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795488662234
+      }
+    ],
+    "20.3 送出佇列（`crates/web/src/sync/sender.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428449217
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480961099
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795488669556
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795489108049
+      }
+    ],
+    "20.4 Trip_Channel 的生命週期與補齊（`crates/web/src/sync/realtime.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428451273
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480963206
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795489115463
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795489786448
+      }
+    ],
+    "20.5 Trip_Page 外框與編輯表單的共用元件（`crates/web/src/pages/trip.rs`、`crates/web/src/views/forms.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428453316
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480965313
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795489793852
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795490806274
+      }
+    ],
+    "21.1 選日、這一天的設定與路線卡片": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428455369
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480967482
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795490815628
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795491662149
+      }
+    ],
+    "21.2 活動與當天的料理": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428457404
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480969638
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795491669270
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795492380597
+      }
+    ],
+    "21.3 地點與車、未分配採買清單": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428459485
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480971776
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795492387628
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795493076430
+      }
+    ],
+    "21.4 文字版與「複製文字」": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428461565
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480973896
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795493083632
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795493480564
+      }
+    ],
+    "22.1 料理菜單（`crates/web/src/views/meals.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428463663
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480976096
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795493490064
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795494501653
+      }
+    ],
+    "22.2 採買清單（`crates/web/src/views/shopping.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428465725
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480978201
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795493493115
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795494504690
+      }
+    ],
+    "22.3 裝備分工（`crates/web/src/views/gear.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428467809
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480980330
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795493495916
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795494507521
+      }
+    ],
+    "22.4 分帳記帳（`crates/web/src/views/ledger.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428469834
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480982577
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795493498410
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795494510334
+      }
+    ],
+    "23.1 Trip_Menu（`crates/web/src/views/trip_menu.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428471967
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480984695
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795494523914
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795495420135
+      }
+    ],
+    "23.2 Departure_Page（`crates/web/src/pages/departure.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428474033
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480986807
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795494526798
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795495423055
+      }
+    ],
+    "24.1 Presence 狀態與這個分頁的回報（`crates/web/src/sync/presence.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428476059
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480989004
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795495431934
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795495909810
+      }
+    ],
+    "24.2 `<EditorAvatars>` 與 `presence.css`（`crates/web/src/views/editors.rs`、`crates/web/styles/presence.css`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428478090
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480991255
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795495916902
+      },
+      {
+        "executionId": "d3a2baa1-5e81-4d77-88e8-367a345da2f2",
+        "chatSessionId": "sess_4e23475b-3d82-4e54-a2b9-976c95c961ac",
+        "timestamp": 1795502082097
+      },
+      {
+        "executionId": "d3a2baa1-5e81-4d77-88e8-367a345da2f2",
+        "chatSessionId": "sess_4e23475b-3d82-4e54-a2b9-976c95c961ac",
+        "timestamp": 1795502084447
+      },
+      {
+        "executionId": "d3a2baa1-5e81-4d77-88e8-367a345da2f2",
+        "chatSessionId": "sess_4e23475b-3d82-4e54-a2b9-976c95c961ac",
+        "timestamp": 1795502104147
+      },
+      {
+        "executionId": "d3a2baa1-5e81-4d77-88e8-367a345da2f2",
+        "chatSessionId": "sess_4e23475b-3d82-4e54-a2b9-976c95c961ac",
+        "timestamp": 1795502692522
+      }
+    ],
+    "24.3 表單上的 Editing_Notice 與「仍要編輯」（`crates/web/src/views/forms.rs`）": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428480141
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480993517
+      },
+      {
+        "executionId": "d3a2baa1-5e81-4d77-88e8-367a345da2f2",
+        "chatSessionId": "sess_4e23475b-3d82-4e54-a2b9-976c95c961ac",
+        "timestamp": 1795502715421
+      },
+      {
+        "executionId": "d3a2baa1-5e81-4d77-88e8-367a345da2f2",
+        "chatSessionId": "sess_4e23475b-3d82-4e54-a2b9-976c95c961ac",
+        "timestamp": 1795503365305
+      }
+    ],
+    "25. Checkpoint - LM_Web": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428482195
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480995806
+      },
+      {
+        "executionId": "d3a2baa1-5e81-4d77-88e8-367a345da2f2",
+        "chatSessionId": "sess_4e23475b-3d82-4e54-a2b9-976c95c961ac",
+        "timestamp": 1795503374552
+      },
+      {
+        "executionId": "d3a2baa1-5e81-4d77-88e8-367a345da2f2",
+        "chatSessionId": "sess_4e23475b-3d82-4e54-a2b9-976c95c961ac",
+        "timestamp": 1795503481462
+      }
+    ],
+    "26. README：第一版的開發步驟與手動確認": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428484275
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795480997888
+      },
+      {
+        "executionId": "d3a2baa1-5e81-4d77-88e8-367a345da2f2",
+        "chatSessionId": "sess_4e23475b-3d82-4e54-a2b9-976c95c961ac",
+        "timestamp": 1795503488124
+      },
+      {
+        "executionId": "d3a2baa1-5e81-4d77-88e8-367a345da2f2",
+        "chatSessionId": "sess_4e23475b-3d82-4e54-a2b9-976c95c961ac",
+        "timestamp": 1795503664545
+      }
+    ],
+    "27. Final checkpoint - 全部建置檢查": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795428486341
+      },
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795481000012
+      },
+      {
+        "executionId": "d3a2baa1-5e81-4d77-88e8-367a345da2f2",
+        "chatSessionId": "sess_4e23475b-3d82-4e54-a2b9-976c95c961ac",
+        "timestamp": 1795503671800
+      },
+      {
+        "executionId": "d3a2baa1-5e81-4d77-88e8-367a345da2f2",
+        "chatSessionId": "sess_4e23475b-3d82-4e54-a2b9-976c95c961ac",
+        "timestamp": 1795505351919
+      }
+    ],
+    "1. Spike：在本機 Supabase CLI 堆疊上確認 R2 與 R3": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795433900402
+      }
+    ],
+    "3. Local_Stack：`supabase/` 設定與三個遷移檔": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795442512475
+      }
+    ],
+    "12. LM_Supabase：Realtime 協定、連線狀態機、Auth_Service 與 JWT": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795454428460
+      }
+    ],
+    "13. LM_Server：設定、啟動檢查與 HTTP 骨架": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795476504464
+      }
+    ],
+    "14. LM_Server：帳號端點": [
+      {
+        "executionId": "d7561073-4d4f-4de7-bc72-8d4247ba8075",
+        "chatSessionId": "sess_85a3f94a-6c0c-4fa4-8e5a-06ce5c60e1af",
+        "timestamp": 1795480357693
+      }
+    ],
+    "15. LM_Server：儲存層、旅行、Command_Executor、Snapshot 與增量": [
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795482973566
+      }
+    ],
+    "16. LM_Server：邀請連結與 Realtime 轉送": [
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795483769075
+      }
+    ],
+    "18. LM_Web：外觀資源、路由與登入狀態": [
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795486524423
+      }
+    ],
+    "19. LM_Web：首頁與邀請頁": [
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795487792164
+      }
+    ],
+    "20. LM_Web：同步引擎與旅行頁外框": [
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795490808528
+      }
+    ],
+    "21. LM_Web：行程表分頁": [
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795493482783
+      }
+    ],
+    "22. LM_Web：料理菜單、採買清單、裝備分工與分帳記帳分頁": [
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795494512439
+      }
+    ],
+    "23. LM_Web：旅行選單與出發清單": [
+      {
+        "executionId": "2fc03e93-bd98-4f46-b016-660d07fa43c7",
+        "chatSessionId": "sess_edb10984-fd74-4ed9-88e8-ee70f85bd15f",
+        "timestamp": 1795495425127
+      }
+    ],
+    "24. LM_Web：誰正在編輯（Presence 與編輯者頭像）": [
+      {
+        "executionId": "d3a2baa1-5e81-4d77-88e8-367a345da2f2",
+        "chatSessionId": "sess_4e23475b-3d82-4e54-a2b9-976c95c961ac",
+        "timestamp": 1795503367637
+      }
+    ]
+  }
+}

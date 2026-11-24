@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 200" preserveAspectRatio="xMidYMid meet" class="illustration illustration--market" aria-hidden="true" focusable="false" fill="none" style="display:block;max-width:100%;height:auto">
+  <rect x="0" y="0" width="240" height="200" rx="20" fill="#fffcf6"/>
+  <g stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M104 74 Q100 40 120 40 Q140 40 136 74" />
+    <path d="M124 60 Q128 30 150 26 Q146 52 128 62" fill="#b9cda5"/>
+    <rect x="132" y="44" width="24" height="44" rx="6" fill="#b7dbe5"/>
+    <circle cx="96" cy="68" r="16" fill="#efa28f"/>
+    <line x1="96" y1="52" x2="100" y2="44"/>
+    <path d="M70 74 H170 L160 172 Q159 180 150 180 H90 Q81 180 80 172 Z" fill="#f6d27a"/>
+    <path d="M92 108 H148"/>
+    <line x1="48" y1="182" x2="192" y2="182"/>
+  </g></svg>

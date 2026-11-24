@@ -1,0 +1,5 @@
+/* schedule-tab-css-parity 需求 1.6、1.7：自 src/scene-motion.css 第 1、2、3、42 行逐字複製的四條版面規則（Scene_Motion_Layout_Rules），順序同 Bun。不含其他 scene-motion 規則。 */
+.scene-motion{position:relative;display:block;line-height:0}
+.hero-art>.scene-motion{position:relative}
+.scene-motion>svg{width:100%}
+.hero-art .scene-motion>.countdown{left:50%;top:50%;bottom:auto;transform:translate(-50%,-50%) rotate(-6deg);line-height:1.5;z-index:1}

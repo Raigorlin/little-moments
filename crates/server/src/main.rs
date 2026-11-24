@@ -22,7 +22,7 @@
 //! | 路徑 | 處理 |
 //! | --- | --- |
 //! | `/api`、`/api/` 與 `/api/<路徑>` | `api_router()`：`api_routes()` 中的端點（由任務 14 至 16 加入）；沒有這個路徑時 404 `api_not_found`，路徑存在但不支援這個方法時 405 `method_not_allowed`，都是 JSON，不回傳 index.html（需求 5.5、5.9） |
-//! | `/realtime/v1/websocket` | Realtime 轉送，由任務 16.2 換成 `gateway::realtime_proxy`；在那之前 `GET` 回應 501 的 JSON 錯誤（`not_implemented`），其他方法 405，都不回傳 index.html |
+//! | `/realtime/v1/websocket` | `GET`：Realtime 轉送（`gateway::realtime_proxy`，需求 11.2、11.12）；不是 WebSocket 升級的 `GET` 由 axum 回應 4xx，其他方法 405，都不回傳 index.html |
 //! | 其他 | `LM_STATIC_DIR` 的靜態檔，找不到時回傳 index.html（`static_files`，需求 32.2） |
 //!
 //! `/api` 本身與 `/api/` 也屬於 API：`api` 是保留的帳號名稱（需求 3.3），LM_Web 沒有這兩個網址的畫面。axum 0.8 的
@@ -33,6 +33,7 @@
 //! 旅行資料都不保存在記憶體中（需求 1.11）。
 
 mod auth;
+mod commands;
 mod config;
 mod db;
 // `/api/*` 的錯誤回應與請求擷取器（任務 13.2），由任務 13.3 至 16 的路由使用。一個模組的項目全部用上之後，它的
@@ -41,17 +42,19 @@ mod db;
 mod error;
 #[expect(dead_code, reason = "任務 13.3 至 16 的路由才會使用")]
 mod extract;
+mod gateway;
+mod invites;
 mod repo;
 mod state;
 mod static_files;
+mod trips;
 
 use std::fmt::Display;
 use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
 use axum::extract::Request;
-use axum::http::StatusCode;
-use axum::routing::{any, get, post};
+use axum::routing::{any, delete, get, post};
 use axum::Router;
 use tokio::net::TcpListener;
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
@@ -126,7 +129,7 @@ fn app(state: AppState) -> Router {
     Router::new()
         .nest("/api", api_router())
         .route("/api/", any(api_not_found))
-        .route(REALTIME_PATH, get(realtime_not_implemented))
+        .route(REALTIME_PATH, get(gateway::realtime_proxy))
         .fallback(move |request: Request| static_files.clone().serve(request))
         .with_state(state)
 }
@@ -148,6 +151,22 @@ fn api_routes() -> Router<AppState> {
         .route("/auth/refresh", post(auth::refresh_handler))
         .route("/auth/logout", post(auth::logout_handler))
         .route("/me", get(auth::me))
+        .route("/trips", get(trips::list_trips).post(trips::create_trip))
+        .route("/trips/{id}", delete(trips::delete_trip))
+        .route("/trips/{id}/snapshot", get(trips::snapshot))
+        .route("/trips/{id}/changes", get(trips::changes))
+        .route("/trips/{id}/head", get(trips::head))
+        .route("/trips/{id}/commands", post(commands::post_command))
+        .route(
+            "/trips/{id}/invites",
+            get(invites::list).post(invites::create),
+        )
+        .route(
+            "/trips/{id}/invites/{invite_id}/revoke",
+            post(invites::revoke),
+        )
+        .route("/invites/{token}", get(invites::preview))
+        .route("/invites/{token}/join", post(invites::join))
 }
 
 /// 404 `api_not_found`：`/api/*` 下沒有這個路徑（需求 5.9）。
@@ -158,16 +177,6 @@ async fn api_not_found() -> ApiError {
 /// 405 `method_not_allowed`：路徑存在，但不支援這個方法（需求 5.9）。
 async fn api_method_not_allowed() -> ApiError {
     ApiError::method_not_allowed()
-}
-
-/// `/realtime/v1/websocket` 在任務 16.2 之前的回應：501 的 JSON 錯誤，不回傳 index.html。任務 16.2 以
-/// `gateway::realtime_proxy` 取代這個處理函式。
-async fn realtime_not_implemented() -> ApiError {
-    ApiError::new(
-        StatusCode::NOT_IMPLEMENTED,
-        "not_implemented",
-        "即時同步尚未提供。",
-    )
 }
 
 /// 等到 Ctrl-C（SIGINT）或 SIGTERM。無法註冊其中一種時只等另一種。

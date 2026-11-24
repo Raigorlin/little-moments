@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 260" preserveAspectRatio="xMidYMid meet" class="dish-illustration__svg" aria-hidden="true" focusable="false" fill="none" style="display:block;width:100%;height:auto">
+  
+  <rect x="0" y="0" width="480" height="260" rx="28" fill="#fffcf6"/>
+  <path d="M54 130 Q52 54 150 44 Q240 34 320 50 Q430 66 428 140 Q426 214 320 226 Q170 238 98 210 Q56 190 54 130 Z" fill="#efa28f" opacity="0.45"/>
+  <g fill="#3e3a39" opacity="0.18">
+    <circle cx="44" cy="40" r="3"/><circle cx="440" cy="52" r="3"/><circle cx="420" cy="228" r="3"/><circle cx="56" cy="214" r="3"/>
+  </g>
+  
+  <g stroke="#3e3a39" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.55">
+    <path d="M372 92 q-9 -10 0 -20 t0 -20"/><path d="M396 92 q-9 -10 0 -20 t0 -20"/>
+  </g>
+  <ellipse cx="210" cy="222" rx="150" ry="12" fill="#3e3a39" opacity="0.08"/>
+  <g stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="210" cy="176" rx="160" ry="50" fill="#fffcf6"/>
+    <ellipse cx="210" cy="176" rx="128" ry="36"/>
+    <path d="M96 176 Q92 168 98 160 L148 96 Q156 88 164 96 L212 162 Q218 172 208 176 Z" fill="#dca46a"/>
+    <path d="M110 168 L154 108 L198 168 Z" fill="#f8e2b0" stroke="none"/>
+    <path d="M152 186 Q148 178 154 170 L210 112 Q218 104 226 112 L270 176 Q276 186 266 188 Z" fill="#dca46a"/>
+    <path d="M168 180 L218 124 L258 180 Z" fill="#f8e2b0" stroke="none"/>
+    <rect x="204" y="150" width="22" height="16" rx="4" fill="#f6d27a" transform="rotate(-12 215 158)"/>
+    <path d="M276 160 Q272 140 292 138 Q308 126 324 140 Q346 142 340 162 Q344 182 318 184 Q298 192 284 180 Q266 176 276 160 Z" fill="#ffffff"/>
+    <circle cx="308" cy="160" r="14" fill="#f6d27a"/>
+  </g>
+  <path d="M302 154 q4 -4 10 -2" stroke="#fffcf6" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <g stroke="#3e3a39" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="392" cy="186" rx="50" ry="12" fill="#fffcf6"/>
+    <path d="M422 128 Q446 128 446 148 Q446 168 420 168" fill="none"/>
+    <path d="M354 112 H426 V164 Q426 182 404 182 H376 Q354 182 354 164 Z" fill="#b7dbe5"/>
+    <ellipse cx="390" cy="112" rx="36" ry="8" fill="#a8714f"/>
+    <path d="M364 138 Q390 146 416 138" stroke="#fffcf6"/>
+  </g></svg>

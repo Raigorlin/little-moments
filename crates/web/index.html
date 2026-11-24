@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>日子拾光 · LITTLE MOMENTS</title>
     <link data-trunk rel="rust" href="Cargo.toml" data-wasm-opt="z" />
+    <!-- 樣式順序同 Bun：styles.css → accounts.css → scene-motion 版面規則 → expenses.css。
+         styles.css 與 Bun 逐字相同，含 :root[data-theme=dark] 規則；根元素有 data-theme="dark" 時套用深色主題，
+         沒有 data-theme 時為淺色主題（schedule-tab-css-parity 需求 6）。此處不設定 data-theme。 -->
+    <link data-trunk rel="css" href="styles/styles.css" />
+    <link data-trunk rel="css" href="styles/accounts.css" />
+    <link data-trunk rel="css" href="styles/scene-motion-layout.css" />
+    <link data-trunk rel="css" href="styles/expenses.css" />
+    <!-- 第一版唯一新增的樣式檔：Editor_Stack 與 Editor_Avatar（需求 32.8） -->
+    <link data-trunk rel="css" href="styles/presence.css" />
+    <!-- 字型子集與授權檔；styles.css 的 @font-face 以 ./assets/fonts/… 引用 -->
+    <link data-trunk rel="copy-dir" href="../../assets/fonts" data-target-path="assets/fonts" />
   </head>
   <body></body>
 </html>

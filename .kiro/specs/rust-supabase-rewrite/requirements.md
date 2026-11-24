@@ -296,7 +296,7 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 
 ### Requirement 2: 本機開發環境與網路綁定
 
-**User Story:** 身為開發者，我希望在 Windows 的 WSL 2（Ubuntu）中以 Supabase CLI 的本機堆疊開發，而且這些服務只有這台電腦連得到，以便開發方便，又不會把使用範例金鑰的服務開放給區網。
+**User Story:** 身為開發者，我希望在 amazon linux2 中以 Supabase CLI 的本機堆疊開發，而且這些服務只有這台電腦連得到，以便開發方便，又不會把使用範例金鑰的服務開放給區網。
 
 #### Acceptance Criteria
 

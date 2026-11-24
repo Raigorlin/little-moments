@@ -14,14 +14,56 @@ lm-supabase = { path = "../supabase", features = ["web"] }
 # REST 呼叫只需要 http 與 json；Realtime 的 WebSocket 由 lm-supabase 處理
 gloo-net = { version = "0.6", default-features = false, features = ["http", "json"] }
 gloo-storage = "0.3"
-gloo-timers = "0.3"
+# 計時器；`futures` 提供建立旅行等請求的逾時（api.rs）
+gloo-timers = { version = "0.3", features = ["futures"] }
+# 同一個分頁同時只有一個換發：進行中的換發以 Shared future 讓其他請求一起等待（session.rs）
+futures = { version = "0.3", default-features = false, features = ["std"] }
 js-sys = "0.3"
 leptos = { version = "0.8", features = ["csr"] }
 leptos_router = "0.8"
+serde = "1"
+serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 wasm-bindgen = "0.2"
-web-sys = "0.3"
+# App 外框的帳號選單以 Event.target 與 Element.closest 判斷點選的位置；Home_Page 的「新增旅行」以 <dialog> 開啟；登入狀態讀取網址（Location）、
+# 分頁是否可見（Document.visibilityState）與其他分頁寫入 localStorage 的 storage 事件；旅行頁列上直接修改的文字欄位
+# 在失去焦點後才以 HtmlInputElement 寫回最新的值；行程表「複製文字」以 Clipboard 寫入剪貼簿，失敗時以 Selection 選取文字版
+# 行程表列的滑動操作（swipe/）另外需要指標、轉場與 MutationObserver 事件、matchMedia 與 performance.now()
+web-sys = { version = "0.3", features = [
+    "AddEventListenerOptions",
+    "Clipboard",
+    "CssStyleDeclaration",
+    "Document",
+    "DomTokenList",
+    "Element",
+    "Event",
+    "EventListenerOptions",
+    "EventTarget",
+    "HtmlButtonElement",
+    "HtmlDialogElement",
+    "HtmlElement",
+    "HtmlInputElement",
+    "Location",
+    "MediaQueryList",
+    "MediaQueryListEvent",
+    "MouseEvent",
+    "MutationObserver",
+    "MutationObserverInit",
+    "MutationRecord",
+    "Navigator",
+    "Node",
+    "NodeList",
+    "Performance",
+    "PointerEvent",
+    "Selection",
+    "StorageEvent",
+    "TransitionEvent",
+    "VisibilityState",
+    "Window",
+] }
 
 # wasm32 以瀏覽器的 crypto.getRandomValues 產生 UUID
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 uuid = { version = "1", features = ["js"] }
+# 等待 navigator.clipboard.writeText() 的 Promise（views/schedule/text.rs）
+wasm-bindgen-futures = "0.4"

@@ -196,6 +196,37 @@ impl Config {
         }
     }
 
+    /// Realtime 轉送的上游網址（design 3.4，需求 11.2）：`SUPABASE_URL` 去掉查詢與片段，`http://` 換成 `ws://`、
+    /// `https://` 換成 `wss://`，原本的路徑（可以有前綴）之後接 `realtime/v1/websocket`。查詢參數只有 `query`（瀏覽器
+    /// 送來的原始查詢字串）中第一個 `vsn`，再加上值為 `SUPABASE_ANON_KEY` 的 `apikey`；瀏覽器送來的 `apikey` 與其他
+    /// 參數都不轉送。回傳的網址含有 anon key，不能寫進記錄或回應。
+    pub fn realtime_upstream_url(&self, query: Option<&str>) -> String {
+        let base = &self.supabase_url;
+        let base = &base[..base.find(['?', '#']).unwrap_or(base.len())];
+        let (scheme, rest) = match base.strip_prefix("https://") {
+            Some(rest) => ("wss://", rest),
+            None => ("ws://", base.strip_prefix("http://").unwrap_or(base)),
+        };
+        let slash = if rest.ends_with('/') { "" } else { "/" };
+        let mut url = format!("{scheme}{rest}{slash}realtime/v1/websocket?");
+        let vsn = query
+            .into_iter()
+            .flat_map(|query| query.split('&'))
+            .find_map(|pair| {
+                let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+                (percent_decode(&name.replace('+', " ")) == "vsn")
+                    .then(|| percent_decode(&value.replace('+', " ")))
+            });
+        if let Some(vsn) = vsn {
+            url.push_str("vsn=");
+            url.push_str(&percent_encode(&vsn));
+            url.push('&');
+        }
+        url.push_str("apikey=");
+        url.push_str(&percent_encode(self.supabase_anon_key.expose()));
+        url
+    }
+
     /// 依 `.env.example` 的順序檢查每個變數，不通過的全部記下（需求 2.11）。
     fn check(values: &Values) -> Result<Self, Vec<Problem>> {
         let mut checker = Checker {
@@ -688,6 +719,20 @@ fn without_userinfo(url: &str) -> String {
         Some(range) => format!("{}***{}", &url[..range.start], &url[range.end..]),
         None => url.to_owned(),
     }
+}
+
+/// 百分比編碼：RFC 3986 的 unreserved 字元（英文字母、數字與 `-._~`）原樣保留，其他位元組寫成 `%XX`，使結果可以
+/// 放進網址的查詢參數（Realtime 轉送的上游網址，`Config::realtime_upstream_url`）。
+pub fn percent_encode(text: &str) -> String {
+    let mut encoded = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
 }
 
 /// 百分比解碼（`%XX`）：後面不是兩個十六進位數字的 `%` 原樣保留；解碼後不是 UTF-8 的位元組以 U+FFFD 代替。靜態檔
