@@ -20,15 +20,14 @@ use leptos::task::spawn_local;
 use lm_core::ids::VehicleId;
 use lm_core::itinerary_text::itinerary_text;
 use lm_core::model::{Date, PlaceRef, StopTask};
-use lm_core::storybook::{is_return_day, studio_plan, StudioEvent, StudioPlan, StudioRoute};
+use lm_core::storybook::{is_return_day, StudioEvent, StudioPlan, StudioRoute};
 use lm_core::time::{month_day, weekday_char, Hm};
 
 use super::doodles::{
     camp_scene, doodle_strip, hash_str, header_scene, icon_body, kind_icon, life_scene, svg, Rng,
     SHUFFLE_ICON, WOBBLE,
 };
-use super::{use_studio, PlanSection, StudioUi};
-use crate::pages::trip::{use_trip, TripContext};
+use super::editor::{use_editor, Editor};
 
 /// 按鈕文字恢復為「複製文字」之前的毫秒數。
 const RESTORE_MS: u32 = 1_800;
@@ -72,7 +71,7 @@ fn time_or(time: Option<Hm>, missing: &str) -> String {
 }
 
 /// 現行 `placeName()`：工作室地點的名稱；找不到或名稱是空的時是「（已移除的地點）」，沒有地點時是「未指定」。
-fn place_name(plan: &StudioPlan, place: Option<PlaceRef>) -> String {
+pub(super) fn place_name(plan: &StudioPlan, place: Option<PlaceRef>) -> String {
     let Some(place) = place else {
         return "未指定".to_owned();
     };
@@ -86,7 +85,7 @@ fn place_name(plan: &StudioPlan, place: Option<PlaceRef>) -> String {
 }
 
 /// 現行 `vehicleName()`。
-fn vehicle_name(plan: &StudioPlan, vehicle: VehicleId) -> String {
+pub(super) fn vehicle_name(plan: &StudioPlan, vehicle: VehicleId) -> String {
     plan.vehicles
         .iter()
         .find(|item| item.id == vehicle)
@@ -186,15 +185,10 @@ fn event_item(event: &StudioEvent) -> impl IntoView {
 }
 
 /// 第 `i` 天的日卡（現行 `renderJournal()` 的 `days`）。
-fn day_card(plan: &StudioPlan, i: usize, seed: &str, studio: StudioUi) -> impl IntoView {
+fn day_card(plan: &StudioPlan, i: usize, seed: &str, editor: Editor) -> impl IntoView {
     let day = &plan.days[i];
     let after = is_return_day(plan, i);
     let has_routes = !day.routes.is_empty();
-    let section = if has_routes {
-        PlanSection::Routes
-    } else {
-        PlanSection::Events
-    };
 
     let routes = has_routes.then(|| {
         let arrival = (!day.arrival_label.is_empty()).then(|| {
@@ -307,7 +301,7 @@ fn day_card(plan: &StudioPlan, i: usize, seed: &str, studio: StudioUi) -> impl I
                     class="j-edit"
                     title="編輯這一天"
                     aria-label=format!("編輯第 {n} 天")
-                    on:click=move |_| studio.edit_day(i, section)
+                    on:click=move |_| editor.edit_day(i)
                     inner_html=svg(icon_body("pencil"))
                 ></button>
             </header>
@@ -325,7 +319,7 @@ fn day_card(plan: &StudioPlan, i: usize, seed: &str, studio: StudioUi) -> impl I
 fn journal_body(
     plan: &StudioPlan,
     bump: u32,
-    studio: StudioUi,
+    editor: Editor,
     label: RwSignal<CopyLabel>,
     on_copy: impl Fn() + Copy + 'static,
     on_shuffle: impl Fn() + Copy + 'static,
@@ -389,7 +383,7 @@ fn journal_body(
     let head_art = InertElement::new(header_scene(&mut rng(&seed, "head")));
 
     let days = (0..plan.days.len())
-        .map(|i| day_card(plan, i, &seed, studio))
+        .map(|i| day_card(plan, i, &seed, editor))
         .collect_view();
 
     let shop = (!plan.shopping.is_empty()).then(|| {
@@ -472,9 +466,9 @@ fn journal_body(
 /// `section#journal`（template.js）與其中的手帖。
 #[component]
 pub(super) fn Journal() -> impl IntoView {
-    let TripContext { handle, .. } = use_trip();
-    let studio = use_studio();
-    let plan = Memo::new(move |_| handle.with_view(studio_plan));
+    let editor = use_editor();
+    let handle = editor.handle;
+    let plan = editor.plan;
     let bump = RwSignal::new(SHUFFLE_BUMP.load(Ordering::Relaxed));
     let label = RwSignal::new(CopyLabel::Idle);
     let journal = NodeRef::<html::Section>::new();
@@ -517,7 +511,7 @@ pub(super) fn Journal() -> impl IntoView {
             {move || {
                 plan.with(|plan| {
                     plan.as_ref()
-                        .map(|plan| journal_body(plan, bump.get(), studio, label, on_copy, on_shuffle))
+                        .map(|plan| journal_body(plan, bump.get(), editor, label, on_copy, on_shuffle))
                 })
             }}
         </section>

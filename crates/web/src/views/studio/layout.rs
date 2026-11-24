@@ -11,13 +11,23 @@ use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
 
+use wasm_bindgen::JsCast;
+
+use super::assets_tab::AssetsPanel;
+use super::cover_tab::CoverPanel;
+use super::editor::Editor;
 use super::journal::Journal;
+use super::plan_tab::PlanPanel;
 use super::{use_studio, EditorTab, MobileView, KEY_STEP, MIN_WIDTH, PREVIEW_MIN};
+use crate::pages::trip::{use_trip, TripContext};
 
 /// 工作室的根元素 `div.studio[data-studio-root]`。
 #[component]
 pub(super) fn StudioRoot() -> impl IntoView {
     let studio = use_studio();
+    let TripContext { handle, .. } = use_trip();
+    let editor = Editor::new(handle, studio);
+    provide_context(editor);
     let layout = NodeRef::<html::Div>::new();
     let splitter = NodeRef::<html::Div>::new();
     let switch = NodeRef::<html::Nav>::new();
@@ -123,16 +133,50 @@ pub(super) fn StudioRoot() -> impl IntoView {
                     aria-controls=format!("panel-{}", tab.key())
                     aria-selected=move || selected().to_string()
                     tabindex=move || if selected() { "0" } else { "-1" }
-                    on:click=move |_| studio.show_tab(tab)
+                    on:click=move |_| {
+                        editor.show_tab(tab);
+                    }
                 >
                     {tab.label()}
                 </button>
             }
         })
         .collect_view();
+    // Bun createWorkspace()：分頁以方向鍵、Home 與 End 切換
+    let on_tabs_key = move |event: ev::KeyboardEvent| {
+        let Some(index) = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+            .and_then(|target| target.get_attribute("data-tab"))
+            .and_then(|key| EditorTab::parse(&key))
+            .and_then(|tab| EditorTab::ALL.iter().position(|item| *item == tab))
+        else {
+            return;
+        };
+        let count = EditorTab::ALL.len();
+        let next = match event.key().as_str() {
+            "Home" => 0,
+            "End" => count - 1,
+            "ArrowRight" => (index + 1) % count,
+            "ArrowLeft" => (index + count - 1) % count,
+            _ => return,
+        };
+        event.prevent_default();
+        let tab = EditorTab::ALL[next];
+        if editor.show_tab(tab) {
+            if let Some(button) = editor.element(&format!("tab-{}", tab.key())) {
+                button.focus().ok();
+            }
+        }
+    };
     let panels = EditorTab::ALL
         .into_iter()
         .map(|tab| {
+            let content = match tab {
+                EditorTab::Plan => view! { <PlanPanel /> }.into_any(),
+                EditorTab::Cover => view! { <CoverPanel /> }.into_any(),
+                EditorTab::Assets => view! { <AssetsPanel /> }.into_any(),
+            };
             view! {
                 <section
                     class="panel"
@@ -141,13 +185,35 @@ pub(super) fn StudioRoot() -> impl IntoView {
                     role="tabpanel"
                     aria-labelledby=format!("tab-{}", tab.key())
                     hidden=move || studio.tab.get() != tab
-                ></section>
+                >
+                    {content}
+                </section>
             }
         })
         .collect_view();
+    // Bun：在文字欄位以外按 Ctrl／Cmd+Z 復原，加 Shift 重做
+    let on_root_key = move |event: ev::KeyboardEvent| {
+        if !(event.ctrl_key() || event.meta_key()) || event.key().to_lowercase() != "z" {
+            return;
+        }
+        let in_text = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+            .is_some_and(|target| {
+                target
+                    .matches("input,textarea,[contenteditable]")
+                    .unwrap_or(false)
+            });
+        if in_text {
+            return;
+        }
+        event.prevent_default();
+        editor.travel(!event.shift_key());
+    };
+    let status = move || editor.status();
 
     view! {
-        <div class=root_class data-studio-root="">
+        <div class=root_class data-studio-root="" on:keydown=on_root_key>
             <header class="topbar" hidden=true>
                 <div class="brand">
                     <strong>"旅行繪本"</strong>
@@ -164,7 +230,14 @@ pub(super) fn StudioRoot() -> impl IntoView {
                 node_ref=layout
             >
                 <main class="stage" aria-label="海報">
-                    <p id="message" role="status" aria-live="polite" class="message"></p>
+                    <p
+                        id="message"
+                        role="status"
+                        aria-live="polite"
+                        class=move || editor.notice_class("message")
+                    >
+                        {move || editor.notice_text()}
+                    </p>
                     <p class="hint stage-hint" id="previewHint" hidden=true>
                         "點海報上的任一天，就會打開那一天的編輯；也可以用 Tab 鍵選到日期區塊後按 Enter。"
                     </p>
@@ -218,7 +291,16 @@ pub(super) fn StudioRoot() -> impl IntoView {
                                     <button type="button" id="saveTrip" class="primary" hidden=true>
                                         "儲存行程"
                                     </button>
-                                    <span id="saveStatus" class="status" aria-live="polite"></span>
+                                    <span
+                                        id="saveStatus"
+                                        class=move || {
+                                            if status() == "已儲存" { "status" } else { "status dirty" }
+                                        }
+                                        aria-live="polite"
+                                        title=status
+                                    >
+                                        {status}
+                                    </span>
                                     <span class="editor-actions-end">
                                         <button
                                             type="button"
@@ -226,7 +308,8 @@ pub(super) fn StudioRoot() -> impl IntoView {
                                             class="icon"
                                             aria-label="復原"
                                             title="復原（Ctrl+Z）"
-                                            disabled=true
+                                            disabled=move || editor.history.sizes().0 == 0
+                                            on:click=move |_| editor.travel(true)
                                         >
                                             "↶"
                                             <span class="label-text">"復原"</span>
@@ -237,7 +320,8 @@ pub(super) fn StudioRoot() -> impl IntoView {
                                             class="icon"
                                             aria-label="重做"
                                             title="重做（Ctrl+Shift+Z）"
-                                            disabled=true
+                                            disabled=move || editor.history.sizes().1 == 0
+                                            on:click=move |_| editor.travel(false)
                                         >
                                             "↷"
                                             <span class="label-text">"重做"</span>
@@ -261,15 +345,19 @@ pub(super) fn StudioRoot() -> impl IntoView {
                                     id="editorTabs"
                                     role="tablist"
                                     aria-label="編輯項目"
+                                    on:keydown=on_tabs_key
                                 >
                                     {tabs}
                                 </div>
                                 <p
-                                    class="editor-notice"
+                                    class=move || editor.notice_class("editor-notice")
                                     id="editorNotice"
                                     role="status"
                                     aria-live="polite"
-                                ></p>
+                                    hidden=move || editor.notice_hidden()
+                                >
+                                    {move || editor.notice_text()}
+                                </p>
                             </header>
                             {panels}
                         </fieldset>

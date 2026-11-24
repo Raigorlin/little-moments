@@ -461,6 +461,33 @@ impl TripHandle {
         result
     }
 
+    /// 在 Optimistic_View 的副本上依序預測 `commands`（只計算 Primary_Effect），不建立 Pending_Command，畫面不變。
+    /// 每個命令預測之前的狀態交給 `before`（工作室以它計算復原用的反向命令）；有一個命令不成立時回傳它的
+    /// `Rejection`，之後的命令不再預測。一次送出多個命令之前先以它確認全部成立，不會只送出一部分。成立時回傳是否有任何
+    /// 命令改變了狀態（`false` 是想要的狀態已經成立）。
+    pub fn check_batch(
+        &self,
+        commands: &[Command],
+        mut before: impl FnMut(&TripState, &Command),
+    ) -> Result<bool, Rejection> {
+        self.inner
+            .try_with_value(|sync| {
+                let (Some(view), Some(ctx)) = (&sync.view, sync.ctx()) else {
+                    return Err(Rejection::conflict("not_loaded", NOT_LOADED));
+                };
+                let mut state = view.clone();
+                let mut changed = false;
+                for command in commands {
+                    before(&state, command);
+                    let outcome = apply(&state, &ctx, Mode::Predict, &mut NoDerivedIds, command)?;
+                    changed |= !outcome.is_noop();
+                    state.apply_effects(outcome.effects().iter());
+                }
+                Ok(changed)
+            })
+            .unwrap_or_else(|| Err(Rejection::conflict("not_loaded", NOT_LOADED)))
+    }
+
     /// 不是來自表單的操作（勾選、列上的選單）：不成立時以 Toast 顯示訊息（需求 13.2）。
     pub fn submit_or_toast(&self, command: Command) -> Option<CommandId> {
         match self.submit(command) {

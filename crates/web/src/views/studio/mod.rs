@@ -5,13 +5,22 @@
 //! - [`layout`]：`src/storybook/template.js` 的版面（相同的 id、class、文字與 aria），以及 `app.js` 的編輯器收合、
 //!   分隔線、窄版的「編輯／預覽」切換與深色主題。
 //! - [`journal`] 與 [`doodles`]：「行程手帖」預覽（`journal.js`），由 `lm_core::storybook::studio_plan()` 產生。
+//! - [`editor`]、[`history`] 與 [`inverse`]：編輯器的送出、未通過檢查的欄位、「已儲存」狀態，以及「復原／重做」。
+//! - [`plan_tab`]、[`cover_tab`] 與 [`assets_tab`]：編輯器的「行程」「封面」「地點與車」三個分頁（template.js 與
+//!   `app.js` 的 `renderDay()`、`renderEvents()`、`renderRoutes()`、`renderStops()`、`renderPlaces()`、`renderVehicles()`）。
 //!
 //! 工作室的畫面狀態放在 [`StudioUi`]（`Copy`，以 context 提供），選定的日子沿用 `UiState::schedule_day`。Bun 在 studio 根
 //! 元素上停止事件傳遞的迴圈（`bind()`）沒有移植：Leptos 的事件直接掛在元素上，網站的其他處理不會收到工作室的事件。
+mod assets_tab;
+mod cover_tab;
 mod doodles;
+mod editor;
+mod history;
 mod host;
+mod inverse;
 mod journal;
 mod layout;
+mod plan_tab;
 
 pub use host::Studio;
 
@@ -64,6 +73,11 @@ impl EditorTab {
             EditorTab::Assets => "地點與車",
         }
     }
+
+    /// `key()` 的反向。
+    pub(crate) fn parse(key: &str) -> Option<EditorTab> {
+        EditorTab::ALL.into_iter().find(|tab| tab.key() == key)
+    }
 }
 
 /// 「行程」分頁中這一天要編輯的內容（template.js `.subnav`）。
@@ -87,8 +101,7 @@ pub(crate) struct StudioUi {
     /// 選定的第 N 天（`UiState::schedule_day`，0 為第 1 天）
     pub day: RwSignal<usize>,
     pub tab: RwSignal<EditorTab>,
-    /// 「行程」分頁的路線或活動（編輯器的內容讀取）
-    #[allow(dead_code)]
+    /// 「行程」分頁的路線或活動
     pub section: RwSignal<PlanSection>,
     pub mobile_view: RwSignal<MobileView>,
     pub editor_hidden: RwSignal<bool>,
@@ -295,13 +308,10 @@ impl StudioUi {
         self.section.set(section);
     }
 
-    /// 手帖日卡上的「編輯這一天」（Bun `onEditDay`）：編輯器收起時不做事；否則選定那一天並顯示編輯器。
-    fn edit_day(&self, index: usize, section: PlanSection) {
-        if self.editor_hidden.get_untracked() {
-            return;
-        }
-        self.select_day(index, section);
-        self.set_mobile_view(MobileView::Editor);
+    /// 宿主的 Shadow Root（工作室的元素在其中）。
+    fn shadow_root(&self) -> Option<web_sys::ShadowRoot> {
+        self.host
+            .with_value(|host| host.as_ref().and_then(|host| host.shadow_root()))
     }
 }
 
