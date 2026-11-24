@@ -1028,6 +1028,7 @@ fn new_stop(n: u64, place: PlaceRef, kind: StopKind, note: &str) -> Stop {
         task: None,
         note: note.to_owned(),
         time: None,
+        items: Vec::new(),
     }
 }
 
@@ -1092,6 +1093,7 @@ fn push_place(state: &mut TripState, n: u64, name: &str) {
         name: name.to_owned(),
         ordinal,
         version: 1,
+        template: None,
     }));
 }
 

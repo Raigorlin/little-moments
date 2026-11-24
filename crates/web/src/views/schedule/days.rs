@@ -137,6 +137,7 @@ fn day_patch(initial: &DayDraft, current: &DayDraft) -> DaySettingPatch {
         place: changed(&initial.place_id(), &current.place_id()),
         arrival: changed(&initial.arrival, &current.arrival).map(|text| time_input(&text)),
         route_position: changed(&initial.position, &current.position).map(Input::Ok),
+        arrival_label: None,
     }
 }
 

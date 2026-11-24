@@ -218,6 +218,7 @@ fn PlaceEditor(form: FormSession<PlaceFields>) -> impl IntoView {
             Some(Command::AddPlace {
                 id,
                 name: fields.name,
+                template: None,
             })
         } else {
             changed(&form.initial().name, &fields.name)

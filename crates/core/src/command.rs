@@ -20,7 +20,7 @@ use crate::ids::{
 };
 use crate::model::{
     ActivityKind, Category, Color, CoverKind, Date, DishKind, ExpenseCategory, GearScope, MealSlot,
-    Participation, PlaceRef, RoutePosition, StopKind, StopTask, TripStatus,
+    Participation, PlaceRef, PlaceTemplate, RoutePosition, StopKind, StopTask, TripStatus,
 };
 use crate::text::InvalidTime;
 use crate::time::Hm;
@@ -67,6 +67,9 @@ pub enum Command {
     AddPlace {
         id: PlaceId,
         name: String,
+        /// 繪本插圖；沒有選擇時不寫出。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        template: Option<Input<PlaceTemplate>>,
     },
     RenamePlace {
         id: PlaceId,
@@ -261,6 +264,12 @@ pub struct TripPatch {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// 繪本的大標題；空字串是清空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headline: Option<String>,
+    /// 繪本的底部短語；空字串是清空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover: Option<Input<CoverKind>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -351,6 +360,9 @@ pub struct StopDraft {
     pub note: String,
     #[serde(default)]
     pub time: Option<Input<Hm>>,
+    /// 待辦清單或旅伴名單；每項經 Trim_White，空白的項目略過；採買的停靠點不儲存。
+    #[serde(default)]
+    pub items: Vec<String>,
 }
 
 /// 一天的設定（需求 22.10、22.15）：只帶改過的欄位；`Some(None)` 是清空。
@@ -375,6 +387,13 @@ pub struct DaySettingPatch {
         with = "serde_with::rust::double_option"
     )]
     pub arrival: Option<Option<Input<Hm>>>,
+    /// 繪本日卡的抵達說明；`Some(None)` 或只有空白是清空。
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_with::rust::double_option"
+    )]
+    pub arrival_label: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route_position: Option<Input<RoutePosition>>,
 }

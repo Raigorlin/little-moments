@@ -12,11 +12,12 @@ use crate::command::{
 use crate::ids::{ActivityId, PersonId, RouteId, VehicleId};
 use crate::limits::{
     ACTIVITIES_MAX, ACTIVITY_LOCATION_CHARS, ACTIVITY_NOTE_CHARS, ACTIVITY_TITLE_CHARS,
-    DAY_TITLE_CHARS, ROUTE_STOPS, STOP_NOTE_CHARS,
+    ARRIVAL_LABEL_CHARS, DAY_TITLE_CHARS, ROUTE_STOPS, STOP_ITEMS_MAX, STOP_ITEM_CHARS,
+    STOP_NOTE_CHARS,
 };
 use crate::model::{
     Activity, ActivityKind, Date, DaySetting, Entity, Participation, PlaceRef, Route,
-    RoutePosition, Slot, Stop, TripState,
+    RoutePosition, Slot, Stop, StopKind, TripState,
 };
 use crate::text::trim_white;
 use crate::time::Hm;
@@ -46,8 +47,31 @@ fn route_place(
     }
 }
 
-/// `SaveRoute`：依需求 22.4–22.7 的順序檢查；整條取代並保留路線與既有停靠點的 id；路線不存在時新增；不改變
-/// 採買品項。
+/// 停靠點的待辦清單或旅伴名單：每項經 Trim_White，空白的項目略過；最多 8 項，每項最多 100 字。採買的停靠點不儲存
+/// 清單（品項由採買清單推得），一律是空的。
+fn stop_items(kind: StopKind, items: &[String]) -> Result<Vec<String>, Rejection> {
+    if kind == StopKind::Shop {
+        return Ok(Vec::new());
+    }
+    let items: Vec<&str> = items
+        .iter()
+        .map(|item| trim_white(item))
+        .filter(|item| !item.is_empty())
+        .collect();
+    if items.len() > STOP_ITEMS_MAX {
+        return Err(Rejection::invalid("stops", "每個停靠點最多 8 項。"));
+    }
+    for item in &items {
+        if !fits(item, STOP_ITEM_CHARS) {
+            return Err(Rejection::invalid("stops", "每一項最多 100 個字。"));
+        }
+        storable("stops", item)?;
+    }
+    Ok(items.into_iter().map(str::to_owned).collect())
+}
+
+/// `SaveRoute`：依需求 22.4–22.7 的順序檢查，最後是停靠點的清單；整條取代並保留路線與既有停靠點的 id；路線不存在
+/// 時新增；不改變採買品項。
 pub(super) fn save_route(d: &mut TripState, draft: &RouteDraft) -> Result<Vec<Slot>, Rejection> {
     if !in_trip(d, draft.day) {
         return Err(Rejection::invalid("day", RELOAD_AND_RETRY));
@@ -98,6 +122,12 @@ pub(super) fn save_route(d: &mut TripState, draft: &RouteDraft) -> Result<Vec<Sl
         .map(|stop| optional_time(stop.time.as_ref()))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| Rejection::invalid("stops", TIME_OR_BLANK))?;
+    let items = draft
+        .stops
+        .iter()
+        .zip(&kinds)
+        .map(|(stop, (kind, _))| stop_items(*kind, &stop.items))
+        .collect::<Result<Vec<_>, _>>()?;
     let taken = d
         .routes
         .values()
@@ -113,15 +143,18 @@ pub(super) fn save_route(d: &mut TripState, draft: &RouteDraft) -> Result<Vec<Sl
         .iter()
         .zip(places)
         .zip(kinds)
-        .zip(notes.into_iter().zip(times))
-        .map(|(((stop, place), (kind, task)), (note, time))| Stop {
-            id: stop.id,
-            place,
-            kind,
-            task,
-            note,
-            time,
-        })
+        .zip(notes.into_iter().zip(times).zip(items))
+        .map(
+            |(((stop, place), (kind, task)), ((note, time), items))| Stop {
+                id: stop.id,
+                place,
+                kind,
+                task,
+                note,
+                time,
+                items,
+            },
+        )
         .collect();
     let existing = d.routes.get(&draft.id);
     let created = existing.is_none();
@@ -151,8 +184,8 @@ pub(super) fn remove_route(d: &mut TripState, id: RouteId) {
 
 // ── 每日設定 ──
 
-/// `SaveDaySetting`：只合併帶有的欄位，依需求 22.10 的順序檢查；合併後標題、地點與預計抵達時間都未設定時刪除這一天
-/// 的設定，路線位置因此回到 before（需求 22.11、22.15）。
+/// `SaveDaySetting`：只合併帶有的欄位，依需求 22.10 的順序檢查，最後是抵達說明；合併後標題、地點、預計抵達時間與
+/// 抵達說明都未設定時刪除這一天的設定，路線位置因此回到 before（需求 22.11、22.15）。
 pub(super) fn save_day_setting(
     d: &mut TripState,
     day: Date,
@@ -166,6 +199,7 @@ pub(super) fn save_day_setting(
         title: None,
         place: None,
         arrival: None,
+        arrival_label: None,
         route_position: RoutePosition::Before,
         version: 0,
     });
@@ -195,7 +229,24 @@ pub(super) fn save_day_setting(
             .copied()
             .ok_or_else(|| Rejection::invalid("route_position", "請選擇路線在活動之前或之後。"))?;
     }
-    if setting.title.is_none() && setting.place.is_none() && setting.arrival.is_none() {
+    if let Some(label) = &patch.arrival_label {
+        let label = label.as_deref().map(trim_white).filter(|l| !l.is_empty());
+        if let Some(label) = label {
+            if !fits(label, ARRIVAL_LABEL_CHARS) {
+                return Err(Rejection::invalid(
+                    "arrival_label",
+                    "抵達說明最多 120 個字。",
+                ));
+            }
+            storable("arrival_label", label)?;
+        }
+        setting.arrival_label = label.map(str::to_owned);
+    }
+    if setting.title.is_none()
+        && setting.place.is_none()
+        && setting.arrival.is_none()
+        && setting.arrival_label.is_none()
+    {
         d.day_settings.remove(&day);
     } else {
         d.day_settings.insert(day, setting);

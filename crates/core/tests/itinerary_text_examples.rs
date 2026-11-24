@@ -107,6 +107,8 @@ fn trip(
         cover: CoverKind::Camp,
         status: TripStatus::Planning,
         version: 0,
+        caption: String::new(),
+        headline: String::new(),
     });
     for row in rows {
         s.put(row);
@@ -151,6 +153,7 @@ fn place(n: u64, name: &str) -> Row {
         name: name.to_owned(),
         ordinal: n,
         version: 1,
+        template: None,
     })
 }
 
@@ -178,6 +181,7 @@ fn stop(
         task,
         note: note.to_owned(),
         time,
+        items: Vec::new(),
     }
 }
 
@@ -219,6 +223,7 @@ fn setting(
         arrival,
         route_position,
         version: 1,
+        arrival_label: None,
     })
 }
 

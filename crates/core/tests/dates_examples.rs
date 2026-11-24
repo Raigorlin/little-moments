@@ -354,6 +354,7 @@ fn set_day(state: &mut TripState, n: u64, change: impl FnOnce(&mut DaySetting)) 
         title: None,
         place: None,
         arrival: None,
+        arrival_label: None,
         route_position: RoutePosition::Before,
         version: 1,
     });

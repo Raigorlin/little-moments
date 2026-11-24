@@ -23,7 +23,8 @@ use lm_core::ids::{IdSource, PersonId, ShoppingId, UserId, VehicleId};
 use lm_core::ingredients::sync_meal_ingredients;
 use lm_core::model::{
     ActivityKind, Category, Color, CoverKind, Date, DishKind, ExpenseCategory, GearScope, MealSlot,
-    Participation, PlaceRef, Role, RoutePosition, StopKind, StopTask, TripState, TripStatus,
+    Participation, PlaceRef, PlaceTemplate, Role, RoutePosition, StopKind, StopTask, TripState,
+    TripStatus,
 };
 use lm_core::rules::{capabilities, Capabilities};
 use lm_core::time::Hm;
@@ -39,9 +40,10 @@ use super::ids::{id, SeqIds, Tag};
 use super::state::{arb_amount_cents, arb_hm, arb_state};
 use super::vocab::{
     arb_ingredients, arb_item_name, ACTIVITY_LOCATIONS, ACTIVITY_NOTES, ACTIVITY_TITLES,
-    DAY_TITLES, DESTINATIONS, EXPENSE_TITLES, GEAR_NAMES, GEAR_QUANTITIES, LEDGER_NOTES,
-    MEAL_NOTES, MEAL_TITLES, PERSON_NAMES, PERSON_ROLES, PLACE_NAMES, SHOPPING_QUANTITIES,
-    STOP_NOTES, TRIP_DESCRIPTIONS, TRIP_NOTES, TRIP_TITLES, VEHICLE_COLORS, VEHICLE_NAMES,
+    ARRIVAL_LABELS, DAY_TITLES, DESTINATIONS, EXPENSE_TITLES, GEAR_NAMES, GEAR_QUANTITIES,
+    LEDGER_NOTES, MEAL_NOTES, MEAL_TITLES, PERSON_NAMES, PERSON_ROLES, PLACE_NAMES,
+    SHOPPING_QUANTITIES, STOP_ITEMS, STOP_NOTES, STORYBOOK_CAPTIONS, STORYBOOK_HEADLINES,
+    TRIP_DESCRIPTIONS, TRIP_NOTES, TRIP_TITLES, VEHICLE_COLORS, VEHICLE_NAMES,
 };
 
 // ── 狀態 ──
@@ -452,16 +454,22 @@ fn trip_commands(state: &TripState, p: &Pools, arms: &mut Vec<BoxedStrategy<Comm
         maybe(text(TRIP_NOTES, 1000)),
         maybe(choice(CoverKind::ALL)),
         maybe(choice(TripStatus::ALL)),
+        maybe(text(STORYBOOK_HEADLINES, 80)),
+        maybe(text(STORYBOOK_CAPTIONS, 150)),
     )
         .prop_map(
-            |(title, destination, dates, description, note, cover, status)| TripPatch {
-                title,
-                destination,
-                dates,
-                description,
-                note,
-                cover,
-                status,
+            |(title, destination, dates, description, note, cover, status, headline, caption)| {
+                TripPatch {
+                    title,
+                    destination,
+                    dates,
+                    description,
+                    note,
+                    headline,
+                    caption,
+                    cover,
+                    status,
+                }
             },
         );
     arms.push(
@@ -565,8 +573,12 @@ fn vehicle_and_place_commands(p: &Pools, arms: &mut Vec<BoxedStrategy<Command>>)
             .boxed()
     };
     arms.push(
-        (new_id(p.places.clone(), Tag::Place), place_name())
-            .prop_map(|(id, name)| Command::AddPlace { id, name })
+        (
+            new_id(p.places.clone(), Tag::Place),
+            place_name(),
+            option::of(choice(PlaceTemplate::ALL)),
+        )
+            .prop_map(|(id, name, template)| Command::AddPlace { id, name, template })
             .boxed(),
     );
     arms.push(
@@ -600,14 +612,20 @@ fn schedule_commands(state: &TripState, p: &Pools, arms: &mut Vec<BoxedStrategy<
         ],
         text(STOP_NOTES, 100),
         time_input(),
+        // 待辦清單：多數 0–3 項，也有只有空白的項目與超過 8 項
+        prop_oneof![
+            6 => vec(text(STOP_ITEMS, 100), 0..=3),
+            1 => Just(vec!["冰塊".to_owned(); 9]),
+        ],
     )
-        .prop_map(|(id, place, kind, task, note, time)| StopDraft {
+        .prop_map(|(id, place, kind, task, note, time, items)| StopDraft {
             id,
             place,
             kind,
             task,
             note,
             time,
+            items,
         });
     // 既有的路線多半沿用它的日子與車輛，使整條取代通常成功
     let existing: Vec<(lm_core::ids::RouteId, Date, VehicleId)> = state
@@ -662,13 +680,17 @@ fn schedule_commands(state: &TripState, p: &Pools, arms: &mut Vec<BoxedStrategy<
                 .boxed(),
         ),
         maybe(choice(RoutePosition::ALL)),
+        patch_of(text(ARRIVAL_LABELS, 120)),
     )
-        .prop_map(|(title, place, arrival, route_position)| DaySettingPatch {
-            title,
-            place,
-            arrival,
-            route_position,
-        });
+        .prop_map(
+            |(title, place, arrival, route_position, arrival_label)| DaySettingPatch {
+                title,
+                place,
+                arrival,
+                arrival_label,
+                route_position,
+            },
+        );
     arms.push(
         (p.day(), setting)
             .prop_map(|(day, patch)| Command::SaveDaySetting { day, patch })

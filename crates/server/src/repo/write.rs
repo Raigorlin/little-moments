@@ -28,7 +28,7 @@ use lm_core::model::{
 use lm_core::sync::Change;
 use lm_core::text::{participant_key, place_key};
 use lm_core::time::Hm;
-use sqlx::types::Uuid;
+use sqlx::types::{Json, Uuid};
 
 use super::{to_i64, PgTx};
 
@@ -425,6 +425,7 @@ async fn insert_stops(tx: &mut PgTx, trip: TripId, routes: &[&Route]) -> sqlx::R
     let mut tasks = Vec::new();
     let mut notes = Vec::new();
     let mut times = Vec::new();
+    let mut items = Vec::new();
     for route in routes {
         for (position, stop) in route.stops.iter().enumerate() {
             ids.push(stop.id.0);
@@ -438,17 +439,21 @@ async fn insert_stops(tx: &mut PgTx, trip: TripId, routes: &[&Route]) -> sqlx::R
             tasks.push(stop.task.map(|task| task.as_str()));
             notes.push(stop.note.as_str());
             times.push(hm_text(stop.time));
+            items.push(Json(&stop.items));
         }
     }
     if ids.is_empty() {
         return Ok(());
     }
+    // 每個停靠點的清單長度不同，不能以多維的 text[] 傳入；每個停靠點傳一個 jsonb 陣列，再轉成 text[]
     sqlx::query(
-        "insert into app.stops (trip_id, id, route_id, position, place_id, kind, task_kind, note, stop_time) \
-         select $1, u.id, u.route_id, u.position, u.place_id, u.kind, u.task_kind, u.note, u.stop_time \
+        "insert into app.stops (trip_id, id, route_id, position, place_id, kind, task_kind, note, stop_time, \
+                                items) \
+         select $1, u.id, u.route_id, u.position, u.place_id, u.kind, u.task_kind, u.note, u.stop_time, \
+                array(select jsonb_array_elements_text(u.items)) \
          from unnest($2::uuid[], $3::uuid[], $4::smallint[], $5::uuid[], $6::text[], $7::text[], $8::text[], \
-                     $9::text[]) \
-              as u(id, route_id, position, place_id, kind, task_kind, note, stop_time)",
+                     $9::text[], $10::jsonb[]) \
+              as u(id, route_id, position, place_id, kind, task_kind, note, stop_time, items)",
     )
     .bind(trip.0)
     .bind(ids)
@@ -459,6 +464,7 @@ async fn insert_stops(tx: &mut PgTx, trip: TripId, routes: &[&Route]) -> sqlx::R
     .bind(tasks)
     .bind(notes)
     .bind(times)
+    .bind(items)
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -473,7 +479,8 @@ async fn update_card(tx: &mut PgTx, trip: TripId, card: &TripCard) -> sqlx::Resu
     }
     let result = sqlx::query(
         "update app.trips set title = $2, destination = $3, start_date = $4, end_date = $5, \
-                description = $6, note = $7, cover_kind = $8, status = $9, version = $10 \
+                description = $6, note = $7, cover_kind = $8, status = $9, version = $10, \
+                headline = $11, caption = $12 \
          where id = $1",
     )
     .bind(trip.0)
@@ -486,6 +493,8 @@ async fn update_card(tx: &mut PgTx, trip: TripId, card: &TripCard) -> sqlx::Resu
     .bind(card.cover.as_str())
     .bind(card.status.as_str())
     .bind(to_i64(card.version, "version")?)
+    .bind(&card.headline)
+    .bind(&card.caption)
     .execute(&mut **tx)
     .await?;
     if result.rows_affected() != 1 {
@@ -563,13 +572,13 @@ async fn upsert_places(tx: &mut PgTx, trip: TripId, rows: &[&Place]) -> sqlx::Re
     }
     let (ordinals, versions) = ordinals_versions(rows, |row| row.ordinal, |row| row.version)?;
     sqlx::query(
-        "insert into app.places (trip_id, id, name, name_key, ordinal, version) \
-         select $1, u.id, u.name, u.name_key, u.ordinal, u.version \
-         from unnest($2::uuid[], $3::text[], $4::text[], $5::bigint[], $6::bigint[]) \
-              as u(id, name, name_key, ordinal, version) \
+        "insert into app.places (trip_id, id, name, name_key, template, ordinal, version) \
+         select $1, u.id, u.name, u.name_key, u.template, u.ordinal, u.version \
+         from unnest($2::uuid[], $3::text[], $4::text[], $5::text[], $6::bigint[], $7::bigint[]) \
+              as u(id, name, name_key, template, ordinal, version) \
          on conflict (trip_id, id) do update set \
-           name = excluded.name, name_key = excluded.name_key, ordinal = excluded.ordinal, \
-           version = excluded.version",
+           name = excluded.name, name_key = excluded.name_key, template = excluded.template, \
+           ordinal = excluded.ordinal, version = excluded.version",
     )
     .bind(trip.0)
     .bind(ids(rows, |row| row.id.0))
@@ -577,6 +586,11 @@ async fn upsert_places(tx: &mut PgTx, trip: TripId, rows: &[&Place]) -> sqlx::Re
     .bind(
         rows.iter()
             .map(|row| place_key(&row.name))
+            .collect::<Vec<_>>(),
+    )
+    .bind(
+        rows.iter()
+            .map(|row| row.template.map(|template| template.as_str()))
             .collect::<Vec<_>>(),
     )
     .bind(ordinals)
@@ -631,19 +645,22 @@ async fn upsert_day_settings(
         .map(|row| to_i64(row.version, "version"))
         .collect::<sqlx::Result<Vec<_>>>()?;
     sqlx::query(
-        "insert into app.day_settings (trip_id, day, title, place_id, arrival, route_position, version) \
-         select $1, u.day, u.title, u.place_id, u.arrival, u.route_position, u.version \
-         from unnest($2::date[], $3::text[], $4::uuid[], $5::text[], $6::text[], $7::bigint[]) \
-              as u(day, title, place_id, arrival, route_position, version) \
+        "insert into app.day_settings (trip_id, day, title, place_id, arrival, arrival_label, route_position, \
+                                       version) \
+         select $1, u.day, u.title, u.place_id, u.arrival, u.arrival_label, u.route_position, u.version \
+         from unnest($2::date[], $3::text[], $4::uuid[], $5::text[], $6::text[], $7::text[], $8::bigint[]) \
+              as u(day, title, place_id, arrival, arrival_label, route_position, version) \
          on conflict (trip_id, day) do update set \
            title = excluded.title, place_id = excluded.place_id, arrival = excluded.arrival, \
-           route_position = excluded.route_position, version = excluded.version",
+           arrival_label = excluded.arrival_label, route_position = excluded.route_position, \
+           version = excluded.version",
     )
     .bind(trip.0)
     .bind(rows.iter().map(|row| row.day).collect::<Vec<_>>())
     .bind(rows.iter().map(|row| row.title.as_deref()).collect::<Vec<_>>())
     .bind(rows.iter().map(|row| row.place.map(|id| id.0)).collect::<Vec<_>>())
     .bind(rows.iter().map(|row| hm_text(row.arrival)).collect::<Vec<_>>())
+    .bind(rows.iter().map(|row| row.arrival_label.as_deref()).collect::<Vec<_>>())
     .bind(rows.iter().map(|row| row.route_position.as_str()).collect::<Vec<_>>())
     .bind(versions)
     .execute(&mut **tx)

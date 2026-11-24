@@ -174,6 +174,50 @@ string_enum! {
 }
 
 string_enum! {
+    /// 地點的繪本插圖（旅行繪本工作室的 `TEMPLATES`），依工作室的順序；`label()` 是選單中的名稱。
+    pub enum PlaceTemplate {
+        Home => "home",
+        Market => "market",
+        SevenEleven => "seven-eleven",
+        FamilyMart => "familymart",
+        OkMart => "okmart",
+        PxmartMega => "pxmart-mega",
+        Costco => "costco",
+        Ikea => "ikea",
+        Carrefour => "carrefour",
+        Tent => "tent",
+        Bell => "bell",
+        Dome => "dome",
+        Tarp => "tarp",
+        Camper => "camper",
+        Cabin => "cabin",
+    }
+}
+
+impl PlaceTemplate {
+    /// 工作室選單中的名稱。
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Home => "家／出發地",
+            Self::Market => "超市／賣場",
+            Self::SevenEleven => "7-ELEVEN",
+            Self::FamilyMart => "全家 FamilyMart",
+            Self::OkMart => "OK mart",
+            Self::PxmartMega => "大全聯",
+            Self::Costco => "Costco 好市多",
+            Self::Ikea => "IKEA",
+            Self::Carrefour => "家樂福 Carrefour",
+            Self::Tent => "經典帳篷",
+            Self::Bell => "鐘型帳",
+            Self::Dome => "圓頂帳",
+            Self::Tarp => "天幕野餐",
+            Self::Camper => "露營車",
+            Self::Cabin => "小木屋",
+        }
+    }
+}
+
+string_enum! {
     /// 這一天的 Itinerary_Text 中，路線在活動之前或之後；沒有設定時是 before。
     #[derive(Default)]
     pub enum RoutePosition {
@@ -379,6 +423,12 @@ pub struct TripCard {
     pub description: String,
     /// 小叮嚀，0–1000 字。
     pub note: String,
+    /// 繪本的大標題，0–80 字；空字串是未設定。不輸出到 Itinerary_Text。
+    #[serde(default)]
+    pub headline: String,
+    /// 繪本的底部短語，0–150 字；空字串是未設定。不輸出到 Itinerary_Text。
+    #[serde(default)]
+    pub caption: String,
     pub cover: CoverKind,
     pub status: TripStatus,
     pub version: Seq,
@@ -423,6 +473,9 @@ pub struct Place {
     pub id: PlaceId,
     /// 1–50 字；Place_Key 在這趟旅行中不重複，也不等於非空白旅行目的地的 Place_Key。
     pub name: String,
+    /// 繪本插圖；只在新增地點時選擇，沒有選擇時是 `None`。
+    #[serde(default)]
+    pub template: Option<PlaceTemplate>,
     pub ordinal: u64,
     pub version: Seq,
 }
@@ -464,6 +517,9 @@ pub struct Stop {
     /// 0–100 字。
     pub note: String,
     pub time: Option<Hm>,
+    /// 待辦清單或旅伴名單：最多 8 項，每項 1–100 字。採買的停靠點一律是空的（品項由採買清單推得）。
+    #[serde(default)]
+    pub items: Vec<String>,
 }
 
 /// 一個 Trip_Day 的設定；以日期為鍵，每天最多一列。
@@ -476,6 +532,9 @@ pub struct DaySetting {
     pub place: Option<PlaceId>,
     /// 預計抵達時間：由規劃者填寫，App 不計算。
     pub arrival: Option<Hm>,
+    /// 繪本日卡的抵達說明（「抵達：…」），1–120 字；未設定時是 `None`。不輸出到 Itinerary_Text。
+    #[serde(default)]
+    pub arrival_label: Option<String>,
     pub route_position: RoutePosition,
     pub version: Seq,
 }
@@ -1085,6 +1144,8 @@ mod tests {
             cover: CoverKind::Mountain,
             status: TripStatus::Planning,
             version: 0,
+            caption: String::new(),
+            headline: String::new(),
         }
     }
 
@@ -1107,6 +1168,7 @@ mod tests {
             name: "山下超市".to_owned(),
             ordinal: 8,
             version: 5,
+            template: None,
         }
     }
 
@@ -1118,6 +1180,7 @@ mod tests {
             arrival: Some(hm(12, 0)),
             route_position: RoutePosition::After,
             version: 8,
+            arrival_label: None,
         }
     }
 
@@ -1139,6 +1202,7 @@ mod tests {
                         "id": TRIP, "title": "雲海裡，住一晚", "destination": "山間小日子營地",
                         "start": "2026-11-20", "end": "2026-11-22",
                         "description": "一起煮飯、一起看星星。", "note": "",
+                        "headline": "", "caption": "",
                         "cover": "mountain", "status": "planning", "version": 0
                     }
                 }),
@@ -1212,7 +1276,9 @@ mod tests {
                 Row::Place(place()),
                 json!({
                     "entity": "place",
-                    "row": { "id": PL1, "name": "山下超市", "ordinal": 8, "version": 5 }
+                    "row": {
+                        "id": PL1, "name": "山下超市", "template": null, "ordinal": 8, "version": 5
+                    }
                 }),
             ),
             (
@@ -1231,6 +1297,7 @@ mod tests {
                             task: None,
                             note: "記得買冰塊".to_owned(),
                             time: Some(hm(9, 15)),
+                            items: Vec::new(),
                         },
                         Stop {
                             id: StopId(uuid(S2)),
@@ -1239,6 +1306,7 @@ mod tests {
                             task: Some(StopTask::PassengerDropoff),
                             note: String::new(),
                             time: None,
+                            items: vec!["小安".to_owned(), "阿哲".to_owned()],
                         },
                     ],
                     ordinal: 9,
@@ -1253,11 +1321,12 @@ mod tests {
                         "stops": [
                             {
                                 "id": S1, "place": { "kind": "place", "id": PL1 }, "kind": "shop",
-                                "task": null, "note": "記得買冰塊", "time": "09:15"
+                                "task": null, "note": "記得買冰塊", "time": "09:15", "items": []
                             },
                             {
                                 "id": S2, "place": { "kind": "destination" }, "kind": "pickup",
-                                "task": "passenger-dropoff", "note": "", "time": null
+                                "task": "passenger-dropoff", "note": "", "time": null,
+                                "items": ["小安", "阿哲"]
                             }
                         ],
                         "ordinal": 9, "version": 7
@@ -1270,7 +1339,7 @@ mod tests {
                     "entity": "day_setting",
                     "row": {
                         "day": "2026-11-21", "title": "森林小徑", "place": PL1, "arrival": "12:00",
-                        "route_position": "after", "version": 8
+                        "arrival_label": null, "route_position": "after", "version": 8
                     }
                 }),
             ),
@@ -1280,6 +1349,7 @@ mod tests {
                     title: None,
                     place: None,
                     arrival: Some(hm(17, 30)),
+                    arrival_label: Some("營地 14:00 可進場".to_owned()),
                     route_position: RoutePosition::Before,
                     version: 9,
                 }),
@@ -1287,7 +1357,8 @@ mod tests {
                     "entity": "day_setting",
                     "row": {
                         "day": "2026-11-22", "title": null, "place": null, "arrival": "17:30",
-                        "route_position": "before", "version": 9
+                        "arrival_label": "營地 14:00 可進場", "route_position": "before",
+                        "version": 9
                     }
                 }),
             ),
@@ -1921,6 +1992,26 @@ mod tests {
             ]
         );
         assert_wire_strings!(StopKind, ["shop", "pickup", "gear", "other"]);
+        assert_wire_strings!(
+            PlaceTemplate,
+            [
+                "home",
+                "market",
+                "seven-eleven",
+                "familymart",
+                "okmart",
+                "pxmart-mega",
+                "costco",
+                "ikea",
+                "carrefour",
+                "tent",
+                "bell",
+                "dome",
+                "tarp",
+                "camper",
+                "cabin"
+            ]
+        );
         assert_wire_strings!(
             StopTask,
             [

@@ -19,6 +19,10 @@ pub const TRIP_DESTINATION_CHARS: RangeInclusive<usize> = 0..=100;
 pub const TRIP_DESCRIPTION_CHARS: RangeInclusive<usize> = 0..=1000;
 /// 小叮嚀 0–1000 字。
 pub const TRIP_NOTE_CHARS: RangeInclusive<usize> = 0..=1000;
+/// 繪本封面的大標題 0–80 字。
+pub const STORYBOOK_HEADLINE_CHARS: RangeInclusive<usize> = 0..=80;
+/// 繪本底部短語 0–150 字。
+pub const STORYBOOK_CAPTION_CHARS: RangeInclusive<usize> = 0..=150;
 
 // ── 旅伴 ──
 
@@ -51,8 +55,14 @@ pub const ROUTES_PER_VEHICLE_PER_DAY: usize = 1;
 pub const ROUTE_STOPS: RangeInclusive<usize> = 0..=6;
 /// 停靠點備註 0–100 字。
 pub const STOP_NOTE_CHARS: RangeInclusive<usize> = 0..=100;
+/// 採買以外的停靠點，待辦清單或旅伴名單最多 8 項。
+pub const STOP_ITEMS_MAX: usize = 8;
+/// 停靠點清單的每一項 1–100 字。
+pub const STOP_ITEM_CHARS: RangeInclusive<usize> = 1..=100;
 /// 每日設定的標題 0–20 字。
 pub const DAY_TITLE_CHARS: RangeInclusive<usize> = 0..=20;
+/// 每日設定的抵達說明 0–120 字。
+pub const ARRIVAL_LABEL_CHARS: RangeInclusive<usize> = 0..=120;
 
 // ── 活動 ──
 

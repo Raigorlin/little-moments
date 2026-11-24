@@ -450,7 +450,9 @@ fn check_fields(s: &TripState) -> Result<(), TestCaseError> {
         stored(&card.title, limits::TRIP_TITLE_CHARS)
             && stored(&card.destination, limits::TRIP_DESTINATION_CHARS)
             && stored(&card.description, limits::TRIP_DESCRIPTION_CHARS)
-            && stored(&card.note, limits::TRIP_NOTE_CHARS),
+            && stored(&card.note, limits::TRIP_NOTE_CHARS)
+            && stored(&card.headline, limits::STORYBOOK_HEADLINE_CHARS)
+            && stored(&card.caption, limits::STORYBOOK_CAPTION_CHARS),
         "旅行資料 {:?}",
         card
     );
@@ -484,7 +486,13 @@ fn check_fields(s: &TripState) -> Result<(), TestCaseError> {
     for stop in s.routes.values().flat_map(|route| &route.stops) {
         prop_assert!(
             stored(&stop.note, limits::STOP_NOTE_CHARS)
-                && stop.task.is_none_or(|task| kind_of(task) == stop.kind),
+                && stop.task.is_none_or(|task| kind_of(task) == stop.kind)
+                && stop.items.len() <= limits::STOP_ITEMS_MAX
+                && (stop.kind != StopKind::Shop || stop.items.is_empty())
+                && stop
+                    .items
+                    .iter()
+                    .all(|item| stored(item, limits::STOP_ITEM_CHARS)),
             "停靠點 {:?}",
             stop
         );
@@ -495,9 +503,13 @@ fn check_fields(s: &TripState) -> Result<(), TestCaseError> {
                 .title
                 .as_deref()
                 .is_none_or(|title| !title.is_empty() && stored(title, limits::DAY_TITLE_CHARS))
+                && setting.arrival_label.as_deref().is_none_or(|label| {
+                    !label.is_empty() && stored(label, limits::ARRIVAL_LABEL_CHARS)
+                })
                 && (setting.title.is_some()
                     || setting.place.is_some()
-                    || setting.arrival.is_some()),
+                    || setting.arrival.is_some()
+                    || setting.arrival_label.is_some()),
             "每日設定 {:?}",
             setting
         );

@@ -1,10 +1,10 @@
 //! 地點清單：`AddPlace`、`RenamePlace`、`RemovePlace`（需求 21）。
 
-use crate::command::{Rejection, DUPLICATE_NAME, IN_USE, LIMIT_REACHED};
+use crate::command::{Input, Rejection, DUPLICATE_NAME, IN_USE, LIMIT_REACHED};
 use crate::ids::PlaceId;
 use crate::itinerary::{place_in_use_message, place_name_error, place_usages, PlaceNameError};
 use crate::limits::PLACES_MAX;
-use crate::model::{Entity, Place, Slot, TripState};
+use crate::model::{Entity, Place, PlaceTemplate, Slot, TripState};
 use crate::text::trim_white;
 
 use super::common::{ensure_new, next_ordinal};
@@ -21,20 +21,34 @@ fn check_name(d: &TripState, name: &str, except: Option<PlaceId>) -> Result<Stri
     }
 }
 
-/// `AddPlace`：名稱依需求 21.1 檢查；已有 100 個地點時 409（需求 21.2）。
+/// 繪本插圖不是工作室的插圖之一（400）。
+const BAD_TEMPLATE: &str = "請選擇插圖。";
+
+/// `AddPlace`：名稱依需求 21.1 檢查，接著是繪本插圖；已有 100 個地點時 409（需求 21.2）。
 pub(super) fn add_place(
     d: &mut TripState,
     id: PlaceId,
     name: &str,
+    template: Option<&Input<PlaceTemplate>>,
 ) -> Result<Vec<Slot>, Rejection> {
     ensure_new(&d.places, &id)?;
     let name = check_name(d, name, None)?;
+    let template = match template {
+        None => None,
+        Some(input) => Some(
+            input
+                .ok()
+                .copied()
+                .ok_or_else(|| Rejection::invalid("template", BAD_TEMPLATE))?,
+        ),
+    };
     if d.places.len() >= PLACES_MAX {
         return Err(Rejection::conflict(LIMIT_REACHED, "地點最多 100 個"));
     }
     let place = Place {
         id,
         name,
+        template,
         ordinal: next_ordinal(d),
         version: 0,
     };

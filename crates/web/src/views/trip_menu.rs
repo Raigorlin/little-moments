@@ -257,6 +257,8 @@ fn card_patch(initial: &CardFields, current: &CardFields) -> (TripPatch, bool) {
         note: changed(&initial.note, &current.note),
         cover: changed(&initial.cover, &current.cover).map(Input::Ok),
         status: changed(&initial.status, &current.status).map(Input::Ok),
+        headline: None,
+        caption: None,
     };
     (patch, !dates_changed || dates.is_some())
 }

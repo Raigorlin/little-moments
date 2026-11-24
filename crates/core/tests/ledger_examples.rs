@@ -562,6 +562,8 @@ fn card() -> TripCard {
         cover: CoverKind::Lake,
         status: TripStatus::Planning,
         version: 0,
+        caption: String::new(),
+        headline: String::new(),
     }
 }
 

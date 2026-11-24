@@ -61,6 +61,17 @@ pub const PLACE_NAMES: &[&str] = &[
 pub const STOP_NOTES: &[&str] = &["", "買冰塊", "接小安", "還車前加油"];
 /// 每日設定的標題，1–20 字（只有空白的標題視為未設定，不會儲存）。
 pub const DAY_TITLES: &[&str] = &["森林小徑", "抵達營地", "返程日"];
+/// 停靠點的待辦清單或旅伴名單的一項，1–100 字。
+pub const STOP_ITEMS: &[&str] = &["冰塊", "小安", "借營燈", "Ken"];
+/// 每日設定的抵達說明，1–120 字。
+pub const ARRIVAL_LABELS: &[&str] = &["營地 14:00 可進場", "晚餐前抵達"];
+
+// ── 繪本 ──
+
+/// 繪本的大標題，0–80 字。
+pub const STORYBOOK_HEADLINES: &[&str] = &["", "露營小日記", "Camping Days"];
+/// 繪本的底部短語，0–150 字。
+pub const STORYBOOK_CAPTIONS: &[&str] = &["", "一起去山裡過週末。"];
 /// 活動標題，1–100 字。
 pub const ACTIVITY_TITLES: &[&str] = &[
     "起床",

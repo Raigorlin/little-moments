@@ -220,6 +220,8 @@ mod tests {
             cover: CoverKind::Camp,
             status: TripStatus::Planning,
             version: 1,
+            caption: String::new(),
+            headline: String::new(),
         })
     }
 
@@ -247,6 +249,7 @@ mod tests {
             arrival: None,
             route_position: RoutePosition::Before,
             version: 1,
+            arrival_label: None,
         }
     }
 

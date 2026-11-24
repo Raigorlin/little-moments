@@ -7,17 +7,37 @@ use crate::dates::{retime_by_day_index, shorten_blocked_message};
 use crate::ids::TripId;
 use crate::itinerary::{destination_conflict, DestinationConflict};
 use crate::limits::{
-    TRIP_DESCRIPTION_CHARS, TRIP_DESTINATION_CHARS, TRIP_NOTE_CHARS, TRIP_TITLE_CHARS,
+    STORYBOOK_CAPTION_CHARS, STORYBOOK_HEADLINE_CHARS, TRIP_DESCRIPTION_CHARS,
+    TRIP_DESTINATION_CHARS, TRIP_NOTE_CHARS, TRIP_TITLE_CHARS,
 };
 use crate::model::{CoverKind, TripCard, TripState, TripStatus};
 use crate::text::{char_count, trim_white};
 use crate::time::date_range;
 
-use super::common::fits;
+use super::common::{fits, storable};
 use super::people::checked_name;
 
 /// 旅行資料含有 U+0000（需求 8.12、17.5）。
 const UNSTORABLE_TRIP: &str = "旅行資料含有不允許的字元。";
+/// 繪本的大標題超過 80 字。
+const HEADLINE_TOO_LONG: &str = "大標題最多 80 個字。";
+/// 繪本的底部短語超過 150 字。
+const CAPTION_TOO_LONG: &str = "底部短語最多 150 個字。";
+
+/// 繪本的大標題或底部短語：經 Trim_White，超過上限或含有 U+0000 時 400。
+fn storybook_text(
+    text: &str,
+    field: &str,
+    range: std::ops::RangeInclusive<usize>,
+    too_long: &str,
+) -> Result<String, Rejection> {
+    let text = trim_white(text);
+    if !fits(text, range) {
+        return Err(Rejection::invalid(field, too_long));
+    }
+    storable(field, text)?;
+    Ok(text.to_owned())
+}
 
 /// 以現行 `validateTripCard()` 的順序檢查 Trip_Card 的文字與日期（需求 17.5）：名稱、目的地、起訖日期、介紹與
 /// 小叮嚀，再檢查四段文字不含 U+0000。文字已經過 Trim_White。
@@ -76,6 +96,8 @@ pub fn new_trip_card(id: TripId, draft: &TripDraft) -> Result<TripCard, Rejectio
         end: draft.end,
         description: trim_white(&draft.description).to_owned(),
         note: trim_white(&draft.note).to_owned(),
+        headline: String::new(),
+        caption: String::new(),
         cover: CoverKind::Camp,
         status: TripStatus::Planning,
         version: 0,
@@ -92,8 +114,8 @@ pub fn creator_name(display_name: &str) -> Result<String, Rejection> {
     checked_name(display_name)
 }
 
-/// `UpdateTrip`（需求 18）：只合併帶有的欄位，以合併後的旅行資料依名稱、目的地、起訖日期、介紹、小叮嚀、封面、
-/// 狀態的順序檢查（400）；接著是目的地的衝突（409，需求 18.3、18.4）與縮短天數（409，需求 18.7）；改日期時依
+/// `UpdateTrip`（需求 18）：只合併帶有的欄位，以合併後的旅行資料依名稱、目的地、起訖日期、介紹、小叮嚀、繪本的
+/// 大標題與底部短語、封面、狀態的順序檢查（400）；接著是目的地的衝突（409，需求 18.3、18.4）與縮短天數（409，需求 18.7）；改日期時依
 /// `retime_by_day_index()` 搬動（需求 18.5–18.9）。
 pub(super) fn update_trip(d: &mut TripState, patch: &TripPatch) -> Result<(), Rejection> {
     let mut card = d.card.clone();
@@ -115,6 +137,22 @@ pub(super) fn update_trip(d: &mut TripState, patch: &TripPatch) -> Result<(), Re
         card.note = trimmed(note);
     }
     check_card(&card)?;
+    if let Some(headline) = &patch.headline {
+        card.headline = storybook_text(
+            headline,
+            "headline",
+            STORYBOOK_HEADLINE_CHARS,
+            HEADLINE_TOO_LONG,
+        )?;
+    }
+    if let Some(caption) = &patch.caption {
+        card.caption = storybook_text(
+            caption,
+            "caption",
+            STORYBOOK_CAPTION_CHARS,
+            CAPTION_TOO_LONG,
+        )?;
+    }
     if let Some(input) = &patch.cover {
         card.cover = cover(input)?;
     }

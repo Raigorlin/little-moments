@@ -2,7 +2,7 @@
 //!
 //! 輸入是 `arb_valid_state()` 中既有的一列，以及兩個修改它的 patch p₁、p₂：車輛（名稱、駕駛、座位、顏色與乘客的加入、
 //! 移除）、活動（標題、時間、地點、備註與指定旅伴的加入、移除）、料理（名稱、份數、筆記與負責人）、每日設定（標題、
-//! 地點、預計抵達時間與路線位置）與支出（標題、金額、備註與分攤旅伴的加入、移除）。值多數是合法的；依 p₁p₂ 與 p₂p₁
+//! 地點、預計抵達時間、抵達說明與路線位置）與支出（標題、金額、備註與分攤旅伴的加入、移除）。值多數是合法的；依 p₁p₂ 與 p₂p₁
 //! 兩種順序（各自套用到前一次的結果）都成功時：
 //!
 //! - 兩者修改的欄位不相交：兩種順序得到相同的狀態；
@@ -36,8 +36,8 @@ use serde_json::Value;
 use support::commands::{arb_valid_state, caps_of, ctx_of, CommitIds, Identity};
 use support::state::{arb_amount_cents, arb_hm};
 use support::vocab::{
-    ACTIVITY_LOCATIONS, ACTIVITY_NOTES, ACTIVITY_TITLES, DAY_TITLES, EXPENSE_TITLES, LEDGER_NOTES,
-    MEAL_NOTES, MEAL_TITLES, VEHICLE_COLORS, VEHICLE_NAMES,
+    ACTIVITY_LOCATIONS, ACTIVITY_NOTES, ACTIVITY_TITLES, ARRIVAL_LABELS, DAY_TITLES,
+    EXPENSE_TITLES, LEDGER_NOTES, MEAL_NOTES, MEAL_TITLES, VEHICLE_COLORS, VEHICLE_NAMES,
 };
 
 /// patch 修改的欄位；集合欄位的元素寫成「欄位:元素」。
@@ -237,14 +237,16 @@ fn day_setting_patch(places: &[lm_core::ids::PlaceId]) -> BoxedStrategy<(Command
         place,
         option::of(arb_hm().prop_map(|hm| Some(Input::Ok(hm)))),
         option::of(select(RoutePosition::ALL).prop_map(Input::Ok)),
+        option::of(select(ARRIVAL_LABELS).prop_map(|t| Some(t.to_owned()))),
     )
-        .prop_map(|(title, place, arrival, route_position)| {
+        .prop_map(|(title, place, arrival, route_position, arrival_label)| {
             let f = fields(
                 &[
                     ("title", title.is_some()),
                     ("place", place.is_some()),
                     ("arrival", arrival.is_some()),
                     ("route_position", route_position.is_some()),
+                    ("arrival_label", arrival_label.is_some()),
                 ],
                 &[],
             );
@@ -252,6 +254,7 @@ fn day_setting_patch(places: &[lm_core::ids::PlaceId]) -> BoxedStrategy<(Command
                 title,
                 place,
                 arrival,
+                arrival_label,
                 route_position,
             };
             let day = lm_core::model::Date::MIN;

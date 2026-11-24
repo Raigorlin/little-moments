@@ -148,6 +148,7 @@ fn every_command() -> Vec<Command> {
         Command::AddPlace {
             id: id(Tag::Place, n),
             name: "山下超市".to_owned(),
+            template: None,
         },
         Command::RenamePlace {
             id: id::<PlaceId>(Tag::Place, n),

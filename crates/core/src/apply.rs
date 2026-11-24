@@ -184,7 +184,7 @@ fn run(d: &mut TripState, ctx: &Ctx, cmd: &Command) -> Result<Vec<Slot>, Rejecti
         AddVehicle { id, draft } => vehicles::add_vehicle(d, *id, draft),
         UpdateVehicle { id, patch } => none(vehicles::update_vehicle(d, *id, patch)),
         RemoveVehicle { id } => none(vehicles::remove_vehicle(d, *id)),
-        AddPlace { id, name } => places::add_place(d, *id, name),
+        AddPlace { id, name, template } => places::add_place(d, *id, name, template.as_ref()),
         RenamePlace { id, name } => none(places::rename_place(d, *id, name)),
         RemovePlace { id } => none(places::remove_place(d, *id)),
         SaveRoute { route } => schedule::save_route(d, route),

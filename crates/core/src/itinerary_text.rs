@@ -295,6 +295,8 @@ mod tests {
             cover: CoverKind::Camp,
             status: TripStatus::Planning,
             version: 0,
+            caption: String::new(),
+            headline: String::new(),
         })
     }
 
@@ -339,6 +341,7 @@ mod tests {
             name: name.to_owned(),
             ordinal: n,
             version: 1,
+            template: None,
         })
     }
 
@@ -351,6 +354,7 @@ mod tests {
             task: None,
             note: note.to_owned(),
             time,
+            items: Vec::new(),
         }
     }
 
@@ -391,6 +395,7 @@ mod tests {
             arrival,
             route_position,
             version: 1,
+            arrival_label: None,
         })
     }
 

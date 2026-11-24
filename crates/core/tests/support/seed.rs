@@ -107,6 +107,8 @@ pub fn seed() -> TripState {
         cover: CoverKind::Camp,
         status: TripStatus::Planning,
         version: 0,
+        caption: String::new(),
+        headline: String::new(),
     });
     let people = [
         ("小安", Color::Coral, "這趟的召集人"),

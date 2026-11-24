@@ -18,12 +18,12 @@ use lm_core::ids::{
 use lm_core::model::{
     Activity, ActivityKind, Category, Color, CoverKind, Date, DaySetting, Departure, DishKind,
     Expense, ExpenseCategory, GearItem, GearScope, ItemSource, Meal, MealSlot, Participation,
-    Person, Place, PlaceRef, Route, RoutePosition, Settlement, ShoppingItem, Stop, StopKind,
-    StopTask, TripCard, TripState, TripStatus, Vehicle,
+    Person, Place, PlaceRef, PlaceTemplate, Route, RoutePosition, Settlement, ShoppingItem, Stop,
+    StopKind, StopTask, TripCard, TripState, TripStatus, Vehicle,
 };
 use lm_core::time::Hm;
 use sqlx::postgres::PgRow;
-use sqlx::types::Uuid;
+use sqlx::types::{Json, Uuid};
 use sqlx::{Decode, Postgres, Row as _, Type};
 
 use super::{to_u64, PgTx};
@@ -32,7 +32,8 @@ use super::{to_u64, PgTx};
 /// 旅行不存在時是 `sqlx::Error::RowNotFound`。
 pub async fn load_trip(tx: &mut PgTx, trip: TripId) -> sqlx::Result<TripState> {
     let card = sqlx::query(
-        "select id, title, destination, start_date, end_date, description, note, cover_kind, status, version \
+        "select id, title, destination, start_date, end_date, description, note, headline, caption, \
+                cover_kind, status, version \
          from app.trips where id = $1",
     )
     .bind(trip.0)
@@ -61,7 +62,7 @@ pub async fn load_trip(tx: &mut PgTx, trip: TripId) -> sqlx::Result<TripState> {
     state.places = rows(
         tx,
         trip,
-        "select id, name, ordinal, version from app.places where trip_id = $1",
+        "select id, name, template, ordinal, version from app.places where trip_id = $1",
         place_row,
     )
     .await?;
@@ -71,7 +72,8 @@ pub async fn load_trip(tx: &mut PgTx, trip: TripId) -> sqlx::Result<TripState> {
         "select r.id, r.day, r.vehicle_id, r.from_place_id, r.to_place_id, r.depart_time, r.ordinal, r.version, \
                 coalesce(s.ids, '{}') as stop_ids, coalesce(s.places, '{}') as stop_places, \
                 coalesce(s.kinds, '{}') as stop_kinds, coalesce(s.tasks, '{}') as stop_tasks, \
-                coalesce(s.notes, '{}') as stop_notes, coalesce(s.times, '{}') as stop_times \
+                coalesce(s.notes, '{}') as stop_notes, coalesce(s.times, '{}') as stop_times, \
+                coalesce(s.items, '[]'::jsonb) as stop_items \
          from app.routes r \
          left join lateral ( \
            select array_agg(s.id order by s.position) as ids, \
@@ -79,7 +81,8 @@ pub async fn load_trip(tx: &mut PgTx, trip: TripId) -> sqlx::Result<TripState> {
                   array_agg(s.kind order by s.position) as kinds, \
                   array_agg(s.task_kind order by s.position) as tasks, \
                   array_agg(s.note order by s.position) as notes, \
-                  array_agg(s.stop_time order by s.position) as times \
+                  array_agg(s.stop_time order by s.position) as times, \
+                  jsonb_agg(to_jsonb(s.items) order by s.position) as items \
            from app.stops s where s.trip_id = r.trip_id and s.route_id = r.id \
          ) s on true \
          where r.trip_id = $1",
@@ -89,7 +92,7 @@ pub async fn load_trip(tx: &mut PgTx, trip: TripId) -> sqlx::Result<TripState> {
     state.day_settings = rows(
         tx,
         trip,
-        "select day, title, place_id, arrival, route_position, version \
+        "select day, title, place_id, arrival, arrival_label, route_position, version \
          from app.day_settings where trip_id = $1",
         day_setting_row,
     )
@@ -278,6 +281,8 @@ fn card_row(row: &PgRow) -> sqlx::Result<TripCard> {
         end: get(row, "end_date")?,
         description: get(row, "description")?,
         note: get(row, "note")?,
+        headline: get(row, "headline")?,
+        caption: get(row, "caption")?,
         cover: parsed(row, "cover_kind", CoverKind::parse)?,
         status: parsed(row, "status", TripStatus::parse)?,
         version: unsigned(row, "version")?,
@@ -315,6 +320,7 @@ fn place_row(row: &PgRow) -> sqlx::Result<(PlaceId, Place)> {
     let place = Place {
         id: id(row, "id")?,
         name: get(row, "name")?,
+        template: parsed_opt(row, "template", PlaceTemplate::parse)?,
         ordinal: unsigned(row, "ordinal")?,
         version: unsigned(row, "version")?,
     };
@@ -328,6 +334,8 @@ fn route_row(row: &PgRow) -> sqlx::Result<(RouteId, Route)> {
     let tasks: Vec<Option<String>> = get(row, "stop_tasks")?;
     let notes: Vec<String> = get(row, "stop_notes")?;
     let times: Vec<Option<String>> = get(row, "stop_times")?;
+    // 每個停靠點的清單長度不同，`array_agg` 不能併成多維陣列，所以以 jsonb 的陣列的陣列讀出
+    let Json(items): Json<Vec<Vec<String>>> = get(row, "stop_items")?;
     let count = ids.len();
     if [
         places.len(),
@@ -335,6 +343,7 @@ fn route_row(row: &PgRow) -> sqlx::Result<(RouteId, Route)> {
         tasks.len(),
         notes.len(),
         times.len(),
+        items.len(),
     ]
     .iter()
     .any(|&len| len != count)
@@ -351,7 +360,8 @@ fn route_row(row: &PgRow) -> sqlx::Result<(RouteId, Route)> {
         .zip(tasks)
         .zip(notes)
         .zip(times)
-        .map(|(((((id, place), kind), task), note), time)| {
+        .zip(items)
+        .map(|((((((id, place), kind), task), note), time), items)| {
             Ok(Stop {
                 id: StopId(id),
                 place: place_ref(place),
@@ -361,6 +371,7 @@ fn route_row(row: &PgRow) -> sqlx::Result<(RouteId, Route)> {
                     .transpose()?,
                 note,
                 time: time.map(|time| hm_text("stop_times", &time)).transpose()?,
+                items,
             })
         })
         .collect::<sqlx::Result<Vec<Stop>>>()?;
@@ -384,6 +395,7 @@ fn day_setting_row(row: &PgRow) -> sqlx::Result<(Date, DaySetting)> {
         title: get(row, "title")?,
         place: id_opt(row, "place_id")?,
         arrival: hm_opt(row, "arrival")?,
+        arrival_label: get(row, "arrival_label")?,
         route_position: parsed(row, "route_position", RoutePosition::parse)?,
         version: unsigned(row, "version")?,
     };

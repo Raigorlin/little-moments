@@ -124,6 +124,7 @@ impl RouteFields {
                         task: stop.task.map(Input::Ok),
                         note: stop.note.clone(),
                         time: time_input(&stop.time),
+                        items: Vec::new(),
                     })
                     .collect(),
             },

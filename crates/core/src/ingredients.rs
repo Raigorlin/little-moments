@@ -1105,6 +1105,8 @@ mod tests {
             cover: CoverKind::Camp,
             status: TripStatus::Planning,
             version: 0,
+            caption: String::new(),
+            headline: String::new(),
         }
     }
 }

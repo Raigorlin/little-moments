@@ -51,6 +51,8 @@ pub fn example_trip() -> TripState {
         cover: CoverKind::Camp,
         status: TripStatus::Planning,
         version: 0,
+        caption: String::new(),
+        headline: String::new(),
     });
     for row in rows() {
         state.put(row);
@@ -67,6 +69,7 @@ fn rows() -> Vec<Row> {
         task: None,
         note: String::new(),
         time: None,
+        items: Vec::new(),
     };
     vec![
         person(1, "小安", Color::Coral, "這趟的召集人"),
@@ -265,6 +268,7 @@ fn place(n: u64, name: &str) -> Row {
         name: name.to_owned(),
         ordinal: n,
         version: 1,
+        template: None,
     })
 }
 
@@ -300,5 +304,6 @@ fn day_setting(on: u32, title: &str, arrival: Option<Hm>) -> Row {
         arrival,
         route_position: RoutePosition::Before,
         version: 1,
+        arrival_label: None,
     })
 }

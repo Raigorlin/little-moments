@@ -12,8 +12,8 @@ use lm_core::limits::{ROUTE_STOPS, VEHICLE_SEATS};
 use lm_core::model::{
     Activity, ActivityKind, Category, Color, CoverKind, Date, DaySetting, Departure, DishKind,
     Expense, ExpenseCategory, GearItem, GearScope, ItemSource, Meal, MealSlot, Participation,
-    Person, Place, PlaceRef, Route, RoutePosition, Row, Settlement, ShoppingItem, Stop, StopKind,
-    StopTask, TripCard, TripState, TripStatus, Vehicle,
+    Person, Place, PlaceRef, PlaceTemplate, Route, RoutePosition, Row, Settlement, ShoppingItem,
+    Stop, StopKind, StopTask, TripCard, TripState, TripStatus, Vehicle,
 };
 use lm_core::text::{place_key, trim_white};
 use lm_core::time::{date_range, Hm};
@@ -25,10 +25,10 @@ use proptest::sample::{select, subsequence, Index};
 use super::ids::{id, Tag};
 use super::vocab::{
     arb_ingredients, arb_item_name, ACTIVITY_LOCATIONS, ACTIVITY_NOTES, ACTIVITY_TITLES,
-    CLOCK_MINUTES, DAY_TITLES, DESTINATIONS, EXPENSE_TITLES, GEAR_NAMES, GEAR_QUANTITIES,
-    LEDGER_NOTES, MEAL_NOTES, MEAL_TITLES, PERSON_NAMES, PERSON_ROLES, PLACE_NAMES,
-    SHOPPING_QUANTITIES, STOP_NOTES, TRIP_DESCRIPTIONS, TRIP_NOTES, TRIP_TITLES, VEHICLE_COLORS,
-    VEHICLE_NAMES,
+    ARRIVAL_LABELS, CLOCK_MINUTES, DAY_TITLES, DESTINATIONS, EXPENSE_TITLES, GEAR_NAMES,
+    GEAR_QUANTITIES, LEDGER_NOTES, MEAL_NOTES, MEAL_TITLES, PERSON_NAMES, PERSON_ROLES,
+    PLACE_NAMES, SHOPPING_QUANTITIES, STOP_ITEMS, STOP_NOTES, STORYBOOK_CAPTIONS,
+    STORYBOOK_HEADLINES, TRIP_DESCRIPTIONS, TRIP_NOTES, TRIP_TITLES, VEHICLE_COLORS, VEHICLE_NAMES,
 };
 
 /// 旅行最多 5 天（每一趟 1–5 天）。
@@ -67,7 +67,7 @@ const _: () = assert!(MAX_PEOPLE <= 8 && MAX_VEHICLES <= 8 && MAX_MEALS <= 8);
 ///   使用 Destination_Place；活動、料理、路線與每日設定的日期都在旅行範圍內（支出與還款的日期可能在範圍外）；駕駛不在
 ///   乘客中、乘客加 1 不超過座位數；個人裝備沒有負責人、共用裝備只有負責人能打包；有出發確認的旅伴都滿足 Can_Depart；
 ///   支出的分攤旅伴有 1 位以上、還款的付款人與收款人不同；指定旅伴與指定車輛的活動不是空集合；數量都遠低於上限。
-/// - 每個欄位都是命令處理函式會儲存的值（見 `vocab`）；每日設定至少設定了標題、地點與預計抵達時間其中一項
+/// - 每個欄位都是命令處理函式會儲存的值（見 `vocab`）；每日設定至少設定了標題、地點、預計抵達時間與抵達說明其中一項
 ///   （需求 22.11）。
 /// - 每一列的 id 是 `support::ids` 的 `id(Tag::…, k)`，k 依建立的順序從 1 起；旅行 id 一律是 `id(Tag::Trip, 1)`。
 ///   不使用 `Tag::NewShopping`，所以 `SeqIds` 回傳的 id 都是新的。
@@ -84,6 +84,7 @@ pub fn arb_state() -> impl Strategy<Value = TripState> {
         vec(arb_person_seed(), MAX_PEOPLE),
         vec(arb_vehicle_seed(), 0..=MAX_VEHICLES),
         subsequence(PLACE_NAMES, 0..=MAX_PLACES),
+        vec(option::of(select(PlaceTemplate::ALL)), MAX_PLACES),
         vec(
             option::weighted(0.35, arb_route_seed()),
             MAX_VEHICLES * MAX_DAYS,
@@ -101,7 +102,7 @@ pub fn arb_state() -> impl Strategy<Value = TripState> {
     );
     (plan, contents).prop_map(
         |(
-            (card, names, people, vehicles, places, routes, day_settings),
+            (card, names, people, vehicles, places, place_templates, routes, day_settings),
             (activities, meals, shopping, gear, expenses, settlements, shuffle),
         )| {
             StateSeed {
@@ -110,6 +111,7 @@ pub fn arb_state() -> impl Strategy<Value = TripState> {
                 people,
                 vehicles,
                 places,
+                place_templates,
                 routes,
                 day_settings,
                 activities,
@@ -138,6 +140,8 @@ struct StateSeed {
     vehicles: Vec<VehicleSeed>,
     /// 地點的名稱；與非空白旅行目的地同名的不放進地點清單。
     places: Vec<&'static str>,
+    /// 固定 `MAX_PLACES` 份：第 k 個地點的繪本插圖。
+    place_templates: Vec<Option<PlaceTemplate>>,
     /// 固定 `MAX_VEHICLES * MAX_DAYS` 份：第 v 台車在第 d 天（從 0 起）的路線是 `routes[v * MAX_DAYS + d]`。
     routes: Vec<Option<RouteSeed>>,
     /// 固定 `MAX_DAYS` 份：第 d 天的每日設定。
@@ -161,6 +165,8 @@ struct CardSeed {
     days: usize,
     description: &'static str,
     note: &'static str,
+    headline: &'static str,
+    caption: &'static str,
     cover: CoverKind,
     status: TripStatus,
 }
@@ -202,6 +208,8 @@ struct StopSeed {
     task: Option<Index>,
     note: &'static str,
     time: Option<Hm>,
+    /// 待辦清單；採買的停靠點不使用。
+    items: Vec<&'static str>,
 }
 
 #[derive(Clone, Debug)]
@@ -209,6 +217,7 @@ struct DaySettingSeed {
     title: Option<&'static str>,
     place: Option<Index>,
     arrival: Option<Hm>,
+    arrival_label: Option<&'static str>,
     route_position: RoutePosition,
 }
 
@@ -314,10 +323,15 @@ prop_compose! {
         days in 1..=MAX_DAYS,
         description in select(TRIP_DESCRIPTIONS),
         note in select(TRIP_NOTES),
+        headline in select(STORYBOOK_HEADLINES),
+        caption in select(STORYBOOK_CAPTIONS),
         cover in select(CoverKind::ALL),
         status in select(TripStatus::ALL),
     ) -> CardSeed {
-        CardSeed { title, destination, start_offset, days, description, note, cover, status }
+        CardSeed {
+            title, destination, start_offset, days, description, note, headline, caption, cover,
+            status,
+        }
     }
 }
 
@@ -363,8 +377,9 @@ prop_compose! {
         task in option::of(any::<Index>()),
         note in select(STOP_NOTES),
         time in option::of(arb_hm()),
+        items in vec(select(STOP_ITEMS), 0..=3),
     ) -> StopSeed {
-        StopSeed { place, kind, task, note, time }
+        StopSeed { place, kind, task, note, time, items }
     }
 }
 
@@ -373,9 +388,10 @@ prop_compose! {
         title in option::of(select(DAY_TITLES)),
         place in option::of(any::<Index>()),
         arrival in option::of(arb_hm()),
+        arrival_label in option::weighted(0.3, select(ARRIVAL_LABELS)),
         route_position in select(RoutePosition::ALL),
     ) -> DaySettingSeed {
-        DaySettingSeed { title, place, arrival, route_position }
+        DaySettingSeed { title, place, arrival, arrival_label, route_position }
     }
 }
 
@@ -564,6 +580,7 @@ impl StateSeed {
             .map(|(k, name)| Place {
                 id: id(Tag::Place, number(k)),
                 name: (*name).to_owned(),
+                template: self.place_templates[k],
                 ordinal: 0,
                 version: 0,
             })
@@ -596,6 +613,11 @@ impl StateSeed {
                         task: stop.task.map(|task| *task.get(tasks_of(stop.kind))),
                         note: stop.note.to_owned(),
                         time: stop.time,
+                        items: if stop.kind == StopKind::Shop {
+                            Vec::new()
+                        } else {
+                            stop.items.iter().map(|item| (*item).to_owned()).collect()
+                        },
                     });
                     stop_count += 1;
                 }
@@ -621,7 +643,11 @@ impl StateSeed {
             .filter_map(|(&day, seed)| {
                 let seed = seed.as_ref()?;
                 let place = pick(&place_ids, seed.place);
-                if seed.title.is_none() && place.is_none() && seed.arrival.is_none() {
+                if seed.title.is_none()
+                    && place.is_none()
+                    && seed.arrival.is_none()
+                    && seed.arrival_label.is_none()
+                {
                     return None;
                 }
                 Some(DaySetting {
@@ -629,6 +655,7 @@ impl StateSeed {
                     title: seed.title.map(str::to_owned),
                     place,
                     arrival: seed.arrival,
+                    arrival_label: seed.arrival_label.map(str::to_owned),
                     route_position: seed.route_position,
                     version: 0,
                 })
@@ -869,6 +896,8 @@ impl CardSeed {
             end,
             description: self.description.to_owned(),
             note: self.note.to_owned(),
+            headline: self.headline.to_owned(),
+            caption: self.caption.to_owned(),
             cover: self.cover,
             status: self.status,
             version: 0,
