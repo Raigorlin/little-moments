@@ -1,10 +1,11 @@
-//! 帳號欄位的規則（需求 3.2 至 3.5）：註冊時依序檢查帳號名稱的格式、保留字、顯示名稱與密碼。
+//! 帳號欄位的規則：註冊時的帳號名稱、顯示名稱與密碼（需求 3.2 至 3.5），以及登入時的帳號名稱與密碼（需求 4.1、
+//! 4.2）。LM_Server 的註冊與登入，和 LM_Web 的註冊表單（需求 3.14），都以這裡的規則檢查（需求 1.3、1.5）。
 //!
-//! 只依賴 lm-core 的 `text` 與 `limits`，不讀取 Database 或 Auth_Service，而且每個規則都有固定的 `code`、`field` 與
-//! 訊息。需求 3.14 要求 LM_Web 的註冊表單以「與 LM_Server 相同的 LM_Core 規則」檢查，但 lm-core 目前只有長度上限
-//! （`USERNAME_CHARS`、`DISPLAY_NAME_CHARS`、`PASSWORD_CHARS`、`PASSWORD_MAX_BYTES`）與文字規則，沒有這幾個檢查，所以
-//! 先放在 lm-server。這個模組可以原樣移到 lm-core（例如 `lm_core::account`），再由 LM_Server 與 LM_Web（任務 18.5）
-//! 一起使用。
+//! 只依賴 `text` 與 `limits`，不讀取 Database 或 Auth_Service；每個規則都有固定的 `code`、`field` 與訊息。
+//!
+//! # 註冊（需求 3.1 至 3.5、3.14）
+//!
+//! `check_signup()` 依下表的順序檢查，回傳第一個不通過的規則（`Violation`）：
 //!
 //! | 依序檢查 | 不通過時的 `code` | `field` | 訊息 |
 //! | --- | --- | --- | --- |
@@ -12,15 +13,29 @@
 //! | 帳號名稱不是保留字（需求 3.3） | `reserved_username` | `username` | 這個帳號名稱是系統保留字，請換一個。 |
 //! | 顯示名稱經 Participant_Name 後是 1–30 個字、沒有 Hidden_Control_Char，而且 Participant_Key 經 Trim_White 後不是空的（需求 3.4） | `invalid_display_name` | `display_name` | 請填寫 1–30 個字的顯示名稱，不能只有空白或包含隱藏控制字元。 |
 //! | 原樣的密碼（不去除空白、不做 Unicode 正規化）是 12–72 個字元，而且 UTF-8 不超過 72 位元組（需求 3.5） | `invalid_password` | `password` | 密碼需為 12–72 個字元，而且不超過 72 個位元組（一個中文字占 3 個位元組）。 |
+//!
+//! - LM_Server 原樣檢查請求中的帳號名稱與密碼，所以 `Alice` 與 ` alice` 都不符合格式（需求 3.2）。
+//! - LM_Web 的註冊表單先以 `normalize_username()` 處理帳號名稱（密碼不做任何修改），再以 `check_signup()` 檢查，最後
+//!   確認兩次輸入的密碼完全相同，不同時顯示 `PASSWORD_MISMATCH`（需求 3.14）。
+//!
+//! # 登入（需求 4.1、4.2）
+//!
+//! `login_username()` 以 `normalize_username()`（Trim_White，再把 A–Z 轉成小寫）處理帳號名稱，密碼原樣。正規化後的
+//! 帳號名稱不通過 `check_username()`（空字串、格式不符或是保留字），或密碼是空的、UTF-8 超過 72 位元組時，沒有任何
+//! 帳號能以這組帳號名稱與密碼登入，結果是 `None`：LM_Server 不詢問 Auth_Service，回應與密碼不正確相同的 401。密碼的
+//! 字數不在這裡檢查，例如少於 12 個字元的密碼由 Auth_Service 判斷是否正確。
 
-use lm_core::limits::{DISPLAY_NAME_CHARS, PASSWORD_CHARS, PASSWORD_MAX_BYTES, USERNAME_CHARS};
-use lm_core::text::{char_count, has_control_chars, participant_key, participant_name, trim_white};
+use crate::limits::{DISPLAY_NAME_CHARS, PASSWORD_CHARS, PASSWORD_MAX_BYTES, USERNAME_CHARS};
+use crate::text::{char_count, has_control_chars, participant_key, participant_name, trim_white};
 
 /// 保留的帳號名稱（需求 3.3）：現行的 8 個，加上 `invite`，因為 `/invite/<token>` 與 `/<帳號名稱>/home` 共用第一段
 /// 路徑。每一個都符合帳號名稱的格式，所以格式之後才檢查。
 pub const RESERVED_USERNAMES: [&str; 9] = [
     "api", "admin", "setup", "login", "register", "logout", "demo", "assets", "invite",
 ];
+
+/// 兩次輸入的密碼不同時，LM_Web 的註冊表單顯示的訊息（需求 3.14）。註冊的請求只有一個密碼，所以 LM_Server 不使用。
+pub const PASSWORD_MISMATCH: &str = "兩次輸入的密碼不一致。";
 
 /// 不通過的規則（見模組說明的表）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,4 +136,18 @@ pub fn check_password(password: &str) -> Result<(), Violation> {
     } else {
         Err(Violation::Password)
     }
+}
+
+/// 登入與 LM_Web 註冊表單的帳號名稱（需求 3.14、4.1）：Trim_White，再把 A–Z 轉成小寫；其他字元不變，包括全形的
+/// 英文字母。例如 `"  Alice "` 與 `"\u{3000}ALICE\u{3000}"` 都成為 `"alice"`。
+pub fn normalize_username(username: &str) -> String {
+    trim_white(username).to_ascii_lowercase()
+}
+
+/// 登入時以 Synthetic_Email 送給 Auth_Service 的帳號名稱（需求 4.1、4.2）：`normalize_username()` 的結果。正規化後
+/// 的帳號名稱不通過 `check_username()`，或密碼是空的、UTF-8 超過 72 位元組時是 `None`（見模組說明的「登入」）。
+pub fn login_username(username: &str, password: &str) -> Option<String> {
+    let username = normalize_username(username);
+    let password_possible = !password.is_empty() && password.len() <= PASSWORD_MAX_BYTES;
+    (password_possible && check_username(&username).is_ok()).then_some(username)
 }

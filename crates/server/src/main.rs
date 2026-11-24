@@ -32,7 +32,6 @@
 //! 路由器的狀態是 `AppState`（`state`）：連線池、Auth_Service 的用戶端、access token 的驗證器、設定與時鐘；登入狀態與
 //! 旅行資料都不保存在記憶體中（需求 1.11）。
 
-mod account_rules;
 mod auth;
 mod config;
 mod db;

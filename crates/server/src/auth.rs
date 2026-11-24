@@ -6,7 +6,8 @@
 //! Public_Endpoint：不使用 `AuthUser`，所以不看 `Authorization` 標頭（需求 5.8）。請求內容是 `SignupRequest`，不是
 //! JSON、缺少欄位或型別不符時 `ApiJson` 回應 400 `invalid_request`。之後依序處理，只回應第一個不通過的（需求 3.1）：
 //!
-//! 1. `account_rules::check_signup()`：帳號名稱的格式與保留字、顯示名稱、密碼（需求 3.2 至 3.5）。
+//! 1. lm-core 的 `account::check_signup()`：帳號名稱的格式與保留字、顯示名稱、密碼（需求 3.2 至 3.5）。LM_Web 的
+//!    註冊表單以同一份規則檢查（需求 3.14）。
 //! 2. 沒有邀請而 `LM_PUBLIC_SIGNUP` 是 `false`：不呼叫 Auth_Service（需求 3.7）。
 //! 3. 附邀請：任務 16.1 改成檢查連結（需求 30.13），並在步驟 5 的交易中加入旅行；在那之前一律回應 501，不呼叫
 //!    Auth_Service，所以 `LM_PUBLIC_SIGNUP` 是 `false` 時也不能以任意的邀請註冊。
@@ -23,7 +24,7 @@
 //! | 情況 | 狀態 | `code` | `field` | 訊息 |
 //! | --- | --- | --- | --- | --- |
 //! | 請求內容的格式不正確（需求 5.9） | 400 | `invalid_request` | `null` | 資料格式不正確。 |
-//! | 需求 3.2 至 3.5 | 400 | 見 `account_rules` | 見 `account_rules` | 見 `account_rules` |
+//! | 需求 3.2 至 3.5 | 400 | 見 lm-core 的 `account` | 見 lm-core 的 `account` | 見 lm-core 的 `account` |
 //! | 沒有邀請而 `LM_PUBLIC_SIGNUP` 是 `false`（需求 3.7） | 403 | `signup_invite_only` | `null` | 目前只接受以邀請連結註冊。 |
 //! | 附邀請（任務 16.1 之前） | 501 | `not_implemented` | `null` | 以邀請連結註冊尚未提供。 |
 //! | Auth_Service 已有這個 email，包括同時進行、先建立使用者的另一個註冊；或 `app.profiles` 已有這個帳號名稱（需求 3.6） | 409 | `username_taken` | `username` | 這個帳號名稱已被使用。 |
@@ -46,6 +47,7 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
+use lm_core::account::{self, Violation};
 use lm_core::api::{ProfileDto, SessionDto, SignupRequest, SignupResponse};
 use lm_core::ids::UserId;
 use lm_core::model::Role;
@@ -53,7 +55,6 @@ use lm_supabase::gotrue::{AuthError, GoTrueSession};
 // sqlx 的 JsonValue 就是 serde_json::Value，lm-supabase 的 create_user() 以它接收 user_metadata
 use sqlx::types::JsonValue;
 
-use crate::account_rules::{self, Violation};
 use crate::config::Config;
 use crate::error::ApiError;
 use crate::extract::ApiJson;
@@ -81,7 +82,7 @@ async fn signup(st: &AppState, request: SignupRequest) -> Result<SignupResponse,
         invite,
     } = request;
     // 1. 需求 3.2 至 3.5；帳號名稱與密碼都原樣使用
-    let display_name = account_rules::check_signup(&username, &display_name, &password)?;
+    let display_name = account::check_signup(&username, &display_name, &password)?;
     // 2. 需求 3.7
     if invite.is_none() && !st.config.public_signup {
         return Err(ApiError::new(
@@ -264,7 +265,7 @@ fn signup_login_unavailable() -> ApiError {
     )
 }
 
-/// 需求 3.2 至 3.5 不通過：400，`code`、`field` 與訊息見 `account_rules`。
+/// 需求 3.2 至 3.5 不通過：400，`code`、`field` 與訊息見 lm-core 的 `account`。
 impl From<Violation> for ApiError {
     fn from(violation: Violation) -> Self {
         ApiError::new(
