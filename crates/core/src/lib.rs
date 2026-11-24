@@ -21,6 +21,7 @@ pub mod model;
 pub mod presence;
 pub mod recipes;
 pub mod rules;
+pub mod storybook;
 pub mod sync;
 pub mod text;
 pub mod time;

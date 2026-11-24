@@ -48,6 +48,8 @@ const RECONNECTING: &str = "重新連線中，畫面可能不是最新";
 const SAVE_RETRYING: &str = "儲存失敗，正在重試";
 /// 「匯出手冊」按鈕的提示：這個版本沒有匯出功能（schedule-tab-css-parity Decision D1）。
 const EXPORT_UNAVAILABLE: &str = "這個版本還不能匯出手冊";
+/// 行程表分頁時 `<main>` 的 class（Bun `trip()` 的 `story-schedule-page`）。
+const SCHEDULE_PAGE_CLASS: &str = "story-schedule-page";
 
 /// Trip_Page 的五個分頁（需求 32.3；現行 `TABS` 與 `TAB_ICONS`）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -330,6 +332,20 @@ fn TripLoaded(trip: TripId, handle: TripHandle, stores: TripStores) -> impl Into
             Tab::parse(params.get_str("tab"))
         })
     });
+    // 行程表分頁時 `<main>` 另有 `story-schedule-page`（Bun `trip()`；版面規則在 storybook-host.css）
+    Effect::new(move |_| {
+        let schedule = tab.get() == Tab::Schedule;
+        if let Some(main) = document().get_element_by_id("main") {
+            let _ = main
+                .class_list()
+                .toggle_with_force(SCHEDULE_PAGE_CLASS, schedule);
+        }
+    });
+    on_cleanup(|| {
+        if let Some(main) = document().get_element_by_id("main") {
+            let _ = main.class_list().remove_1(SCHEDULE_PAGE_CLASS);
+        }
+    });
     let navigate = use_navigate();
     let select = move |next: Tab| {
         let target = url.with_untracked(|url| tab_url(url.path(), url.search(), next));
@@ -461,16 +477,33 @@ fn TripLoaded(trip: TripId, handle: TripHandle, stores: TripStores) -> impl Into
         <nav class="section-tabs" aria-label="旅行內容">
             {tabs}
         </nav>
-        <div class="workspace" node_ref=workspace>
-            <section class="workspace-main" aria-label=move || tab.get().label()>
-                {move || match tab.get() {
-                    Tab::Schedule => view! { <ScheduleTab /> }.into_any(),
-                    Tab::Meals => view! { <MealsTab /> }.into_any(),
-                    Tab::Shopping => view! { <ShoppingTab /> }.into_any(),
-                    Tab::Gear => view! { <GearTab /> }.into_any(),
-                    Tab::Expenses => view! { <LedgerTab /> }.into_any(),
-                }}
-            </section>
+        // 行程表（Bun `scheduleTab()`）：工作室的宿主直接放在 `.workspace.story-schedule-layout` 中，沒有 `.workspace-main`
+        <div
+            class=move || {
+                if tab.get() == Tab::Schedule {
+                    "workspace story-schedule-layout"
+                } else {
+                    "workspace"
+                }
+            }
+            node_ref=workspace
+        >
+            {move || match tab.get() {
+                Tab::Schedule => view! { <ScheduleTab /> }.into_any(),
+                other => {
+                    view! {
+                        <section class="workspace-main" aria-label=other.label()>
+                            {match other {
+                                Tab::Meals => view! { <MealsTab /> }.into_any(),
+                                Tab::Shopping => view! { <ShoppingTab /> }.into_any(),
+                                Tab::Gear => view! { <GearTab /> }.into_any(),
+                                _ => view! { <LedgerTab /> }.into_any(),
+                            }}
+                        </section>
+                    }
+                        .into_any()
+                }
+            }}
             <Sidebar departure=Signal::derive(departure) open_gear />
         </div>
         {move || ui.menu_open.get().then(|| view! { <TripMenu /> })}

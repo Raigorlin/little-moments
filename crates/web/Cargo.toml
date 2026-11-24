@@ -29,20 +29,27 @@ wasm-bindgen = "0.2"
 # 分頁是否可見（Document.visibilityState）與其他分頁寫入 localStorage 的 storage 事件；旅行頁列上直接修改的文字欄位
 # 在失去焦點後才以 HtmlInputElement 寫回最新的值；行程表「複製文字」以 Clipboard 寫入剪貼簿，失敗時以 Selection 選取文字版
 # 行程表列的滑動操作（swipe/）另外需要指標、轉場與 MutationObserver 事件、matchMedia 與 performance.now()
+# 行程表的旅行繪本工作室（views/studio/）掛在 Shadow Root 中，以 ResizeObserver 量測宿主寬度、以 localStorage 記住編輯器的
+# 寬度與收合；編輯器的表單另外使用 select、textarea、details 與鍵盤事件
 web-sys = { version = "0.3", features = [
     "AddEventListenerOptions",
     "Clipboard",
     "CssStyleDeclaration",
     "Document",
+    "DomRect",
     "DomTokenList",
     "Element",
     "Event",
     "EventListenerOptions",
     "EventTarget",
     "HtmlButtonElement",
+    "HtmlDetailsElement",
     "HtmlDialogElement",
     "HtmlElement",
     "HtmlInputElement",
+    "HtmlSelectElement",
+    "HtmlTextAreaElement",
+    "KeyboardEvent",
     "Location",
     "MediaQueryList",
     "MediaQueryListEvent",
@@ -55,7 +62,14 @@ web-sys = { version = "0.3", features = [
     "NodeList",
     "Performance",
     "PointerEvent",
+    "ResizeObserver",
+    "ResizeObserverEntry",
+    "ResizeObserverSize",
     "Selection",
+    "ShadowRoot",
+    "ShadowRootInit",
+    "ShadowRootMode",
+    "Storage",
     "StorageEvent",
     "TransitionEvent",
     "VisibilityState",
@@ -65,5 +79,5 @@ web-sys = { version = "0.3", features = [
 # wasm32 以瀏覽器的 crypto.getRandomValues 產生 UUID
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 uuid = { version = "1", features = ["js"] }
-# 等待 navigator.clipboard.writeText() 的 Promise（views/schedule/text.rs）
+# 等待 navigator.clipboard.writeText() 的 Promise（views/studio/journal.rs）
 wasm-bindgen-futures = "0.4"

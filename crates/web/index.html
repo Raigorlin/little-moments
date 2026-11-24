@@ -14,8 +14,13 @@
     <link data-trunk rel="css" href="styles/expenses.css" />
     <!-- 第一版唯一新增的樣式檔：Editor_Stack 與 Editor_Avatar（需求 32.8） -->
     <link data-trunk rel="css" href="styles/presence.css" />
+    <!-- 行程表的旅行繪本工作室：頁面版面與 Patrick Hand 字型，與 Bun 的 src/storybook-host.css 逐字相同。工作室本身的樣式
+         （styles/storybook-studio.css，與 src/storybook/style.css 逐字相同）放在工作室的 Shadow Root 中，不在這裡連結。 -->
+    <link data-trunk rel="css" href="styles/storybook-host.css" />
     <!-- 字型子集與授權檔；styles.css 的 @font-face 以 ./assets/fonts/… 引用 -->
     <link data-trunk rel="copy-dir" href="../../assets/fonts" data-target-path="assets/fonts" />
+    <!-- storybook-host.css 的 @font-face 以 /assets/storybook/fonts/PatrickHand-32c1a2bb.woff2 引用 -->
+    <link data-trunk rel="copy-dir" href="../../assets/storybook/fonts" data-target-path="assets/storybook/fonts" />
   </head>
   <body></body>
 </html>
