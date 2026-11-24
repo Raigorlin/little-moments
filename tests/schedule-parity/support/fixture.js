@@ -4,7 +4,8 @@
 //   unassigned shared gear item and one purchased ingredient item, so that every Selector_Map state has content.
 // - fakeBunAccount(page, state): serves that Trip_State to Bun_App through page.route (as tests/storybook-account.e2e.js).
 // - loadLmTrip(request, state): writes the same trip into LM_Server through its API with lm_core::command::Command
-//   values, checks the snapshot entity counts, and returns the Trip_Page path and the Session.
+//   values (including the storybook fields headline/caption, arrivalLabel, stop items/taskKind and place templateId
+//   when the state has them), checks the snapshot entity counts, and returns the Trip_Page path and the Session.
 // - beforeAllServersReachable(test): a beforeAll that fails with the URL that did not answer.
 import { randomUUID } from 'node:crypto';
 import { exampleTrip } from '../../fixtures/example-trip.js';
@@ -158,7 +159,14 @@ export async function loadLmTrip(request, state) {
       draft: { name: v.name, driver: person(v.driver), seats: v.seats, color: null, passengers: v.passengers.map(uuid) }
     });
   }
-  for (const pl of state.places) await send({ type: 'add_place', id: uuid(pl.id), name: pl.name });
+  // Storybook cover texts (state.storybook, 封面 tab) go through update_trip.
+  const cover = {};
+  if (state.storybook?.headline) cover.headline = state.storybook.headline;
+  if (state.storybook?.caption) cover.caption = state.storybook.caption;
+  if (Object.keys(cover).length) await send({ type: 'update_trip', patch: cover });
+  for (const pl of state.places) {
+    await send({ type: 'add_place', id: uuid(pl.id), name: pl.name, ...(pl.templateId ? { template: pl.templateId } : {}) });
+  }
   for (const r of state.routes) {
     await send({
       type: 'save_route',
@@ -166,7 +174,10 @@ export async function loadLmTrip(request, state) {
         id: uuid(r.id), day: r.date, vehicle: uuid(r.vehicleId), from: placeRef(r.from), to: placeRef(r.to),
         depart: nullable(r.time),
         stops: (r.stops || []).map(s => ({
-          id: uuid(s.id), place: placeRef(s.place), kind: s.kind, note: s.note || '', time: nullable(s.time)
+          id: uuid(s.id), place: placeRef(s.place), kind: s.kind, note: s.note || '', time: nullable(s.time),
+          ...(s.taskKind ? { task: s.taskKind } : {}),
+          // Shopping stop items are derived from the shopping list (lm-core ignores them for 'shop').
+          ...(s.kind !== 'shop' && s.items?.length ? { items: [...s.items] } : {})
         }))
       }
     });
@@ -176,6 +187,7 @@ export async function loadLmTrip(request, state) {
     if (d.title) patch.title = d.title;
     if (d.place) patch.place = uuid(d.place);
     if (d.arrival) patch.arrival = d.arrival;
+    if (d.arrivalLabel) patch.arrival_label = d.arrivalLabel;
     await send({ type: 'save_day_setting', day: d.date, patch });
   }
   for (const a of state.activities) {

@@ -2,12 +2,12 @@
 // For each Viewport_Profile (parity-desktop, parity-mobile) and Theme (light, dark), Bun_App and LM_Web open the
 // Comparison_Fixture's schedule tab in separate contexts with the same options. The Page_Chrome element trees must be
 // equal (Property 3) and the masked Chrome_Region captures must match within the pixel budget (Property 14).
-// Mobile adds one CDP touch swipe on the first activity card (Requirement 7.11); desktop adds the Requirement 2.5
-// navigation checks.
+// Desktop adds the Requirement 2.5 navigation checks. The schedule tab body is the storybook studio in both apps
+// (studio.e2e.js compares it); the old planner's swipe rows (Requirement 7.11) no longer exist in either app.
 //
 // Property 3: Page_Chrome structure equivalence. Validates: Requirements 2.1, 2.2, 2.3, 2.4
 // Property 14: Page_Chrome pixel parity. Validates: Requirements 6.1, 7.2, 7.6
-// Also validates: Requirements 2.5, 7.1, 7.3, 7.4, 7.5, 7.7, 7.11
+// Also validates: Requirements 2.5, 7.1, 7.3, 7.4, 7.5, 7.7
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { test, expect } from '@playwright/test';
@@ -19,7 +19,6 @@ import { chromeScreenshotOptions, chromeTree, prepareCapture, waitForCapture } f
 
 const PROFILES = ['desktop', 'mobile'];
 const THEMES = ['light', 'dark'];
-const SWIPE = { distance: 120, steps: 8, stepMs: 16 };
 
 beforeAllServersReachable(test);
 
@@ -66,53 +65,10 @@ async function openLm(browser, testInfo, theme, path = lmTrip.schedulePath) {
   if (theme) await prepareCapture(page, { app: 'lm', theme });
   await page.goto(`${LM_BASE_URL}${path}`);
   await expect(page.locator('.section-tabs')).toBeVisible();
-  await expect(page.locator('.workspace .activity-card').first()).toBeVisible();
+  // The studio journal renders inside the .story-studio-host shadow root (Playwright CSS pierces open shadow roots).
+  await expect(page.locator('.workspace .story-studio-host .j-day').first()).toBeVisible();
   await waitForCapture(page, { app: 'lm' });
   return { context, page };
-}
-
-/**
- * Point inside `row` whose topmost element is row content, not a button, link or form control. The point is in
- * visual-viewport coordinates, which Input.dispatchTouchEvent expects; on a mobile page whose layout viewport is wider
- * than the screen these differ from the client coordinates that elementFromPoint takes.
- */
-async function rowContentPoint(row, travel) {
-  await row.scrollIntoViewIfNeeded();
-  const point = await row.evaluate((el, travel) => {
-    const box = el.getBoundingClientRect();
-    const vv = window.visualViewport;
-    const [left, top, width, height] = vv ? [vv.offsetLeft, vv.offsetTop, vv.width, vv.height]
-      : [0, 0, innerWidth, innerHeight];
-    const interactive = 'button, a, input, select, textarea, summary';
-    for (const fy of [0.5, 0.3, 0.7, 0.2, 0.8]) {
-      for (const fx of [0.8, 0.7, 0.6, 0.9, 0.5]) {
-        const x = box.left + box.width * fx, y = box.top + box.height * fy;
-        const vx = x - left, vy = y - top;
-        if (vx - travel < 1 || vx >= width || vy < 1 || vy >= height) continue;
-        const hit = document.elementFromPoint(x, y);
-        if (hit && el.contains(hit) && !hit.closest(interactive)) return { x: vx, y: vy };
-      }
-    }
-    return null;
-  }, travel);
-  if (!point) throw new Error('no non-interactive point inside the first activity card for the swipe');
-  return point;
-}
-
-/** One leftward CDP touch swipe of SWIPE.distance px over SWIPE.steps moves (Requirement 7.11). */
-async function touchSwipe(context, page, row) {
-  const { x, y } = await rowContentPoint(row, SWIPE.distance);
-  const cdp = await context.newCDPSession(page);
-  const touch = (type, px) => cdp.send('Input.dispatchTouchEvent', {
-    type, touchPoints: type === 'touchEnd' ? [] : [{ x: px, y, id: 1, radiusX: 1, radiusY: 1, force: 1 }],
-  });
-  await touch('touchStart', x);
-  for (let step = 1; step <= SWIPE.steps; step++) {
-    await page.waitForTimeout(SWIPE.stepMs);
-    await touch('touchMove', x - (SWIPE.distance * step) / SWIPE.steps);
-  }
-  await touch('touchEnd', x - SWIPE.distance);
-  await cdp.detach();
 }
 
 for (const profile of PROFILES) {
@@ -144,16 +100,6 @@ for (const profile of PROFILES) {
         const lmShot = await lm.page.screenshot(await chromeScreenshotOptions(lm.page));
         expect(lmShot).toMatchSnapshot(name, { threshold: 0.2, maxDiffPixelRatio: 0.01 });
 
-        // Requirement 7.11: left swipe opens the first activity card in Touch_Layout.
-        if (profile === 'mobile') {
-          const row = lm.page.locator('.workspace .activity-card').first();
-          await expect(row).toHaveAttribute('data-swipe-ready', 'true');
-          await touchSwipe(lm.context, lm.page, row);
-          await expect(row).toHaveClass(/(^|\s)swipe-open(\s|$)/);
-          const actions = row.locator(':scope > .swipe-actions > .swipe-action');
-          expect(await actions.count(), `${combination}: the swipe panel has buttons`).toBeGreaterThan(0);
-          for (const action of await actions.all()) await expect(action).toBeVisible();
-        }
       } finally {
         await bun.context.close();
         await lm.context.close();

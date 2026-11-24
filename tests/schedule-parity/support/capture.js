@@ -1,12 +1,7 @@
 // Capture helpers for the schedule-tab-css-parity Playwright checks (design sections 6.2 and 6.3).
 // prepareCapture puts a Bun_App or LM_Web page into the capture state (Requirements 7.3–7.5).
-// chromeTree and chromeClip feed the Chrome_Comparison_Test; plannerSnapshot and styleHarness
-// feed the Style_Comparison_Check (Requirement 7.8).
-import { readFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+// chromeTree and chromeClip feed the Chrome_Comparison_Test; studio.e2e.js uses prepareCapture and waitForCapture.
 
-const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const THEMES = ['light', 'dark'];
 const APPS = ['bun', 'lm'];
 
@@ -137,98 +132,4 @@ export async function chromeScreenshotOptions(page) {
     maskColor: MASK_COLOR,
     animations: 'disabled',
   };
-}
-
-/**
- * Assigns data-parity-id to .workspace and every element inside it, then returns
- * .workspace.outerHTML without <script> elements. The live markup keeps the ids.
- */
-export async function plannerSnapshot(page) {
-  const html = await page.evaluate(() => {
-    const workspace = document.querySelector('.workspace');
-    if (!workspace) return null;
-    [workspace, ...workspace.querySelectorAll('*')].forEach((el, i) => el.setAttribute('data-parity-id', `p${i}`));
-    const copy = workspace.cloneNode(true);
-    copy.querySelectorAll('script').forEach((script) => script.remove());
-    return copy.outerHTML;
-  });
-  if (html === null) throw new Error('plannerSnapshot: .workspace not found');
-  return html;
-}
-
-// Rust_Stylesheets in crates/web/index.html link order (data-trunk rel="css" tags).
-export async function rustStylesheets() {
-  const index = (await readFile(join(ROOT, 'crates/web/index.html'), 'utf8')).replace(/<!--[\s\S]*?-->/g, '');
-  const files = [];
-  for (const [tag] of index.matchAll(/<link\b[^>]*>/gi)) {
-    if (!/\sdata-trunk\b/i.test(tag) || !/\srel\s*=\s*["']css["']/i.test(tag)) continue;
-    const href = tag.match(/\shref\s*=\s*["']([^"']+)["']/i);
-    if (href) files.push(join(ROOT, 'crates/web', href[1]));
-  }
-  if (files.length === 0) throw new Error('crates/web/index.html links no data-trunk css files');
-  return files;
-}
-
-async function harnessFiles() {
-  const read = (path) => readFile(path, 'utf8');
-  const bunCss = (await Promise.all(['styles.css', 'accounts.css', 'scene-motion.css']
-    .map((name) => read(join(ROOT, 'src', name))))).join('\n');
-  const rust = new Map();
-  for (const path of await rustStylesheets()) rust.set(basename(path), await read(path));
-  return {
-    css: new Map([
-      ['/bun/bun.css', bunCss],
-      ['/bun/expenses.css', await read(join(ROOT, 'src/expenses.css'))],
-      ...[...rust].map(([name, text]) => [`/rust/${name}`, text]),
-    ]),
-    links: {
-      bun: ['/bun/bun.css', '/bun/expenses.css'],
-      rust: [...rust.keys()].map((name) => `/rust/${name}`),
-    },
-  };
-}
-
-export const HARNESS_ORIGIN = 'http://parity.test';
-
-/**
- * Serves the Planner_Snapshot at http://parity.test/ inside `main#main.page`, linking either the
- * Bun_Stylesheets or the Rust_Stylesheets, then navigates there and waits for fonts.
- * @param {import('@playwright/test').Page} page
- * @param {'bun'|'rust'} sheets
- * @param {string} html Planner_Snapshot from plannerSnapshot
- * @param {'light'|'dark'} [theme] data-theme on the root; omitted when not given
- */
-export async function styleHarness(page, sheets, html, theme) {
-  if (sheets !== 'bun' && sheets !== 'rust') throw new Error(`unknown sheets: ${sheets}`);
-  if (theme !== undefined) checkTheme(theme);
-  const { css, links } = await harnessFiles();
-  const themeAttr = theme ? ` data-theme="${theme}"` : '';
-  const head = links[sheets].map((href) => `<link rel="stylesheet" href="${href}">`).join('');
-  const pageHtml = '<!doctype html>'
-    + `<html lang="zh-Hant"${themeAttr}><head><meta charset="UTF-8">`
-    + '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'
-    + `${head}</head><body><div id="app"><main id="main" class="page">${html}</main></div></body></html>`;
-  const fontDir = join(ROOT, 'assets/fonts');
-  await page.unroute(`${HARNESS_ORIGIN}/**`);
-  await page.route(`${HARNESS_ORIGIN}/**`, async (route) => {
-    const { pathname } = new URL(route.request().url());
-    if (pathname === '/') {
-      return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: pageHtml });
-    }
-    if (css.has(pathname)) {
-      return route.fulfill({ status: 200, contentType: 'text/css; charset=utf-8', body: css.get(pathname) });
-    }
-    const font = pathname.match(/^\/(?:bun|rust)\/assets\/fonts\/([^/]+\.woff2)$/);
-    if (font) {
-      try {
-        const body = await readFile(join(fontDir, basename(decodeURIComponent(font[1]))));
-        return route.fulfill({ status: 200, contentType: 'font/woff2', body });
-      } catch { /* fall through to 404 */ }
-    }
-    return route.fulfill({ status: 404, contentType: 'text/plain', body: `not served: ${pathname}` });
-  });
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.goto(`${HARNESS_ORIGIN}/`);
-  await waitForFonts(page);
-  return page;
 }
