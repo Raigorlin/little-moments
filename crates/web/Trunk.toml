@@ -4,6 +4,8 @@
 [build]
 target = "index.html"
 dist = "dist"
+# release 建置壓縮 JS 載入程式與 index.html；CSS 的連結帶 data-no-minify，輸出與 styles/ 中的原始檔逐字相同
+minify = "on_release"
 
 # 只在 127.0.0.1:8081 監聽，不在 0.0.0.0、:: 或其他位址監聽（需求 2.5）
 [serve]

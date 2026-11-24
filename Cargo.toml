@@ -18,3 +18,9 @@ codegen-units = 1
 # 只讓前端 crate 以體積為優先；trunk 另以 wasm-opt（index.html 的 data-wasm-opt="z"）縮小輸出
 [profile.release.package.lm-web]
 opt-level = "z"
+
+# 只有 trunk 使用（index.html 的 data-cargo-profile-release）：lm-web 與它的每個依賴都以體積為優先；
+# lm-server 仍以 release 建置
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"

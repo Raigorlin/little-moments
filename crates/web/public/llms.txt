@@ -1,0 +1,7 @@
+# 日子拾光 · LITTLE MOMENTS
+
+> 日子拾光 LITTLE MOMENTS：把平凡的日子，留成喜歡的回憶。旅行規劃與回憶收藏的本機應用。
+
+- [開啟應用程式](/)
+- [登入](/login)
+- [註冊](/register)

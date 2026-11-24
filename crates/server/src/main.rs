@@ -23,7 +23,7 @@
 //! | --- | --- |
 //! | `/api`、`/api/` 與 `/api/<路徑>` | `api_router()`：`api_routes()` 中的端點（由任務 14 至 16 加入）；沒有這個路徑時 404 `api_not_found`，路徑存在但不支援這個方法時 405 `method_not_allowed`，都是 JSON，不回傳 index.html（需求 5.5、5.9） |
 //! | `/realtime/v1/websocket` | `GET`：Realtime 轉送（`gateway::realtime_proxy`，需求 11.2、11.12）；不是 WebSocket 升級的 `GET` 由 axum 回應 4xx，其他方法 405，都不回傳 index.html |
-//! | 其他 | `LM_STATIC_DIR` 的靜態檔，找不到時回傳 index.html（`static_files`，需求 32.2） |
+//! | 其他 | `LM_STATIC_DIR` 的靜態檔，找不到時回傳 index.html；帶 `Cache-Control`，依 `Accept-Encoding` 壓縮（`static_files::router()`，需求 32.2） |
 //!
 //! `/api` 本身與 `/api/` 也屬於 API：`api` 是保留的帳號名稱（需求 3.3），LM_Web 沒有這兩個網址的畫面。axum 0.8 的
 //! `nest("/api", …)` 涵蓋 `/api` 與 `/api/<路徑>`，但不涵蓋 `/api/`，所以另以 `/api/` 的路由回應同樣的 404。axum 以
@@ -53,7 +53,6 @@ use std::fmt::Display;
 use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
-use axum::extract::Request;
 use axum::routing::{any, delete, get, post};
 use axum::Router;
 use tokio::net::TcpListener;
@@ -62,7 +61,6 @@ use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 use crate::config::Config;
 use crate::error::ApiError;
 use crate::state::{AppState, SupabaseClients};
-use crate::static_files::StaticFiles;
 
 /// Realtime 轉送的路徑（需求 11.2）。
 const REALTIME_PATH: &str = "/realtime/v1/websocket";
@@ -125,12 +123,11 @@ async fn main() -> ExitCode {
 
 /// HTTP 服務（見模組說明的「路由」）。
 fn app(state: AppState) -> Router {
-    let static_files = StaticFiles::new(&state.config.static_dir);
     Router::new()
         .nest("/api", api_router())
         .route("/api/", any(api_not_found))
         .route(REALTIME_PATH, get(gateway::realtime_proxy))
-        .fallback(move |request: Request| static_files.clone().serve(request))
+        .fallback_service(static_files::router(&state.config.static_dir))
         .with_state(state)
 }
 

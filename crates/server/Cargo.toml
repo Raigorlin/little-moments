@@ -27,6 +27,11 @@ sqlx = { version = "0.8", default-features = false, features = ["chrono", "json"
 tokio = { version = "1", features = ["full"] }
 # 與 axum 0.8 的 ws 使用同一版；native-tls 讓 SUPABASE_URL 為 https:// 時也能以 wss:// 連上游
 tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
-tower-http = { version = "0.6", features = ["fs", "trace"] }
+# compression-br、compression-gzip：靜態檔依 Accept-Encoding 壓縮（static_files::router()）
+tower-http = { version = "0.6", features = ["compression-br", "compression-gzip", "fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+# static_files 的測試以 oneshot 送出請求
+tower = { version = "0.5", features = ["util"] }

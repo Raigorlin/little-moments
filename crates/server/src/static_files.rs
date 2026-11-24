@@ -6,7 +6,7 @@
 //!
 //! | 請求 | 回應 |
 //! | --- | --- |
-//! | `GET` 或 `HEAD` 目錄中的檔案 | 那個檔案 |
+//! | `GET` 或 `HEAD` 目錄中的檔案 | 那個檔案（快取與壓縮見下） |
 //! | `GET` 或 `HEAD` 其他路徑：不存在的檔案、沒有讀取權限的檔案、目錄（包括 `/`；不重新導向到結尾加 `/` 的網址）、無效的檔名（含 NUL、超過檔案系統的長度上限）、不合法的路徑（見下），或有以 `.` 開頭的區段 | `index.html` |
 //! | 其他方法 | 405，`Allow: GET,HEAD`，沒有內容 |
 //! | `index.html` 也不存在 | 404，沒有內容 |
@@ -29,6 +29,20 @@
 //! index.html：LM_Web 不需要這種檔案（trunk 留在輸出目錄的 `.trunk-lock` 也不必送出），而 `LM_STATIC_DIR` 誤設成
 //! Repository 根目錄時，也不會送出 `.env` 中的金鑰。這是 design 3.1 之外加上的限制。
 //!
+//! # 快取與壓縮
+//!
+//! 每個回應都帶 `Cache-Control`：檔名含內容雜湊的檔案（trunk 輸出的 `lm-web-<16 個十六進位字元>.js`、
+//! `…_bg.wasm`、`styles-<…>.css`，以及 `/assets/` 之下的 `<名稱>-<8 個十六進位字元>.woff2` 字型）是
+//! `public, max-age=31536000, immutable`，內容改變時網址也會改變；其他檔案與 index.html 是 `no-cache`，每次使用前都
+//! 向 lm-server 確認。回應是 `text/html` 時一律 `no-cache`：舊的雜湊網址找不到檔案而回傳 index.html 時，不會被快取
+//! 一年。與 Bun 的 `server/http.js` `assetCacheControl` 相同。
+//!
+//! `router()` 依 `Accept-Encoding` 以 br 或 gzip 壓縮回應（4.9 MB 的 wasm 壓縮後不到原本的一半）。woff2 字型本身已經
+//! 壓縮，不再壓縮；tower-http 也不壓縮 `Range` 請求的部分內容（有 `Content-Range` 的回應）與很小的回應。
+//!
+//! 每個回應另帶 `X-Frame-Options: DENY` 與 `Cross-Origin-Opener-Policy: same-origin`（與 Bun 的 `SECURITY_HEADERS`
+//! 相同）：LM_Web 不在其他網站的 frame 中顯示，也不與其他網站開啟的視窗共用瀏覽環境。
+//!
 //! # 啟動時的檢查
 //!
 //! `LM_STATIC_DIR` 不存在或沒有 index.html 時，`check()` 只記下警告，lm-server 照常啟動（design 3.5 只檢查變數有沒有
@@ -41,14 +55,35 @@ use std::path::{self, Path};
 
 use axum::body::Body;
 use axum::extract::Request;
-use axum::http::StatusCode;
+use axum::http::{header, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
+use axum::Router;
+use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
+use tower_http::compression::CompressionLayer;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::config::percent_decode;
 
 /// LM_Web 的入口；找不到檔案時回傳它。
 const INDEX_HTML: &str = "index.html";
+/// 檔名含內容雜湊的檔案：內容改變時網址也改變，所以可以快取一年（見模組說明的「快取與壓縮」）。
+const CACHE_IMMUTABLE: &str = "public, max-age=31536000, immutable";
+/// 其他檔案與 index.html：每次使用前都向 lm-server 確認。
+const CACHE_NO_CACHE: &str = "no-cache";
+
+/// 靜態檔的路由器：每個路徑都交給 [`StaticFiles`]，回應依 `Accept-Encoding` 以 br 或 gzip 壓縮；字型不壓縮
+/// （見模組說明的「快取與壓縮」）。
+pub fn router(dir: &Path) -> Router {
+    let static_files = StaticFiles::new(dir);
+    Router::new()
+        .fallback(move |request: Request| static_files.clone().serve(request))
+        .layer(
+            CompressionLayer::new()
+                .br(true)
+                .gzip(true)
+                .compress_when(DefaultPredicate::new().and(NotForContentType::const_new("font/"))),
+        )
+}
 
 /// `LM_STATIC_DIR` 的靜態檔（見模組說明）。
 #[derive(Clone)]
@@ -74,6 +109,7 @@ impl StaticFiles {
     /// 回應一個靜態檔的請求（見模組說明）。
     pub async fn serve(mut self, request: Request) -> Response {
         let (parts, body) = request.into_parts();
+        let path = parts.uri.path().to_owned();
         let result = if has_hidden_segment(parts.uri.path()) {
             self.index.try_call(Request::from_parts(parts, body)).await
         } else {
@@ -92,7 +128,27 @@ impl StaticFiles {
             }
         };
         match result {
-            Ok(response) => response.into_response(),
+            Ok(response) => {
+                let mut response = response.into_response();
+                let html = response
+                    .headers()
+                    .get(header::CONTENT_TYPE)
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(|value| value.starts_with("text/html"));
+                let cache = if !html && is_hashed_asset(&path) {
+                    CACHE_IMMUTABLE
+                } else {
+                    CACHE_NO_CACHE
+                };
+                let headers = response.headers_mut();
+                headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
+                headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+                headers.insert(
+                    HeaderName::from_static("cross-origin-opener-policy"),
+                    HeaderValue::from_static("same-origin"),
+                );
+                response
+            }
             Err(error) => {
                 tracing::error!(%error, "failed to read a file in LM_STATIC_DIR");
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -128,10 +184,209 @@ fn has_hidden_segment(path: &str) -> bool {
         .any(|segment| segment.starts_with('.'))
 }
 
+/// 檔名含內容雜湊：trunk 的輸出（`-` 加 16 個十六進位字元，wasm 另有 `_bg`，再接副檔名，例如
+/// `lm-web-0123456789abcdef_bg.wasm`），或 `/assets/` 之下以 `-` 加 8 個十六進位字元命名的 woff2 字型（例如
+/// `jf-openhuninn-ui-204a1ba7.woff2`；與 Bun 的 `HASHED_FONT` 相同）。
+fn is_hashed_asset(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or_default();
+    let ends_with_hash = |stem: &str, len: usize| {
+        stem.len() > len
+            && stem.as_bytes()[stem.len() - len - 1] == b'-'
+            && stem.as_bytes()[stem.len() - len..]
+                .iter()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    };
+    if path.starts_with("/assets/") {
+        if let Some(stem) = name.strip_suffix(".woff2") {
+            if ends_with_hash(stem, 8) {
+                return true;
+            }
+        }
+    }
+    let Some((stem, extension)) = name.rsplit_once('.') else {
+        return false;
+    };
+    if extension.is_empty() || !extension.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return false;
+    }
+    let stem = stem.strip_suffix("_bg").unwrap_or(stem);
+    ends_with_hash(stem, 16)
+}
+
 /// 檔名本身無效：含 NUL（`InvalidInput`），或超過檔案系統的長度上限（`ENAMETOOLONG`）。與檔案不存在相同。
 fn is_invalid_file_name(error: &io::Error) -> bool {
     matches!(
         error.kind(),
         io::ErrorKind::InvalidInput | io::ErrorKind::InvalidFilename
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use axum::body::to_bytes;
+    use axum::http::Method;
+    use tower::ServiceExt as _;
+
+    use super::*;
+
+    #[test]
+    fn hashed_assets() {
+        for path in [
+            "/lm-web-a2ba10321df23617.js",
+            "/lm-web-c7842af86edb34d7_bg.wasm",
+            "/styles-9f93259d316d38da.css",
+            "/assets/fonts/jf-openhuninn-ui-204a1ba7.woff2",
+            "/assets/storybook/fonts/PatrickHand-32c1a2bb.woff2",
+        ] {
+            assert!(is_hashed_asset(path), "{path}");
+        }
+        for path in [
+            "/",
+            "/index.html",
+            "/robots.txt",
+            "/favicon.ico",
+            "/lm-web.js",
+            "/lm-web-a2ba10321df2361.js",
+            "/lm-web-A2BA10321DF23617.js",
+            "/lm-web-a2ba10321df23617",
+            "/jf-openhuninn-ui-204a1ba7.woff2",
+            "/assets/fonts/OFL.txt",
+            "/test/trips/0d391db4-dc30-41d5-b692-4009ce7dcba0",
+            "/日子-拾光.js",
+        ] {
+            assert!(!is_hashed_asset(path), "{path}");
+        }
+    }
+
+    /// 測試用的 LM_STATIC_DIR；結束時刪除。
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "lm-server-static-{}-{}",
+                std::process::id(),
+                rand::random::<u64>()
+            ));
+            fs::create_dir_all(dir.join("assets/fonts")).unwrap();
+            fs::write(dir.join(INDEX_HTML), "<!doctype html><title>LM</title>").unwrap();
+            fs::write(
+                dir.join("lm-web-0123456789abcdef_bg.wasm"),
+                "wasm module ".repeat(400),
+            )
+            .unwrap();
+            fs::write(
+                dir.join("assets/fonts/x-0123abcd.woff2"),
+                "wOF2 ".repeat(400),
+            )
+            .unwrap();
+            fs::write(dir.join("robots.txt"), "User-agent: *\nDisallow: /api/\n").unwrap();
+            Self(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    async fn get(dir: &TempDir, method: Method, path: &str, encoding: Option<&str>) -> Response {
+        let mut request = Request::builder().method(method).uri(path);
+        if let Some(encoding) = encoding {
+            request = request.header(header::ACCEPT_ENCODING, encoding);
+        }
+        router(&dir.0)
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+    }
+
+    fn header_of<'a>(response: &'a Response, name: &str) -> Option<&'a str> {
+        response
+            .headers()
+            .get(name)
+            .map(|value| value.to_str().unwrap())
+    }
+
+    fn assert_security_headers(response: &Response) {
+        assert_eq!(header_of(response, "x-frame-options"), Some("DENY"));
+        assert_eq!(
+            header_of(response, "cross-origin-opener-policy"),
+            Some("same-origin")
+        );
+    }
+
+    #[tokio::test]
+    async fn hashed_wasm_is_compressed_and_immutable() {
+        let dir = TempDir::new();
+        for (accept, encoding) in [("gzip", "gzip"), ("br", "br"), ("br, gzip", "br")] {
+            let response = get(
+                &dir,
+                Method::GET,
+                "/lm-web-0123456789abcdef_bg.wasm",
+                Some(accept),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(header_of(&response, "content-encoding"), Some(encoding));
+            assert_eq!(header_of(&response, "cache-control"), Some(CACHE_IMMUTABLE));
+            assert_security_headers(&response);
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            assert!(body.len() < 4800, "{accept}: {} bytes", body.len());
+        }
+        let response = get(&dir, Method::GET, "/lm-web-0123456789abcdef_bg.wasm", None).await;
+        assert_eq!(header_of(&response, "content-encoding"), None);
+        assert_eq!(header_of(&response, "cache-control"), Some(CACHE_IMMUTABLE));
+    }
+
+    #[tokio::test]
+    async fn fonts_are_not_compressed() {
+        let dir = TempDir::new();
+        let response = get(
+            &dir,
+            Method::GET,
+            "/assets/fonts/x-0123abcd.woff2",
+            Some("br, gzip"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(header_of(&response, "content-encoding"), None);
+        assert_eq!(header_of(&response, "cache-control"), Some(CACHE_IMMUTABLE));
+        assert_security_headers(&response);
+    }
+
+    #[tokio::test]
+    async fn index_html_and_other_files_are_not_cached() {
+        let dir = TempDir::new();
+        for path in [
+            "/",
+            "/lm-web-ffffffffffffffff.js",
+            "/test/trips/x?tab=schedule",
+        ] {
+            let response = get(&dir, Method::GET, path, Some("gzip")).await;
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert!(header_of(&response, "content-type")
+                .unwrap()
+                .starts_with("text/html"));
+            assert_eq!(header_of(&response, "cache-control"), Some(CACHE_NO_CACHE));
+            assert_security_headers(&response);
+        }
+        let response = get(&dir, Method::GET, "/robots.txt", None).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(header_of(&response, "cache-control"), Some(CACHE_NO_CACHE));
+        assert_security_headers(&response);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&body[..], b"User-agent: *\nDisallow: /api/\n");
+    }
+
+    #[tokio::test]
+    async fn other_methods_stay_405() {
+        let dir = TempDir::new();
+        let response = get(&dir, Method::POST, "/", None).await;
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert!(header_of(&response, "allow").is_some());
+    }
 }
