@@ -230,7 +230,7 @@ shred -u "$f"
 | `LM_ALLOWED_HOSTS` | `192.168.1.121` | `www.our-littlemoments.com 192.168.1.121` | 以空白分隔、1–16 項、不得含 `*`；其他 Host 回應 421。`192.168.1.121` 供 Jenkins 的 Smoke_Test 與維運者經 LAN origin 連線 |
 | `LM_HEALTH_HOST` | `192.168.1.121` | `www.our-littlemoments.com` | 健康檢查送出的 Host；必須在 `LM_ALLOWED_HOSTS` 內 |
 | `LM_SITE_URL` | `http://192.168.1.121:8081` | `https://www.our-littlemoments.com` | GoTrue 的 Site URL（origin，不含路徑） |
-| `LM_PUBLIC_SIGNUP` | `true` | `false` | 不經邀請的註冊。Production 只在首次切換時暫時改為 `true` |
+| `LM_PUBLIC_SIGNUP` | `true` | `false` | 公開註冊（不經邀請的註冊）的初始值；管理員在管理後台（`/admin`）儲存公開註冊的設定之後不再生效。Production 只在首次切換時暫時改為 `true` |
 | `LM_AUTH_EMAIL_DOMAIN` | 空白 | 空白 | 合成 email 的網域；空白時為 `users.little-moments.invalid` |
 | `LM_EDGE_TRUSTED_PROXIES`、`LM_LAN_CIDR` | 空白 | 第 10 節 | 只有 Production 經 NPM |
 | `APP_SUBNET`、`PROXY_IP` | 範本值 | 範本值 | 兩個環境必須不同，且不得與 LAN 網段重疊 |
@@ -459,21 +459,23 @@ Let's Encrypt 的 HTTP-01 驗證經 Cloudflare 代理時若失敗，改用 NPM �
       ```
 
       預期輸出 `200`。`409` 表示帳號名稱已存在（例如重新執行時），可以繼續。
-   4. 關閉註冊並重新建立作用中的 App 槽位：
+   4. 在管理後台關閉公開註冊：在 LAN 內的瀏覽器以步驟 7.2 的管理員帳號登入，開啟 `http://192.168.1.121:8082/admin`，關閉「開放公開註冊」。以 `curl` 確認不附邀請的註冊被拒絕。欄位規則在註冊政策之前檢查，所以內容要符合規則：帳號名稱 `signup-check`、任意顯示名稱，密碼欄位換成 12 個字元以上的任意文字（不要用真正的密碼）：
+
+      ```sh
+      curl -sS -w '\n%{http_code}\n' -H 'Content-Type: application/json' \
+        --data-binary '{"username":"signup-check","display_name":"signup-check","password":"<12 個字元以上的任意文字>"}' \
+        http://192.168.1.121:8082/api/auth/signup
+      ```
+
+      預期回應內容含 `"code":"signup_invite_only"`，最後一行為 `403`。若得到 `200`，表示公開註冊仍開放、`signup-check` 已被建立：回到 `/admin` 關閉開關後再試一次，並以管理後台停用 `signup-check`。
+
+      再把 `prod.env` 改回關閉：
 
       ```sh
       sudo sed -i 's/^LM_PUBLIC_SIGNUP=.*/LM_PUBLIC_SIGNUP=false/' /srv/lm/prod/prod.env
-      sudo /opt/lm/bin/lm-deploy prod status
       ```
 
-      記下 `active` 的 `color` 與 `digest`，依第 12 節步驟 2–3 執行 `dc --profile <color> up -d --no-deps app-<color>`。確認新容器讀到的值，並等待健康檢查：
-
-      ```sh
-      sudo docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' lm-prod-app-<color>-1 | grep ^LM_PUBLIC_SIGNUP=
-      sudo /opt/lm/bin/lm-deploy prod health <color> --wait
-      ```
-
-      預期 `LM_PUBLIC_SIGNUP=false`，健康檢查以 `"ok":true` 結束。之後不經邀請的註冊回應 403 `signup_invite_only`。
+      這只是公開註冊的初始值：管理後台儲存的設定優先，所以不需要重新建立 App 容器。只有想讓容器的環境變數與 `prod.env` 一致時，才依第 12 節步驟 2–3 執行 `dc --profile <color> up -d --no-deps app-<color>`（`<color>` 為 `sudo /opt/lm/bin/lm-deploy prod status` 中 `active` 的 `color`）。
    5. 完成部署：`sudo /opt/lm/bin/lm-deploy prod finalize`。`status` 的 `phase` 回到 `idle`，`active` 為 `<digest>`。
 
 8. **重新對外開放**。以管理員帳號從 LAN 經 `https://www.our-littlemoments.com` 登入，確認行程頁可開啟。把 `www` Proxy Host 的 Access List 改回 Publicly Accessible，再依第 13 節檢查（第 10 節的存取日誌確認可在此時執行）。
@@ -481,6 +483,54 @@ Let's Encrypt 的 HTTP-01 驗證經 Cloudflare 代理時若失敗，改用 NPM �
 9. **以一般流程發布 v2.0.0**。以 PR 合併一個只含空 commit 的變更到 `main`（例如 `git commit --allow-empty -m "chore: release v2.0.0"`）。這次 Production Deploy 看得到作用中的 digest，會部署新的 digest、執行 10 分鐘觀察（健康檢查與兩次不含 `--provision` 的 Smoke_Test）並 finalize，「上線後」關卡通過後 Version Tag 把 `v2.0.0` 指向上線的 digest。不要對步驟 6 的同一個 commit 按 Build Now：該 commit 的 `<LM_IMAGE_REPO>:<完整 SHA>` 標籤已存在，「Image Push」會拒絕覆寫。
 
 `smoke-bot` 在 Production 是真實的 member 帳號，知道密碼的人都能以它登入。密碼只保存在 `lm-prod-smoke`。要更換時：以 `smoke-bot` 登入 App 修改密碼，同一時間以 `put` 覆寫 `lm-prod-smoke`（[`../ci/jenkins/README.md`](../ci/jenkins/README.md#秘密目錄)）並 Reload existing configuration；兩者更新完成之前的 Smoke_Test 會失敗。
+
+## 管理員的救援
+
+管理後台沒有建立管理員或重設密碼的伺服器指令。唯一的管理員忘記密碼、被降級或被停用時，維運者在主機上直接修改 Database。以下 `<env>` 為 `prod` 或 `staging`，`<帳號名稱>` 為要處理的帳號（小寫）。
+
+1. 找到 Database 容器並進入互動式 `psql`：
+
+   ```sh
+   sudo docker ps --format '{{.Names}}' | grep -E '^lm-<env>-db-'
+   sudo docker exec -it lm-<env>-db-1 psql -U postgres -d postgres
+   ```
+
+   容器名稱以 `docker ps` 的輸出為準（通常是 `lm-<env>-db-1`）。以下 SQL 都在這個 `psql` 中執行，每個 `update` 預期輸出 `UPDATE 1`；`UPDATE 0` 表示帳號名稱或 email 打錯。
+
+2. 把另一個帳號改為管理員：
+
+   ```sql
+   update app.profiles set role = 'admin' where username = '<帳號名稱>';
+   ```
+
+   伺服器每個請求都重新讀取角色，所以立即生效；對方重新登入後，帳號選單才會出現「管理後台」。
+
+3. 直接設定密碼。先以 `\prompt` 把新密碼讀進 psql 變數 `pw`：新密碼只在這個 `psql` 中輸入（輸入時會顯示在畫面上），不出現在任何指令列或 shell 的記錄中。新密碼必須是 12–72 個字元，且 UTF-8 編碼不超過 72 位元組（與 App 的密碼規則相同；Database 不會檢查）。email 為 `<帳號名稱>@<LM_AUTH_EMAIL_DOMAIN>`；`LM_AUTH_EMAIL_DOMAIN` 空白時為 `users.little-moments.invalid`：
+
+   ```sql
+   \prompt '新密碼：' pw
+   update auth.users set encrypted_password = extensions.crypt(:'pw', extensions.gen_salt('bf')), updated_at = now() where email = '<帳號名稱>@<LM_AUTH_EMAIL_DOMAIN>';
+   delete from auth.sessions where user_id = (select id from auth.users where email = '<帳號名稱>@<LM_AUTH_EMAIL_DOMAIN>');
+   \unset pw
+   ```
+
+   `delete` 讓這個帳號在其他裝置的登入在下一次換發時失效（輸出 `DELETE <n>`，`n` 可以是 0）。之後以新密碼登入 App 確認。
+
+4. 啟用被停用的帳號：
+
+   ```sql
+   update app.profiles set disabled_at = null where username = '<帳號名稱>';
+   ```
+
+5. 恢復由 `LM_PUBLIC_SIGNUP` 控制公開註冊（刪除管理後台儲存的設定）：
+
+   ```sql
+   delete from app.settings where key = 'public_signup';
+   ```
+
+   之後公開註冊依作用中 App 容器建立時讀到的 `LM_PUBLIC_SIGNUP`。首次切換之後、下一次部署建立新的 App 槽位之前，Production 的容器讀到的仍是步驟 7.1 的 `true`，所以這時刪除設定會重新開放公開註冊；要關閉時改在管理後台儲存。
+
+以 `\q` 離開 `psql`。直接修改 Database 不寫入操作紀錄，請另外記下做了什麼與原因。
 
 ## 回滾到 v1.1.5
 
