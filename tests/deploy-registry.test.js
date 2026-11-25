@@ -45,7 +45,7 @@ describe('deploy/registry/compose.yaml', () => {
 describe('mirror.list 與 mirror.sh', () => {
   const list = codeLines(read(`${DIR}/mirror.list`)).map((l) => l.trim().split(/\s+/));
 
-  test('mirror.list 依序列出 8 個上游映像（含 tag）與名稱，與 Jenkinsfile 的鏡像映像相同', () => {
+  test('mirror.list 依序列出 7 個上游映像（含 tag）與名稱，與 Jenkinsfile 的鏡像映像相同', () => {
     expect(list).toEqual([
       ['ghcr.io/gitleaks/gitleaks:v8.30.1', 'gitleaks'],
       ['ghcr.io/google/osv-scanner:v2.7.1', 'osv-scanner'],
@@ -54,7 +54,6 @@ describe('mirror.list 與 mirror.sh', () => {
       ['docker.io/anchore/syft:v1.57.1', 'syft'],
       ['gcr.io/go-containerregistry/crane:v0.22.1', 'crane'],
       ['ghcr.io/sigstore/cosign/cosign:v2.6.5', 'cosign'],
-      ['ghcr.io/zaproxy/zaproxy:2.17.0', 'zap'],
     ]);
     const jenkinsfile = read('Jenkinsfile');
     const mirrored = [...jenkinsfile.matchAll(/^\s*LM_[A-Z_]+_IMAGE = '[^']+\/mirror\/([a-z0-9._-]+)@sha256:[0-9a-f]{64}'$/gm)].map((m) => m[1]);

@@ -13,6 +13,8 @@
 //   秘密檔為 JSON：{ "<憑證 ID>": "<值>" } 或 [{ "id": "...", "value": "..." }]。
 //   --secrets-dir（Jenkinsfile 收尾階段使用）：目錄本身 0700、其中每個檔案 0600、只允許一般檔案：
 //     `*.json`  與 --secrets 相同格式（例如各階段 Ephemeral_Database 的 scrub-secrets.json 副本）
+//     `*.env`   KEY=VALUE 檔（例如 lm-staging-supabase-env／lm-prod-supabase-env 的內容；plan.md D13）：
+//               每個非空、非註解行的 VALUE 各為一個秘密（`<檔名>#<KEY>`），不把整份檔案當成一個值
 //     其他檔案  一個秘密的原值，檔名即憑證 ID（Pipeline 在 withCredentials 內以 shell 內建 printf 或 cat 寫入，
 //               值不經命令列）；結尾換行會被移除；多行值（例如私鑰）另將每一行（≥ 16 字元，PEM 標頭除外）列為秘密。
 //   兩者可同時提供，秘密集合取聯集。
@@ -222,6 +224,27 @@ export function rawSecretEntries(id, text) {
   return out;
 }
 
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+
+/**
+ * KEY=VALUE 秘密檔（`*.env`）的內容 → 秘密項目：每個非空、非 `#` 註解行的 VALUE（去除行尾 CR；值可含 `=`）
+ * 以 `<id>#<KEY>` 列為秘密。鍵名格式不符或沒有 `=` 的行整行列為秘密（`<id>#<行號>`），避免格式錯誤時漏遮。
+ * @returns {{id:string, value:string}[]}
+ */
+export function envFileSecretEntries(id, text) {
+  const out = [];
+  String(text ?? '').split('\n').forEach((raw, i) => {
+    const line = raw.replace(/\r$/, '');
+    const t = line.trim();
+    if (t === '' || t.startsWith('#')) return;
+    const eq = line.indexOf('=');
+    const key = eq > 0 ? line.slice(0, eq).trim() : '';
+    if (eq > 0 && ENV_KEY_RE.test(key)) out.push({ id: `${id}#${key}`, value: line.slice(eq + 1) });
+    else out.push({ id: `${id}#${i + 1}`, value: t });
+  });
+  return normalizeSecrets(out);
+}
+
 /** 讀取秘密目錄；錯誤訊息不含檔案內容。 */
 export function loadSecretsDir(dir, { fs = nodeFs, platform = process.platform } = {}) {
   let stat;
@@ -247,6 +270,8 @@ export function loadSecretsDir(dir, { fs = nodeFs, platform = process.platform }
       try { doc = JSON.parse(text); } catch { return { ok: false, reason: '秘密目錄中的 JSON 檔無效' }; }
       if (!doc || typeof doc !== 'object') return { ok: false, reason: '秘密目錄中的 JSON 檔格式不符' };
       secrets.push(...normalizeSecrets(doc));
+    } else if (ent.name.endsWith('.env')) {
+      secrets.push(...envFileSecretEntries(ent.name, text));
     } else {
       secrets.push(...rawSecretEntries(ent.name, text));
     }

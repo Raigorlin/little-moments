@@ -6,10 +6,11 @@
 //   Init   checkout、Build_Image（只以 digest 引用，格式不符時失敗）、Deploy_Host 名稱格式檢查
 //   Drill  經 SSH 執行 `lm-deploy prod drill`（forced command 綁定 prod，子命令經 SSH_ORIGINAL_COMMAND 傳入）：
 //          Deploy_Host 取最新已驗證的 Production 備份並重算 sha256 → 在獨立 Compose 專案 lm-drill-prod-<8 hex>
-//          （只有 internal 網路與匿名卷，不連接 Production 的網路或資料卷）pg_restore → Migration_Runner 補齊遷移
-//          → 以目前 Production 作用中 digest 啟動 App → 插入臨時合成管理員與 smoke-fixture → Smoke_Test → `down -v`。
+//          （deploy/compose/drill.yaml：db、auth、realtime、gateway；只有 internal 網路與匿名卷，拋棄式金鑰由
+//          lm-supabase-keys 產生，不連接 Production 的網路或資料卷）→ db-setup.sql → 以目前 Production 作用中映像的
+//          /app/migrations 建立 schema → pg_restore --data-only → 筆數驗證（auth.users、app.profiles）→ `down -v`（plan.md D8）。
 //          以 ci/restore-drill.mjs classify 判讀結束碼與輸出；未通過即將建置標記為失敗（Req 14.7）。
-//   post   ci/restore-drill.mjs record 寫入 Build_Record：備份識別碼、還原耗時（秒）、Smoke_Test 結果、失敗步驟
+//   post   ci/restore-drill.mjs record 寫入 Build_Record：備份識別碼、還原耗時（秒）、驗證結果與還原後筆數、失敗步驟
 //          （Req 14.6、14.7），並封存 reports/。
 //
 // 備份保留（Req 14.7）：本 Job 只呼叫 `lm-deploy prod drill`，從不呼叫 backup／prune；lm-deploy drill 只讀取備份，
@@ -19,8 +20,8 @@
 //   * 憑證只在需要的步驟內以 withCredentials 提供；本檔只出現憑證 ID。
 //   * 所有 sh 腳本皆為單引號字串，外部值只經 shell 環境變數（加雙引號）取用，不經 Groovy 插值。
 //   * SSH 一律 StrictHostKeyChecking=yes，known_hosts 來自 Credential_Store 的 secret file（不信任首次連線）。
-//   * Smoke_Test 只在 Deploy_Host 的 drill internal 網路內執行；合成管理員的帳號與密碼由 Deploy_Host 每次隨機產生，
-//     不經過 Jenkins，也不出現在任何輸出。輸出只含步驟名稱、狀態碼與耗時（Req 21.10）。
+//   * 驗證只在 Deploy_Host 的 drill internal 網路內執行；拋棄式金鑰由 Deploy_Host 每次產生，不經過 Jenkins，
+//     也不出現在任何輸出。輸出只含步驟名稱、筆數與耗時（Req 21.10）。
 //
 // 需要的 plugin：Pipeline、Credentials Binding、SSH Credentials、Docker Pipeline、Timestamper。
 //
@@ -71,7 +72,7 @@ pipeline {
           env.LM_DRILL_BACKUP_ID = ''
           env.LM_DRILL_FAILED_STEP = ''
           env.LM_DRILL_RESTORE_SECONDS = ''
-          env.LM_DRILL_SMOKE = 'not_run'
+          env.LM_DRILL_VERIFY = 'not_run'
           env.LM_DRILL_STARTED_AT = utcNow()
           String user = triggeringUser()
           env.LM_DRILL_BY = user ?: 'timer'
@@ -103,7 +104,7 @@ pipeline {
         script {
           enterStage('Drill')
           int rc
-          // 還原（60 分鐘）+ 啟動 + Smoke_Test（15 分鐘）+ 清理的上限由 Deploy_Host 控制；此為外層保護。
+          // Supabase 服務啟動、遷移、還原（60 分鐘）、驗證與清理的上限由 Deploy_Host 控制；此為外層保護。
           timeout(time: 120, unit: 'MINUTES') {
             rc = deployHost('drill', 'drill.jsonl')
           }
@@ -114,7 +115,7 @@ pipeline {
           env.LM_DRILL_BACKUP_ID = (v.backupId ?: '').toString()
           env.LM_DRILL_FAILED_STEP = (v.failedStep ?: '').toString()
           env.LM_DRILL_RESTORE_SECONDS = v.restoreSeconds != null ? v.restoreSeconds.toString() : ''
-          env.LM_DRILL_SMOKE = (v.smokeResult ?: 'not_run').toString()
+          env.LM_DRILL_VERIFY = (v.verifyResult ?: 'not_run').toString()
           if (v.passed != true) {
             // 步驟名稱與代碼皆已由 ci/restore-drill.mjs 驗證為固定格式。
             error('還原演練未通過（步驟 ' + (env.LM_DRILL_FAILED_STEP ?: '不明') + '，代碼 ' + safeCode(v.code) + '）；所有既有備份均已保留')
@@ -182,7 +183,7 @@ void writeDrillRecord() {
   }
 }
 
-/** 建置摘要：只含結果、備份識別碼、還原秒數與 Smoke_Test 結果（皆經格式檢查）。 */
+/** 建置摘要：只含結果、備份識別碼、還原秒數與筆數驗證結果（皆經格式檢查）。 */
 void setSummary() {
   List parts = ['還原演練：' + (env.LM_DRILL_PASSED == 'true' ? '通過' : '未通過')]
   String id = env.LM_DRILL_BACKUP_ID ?: ''
@@ -191,7 +192,7 @@ void setSummary() {
   if (secs ==~ /^[0-9]{1,7}(\.[0-9]{1,3})?$/) {
     parts << '還原 ' + secs + ' 秒'
   }
-  parts << 'Smoke_Test ' + ([pass: '通過', fail: '未通過', not_run: '未執行'][env.LM_DRILL_SMOKE] ?: '未執行')
+  parts << '筆數驗證 ' + ([pass: '通過', fail: '未通過', not_run: '未執行'][env.LM_DRILL_VERIFY] ?: '未執行')
   String step = env.LM_DRILL_FAILED_STEP ?: ''
   if (env.LM_DRILL_PASSED != 'true' && step ==~ /^[a-z][a-z_-]{0,31}$/) {
     parts << '失敗步驟 ' + step

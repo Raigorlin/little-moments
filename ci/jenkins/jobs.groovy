@@ -3,15 +3,15 @@
 //
 // 拓撲：
 //   ci/little-moments        Multibranch：PR（merge 與 head）與非 main 分支；PR 信任策略「Admin or Write」；保留 14 天
-//   release/little-moments   Multibranch：僅 main 分支與 Release_Tag（Tag build strategy）；main 90 天、Tag 365 天
+//   release/little-moments   Multibranch：僅 main 分支（推送或合併即發布：Staging → Production → 版本標籤；plan.md D1）；90 天
 //   release/rollback         Pipeline：手動回滾（ci/jenkins/pipelines/rollback.Jenkinsfile）；365 天
 //   release/restore-drill    Pipeline：還原演練，cron `H 3 1,15 * *`（ci/jenkins/pipelines/restore-drill.Jenkinsfile）；365 天
 //   release/digest-lookup    Pipeline：以 Image_Digest 查詢 Build_Record（ci/jenkins/pipelines/digest-lookup.Jenkinsfile）；30 天
 //   infra/build-image        Pipeline：建置 Build_Image（ci/jenkins/pipelines/build-image.Jenkinsfile）；90 天
 //
 // 憑證（Req 2.4、2.5、15.1）：全部定義在「資料夾範圍」，沒有任何 GLOBAL 範圍的系統憑證（casc.yaml 只有 SYSTEM 範圍的
-// webhook secret，Job 無法讀取）。部署、簽章、Staging／Production Database、Setup_Token、smoke 帳號與 Jenkins API
-// 憑證只存在 release/ 資料夾；ci/ 只有 GitHub App 與唯讀 Registry 拉取帳號，因此 PR 建置請求任何部署憑證時
+// webhook secret，Job 無法讀取）。部署、簽章、Staging／Production 的 Supabase 金鑰檔（lm-*-supabase-env）、smoke 帳號與
+// Jenkins API 憑證只存在 release/ 資料夾；ci/ 只有 GitHub App 與唯讀 Registry 拉取帳號，因此 PR 建置請求任何部署憑證時
 // withCredentials 直接失敗（CredentialNotFoundException）。infra/ 只有建置 Build_Image 所需的 Registry 推送帳號與 GitHub App，
 // 且非管理員沒有任何 infra/ 的 Job/Build 權限。
 //
@@ -35,9 +35,9 @@ import groovy.transform.Field
 @Field final String GITHUB_REPO = 'little-moments'
 @Field final String REPO_URL = "https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}.git".toString()
 @Field final String MAIN_BRANCH = 'main'
-// Release_Tag 的預篩（Req 1.5 的最終驗證在 Jenkinsfile 的 Tag Verify：ci/policy/tag.mjs）。
-// 0 至 999999、無前導零（數值 0 除外）、不含任何前綴或後綴；同時把分支限定為 main。
-@Field final String RELEASE_HEAD_REGEX = '^(main|v(0|[1-9][0-9]{0,5})\\.(0|[1-9][0-9]{0,5})\\.(0|[1-9][0-9]{0,5}))$'
+// release/little-moments 只探索 main（Rust 版不再以 Release_Tag 發布；plan.md D1）。Tag 不被探索，
+// 就算以其他方式觸發，Jenkinsfile 的 ci/stages.mjs 也以固定訊息拒絕。
+@Field final String RELEASE_HEAD_REGEX = '^main$'
 
 // Jenkins 群組與帳號（由 security realm 提供；名稱須與 casc.yaml 的 authorizationStrategy 相同）。
 @Field final String GROUP_DEVELOPERS = 'lm-developers'
@@ -48,7 +48,6 @@ import groovy.transform.Field
 // 保留天數（Req 21.3–21.5；Design「Jenkins Job 配置」）。
 @Field final String KEEP_PR_DAYS = '14'
 @Field final String KEEP_MAIN_DAYS = '90'
-@Field final String KEEP_TAG_DAYS = '365'
 @Field final int KEEP_RELEASE_JOB_DAYS = 365
 @Field final int KEEP_LOOKUP_DAYS = 30
 @Field final int KEEP_INFRA_DAYS = 90
@@ -74,7 +73,7 @@ import groovy.transform.Field
   // END credentials ci
   // BEGIN credentials release
   'release': [
-    [id: 'lm-github-app', type: 'gitHubApp', description: 'GitHub App：checkout、Tag 驗證與 commit status（release/）'],
+    [id: 'lm-github-app', type: 'gitHubApp', description: 'GitHub App：checkout 與 commit status（release/）'],
     [id: 'lm-registry-pull', type: 'usernamePassword', description: 'Registry 唯讀拉取帳號（只允許 GET/HEAD）'],
     [id: 'lm-registry-push', type: 'usernamePassword', description: 'Registry 唯一可寫入帳號 lm-push（推送、簽章、版本標籤）'],
     [id: 'lm-cosign-key', type: 'file', fileName: 'cosign.key', description: 'cosign 加密私鑰'],
@@ -82,15 +81,12 @@ import groovy.transform.Field
     [id: 'lm-cosign-pub', type: 'file', fileName: 'cosign.pub', description: 'cosign 公鑰（部署前驗證簽章與 attestation）'],
     [id: 'lm-deploy-known-hosts', type: 'file', fileName: 'known_hosts', description: 'Deploy_Host 的 known_hosts'],
     [id: 'lm-ssh-staging', type: 'sshKey', description: 'Staging 專用部署金鑰（lm-deploy-staging，forced command）'],
-    [id: 'lm-staging-db', type: 'usernamePassword', description: 'Staging Database 帳號（與 Production 不同）'],
-    [id: 'lm-staging-setup-token', type: 'string', description: 'Staging 的 Setup_Token'],
+    [id: 'lm-staging-supabase-env', type: 'file', fileName: 'supabase.env', description: 'Staging 的 Supabase 金鑰（lm-supabase-keys env staging 的輸出；經 stdin 交給 lm-deploy）'],
     [id: 'lm-staging-smoke', type: 'file', fileName: 'smoke-password', description: 'Staging 合成帳號 smoke-bot 的密碼'],
     [id: 'lm-ssh-prod', type: 'sshKey', description: 'Production 專用部署金鑰（lm-deploy-prod，forced command）'],
-    [id: 'lm-prod-db', type: 'usernamePassword', description: 'Production Database 帳號（與 Staging 不同）'],
-    [id: 'lm-prod-setup-token', type: 'string', description: 'Production 的 Setup_Token'],
+    [id: 'lm-prod-supabase-env', type: 'file', fileName: 'supabase.env', description: 'Production 的 Supabase 金鑰（lm-supabase-keys env prod 的輸出；與 Staging 不同）'],
     [id: 'lm-prod-smoke', type: 'file', fileName: 'smoke-password', description: 'Production 合成帳號 smoke-bot 的密碼'],
-    [id: 'lm-prod-openai-api-key', type: 'file', fileName: 'openai-api-key', description: 'Production 收據 AI 的 OpenAI API 金鑰（只在 Production Deploy 使用）'],
-    [id: 'lm-jenkins-api-readonly', type: 'usernamePassword', description: 'Jenkins API 唯讀帳號（Overall/Read、Job/Read）'],
+    [id: 'lm-jenkins-api-readonly', type: 'usernamePassword', description: 'Jenkins API 唯讀帳號（Overall/Read、Job/Read；release/digest-lookup）'],
     [id: 'lm-jenkins-api-retention', type: 'usernamePassword', description: 'Jenkins API 帳號 lm-retention-bot（release/little-moments 的 Run/Update，僅設定 keepLog）'],
   ],
   // END credentials release
@@ -326,7 +322,6 @@ Closure releaseCredentials = folderCredentials('release')
 Closure infraCredentials = folderCredentials('infra')
 Closure prRetention = retention(KEEP_PR_DAYS)
 Closure mainRetention = retention(KEEP_MAIN_DAYS)
-Closure tagRetention = retention(KEEP_TAG_DAYS)
 Closure rollbackScript = mainScript('ci/jenkins/pipelines/rollback.Jenkinsfile')
 Closure restoreDrillScript = mainScript('ci/jenkins/pipelines/restore-drill.Jenkinsfile')
 Closure digestLookupScript = mainScript('ci/jenkins/pipelines/digest-lookup.Jenkinsfile')
@@ -353,7 +348,7 @@ folder('ci') {
 
 multibranchPipelineJob('ci/little-moments') {
   displayName('little-moments（PR 與非 main 分支）')
-  description('PR（merge 與 head）與未關聯 PR 的非 main 分支：安裝、建置、單元測試、瀏覽器測試與 Security_Scanner（Req 1.2、1.8）。')
+  description('PR（merge 與 head）與未關聯 PR 的非 main 分支（例如 rust）：Rust 工具鏈、安裝、建置、cargo／bun／bats 測試與 Security_Scanner；不建置映像、不部署（Req 1.2、1.8；plan.md D1）。')
   branchSources {
     branchSource {
       source {
@@ -426,16 +421,16 @@ multibranchPipelineJob('ci/little-moments') {
   }
 }
 
-// ---------------------------------------------------------------- release/：main 與 Release_Tag（Trusted）
+// ---------------------------------------------------------------- release/：main（Trusted）
 
 folder('release') {
-  displayName('release（main 與 Release_Tag，含部署憑證）')
+  displayName('release（main，含部署憑證）')
   description('Trusted_Ref 建置與正式發布相關 Job。部署、簽章與資料庫憑證只存在此資料夾範圍；建置只在 lm-trusted agent 執行（Req 2.4、2.8、15.1）。')
   properties {
     authorizationMatrix {
       inheritanceStrategy { inheritingGlobal() }
       entries {
-        // 核准 input 以使用者 ID（ci/release-approvers.json）限定 submitter，不需要 Job/Build；此處只給讀取。
+        // release/rollback 的 input 以使用者 ID（ci/release-approvers.json）限定 submitter；此處只給讀取。
         group {
           name(GROUP_RELEASE_APPROVERS)
           permissions(['Job/Read'])
@@ -447,8 +442,8 @@ folder('release') {
 }
 
 multibranchPipelineJob('release/little-moments') {
-  displayName('little-moments（main 與 Release_Tag）')
-  description('main：QA／安全／映像／Staging 關卡與 Staging 部署；Release_Tag：重新評估關卡、沿用 main 的 Image_Digest、人工核准後部署 Production（Req 1.3、1.4）。')
+  displayName('little-moments（main → Staging → Production）')
+  description('main 的推送或合併：QA／安全／映像關卡 → Staging 部署與驗證 → Production 部署與 10 分鐘觀察 → 版本標籤 v<Cargo.toml 版本>；沒有人工核准（plan.md D1、D2）。')
   properties {
     authorizationMatrix {
       inheritanceStrategy { inheritingGlobal() }
@@ -474,27 +469,20 @@ multibranchPipelineJob('release/little-moments') {
           traits {
             // 不探索任何 PR：PR 只在 ci/ 建置，無法取得本資料夾的憑證（Req 2.4）。
             gitHubBranchDiscovery { strategyId(3) }
-            gitHubTagDiscovery()
-            // 只保留 main 與 v<major>.<minor>.<patch>（預篩；名稱像 Tag 的分支由下方建置策略排除自動建置）。
+            // 只保留 main（不探索 Tag；plan.md D1）。
             headRegexFilter { regex(RELEASE_HEAD_REGEX) }
             githubSkipNotifications()
           }
         }
       }
       strategy {
-        // 預設（Release_Tag）365 天；main 90 天（Req 21.3、21.4）。
-        namedExceptionsBranchPropertyStrategy {
-          defaultProperties(tagRetention)
-          namedExceptions {
-            named {
-              name(MAIN_BRANCH)
-              props(mainRetention)
-            }
-          }
+        // main 90 天（Req 21.3）；正在 Production 執行的建置由 ci/keep-log.mjs 設定 keepLog（Req 21.6）。
+        allBranchesSame {
+          props(mainRetention)
         }
       }
       buildStrategies {
-        // 分支只自動建置 main（名稱符合 Tag 格式的分支不建置）。
+        // 只自動建置 main。
         buildNamedBranches {
           filters {
             exact {
@@ -502,12 +490,6 @@ multibranchPipelineJob('release/little-moments') {
               caseSensitive(true)
             }
           }
-        }
-        // Tag build strategy（basic-branch-build-strategies）：只建置 7 天內建立的 Tag，
-        // 避免首次索引時建置所有歷史 Tag。Release_Tag 應使用 annotated tag（`git tag -a`），時間戳為建立時間。
-        buildTags {
-          atLeastDays('')
-          atMostDays('7')
         }
       }
     }

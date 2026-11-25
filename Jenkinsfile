@@ -1,26 +1,29 @@
-// 日子拾光 · LITTLE MOMENTS — Jenkins Multibranch Pipeline（Requirement 1、3、21、22、23；Design「Pipeline 階段配置」）。
+// 日子拾光 · LITTLE MOMENTS — Jenkins Multibranch Pipeline（Requirement 1、3、21、22、23；Design「Pipeline 階段配置」；
+// Rust + 自架 Supabase 版：.agents/tasks/jenkins-rust-supabase/plan.md 的 D1–D16）。
 //
 // 同一份 Jenkinsfile 由兩個 Multibranch Job 載入（Req 1.1）：
-//   ci/little-moments       PR 與非 main 分支（Untrusted，無部署憑證）
-//   release/little-moments  main 與 Release_Tag（Trusted，憑證只存在 release/ 資料夾範圍）
+//   ci/little-moments       PR 與非 main 分支（例如 rust；Untrusted，無部署憑證）：只有品質階段，不建置映像、不部署
+//   release/little-moments  main（Trusted，憑證只存在 release/ 資料夾範圍）：品質 → App_Image → Staging → Production
+//                           → 版本標籤 v<Cargo.toml 的 [workspace.package] version>。合併到 main 即發布，沒有人工核准（D1、D2）
 // 階段規劃由 ci/stages.mjs 決定；信任只由事件類型與 ref 決定，手動觸發或重跑不提升信任（Req 2.8）。
+// Release_Tag（v*）不再觸發建置：release/little-moments 不探索 Tag，ci/stages.mjs 也以固定訊息拒絕 Tag 事件。
 //
 // 規則：
-//   * 不提供任何建置參數（沒有 `parameters` 區塊）。沒有任何參數、環境變數或選項可以略過 Release_Gate、
-//     將未通過的 Release_Gate 改為通過或放寬通過條件（Req 23.4）。唯一的 `input` 是 Release_Tag 的正式核准與
-//     破壞性遷移核准（releaseApprovalLoop／destructiveApprovalLoop）：只有 submitterParameter、沒有任何參數，
-//     submitter 限定 Release_Approver，送出者另以 ci/approval.mjs 再驗證。
+//   * 不提供任何建置參數（沒有 `parameters` 區塊），也沒有任何 `input` 步驟。沒有任何參數、環境變數或選項可以略過
+//     Release_Gate、將未通過的 Release_Gate 改為通過或放寬通過條件（Req 23.4）。
 //   * 憑證只在需要的步驟內以 withCredentials 提供（Req 15.1、15.2）；本檔只出現憑證 ID，不含任何秘密值。
 //   * 失敗一律以 error()／非零結束碼終止，Declarative Pipeline 會略過所有後續階段（Req 1.7）。
 //   * 所有 sh 腳本使用單引號字串，只透過 shell 環境變數（加雙引號）取用 ref、SHA 等外部值，不經 Groovy 插值。
 //   * 階段名稱與 ci/stages.mjs 的 STAGE 常數一致，供 Build_Record 的 firstFailedStage 使用。
+//   * Rust 的檢查（cargo fmt／clippy／test、trunk build、bats）在本建置以根目錄 Dockerfile 的 toolchain 階段建出的
+//     工具鏈映像內執行（D3）；ci/*.mjs 與 bun test 在 digest 固定的 Build_Image 內執行。
 //
 // 注意：本檔無法在本機執行，語法與 plugin 步驟參數未經 Jenkins 實際驗證。
 
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurperClassic
 
-// environment 各鍵的說明（自 environment 區塊移出，內容不變；鍵、值與順序不變；Components 第 22 節）。
+// environment 各鍵的說明（自 environment 區塊移出；Components 第 22 節）。
 //
 // BUILD_IMAGE：
 //   Build_Image 只以 digest 引用（Req 3.1）。
@@ -28,16 +31,26 @@ import groovy.json.JsonSlurperClassic
 //   更新方式：ci/build-image/Dockerfile 或 ci/toolchain.json 變更後重新執行 infra/build-image，
 //   以新輸出的 digest 在同一個 commit 內取代本檔與 ci/jenkins/pipelines/{rollback,restore-drill,digest-lookup}.Jenkinsfile 的 BUILD_IMAGE。
 //   格式不是 `<registry>/<repo>@sha256:<64 hex>` 時 Init 階段失敗（fail closed），不會退回任何可變 tag。
+//   Rust 版不重建 Build_Image（plan.md D3）：bun 的工具、ci/*.mjs 與 bun test 仍在其中執行。
 // LM_RECORD：
 //   Build_Record 路徑（封存前由 post 階段經 ci/scrub.mjs 處理）。
 // LM_REGISTRY_PULL_CREDENTIALS、LM_GIT_CREDENTIALS：
 //   憑證 ID（值只存在 Credential_Store；ci/ 與 release/ 資料夾各自定義）。
+// LM_RUST_TOOLCHAIN_IMAGE_REPO：
+//   Rust 工具鏈映像的本機名稱（plan.md D3）：Toolchain 階段以 `docker build --target toolchain`（根目錄 Dockerfile、
+//   空的建置內容）建出 `<本值>:<完整 Commit SHA>`，只存在執行本建置的 Agent，不推送到任何 Registry，收尾時移除該標籤。
+//   toolchain 階段的 FROM 以 digest 固定、下載的工具（trunk、wasm-bindgen、wasm-opt、bats）以 SHA-256 檢查，
+//   版本與 ci/rust-toolchain.json 相同（Toolchain 階段以 ci/verify-rust-toolchain.sh 確認）。
+// LM_CARGO_CACHE_VOLUME：
+//   cargo 的 registry 快取（CARGO_HOME）所在的 Docker 具名卷前綴（plan.md D3）。實際名稱另加 `-ci` 或 `-release`：
+//   兩個 Agent 在同一主機上共用 Docker daemon，Untrusted 建置寫入的快取不得被 Trusted 建置讀取。
+//   Install 階段（可連網）`cargo fetch --locked` 寫入；Build 與 Unit Tests 以 --network none、CARGO_NET_OFFLINE=true 讀取。
+// LM_BUN_TESTS：
+//   Unit Tests 階段在 Build_Image 內執行的 bun 測試（plan.md D15；萬用字元由 shell 展開）：CI／部署工具與 Rust 版
+//   對照 Bun 版樣式的測試。其他 tests/*.test.js 屬於 Bun 版 App（src/、server/），Rust 版的 Pipeline 不執行。
 // LM_POSTGRES_IMAGE：
-//   Ephemeral_Database 映像只以 digest 引用，與 deploy/compose/compose.yaml 的 db 相同版本（Req 4.2）。
-//   digest 為 postgres:17.6-bookworm 的多平台 index（`docker buildx imagetools inspect postgres:17.6-bookworm`）；
-//   更新版本時須同時修改 deploy/compose/compose.yaml 與 drill.yaml 的 db。
-// LM_EDB_NAME、LM_EDB_USER：
-//   Ephemeral_Database 的資料庫與管理帳號名稱（非秘密；密碼每階段隨機產生）。
+//   映像層級 Smoke_Test（ci/scripts/image-smoke.sh）的 Ephemeral_Database：一般的 PostgreSQL，只以 digest 引用
+//   （postgres:17.6-bookworm 的多平台 index）。Deploy_Host 的 Supabase Database 映像另見 deploy/compose/compose.yaml（plan.md D5）。
 // LM_GITLEAKS_IMAGE、LM_OSV_SCANNER_IMAGE、LM_TRIVY_IMAGE、LM_SEMGREP_IMAGE：
 //   靜態安全掃描器（Req 6；Design「工具選型」）：鏡像至 LAN Registry（與 Build_Image 同一 Registry）並只以 digest 引用。
 //   上游（linux/amd64 單一平台鏡像）：ghcr.io/gitleaks/gitleaks:v8.30.1、ghcr.io/google/osv-scanner:v2.7.1、
@@ -55,19 +68,8 @@ import groovy.json.JsonSlurperClassic
 //   Agent 的系統 CA bundle（須含 LAN Registry 的內部 CA），以唯讀方式提供給 Trivy 下載資料庫。
 // LM_IMAGE_REPO：
 //   App_Image repository（與 deploy/compose/*.env 的 LM_IMAGE_REPO 相同，位於 Build_Image 的 LAN Registry）。
-//   Migration Compatibility 以 `<repo>:<Release_Tag>`（版本標籤不覆寫，Req 16.10）拉取最近 Release_Tag 的映像後
-//   立即解析為 `<repo>@sha256:<digest>`，之後只以 digest 執行。
-// LM_ZAP_IMAGE：
-//   DAST_Scanner（Design「工具選型」：OWASP ZAP stable，automation framework）：鏡像至 LAN Registry 並只以 digest 引用。
-//   上游 ghcr.io/zaproxy/zaproxy:2.17.0（linux/amd64）；更新方式同上（deploy/registry/mirror.list、mirror.sh）。
-// LM_DAST_PROBE_TARGETS：
-//   隔離探測（ci/dast/isolation-probe.sh，Req 7.7、7.9）必須「無法連線」的位址：Deploy_Host 的 SSH 與 App／代理連接埠、
-//   Staging／Production 連接埠、Registry、Jenkins 與其他 LAN 主機（另含探測腳本預設的網際網路位址與預設閘道）。
-//   同主機配置（design.md 第 18.6 節）：全部在 Deploy_Host 192.168.1.121 上——SSH 22、Edge_Proxy（NPM）80／443 與
-//   管理介面 81、Jenkins controller 8080、Staging／Production LM_Proxy 8081／8082、維運者的暫時預覽 App 8090、
-//   LAN Registry 8443。只接受 IP 位址字面值（`a.b.c.d:port` 或 `[IPv6]:port`，以空白分隔；--internal 網路內
-//   無法解析主機名稱會使探測失去意義），格式不符時 DAST 階段在建立 Test_Environment 前失敗。
-//   主機新增發布連接埠時一併加入（以 `sudo ss -ltnp` 確認）。
+//   標籤：每次 main 建置的 `<完整 SHA>`（Image Push），以及「上線後」關卡通過後的版本標籤 `v<版本>`（Version Tag）；
+//   兩者都不覆寫既有標籤（Req 16.10；plan.md D2）。
 // LM_SYFT_IMAGE、LM_CRANE_IMAGE、LM_COSIGN_IMAGE：
 //   App_Image 掃描、SBOM、Registry 操作與簽章工具（Design「工具選型」：Trivy、Syft、crane、cosign v2）。
 //   Build_Image 不含這些工具；與掃描器相同，鏡像至 LAN Registry 並只以 digest 引用。
@@ -75,60 +77,48 @@ import groovy.json.JsonSlurperClassic
 //   ghcr.io/sigstore/cosign/cosign:v2.6.5（2.x 最新版）。更新方式同上（deploy/registry/mirror.list、mirror.sh）；
 //   crane 另須同步 ci/jenkins/pipelines/build-image.Jenkinsfile 的 LM_CRANE_IMAGE。Trivy 沿用 LM_TRIVY_IMAGE。
 // LM_REGISTRY_PUSH_CREDENTIALS、LM_COSIGN_KEY_CREDENTIALS、LM_COSIGN_PASSPHRASE_CREDENTIALS：
-//   推送與簽章憑證（只定義於 release/ 資料夾範圍，只在 Image Push／Image Sign 的 withCredentials 內提供；Req 15.1、15.2）：
+//   推送與簽章憑證（只定義於 release/ 資料夾範圍，只在 Image Push／Image Sign／Staging 的 attestation／Version Tag 的
+//   withCredentials 內提供；Req 15.1、15.2）：
 //     lm-registry-push      Username with password：Registry 唯一可寫入的帳號 lm-push（deploy/registry/Caddyfile）
 //     lm-cosign-key         Secret file：cosign 加密私鑰 cosign.key
 //     lm-cosign-passphrase  Secret text：cosign.key 的密碼
 // LM_DEPLOY_HOST、LM_DEPLOY_PORT：
-//   Staging 部署（Req 15.1、15.2、15.9、18）：Deploy_Host 的 LAN 位址與 SSH 連接埠（非秘密）。
+//   Staging／Production 部署（Req 15.1、15.2、15.9、18、20）：Deploy_Host 的 LAN 位址與 SSH 連接埠（非秘密）。
 //   known_hosts 憑證（lm-deploy-known-hosts）須含 192.168.1.121 的主機金鑰（連接埠非 22 時為 `[host]:port` 形式）。
 // LM_STAGING_URL：
 //   Staging 代理的 LAN origin（/srv/lm/staging/staging.env 的 LAN_IP:LM_PUBLIC_PORT）。Smoke_Test 由 Trusted Agent
-//   經此 LAN origin 執行，不經 Edge_Proxy：Host 為 192.168.1.121（須在 staging.env 的 ALLOWED_HOSTS 內），
+//   經此 LAN origin 執行，不經 Edge_Proxy：Host 為 192.168.1.121（須在 staging.env 的 LM_ALLOWED_HOSTS 內，plan.md D12），
 //   App 看到的協定為 http。HTTPS 時以 LM_SCAN_CA_BUNDLE（內部 CA）驗證憑證。
-// LM_STAGING_DB_NAME：
-//   Staging Database 名稱（非秘密；須與 Deploy_Host 上 /srv/lm/staging/db.env 的 POSTGRES_DB 相同）。
 // LM_STAGING_PREDICATE_TYPE：
 //   staging-verified attestation 的 predicate type（與 ci/resolve-digest.mjs STAGING_PREDICATE_TYPE 相同）。
-// LM_SSH_STAGING_CREDENTIALS、LM_KNOWN_HOSTS_CREDENTIALS、LM_COSIGN_PUBLIC_KEY_CREDENTIALS、LM_STAGING_DB_CREDENTIALS、LM_STAGING_SETUP_TOKEN_CREDENTIALS、LM_STAGING_SMOKE_CREDENTIALS：
+// LM_SSH_STAGING_CREDENTIALS、LM_KNOWN_HOSTS_CREDENTIALS、LM_COSIGN_PUBLIC_KEY_CREDENTIALS、LM_STAGING_STACK_ENV_CREDENTIALS、LM_STAGING_SMOKE_CREDENTIALS：
 //   Staging 憑證（只定義於 release/ 資料夾範圍，只在 Staging Deploy 的 withCredentials 內提供；Req 15.1、15.2）：
 //     lm-ssh-staging            SSH Username with private key：Staging 專用部署金鑰（authorized_keys forced command
 //                               `lm-deploy staging`；與 Production 的 lm-ssh-prod 不同，Req 15.9）
 //     lm-deploy-known-hosts     Secret file：Deploy_Host 的 known_hosts（與 release/rollback、restore-drill 共用）
 //     lm-cosign-pub             Secret file：cosign 公鑰 cosign.pub（部署前驗證簽章與 attestation，Req 17.7）
-//     lm-staging-db             Username with password：Staging Database 帳號（與 Production 不同，Req 18.6）
-//     lm-staging-setup-token    Secret text：Staging 的 Setup_Token（至少 32 字元）
-//     lm-staging-smoke          Secret file：Staging 合成帳號 smoke-bot 的密碼（與 Production 不同）
+//     lm-staging-supabase-env   Secret file：Staging 的 Supabase 金鑰（`lm-supabase-keys env staging` 輸出的 8 行 KEY=VALUE，
+//                               plan.md D13、D16）。檔案只以 `<` 重新導向成為 `lm-deploy staging deploy --app-env-stdin` 的
+//                               stdin，內容不經 Groovy、命令列或主控台；Deploy_Host 驗證鍵名與格式後以 0600 寫入 app.env
+//     lm-staging-smoke          Secret file：Staging 合成帳號 smoke-bot 的密碼（與 Production 不同）。Staging 的
+//                               Smoke_Test 以 --provision 執行：smoke-bot 不存在時以此密碼註冊（plan.md D9）
 // LM_PROD_URL：
 //   Production 代理的 LAN origin（/srv/lm/prod/prod.env 的 LAN_IP:LM_PUBLIC_PORT；80／443 由 Edge_Proxy 使用）。
 //   觀察期的 Smoke_Test 由 Trusted Agent 經此 LAN origin 執行，不經 Edge_Proxy 與 Cloudflare：Host 為 192.168.1.121
-//   （須在 prod.env 的 ALLOWED_HOSTS 內），App 看到的協定為 http。HTTPS 時以 LM_SCAN_CA_BUNDLE（內部 CA）驗證憑證。
-// LM_PROD_DB_NAME：
-//   Production Database 名稱（非秘密；須與 Deploy_Host 上 /srv/lm/prod/db.env 的 POSTGRES_DB 相同）。
-// LM_JENKINS_API_CREDENTIALS、LM_SSH_PROD_CREDENTIALS、LM_PROD_DB_CREDENTIALS、LM_PROD_SETUP_TOKEN_CREDENTIALS、LM_PROD_SMOKE_CREDENTIALS：
-//   Release_Tag 與 Production 憑證（只定義於 release/ 資料夾範圍，只在對應步驟的 withCredentials 內提供；Req 15.1、15.2）：
-//     lm-jenkins-api-readonly  Username with password：Jenkins 帳號 + API token（僅 Overall/Read、Job/Read、Run/Artifacts）；
-//                              以 fingerprint 找回產生該 Image_Digest 的 main Build_Record（與 release/digest-lookup 共用）
-//     lm-ssh-prod              SSH Username with private key：Production 專用部署金鑰（authorized_keys forced command
-//                              `lm-deploy prod`；與 release/rollback 共用，與 Staging 的 lm-ssh-staging 不同，Req 15.9）
-//     lm-prod-db               Username with password：Production Database 帳號（與 Staging 不同）
-//     lm-prod-setup-token      Secret text：Production 的 Setup_Token（至少 32 字元）
-//     lm-prod-smoke            Secret file：Production 合成帳號 smoke-bot 的密碼（與 Staging 不同）
-//   Version Tag 另使用 lm-registry-push（crane tag 寫入版本標籤）；簽章驗證與 attestation 驗證使用 lm-registry-pull 與 lm-cosign-pub。
+//   （須在 prod.env 的 LM_ALLOWED_HOSTS 內），App 看到的協定為 http。HTTPS 時以 LM_SCAN_CA_BUNDLE（內部 CA）驗證憑證。
+// LM_SSH_PROD_CREDENTIALS、LM_PROD_STACK_ENV_CREDENTIALS、LM_PROD_SMOKE_CREDENTIALS：
+//   Production 憑證（只定義於 release/ 資料夾範圍，只在 Production Deploy 的 withCredentials 內提供；Req 15.1、15.2）：
+//     lm-ssh-prod               SSH Username with private key：Production 專用部署金鑰（authorized_keys forced command
+//                               `lm-deploy prod`；與 release/rollback 共用，與 Staging 的 lm-ssh-staging 不同，Req 15.9）
+//     lm-prod-supabase-env      Secret file：Production 的 Supabase 金鑰（`lm-supabase-keys env prod` 的輸出，與 Staging 不同）；
+//                               交給 `lm-deploy prod deploy --app-env-stdin` 的方式與 Staging 相同
+//     lm-prod-smoke             Secret file：Production 合成帳號 smoke-bot 的密碼（與 Staging 不同；Production 不自動註冊，
+//                               smoke-bot 於首次切換時建立，見 deploy/README.md）
+//   Version Tag 另使用 lm-registry-push（crane tag 寫入版本標籤）；簽章驗證使用 lm-registry-pull 與 lm-cosign-pub。
 // LM_JENKINS_RETENTION_CREDENTIALS：
 //   收尾的建置保留（Req 21.6；只定義於 release/ 資料夾範圍，只在 keepProductionBuildLog 的 withCredentials 內提供）：
 //     lm-jenkins-api-retention  Username with password：Jenkins 帳號 + API token，僅 release/little-moments 的
 //                               Job/Read 與 Run/Update（設定 keepLog=true；沒有 Run/Delete，因此無法解除保留或刪除建置）
-// LM_STAGING_RECEIPT_AI、LM_PROD_RECEIPT_AI、LM_PROD_OPENAI_CREDENTIALS（Req 15.6–15.8；design.md Components 第 25 節）：
-//   收據 AI（OpenAI）的非秘密開關與憑證 ID。修改它們就是 Req 15.7 的「於 Pipeline 設定中明確啟用」，須經一般審查與
-//   Release_Tag 流程；不是建置參數，Build Now 時不能覆寫（Req 23.4）。
-//   LM_STAGING_RECEIPT_AI  只能是 disabled：Staging 部署的 stdin 送出 LM_RECEIPT_AI=disabled，不綁定任何 OpenAI 憑證
-//                          （lm-deploy staging 同樣拒絕 enabled 與金鑰）。
-//   LM_PROD_RECEIPT_AI     enabled｜disabled：enabled 時 Production Deploy 只在 `lm-deploy prod deploy` 那一次 SSH 呼叫綁定
-//                          金鑰，經 stdin 交給 lm-deploy（寫成 Deploy_Host 上的金鑰檔）；disabled 時送出 LM_RECEIPT_AI=disabled，
-//                          lm-deploy 刪除金鑰檔。
-//     lm-prod-openai-api-key  Secret file：Production 收據 AI 的 OpenAI API 金鑰（只定義於 release/ 資料夾範圍；ci/ 永遠不定義，
-//                             Req 15.8）。值不經 Groovy 變數、readFile 或 returnStdout，只以 shell 內建 read／printf 寫入 stdin。
 
 pipeline {
   // 標籤由 ci/jenkins/（13.9）設定。真正的隔離邊界是 Jenkins 資料夾範圍的憑證與 agent 限制，
@@ -147,9 +137,10 @@ pipeline {
     LM_RECORD = 'reports/build-record.json'
     LM_REGISTRY_PULL_CREDENTIALS = 'lm-registry-pull'
     LM_GIT_CREDENTIALS = 'lm-github-app'
+    LM_RUST_TOOLCHAIN_IMAGE_REPO = 'lm-rust-toolchain'
+    LM_CARGO_CACHE_VOLUME = 'lm-cargo-cache'
+    LM_BUN_TESTS = 'tests/ci-*.test.js tests/deploy-*.test.js tests/schedule-css-parity.test.js tests/storybook-studio-parity.test.js tests/readme.test.js tests/secret-scan.test.js'
     LM_POSTGRES_IMAGE = 'postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3'
-    LM_EDB_NAME = 'lm_test'
-    LM_EDB_USER = 'lm_test'
     LM_GITLEAKS_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/gitleaks@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb'
     LM_GITLEAKS_HISTORY_BASE = 'c08447436cb3db000b577a3de28f8be8acbee540'
     LM_OSV_SCANNER_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/osv-scanner@sha256:bc10cae80da100d32572aea48cfc48e592be9adc4a8b0820fd5d2c2db71f9446'
@@ -158,8 +149,6 @@ pipeline {
     LM_TRIVY_DB_REPOSITORY = 'registry.our-littlemoments.com:8443/little-moments/mirror/trivy-db:2'
     LM_SCAN_CA_BUNDLE = '/etc/ssl/certs/ca-certificates.crt'
     LM_IMAGE_REPO = 'registry.our-littlemoments.com:8443/little-moments'
-    LM_ZAP_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/zap@sha256:c2d63bbb2d907a5c5257914fb20e26e969c92b25f265def7f89f08203f912882'
-    LM_DAST_PROBE_TARGETS = '192.168.1.121:22 192.168.1.121:80 192.168.1.121:443 192.168.1.121:81 192.168.1.121:8080 192.168.1.121:8081 192.168.1.121:8082 192.168.1.121:8090 192.168.1.121:8443'
     LM_SYFT_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/syft@sha256:c31c09c21a75c7c0b1f4082358614115536fa4f1d2e0bdab2d11f5257360338a'
     LM_CRANE_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/crane@sha256:18efc5092649b2a674d384663044e04edf76705c4faa2875e8a322b4e80f070a'
     LM_COSIGN_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/cosign@sha256:404b8081d833085d12c21cda889c6f2f3731328768257c760e32fcf070be2cf9'
@@ -169,25 +158,17 @@ pipeline {
     LM_DEPLOY_HOST = '192.168.1.121'
     LM_DEPLOY_PORT = '22'
     LM_STAGING_URL = 'http://192.168.1.121:8081'
-    LM_STAGING_DB_NAME = 'little_moments_staging'
     LM_STAGING_PREDICATE_TYPE = 'https://little-moments.lan/attestations/staging-verified/v1'
     LM_SSH_STAGING_CREDENTIALS = 'lm-ssh-staging'
     LM_KNOWN_HOSTS_CREDENTIALS = 'lm-deploy-known-hosts'
     LM_COSIGN_PUBLIC_KEY_CREDENTIALS = 'lm-cosign-pub'
-    LM_STAGING_DB_CREDENTIALS = 'lm-staging-db'
-    LM_STAGING_SETUP_TOKEN_CREDENTIALS = 'lm-staging-setup-token'
+    LM_STAGING_STACK_ENV_CREDENTIALS = 'lm-staging-supabase-env'
     LM_STAGING_SMOKE_CREDENTIALS = 'lm-staging-smoke'
     LM_PROD_URL = 'http://192.168.1.121:8082'
-    LM_PROD_DB_NAME = 'little_moments'
-    LM_JENKINS_API_CREDENTIALS = 'lm-jenkins-api-readonly'
     LM_SSH_PROD_CREDENTIALS = 'lm-ssh-prod'
-    LM_PROD_DB_CREDENTIALS = 'lm-prod-db'
-    LM_PROD_SETUP_TOKEN_CREDENTIALS = 'lm-prod-setup-token'
+    LM_PROD_STACK_ENV_CREDENTIALS = 'lm-prod-supabase-env'
     LM_PROD_SMOKE_CREDENTIALS = 'lm-prod-smoke'
     LM_JENKINS_RETENTION_CREDENTIALS = 'lm-jenkins-api-retention'
-    LM_STAGING_RECEIPT_AI = 'disabled'
-    LM_PROD_RECEIPT_AI = 'enabled'
-    LM_PROD_OPENAI_CREDENTIALS = 'lm-prod-openai-api-key'
   }
 
   stages {
@@ -197,38 +178,28 @@ pipeline {
       }
     }
 
-    // Release_Tag 格式與 main ancestry 驗證（說明見 runTagVerifyStage）
-    stage('Tag Verify') {
-      when {
-        expression { env.LM_TRIGGER_KIND == 'release_tag' || planned('Tag Verify') }
-      }
-      steps {
-        script { runTagVerifyStage() }
-      }
-    }
-
-    // 工具鏈版本先寫入 Build_Record 再判定；不一致時於安裝前失敗（Req 3.3）。
+    // 工具鏈版本先寫入 Build_Record 再判定；不一致時於安裝前失敗（Req 3.3）。Bun 的 Build_Image 與 Rust 工具鏈映像。
     stage('Toolchain') {
       steps {
         script { runToolchainStage() }
       }
     }
 
-    // 只允許 --frozen-lockfile；bun.lock 不存在、與 package.json 不一致或被修改皆失敗（Req 3.4、3.5）。
+    // bun install --frozen-lockfile 與 cargo fetch --locked；lockfile 不存在、不一致或被修改皆失敗（Req 3.4、3.5）。
     stage('Install') {
       steps {
         script { runInstallStage() }
       }
     }
 
-    // 任何測試之前先建置；非零結束碼使建置失敗並略過所有後續階段（Req 3.6、3.7）。
+    // 任何測試之前先建置（cargo build、trunk build --release）；非零結束碼使建置失敗並略過所有後續階段（Req 3.6、3.7）。
     stage('Build') {
       steps {
         script { runBuildStage() }
       }
     }
 
-    // 單元與 API 整合測試：Ephemeral_Database → Migration_Runner → bun test → JUnit（說明見 runUnitTestsStage）
+    // cargo fmt／clippy／test、bats 與 bun test →「QA」關卡（說明見 runUnitTestsStage）
     stage('Unit Tests') {
       steps {
         script { runUnitTestsStage() }
@@ -236,29 +207,6 @@ pipeline {
       post {
         always {
           script { unitTestsPostAlways() }
-        }
-        cleanup {
-          script { removeEphemeralDbSecrets() }
-        }
-      }
-    }
-
-    // 瀏覽器 E2E 與 QA_Inventory →「QA」關卡（說明見 runBrowserTestsStage）
-    stage('Browser Tests') {
-      steps {
-        script { runBrowserTestsStage() }
-      }
-      post {
-        always {
-          script { browserTestsPostAlways() }
-        }
-        unsuccessful {
-          // 失敗證據（Req 5.6）：Playwright 截圖與 trace（test-results/<測試標題含 TC ID>-<desktop|mobile>/）
-          // 與 reports/server.log，經 ci/scrub.mjs 遮罩 Ephemeral_Database 密碼後封存。
-          script { archiveBrowserEvidence() }
-        }
-        cleanup {
-          script { removeEphemeralDbSecrets() }
         }
       }
     }
@@ -278,43 +226,7 @@ pipeline {
       }
     }
 
-    // 遷移相容性（Trusted_Ref 專用；說明見 runMigrationCompatibilityStage）
-    stage('Migration Compatibility') {
-      when {
-        expression { planned('Migration Compatibility') && env.LM_TRUSTED == 'true' }
-      }
-      steps {
-        script { runMigrationCompatibilityStage() }
-      }
-      post {
-        always {
-          script { migrationCompatibilityPostAlways() }
-        }
-        cleanup {
-          script { removeEphemeralDbSecrets() }
-        }
-      }
-    }
-
-    // DAST 與含 DAST 的「安全」關卡（Trusted_Ref 專用；說明見 runDastStage）
-    stage('DAST') {
-      when {
-        expression { planned('DAST') && env.LM_TRUSTED == 'true' }
-      }
-      steps {
-        script { runDastStage() }
-      }
-      post {
-        always {
-          script { dastPostAlways() }
-        }
-        cleanup {
-          script { removeEphemeralDbSecrets() }
-        }
-      }
-    }
-
-    // ---------------------------------------------------------------- App_Image（main 專用）
+    // ---------------------------------------------------------------- App_Image 與部署（main 專用）
 
     // App_Image 建置與映像層級 Smoke_Test，不推送（說明見 runImageBuildStage）
     stage('Image Build') {
@@ -383,7 +295,7 @@ pipeline {
       }
     }
 
-    // App_Image 推送與 digest 比對（說明見 runImagePushStage）
+    // App_Image 推送與 digest 比對；版本標籤已存在即拒絕（說明見 runImagePushStage）
     stage('Image Push') {
       when {
         expression { planned('Image Push') && env.LM_TRUSTED == 'true' && env.LM_TRIGGER_KIND == 'main_push' }
@@ -434,61 +346,10 @@ pipeline {
       }
     }
 
-    // Release_Tag 的 Image_Digest 解析與「映像」「Staging」關卡（說明見 runResolveDigestStage）
-    stage('Resolve Digest') {
-      when {
-        expression { planned('Resolve Digest') && env.LM_TRUSTED == 'true' && env.LM_TRIGGER_KIND == 'release_tag' }
-      }
-      steps {
-        script { runResolveDigestStage() }
-      }
-      post {
-        unsuccessful {
-          script { releaseStageFailed() }
-        }
-        cleanup {
-          script { cleanupReleaseWork() }
-        }
-      }
-    }
-
-    // 版本標籤，不覆寫既有標籤（說明見 runVersionTagStage）
-    stage('Version Tag') {
-      when {
-        expression { planned('Version Tag') && env.LM_TRUSTED == 'true' && env.LM_TRIGGER_KIND == 'release_tag' }
-      }
-      steps {
-        script { runVersionTagStage() }
-      }
-      post {
-        cleanup {
-          script { cleanupReleaseWork() }
-        }
-      }
-    }
-
-    // 正式核准（說明見 runApprovalStage）
-    stage('Approval') {
-      when {
-        expression { planned('Approval') && env.LM_TRUSTED == 'true' && env.LM_TRIGGER_KIND == 'release_tag' }
-      }
-      steps {
-        script { runApprovalStage() }
-      }
-      post {
-        unsuccessful {
-          script { approvalStageFailed() }
-        }
-        cleanup {
-          script { cleanupReleaseWork() }
-        }
-      }
-    }
-
     // Production 部署、觀察期與「上線後」關卡（說明見 runProductionDeployStage）
     stage('Production Deploy') {
       when {
-        expression { planned('Production Deploy') && env.LM_TRUSTED == 'true' && env.LM_TRIGGER_KIND == 'release_tag' }
+        expression { planned('Production Deploy') && env.LM_TRUSTED == 'true' && env.LM_TRIGGER_KIND == 'main_push' }
       }
       steps {
         script { runProductionDeployStage() }
@@ -497,6 +358,21 @@ pipeline {
         unsuccessful {
           script { productionStageFailed() }
         }
+        cleanup {
+          script { cleanupReleaseWork() }
+        }
+      }
+    }
+
+    // 版本標籤 v<版本>，「上線後」關卡通過後才建立，不覆寫既有標籤（說明見 runVersionTagStage）
+    stage('Version Tag') {
+      when {
+        expression { planned('Version Tag') && env.LM_TRUSTED == 'true' && env.LM_TRIGGER_KIND == 'main_push' }
+      }
+      steps {
+        script { runVersionTagStage() }
+      }
+      post {
         cleanup {
           script { cleanupReleaseWork() }
         }
@@ -548,7 +424,7 @@ void runInitStage() {
     env.LM_TRIGGER_KIND = plan.kind ? plan.kind.toString() : fallbackTriggerKind()
     env.LM_TRUSTED = (plan.trusted == true) ? 'true' : 'false'
     env.LM_STAGES = plan.stages instanceof List ? plan.stages.join('|') : ''
-    env.LM_REF = env.TAG_NAME ?: (env.BRANCH_NAME ?: '')
+    env.LM_REF = env.BRANCH_NAME ?: (env.TAG_NAME ?: '')
 
     // 建立本次執行唯一的 Build_Record（Req 21.1）：建置編號、開始時間、完整 SHA、觸發類型、ref、Build_Image digest。
     sh(label: 'Build_Record init', script: '''
@@ -559,8 +435,19 @@ void runInitStage() {
     ''')
 
     if (planRc != 0 || plan.reject || !plan.kind) {
-      // reject 字串為 ci/stages.mjs 內的固定訊息，不含使用者輸入。
+      // reject 字串為 ci/stages.mjs 內的固定訊息，不含使用者輸入（Tag 事件：發布由 main 的推送執行）。
       error("觸發被拒絕：${plan.reject ?: '無法規劃階段'}")
+    }
+
+    // main 的發布版本 v<Cargo.toml 的 [workspace.package] version>（plan.md D2）：Image Push 拒絕已存在的版本標籤，
+    // Version Tag 在「上線後」關卡通過後建立。版本格式與 Release_Tag 相同（isReleaseTag）。
+    if (env.LM_TRIGGER_KIND == 'main_push') {
+      int versionRc = sh(label: 'ci/release-version.mjs', returnStatus: true, script: 'bun ci/release-version.mjs > reports/release-version.txt')
+      String version = versionRc == 0 ? readFile('reports/release-version.txt').trim() : ''
+      if (!isReleaseTag(version)) {
+        error("無法由 Cargo.toml 的 [workspace.package] version 取得發布版本（ci/release-version.mjs 結束碼 ${versionRc}）")
+      }
+      env.LM_RELEASE_VERSION = version
     }
   }
 
@@ -568,29 +455,8 @@ void runInitStage() {
   echo "觸發類型 ${env.LM_TRIGGER_KIND}（trusted=${env.LM_TRUSTED}），commit ${sha}"
 }
 
-// Release_Tag：格式與 main ancestry 驗證，位於所有品質、推送與部署階段之前（Req 1.5）。
-// 格式不符已在 Init 由 ci/stages.mjs 拒絕；此處以 ci/policy/tag.mjs 再驗證格式並檢查 main 歷史。
-void runTagVerifyStage() {
-  enterStage('Tag Verify')
-  withCredentials([gitUsernamePassword(credentialsId: env.LM_GIT_CREDENTIALS)]) {
-    sh(label: 'fetch origin/main', script: 'git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main')
-  }
-  inBuildImage {
-    int rc = sh(
-      label: 'ci/policy/tag.mjs',
-      returnStatus: true,
-      script: 'bun ci/policy/tag.mjs "$TAG_NAME" "$GIT_COMMIT_FULL" --main-ref origin/main'
-    )
-    if (rc == 1) {
-      error('Release_Tag 格式不符 v<major>.<minor>.<patch>')
-    } else if (rc == 2) {
-      error('Release_Tag 指向的 commit 不在 main 分支歷史中')
-    } else if (rc != 0) {
-      error('Release_Tag 驗證無法完成')
-    }
-  }
-}
-
+// 工具鏈（Req 3.3；plan.md D3）：Build_Image 的 Bun 工具鏈（ci/toolchain.json）→ Rust 工具鏈映像（根目錄 Dockerfile 的
+// toolchain 階段）→ 映像內 ci/verify-rust-toolchain.sh 比對 ci/rust-toolchain.json。版本先寫入 Build_Record 再判定。
 void runToolchainStage() {
   enterStage('Toolchain')
   inBuildImage {
@@ -603,6 +469,23 @@ void runToolchainStage() {
     if (rc != 0) {
       error('工具鏈版本與 ci/toolchain.json 不一致（工具名稱、預期與實際版本見 reports/toolchain.json）')
     }
+  }
+
+  buildRustToolchain()
+  int rustRc = 2
+  inRustToolchain(false) {
+    rustRc = sh(
+      label: 'ci/verify-rust-toolchain.sh',
+      returnStatus: true,
+      script: 'sh ci/verify-rust-toolchain.sh --expected ci/rust-toolchain.json --out reports/rust-toolchain.json'
+    )
+  }
+  Map reports = existingReports([rustToolchain: 'reports/rust-toolchain.json', rustToolchainBuild: 'reports/rust-toolchain-build.log'])
+  if (!reports.isEmpty()) {
+    mergeRecordPatch('reports/rust-toolchain-record-patch.json', [reports: reports])
+  }
+  if (rustRc != 0) {
+    error('Rust 工具鏈版本與 ci/rust-toolchain.json 不一致（工具名稱、預期與實際版本見 reports/rust-toolchain.json）')
   }
 }
 
@@ -624,195 +507,143 @@ void runInstallStage() {
       fi
     ''')
   }
+  // cargo 的相依套件（所有平台，含 wasm32）只在這裡下載；之後的 Build 與 Unit Tests 以 --network none 離線執行（plan.md D15）。
+  inRustToolchain(true) {
+    sh(label: 'cargo fetch --locked', script: '''
+      set -eu
+      if [ ! -f Cargo.lock ]; then
+        echo "找不到 Cargo.lock，安裝中止" >&2
+        exit 1
+      fi
+      before="$(sha256sum Cargo.lock)"
+      cargo fetch --locked
+      after="$(sha256sum Cargo.lock)"
+      if [ "$before" != "$after" ]; then
+        echo "Cargo.lock 在 cargo fetch 期間被修改，安裝中止" >&2
+        exit 1
+      fi
+    ''')
+  }
 }
 
+// 建置（Req 3.6、3.7；plan.md D15）：Rust 工具鏈映像內（--network none、cargo 離線）cargo build --workspace --locked
+// → trunk build --release（LM_Web 的 wasm 與 dist；wasm-bindgen 與 wasm-opt 使用映像內的固定版本，不另外下載）。
 void runBuildStage() {
   enterStage('Build')
-  inBuildImage {
-    sh(label: 'bun run build', script: 'bun run build')
+  inRustToolchain(false) {
+    sh(label: 'cargo build --workspace --locked', script: 'cargo build --workspace --locked')
+    sh(label: 'trunk build --release', script: 'trunk build --release --config crates/web/Trunk.toml')
   }
 }
 
-// 單元與 API 整合測試（Req 4.1–4.8）：本階段專用的 Ephemeral_Database（每次建立、tmpfs、不發布連接埠）
-// → Migration_Runner → verify-env → bun test（15 分鐘逾時）→ JUnit；post 於 120 秒內銷毀資料庫。
+// 單元與整合測試（Req 4.1、4.4、4.5、4.7；plan.md D15）。Rust 工具鏈映像內（--network none）：
+//   cargo fmt --all --check → cargo clippy --workspace --locked -- -D warnings → cargo test --workspace --locked（30 分鐘）
+//   → bats deploy/tests（JUnit 寫入 reports/bats/report.xml，15 分鐘）
+// Build_Image 內：ci/cargo-junit.mjs（cargo test 日誌 → reports/cargo-junit.xml）→ bun test LM_BUN_TESTS（15 分鐘）
+//   →「QA」關卡（ci/gates.mjs：三份 JUnit 的失敗數、錯誤數為 0 且測試數量 > 0）寫入 Build_Record 後才判定。
+// fmt 或 clippy 未通過即以指名該檢查的固定訊息失敗；任何失敗都由 post 記錄「QA」未通過與原因（Req 4.6、23.3）。
 void runUnitTestsStage() {
   enterStage('Unit Tests')
-  env.LM_UNIT_DONE = 'false'
-  startEphemeralDb('unit')
-  inBuildImageOn(env.LM_EDB_NET) {
-    withEnv(testEnv()) {
-      qaStep('Migration_Runner 無法套用遷移至 Ephemeral_Database')
-      int migrateRc = sh(label: 'Migration_Runner', returnStatus: true, script: '''
-        set +x
-        set -eu
-        set -a
-        . "$LM_EDB_DIR/client.env"
-        set +a
-        CAMPING_DATABASE_HOST="$CAMPING_TEST_DATABASE_HOST" \
-        CAMPING_DATABASE_PORT="$CAMPING_TEST_DATABASE_PORT" \
-        CAMPING_DATABASE_NAME="$CAMPING_TEST_DATABASE_NAME" \
-        CAMPING_DATABASE_USER="$CAMPING_TEST_DATABASE_USER" \
-        CAMPING_DATABASE_PASSWORD="$CAMPING_TEST_DATABASE_PASSWORD" \
-        CAMPING_DATABASE_SSLMODE="$CAMPING_TEST_DATABASE_SSLMODE" \
-        CAMPING_BIND_ADDRESS=127.0.0.1 \
-          bun scripts/migrate.mjs > reports/unit-migrate.log 2>&1
+  sh(label: 'reset test reports', script: '''
+    set -eu
+    rm -rf reports/bats
+    rm -f reports/cargo-fmt.log reports/cargo-clippy.log reports/cargo-test.log reports/cargo-junit.xml reports/bats.log reports/unit-junit.xml
+    mkdir -p reports/bats
+  ''')
+  int cargoRc = 2
+  int batsRc = 2
+  inRustToolchain(false) {
+    qaStep('cargo fmt --all --check 未通過（程式碼格式與 rustfmt 不一致）')
+    int fmtRc = sh(label: 'cargo fmt --all --check', returnStatus: true, script: 'cargo fmt --all --check > reports/cargo-fmt.log 2>&1')
+    if (fmtRc != 0) {
+      error('cargo fmt --all --check 未通過（見 reports/cargo-fmt.log）')
+    }
+    qaStep('cargo clippy --workspace --locked -- -D warnings 未通過')
+    int clippyRc = sh(label: 'cargo clippy -D warnings', returnStatus: true, script: 'cargo clippy --workspace --locked -- -D warnings > reports/cargo-clippy.log 2>&1')
+    if (clippyRc != 0) {
+      error('cargo clippy --workspace --locked -- -D warnings 未通過（見 reports/cargo-clippy.log）')
+    }
+    qaStep('cargo test 未在 30 分鐘內結束')
+    // 外層保護；實際上限由 shell 的 timeout 執行，逾時結束碼 124／137。
+    timeout(time: 32, unit: 'MINUTES') {
+      cargoRc = sh(label: 'cargo test --workspace --locked', returnStatus: true, script: '''
+        set -u
+        rc=0
+        timeout --kill-after=30 1800 cargo test --workspace --locked > reports/cargo-test.log 2>&1 || rc=$?
+        tail -n 30 reports/cargo-test.log || true
+        exit "$rc"
       ''')
-      if (migrateRc != 0) {
-        error("Migration_Runner 以結束碼 ${migrateRc} 結束（見 reports/unit-migrate.log），不執行 bun test")
-      }
-
-      verifyTestEnv()
-
-      qaStep('bun test 失敗、逾時（15 分鐘）或執行的測試數量為 0')
-      int testRc
-      // 外層保護；實際 15 分鐘上限由 shell 的 timeout 執行，逾時結束碼 124／137。
-      timeout(time: 17, unit: 'MINUTES') {
-        testRc = sh(label: 'bun test', returnStatus: true, script: '''
-          set +x
-          set -eu
-          set -a
-          . "$LM_EDB_DIR/client.env"
-          set +a
-          rm -f reports/unit-junit.xml
-          timeout --kill-after=30 900 bun test --reporter=junit --reporter-outfile=reports/unit-junit.xml tests/*.test.js
-        ''')
-      }
-      if (testRc == 124 || testRc == 137) {
-        error('bun test 超過 15 分鐘，已中止')
-      }
-      // 失敗數、錯誤數為 0 且測試數量 > 0（Req 4.4）。
-      int junitRc = sh(
-        label: 'ci/gates.mjs unit JUnit',
-        returnStatus: true,
-        script: 'bun ci/gates.mjs junit --gate QA --commit "$GIT_COMMIT_FULL" --out reports/unit-gate.json reports/unit-junit.xml'
-      )
-      if (testRc != 0 || junitRc != 0) {
-        error("單元與 API 測試未通過（bun test 結束碼 ${testRc}，見 reports/unit-junit.xml）")
-      }
-      qaStep('')
+    }
+    if (cargoRc == 124 || cargoRc == 137) {
+      error('cargo test 超過 30 分鐘，已中止')
+    }
+    qaStep('bats deploy/tests 未在 15 分鐘內結束')
+    timeout(time: 17, unit: 'MINUTES') {
+      batsRc = sh(label: 'bats deploy/tests', returnStatus: true, script: '''
+        set -u
+        rc=0
+        timeout --kill-after=30 900 bats --report-formatter junit --output reports/bats deploy/tests > reports/bats.log 2>&1 || rc=$?
+        tail -n 30 reports/bats.log || true
+        exit "$rc"
+      ''')
+    }
+    if (batsRc == 124 || batsRc == 137) {
+      error('bats deploy/tests 超過 15 分鐘，已中止')
     }
   }
-  env.LM_UNIT_DONE = 'true'
+  inBuildImage {
+    qaStep('cargo test 的輸出無法轉為 JUnit（ci/cargo-junit.mjs）')
+    int convRc = 2
+    withEnv(["LM_CARGO_TEST_EXIT=${cargoRc}"]) {
+      convRc = sh(label: 'ci/cargo-junit.mjs', returnStatus: true, script: 'bun ci/cargo-junit.mjs --log reports/cargo-test.log --out reports/cargo-junit.xml --exit "$LM_CARGO_TEST_EXIT"')
+    }
+    if (convRc != 0) {
+      error("ci/cargo-junit.mjs 無法產生 reports/cargo-junit.xml（結束碼 ${convRc}）")
+    }
+    qaStep('bun test 未在 15 分鐘內結束')
+    int testRc = 2
+    timeout(time: 17, unit: 'MINUTES') {
+      testRc = sh(label: 'bun test', returnStatus: true, script: '''
+        set -u
+        rm -f reports/unit-junit.xml
+        # LM_BUN_TESTS 的萬用字元由 shell 展開，因此不加引號。
+        timeout --kill-after=30 900 bun test --reporter=junit --reporter-outfile=reports/unit-junit.xml ${LM_BUN_TESTS}
+      ''')
+    }
+    if (testRc == 124 || testRc == 137) {
+      error('bun test 超過 15 分鐘，已中止')
+    }
+    qaStep('cargo test、bats 或 bun test 未通過（見 reports/cargo-junit.xml、reports/bats/report.xml、reports/unit-junit.xml）')
+    if (cargoRc != 0 || batsRc != 0 || testRc != 0) {
+      error("測試未通過（cargo test 結束碼 ${cargoRc}、bats ${batsRc}、bun test ${testRc}；見 reports/cargo-junit.xml、reports/bats/report.xml、reports/unit-junit.xml）")
+    }
+    qaStep('')
+    if (recordQa(patch: 'reports/unit-record-patch.json', reports: unitReports(), gate: true, junit: qaJunitReports(), inventory: '', stageError: '') != 0) {
+      error('Release_Gate「QA」未通過（未符合的條件見 Build_Record 與 reports/gate-qa.json）')
+    }
+  }
 }
 
 void unitTestsPostAlways() {
-  destroyEphemeralDb()
-  junit(testResults: 'reports/unit-junit.xml', allowEmptyResults: true)
-  Map reports = existingReports([unitJunit: 'reports/unit-junit.xml', unitMigrate: 'reports/unit-migrate.log', verifyEnv: 'reports/verify-env.json'])
-  // JUnit 不論成功或失敗都寫入 Build_Record（Req 4.5）；失敗時「QA」關卡未通過，
-  // 記錄關卡名稱、未符合的條件與失敗原因（不含憑證值；Req 4.6、23.1、23.3、23.5）。
-  boolean failed = env.LM_UNIT_DONE != 'true'
+  junit(testResults: 'reports/cargo-junit.xml, reports/bats/report.xml, reports/unit-junit.xml', allowEmptyResults: true)
+  if (env.LM_QA_GATE_RECORDED == 'true') { return }
+  // 階段在關卡評估前失敗、逾時或中止：JUnit 與日誌仍寫入 Build_Record（Req 4.5），「QA」關卡記錄為未通過，
+  // 含關卡名稱、未符合的條件與失敗原因（不含憑證值；Req 4.6、23.1、23.3、23.5）。
   inBuildImage {
     recordQa(
       patch: 'reports/unit-record-patch.json',
-      reports: reports,
-      gate: failed,
-      junit: ['reports/unit-junit.xml'],
+      reports: unitReports(),
+      gate: true,
+      junit: qaJunitReports(),
       inventory: '',
-      stageError: failed ? qaStageError('Unit Tests') : ''
+      stageError: qaStageError('Unit Tests')
     )
-  }
-}
-
-// 瀏覽器 E2E 與 QA_Inventory（Req 5.3–5.9）：qa-inventory validate → check-accounts.mjs（60 分鐘逾時，
-// 不重試、不傳 --reporter；報告由 playwright.config.js 寫入 reports/e2e.json 與 reports/e2e-junit.xml）
-// → qa-inventory compare → 以 ci/gates.mjs 評估「QA」關卡（單元 + 瀏覽器 JUnit + QA_Inventory）。
-void runBrowserTestsStage() {
-  enterStage('Browser Tests')
-  env.LM_BROWSER_DONE = 'false'
-  env.LM_QA_GATE_RECORDED = 'false'
-
-  // QA_Inventory 不合格時在瀏覽器測試前失敗，並記錄不合格的項目 ID 與原因（Req 5.8）。
-  inBuildImage {
-    qaStep('QA_Inventory 驗證未通過（見 reports/qa-inventory-validate.json）')
-    int validateRc = sh(
-      label: 'qa-inventory validate',
-      returnStatus: true,
-      script: 'bun scripts/qa-inventory.mjs validate qa/inventory.json > reports/qa-inventory-validate.json'
-    )
-    if (validateRc != 0) {
-      error('QA_Inventory 驗證未通過（不合格的項目 ID 與原因見 reports/qa-inventory-validate.json）')
-    }
-  }
-
-  startEphemeralDb('e2e')
-  inBuildImageOn(env.LM_EDB_NET) {
-    withEnv(testEnv()) {
-      verifyTestEnv()
-
-      qaStep('瀏覽器測試失敗或超過 60 分鐘')
-      int e2eRc
-      timeout(time: 62, unit: 'MINUTES') {
-        e2eRc = sh(label: 'scripts/check-accounts.mjs', returnStatus: true, script: '''
-          set +x
-          set -eu
-          set -a
-          . "$LM_EDB_DIR/client.env"
-          set +a
-          rm -rf test-results reports/e2e.json reports/e2e-junit.xml reports/server.log
-          timeout --kill-after=60 3600 node scripts/check-accounts.mjs
-        ''')
-      }
-
-      // 不論瀏覽器測試結果，只要有 Playwright 報告就比對 QA_Inventory（Req 5.4）。
-      int compareRc = -1
-      if (fileExists('reports/e2e.json')) {
-        compareRc = sh(
-          label: 'qa-inventory compare',
-          returnStatus: true,
-          script: 'bun scripts/qa-inventory.mjs compare qa/inventory.json reports/e2e.json --out reports/qa-inventory.json > /dev/null'
-        )
-      }
-
-      if (e2eRc == 124 || e2eRc == 137) {
-        error('瀏覽器測試超過 60 分鐘，已終止')
-      }
-      if (e2eRc != 0) {
-        error("scripts/check-accounts.mjs 以結束碼 ${e2eRc} 結束")
-      }
-      // compare 未通過（失敗或缺少測試的項目）由下方「QA」關卡判定並記錄項目 ID（Req 5.5）。
-      echo "qa-inventory compare 結束碼 ${compareRc}"
-
-      // 「QA」關卡（Req 23.2）：所有單元、API 與瀏覽器測試失敗數與錯誤數為 0，且 QA_Inventory 全數通過。
-      qaStep('')
-      int gateRc = recordQa(
-        patch: 'reports/browser-record-patch.json',
-        reports: browserReports(),
-        gate: true,
-        junit: qaJunitReports(),
-        inventory: 'reports/qa-inventory.json',
-        stageError: ''
-      )
-      if (gateRc != 0) {
-        error('Release_Gate「QA」未通過（未符合的條件見 Build_Record 與 reports/gate-qa.json）')
-      }
-    }
-  }
-  env.LM_BROWSER_DONE = 'true'
-}
-
-void browserTestsPostAlways() {
-  destroyEphemeralDb()
-  junit(testResults: 'reports/e2e-junit.xml', allowEmptyResults: true)
-  if (env.LM_QA_GATE_RECORDED != 'true') {
-    // 階段在關卡評估前失敗、逾時或中止 →「QA」關卡未通過（Req 5.8、5.9、23.1、23.3）。
-    String inventory = fileExists('reports/qa-inventory.json') ? 'reports/qa-inventory.json' : ''
-    inBuildImage {
-      recordQa(
-        patch: 'reports/browser-record-patch.json',
-        reports: browserReports(),
-        gate: true,
-        junit: qaJunitReports(),
-        inventory: inventory,
-        stageError: qaStageError('Browser Tests')
-      )
-    }
   }
 }
 
 // 靜態安全掃描（Req 6.1–6.9）：Gitleaks（受版本控制檔案 + Git 歷史範圍，--redact）→ osv-scanner v2（bun.lock）
 // → Trivy（安裝後的 node_modules 交叉掃描）→ Semgrep（src/、server/、scripts/）。每項掃描 15 分鐘逾時。
-// 結果經 ci/policy/normalize.mjs → ci/policy/evaluate.mjs 判定「安全」關卡（不含 DAST；Trusted_Ref 的 DAST 階段另以含 DAST 的報告重新評估並追加一筆）。
+// 結果經 ci/policy/normalize.mjs → ci/policy/evaluate.mjs 判定「安全」關卡（plan.md D14 已移除 DAST）。
 // 任一掃描執行錯誤、逾時、報告缺失或漏洞資料庫無法取得 → 該掃描未完成 → 關卡未通過（fail closed，Req 6.8）。
 // 掃描器容器：digest 固定、非 root、唯讀根檔案系統、--cap-drop ALL、只以唯讀方式掛載掃描輸入，
 // 寫入只限本次掃描的暫存目錄；Gitleaks 與 Semgrep 無網路，osv-scanner／Trivy 只為取得漏洞資料庫而連線。
@@ -981,7 +812,7 @@ void runSecurityScanStage() {
   }
   secStep('')
 
-  // 「安全」關卡（Req 23.2，不含 DAST）：寫入 Build_Record 後才判定（Req 6.7、23.5）。
+  // 「安全」關卡（Req 23.2）：寫入 Build_Record 後才判定（Req 6.7、23.5）。
   if (recordSecurityGate('') != 0) {
     error('Release_Gate「安全」未通過（未符合的條件見 Build_Record 與 reports/security/evaluation.json）')
   }
@@ -994,235 +825,16 @@ void securityScanPostAlways() {
   }
 }
 
-// 遷移相容性（Trusted_Ref 專用，ci/stages.mjs TRUSTED_ONLY_STAGES；Req 12.5、12.8、12.9；Design §5「相容性驗證」）：
-//   lint-migrations（未標記的破壞性遷移即失敗）→ `git describe` 找 <sha>^ 之前最近的 Release_Tag（無則記錄略過原因）
-//   → 相對於該 Tag 無遷移變更時記錄略過原因 → 在本階段的 Ephemeral_Database 上以該 Tag 的 App_Image 套用其全部遷移
-//   → 以本次 commit 的 Migration_Runner 套用新增遷移 → 以舊 App_Image 啟動（--internal 網路、不發布連接埠）
-//   → 建立合成資料 → Smoke_Test。結果（含失敗的 Smoke_Test 項目與相關遷移檔）寫入 Build_Record 的 reports.migrationCompat。
-void runMigrationCompatibilityStage() {
-  enterStage('Migration Compatibility')
-  env.LM_COMPAT_RECORDED = 'false'
-  env.LM_COMPAT_TAG = ''
-  env.LM_COMPAT_IMAGE = ''
-  env.LM_COMPAT_MIGRATIONS = ''
-  env.LM_COMPAT_APP = ''
-
-  // Req 12.9：會移除或重新命名欄位／資料表但未標記 `-- lm:destructive` 的遷移 → 建置失敗。
-  compatStep('lint-migrations 未通過（未標記的破壞性遷移或無法在交易內執行的語句，見 reports/lint-migrations.log）')
-  inBuildImage {
-    int lintRc = sh(label: 'lint-migrations', returnStatus: true, script: 'bun scripts/lint-migrations.mjs > reports/lint-migrations.log 2>&1')
-    if (lintRc != 0) {
-      error("lint-migrations 以結束碼 ${lintRc} 結束（未通過的遷移檔見 reports/lint-migrations.log）")
-    }
-  }
-
-  compatStep('無法取得 Release_Tag 或遷移差異')
-  withCredentials([gitUsernamePassword(credentialsId: env.LM_GIT_CREDENTIALS)]) {
-    sh(label: 'fetch Release_Tags', script: '''
-      set -eu
-      if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
-        git fetch --unshallow --no-tags --quiet origin
-      fi
-      git fetch --no-tags --quiet --force origin '+refs/tags/v*:refs/tags/v*'
-    ''')
-  }
-  // 只看本次 commit 的祖先（<sha>^1），Release_Tag 建置因此不會選到自己的 Tag。
-  // 含 `-`／`+` 的預發布形式先排除；其餘結果仍須通過 Release_Tag 格式驗證，否則失敗（fail closed）。
-  String tag = sh(label: 'nearest Release_Tag', returnStdout: true, script: '''
-    set -eu
-    base="$GIT_COMMIT_FULL^1"
-    if ! git rev-parse -q --verify "$base^{commit}" > /dev/null; then
-      echo none
-      exit 0
-    fi
-    if [ -z "$(git tag --list --merged "$base" 'v[0-9]*.[0-9]*.[0-9]*')" ]; then
-      echo none
-      exit 0
-    fi
-    git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-*' --exclude '*+*' "$base"
-  ''').trim()
-  if (tag == 'none') {
-    recordMigrationCompat('skipped', '本次 commit 之前尚無任何 Release_Tag，略過遷移相容性驗證（Req 12.5）')
-    echo '尚無 Release_Tag，略過遷移相容性驗證（原因已寫入 Build_Record）'
-    return
-  }
-  if (!isReleaseTag(tag)) {
-    error('git describe 找到的最近 Tag 不符合 Release_Tag 格式 v<major>.<minor>.<patch>')
-  }
-  env.LM_COMPAT_TAG = tag
-
-  String changed = sh(label: 'migrations since Release_Tag', returnStdout: true, script: '''
-    set -eu
-    git diff --name-only --no-renames "refs/tags/$LM_COMPAT_TAG" "$GIT_COMMIT_FULL" -- migrations/
-  ''')
-  List files = migrationFiles(changed)
-  if (files == null) {
-    error('遷移差異含無效的檔名')
-  }
-  env.LM_COMPAT_MIGRATIONS = files.join(' ')
-  if (files.isEmpty()) {
-    recordMigrationCompat('skipped', "相對於 ${tag} 沒有新增或變更的遷移檔，略過遷移相容性驗證（Req 12.5）".toString())
-    echo "相對於 ${tag} 沒有遷移變更，略過遷移相容性驗證"
-    return
-  }
-  echo "最近 Release_Tag ${tag}；變更的遷移檔：${env.LM_COMPAT_MIGRATIONS}"
-
-  compatStep("無法拉取 ${tag} 的 App_Image 或解析其 digest".toString())
-  env.LM_COMPAT_IMAGE = pullReleaseImage(tag)
-
-  compatStep('Ephemeral_Database 未於 120 秒內就緒或無法建立')
-  startEphemeralDb('compat')
-  writeAppSecrets()
-  env.LM_COMPAT_APP = "${env.LM_EDB_RUN}-app"
-
-  // 1. 最近 Release_Tag 的全部遷移：以該 App_Image 內的 Migration_Runner 套用。
-  compatStep("${tag} 的 App_Image 無法套用其遷移至 Ephemeral_Database（見 reports/migration-compat-old-migrate.log）".toString())
-  int oldRc = sh(label: 'Release_Tag Migration_Runner', returnStatus: true, script: '''
-    set +x
-    set -u
-    rc=0
-    timeout --kill-after=10 300 docker run --rm --name "$LM_EDB_RUN-old-migrate" --network "$LM_EDB_NET" \
-      --label "lm.ci.edb=$LM_EDB_RUN" --label "lm.ci.build=$BUILD_TAG" \
-      --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
-      --env-file "$LM_EDB_DIR/app.env" \
-      -e "CAMPING_DATABASE_HOST=$LM_EDB_HOST" -e CAMPING_DATABASE_PORT=5432 -e "CAMPING_DATABASE_NAME=$LM_EDB_NAME" \
-      -e "CAMPING_DATABASE_USER=$LM_EDB_USER" -e CAMPING_DATABASE_SSLMODE=disable \
-      --entrypoint bun "$LM_COMPAT_IMAGE" /app/server/migrate.js \
-      > reports/migration-compat-old-migrate.log 2>&1 || rc=$?
-    exit "$rc"
-  ''')
-  if (oldRc != 0) {
-    error("${tag} 的 Migration_Runner 以結束碼 ${oldRc} 結束（見 reports/migration-compat-old-migrate.log）")
-  }
-
-  // 2. 新增遷移：本次 commit 的 Migration_Runner（同一個 Database）。
-  compatStep("本次 commit 的 Migration_Runner 無法套用新增遷移（${env.LM_COMPAT_MIGRATIONS}；見 reports/migration-compat-new-migrate.log）".toString())
-  inBuildImageOn(env.LM_EDB_NET) {
-    withEnv(testEnv()) {
-      int newRc = migrateEphemeralDb('reports/migration-compat-new-migrate.log')
-      if (newRc != 0) {
-        error("本次 commit 的 Migration_Runner 以結束碼 ${newRc} 結束（見 reports/migration-compat-new-migrate.log）")
-      }
-    }
-  }
-
-  // 3. 以舊 App_Image 啟動：綁定 0.0.0.0 只在容器的網路命名空間內；網路為 --internal 且不發布連接埠。
-  compatStep("${tag} 的 App_Image 無法在新增遷移後啟動".toString())
-  sh(label: 'start Release_Tag App_Image', script: '''
-    set +x
-    set -eu
-    docker run -d --name "$LM_COMPAT_APP" --network "$LM_EDB_NET" \
-      --label "lm.ci.edb=$LM_EDB_RUN" --label "lm.ci.build=$BUILD_TAG" \
-      --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
-      --env-file "$LM_EDB_DIR/app.env" --env-file "$LM_EDB_DIR/setup.env" \
-      -e "CAMPING_DATABASE_HOST=$LM_EDB_HOST" -e CAMPING_DATABASE_PORT=5432 -e "CAMPING_DATABASE_NAME=$LM_EDB_NAME" \
-      -e "CAMPING_DATABASE_USER=$LM_EDB_USER" -e CAMPING_DATABASE_SSLMODE=disable \
-      -e CAMPING_BIND_ADDRESS=0.0.0.0 -e PORT=5173 -e "CAMPING_ALLOWED_HOSTS=$LM_COMPAT_APP" \
-      "$LM_COMPAT_IMAGE" > /dev/null
-  ''')
-
-  // 4. 合成資料 + Smoke_Test（Req 12.5、12.8）：於同一 --internal 網路內的 Build_Image 容器執行。
-  inBuildImageOn(env.LM_EDB_NET) {
-    withEnv(testEnv() + ["CAMPING_SMOKE_BASE_URL=http://${env.LM_COMPAT_APP}:5173".toString()]) {
-      compatStep("${tag} 的 App_Image 未於 120 秒內就緒或無法建立合成資料".toString())
-      int seedRc = seedTestApp('reports/migration-compat')
-      if (seedRc != 0) {
-        error("${tag} 的 App_Image 未就緒或無法建立合成資料（結束碼 ${seedRc}，見 reports/migration-compat-health.json、reports/migration-compat-seed.json）")
-      }
-      compatStep("${tag} 的 App_Image 在新增遷移（${env.LM_COMPAT_MIGRATIONS}）後 Smoke_Test 失敗（失敗項目見 Build_Record）".toString())
-      int smokeRc = sh(label: 'Smoke_Test（Release_Tag App_Image）', returnStatus: true, script: '''
-        set +x
-        set -u
-        set -a
-        . "$LM_EDB_DIR/smoke.env"
-        set +a
-        rc=0
-        timeout --kill-after=10 600 bun scripts/smoke.mjs > reports/migration-compat-smoke.json || rc=$?
-        exit "$rc"
-      ''')
-      if (smokeRc != 0) {
-        error("${tag} 的 App_Image 在新增遷移後 Smoke_Test 失敗（結束碼 ${smokeRc}，見 reports/migration-compat-smoke.json）")
-      }
-    }
-  }
-  if (!containerRunning(env.LM_COMPAT_APP)) {
-    error("${tag} 的 App_Image 於 Smoke_Test 期間停止")
-  }
-
-  recordMigrationCompat('pass', '')
-  compatStep('')
-}
-
-void migrationCompatibilityPostAlways() {
-  saveContainerLog(env.LM_COMPAT_APP, 'reports/migration-compat-app.log')
-  destroyEphemeralDb()
-  if (env.LM_COMPAT_RECORDED != 'true') {
-    recordMigrationCompat('fail', compatStageError())
-  }
-}
-
-// DAST（Trusted_Ref 專用，且瀏覽器測試全部通過後才執行；Req 7.1–7.11、10.10、10.11）：
-//   Ephemeral_Database（--internal 網路）→ ci/dast/targets.mjs 驗證並產生 ZAP 計畫（任何掃描請求前，Req 7.2、7.3）
-//   → 本次 commit 的 Migration_Runner → Test_Environment（Build_Image 執行 checkout，綁定 0.0.0.0 只在 internal 網路內）
-//   → 合成資料 → ci/dast/isolation-probe.sh（Test_Environment 網路命名空間；只允許 Ephemeral_Database，Req 7.7、7.9）
-//   → tests/security（scripts/security-suite.mjs：loopback 與 Req 10.10 的非 loopback bind + 非 loopback Host）
-//   → OWASP ZAP（速率 20 rps、5 執行緒）→ normalize → evaluate（靜態掃描 + ZAP + 安全測試套件）→ 含 DAST 的「安全」關卡。
-// 整個階段 60 分鐘上限（Req 7.4）；逾時視為失敗，使用者中止則為已中止（Req 7.5）。post 先停止 ZAP、銷毀環境，再記錄關卡（Req 7.11）。
-void runDastStage() {
-  enterStage('DAST')
-  lmDastErrors = []
-  env.LM_DAST_GATE_RECORDED = 'false'
-  env.LM_DAST_APP = ''
-  dastStep('')
-  if (env.LM_BROWSER_DONE != 'true') {
-    dastStep('瀏覽器測試未全部通過')
-    error('瀏覽器測試未全部通過，不執行 DAST（Req 7.1）')
-  }
-  long started = System.currentTimeMillis()
-  try {
-    timeout(time: 60, unit: 'MINUTES') {
-      runDast()
-    }
-  } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
-    // timeout 步驟逾時與使用者中止都以 FlowInterruptedException 結束；以經過時間區分。
-    if (System.currentTimeMillis() - started >= 60L * 60L * 1000L - 5000L) {
-      dastStep('DAST 階段達到 60 分鐘上限，已中止 DAST_Scanner')
-      lmDastErrors << 'DAST 階段達到 60 分鐘上限，掃描未完成'
-      error('DAST 階段達到 60 分鐘上限，已中止 DAST_Scanner 並停止後續發布階段（Req 7.4）')
-    }
-    dastStep('DAST 階段已被中止')
-    throw e
-  }
-
-  // 含 DAST 的「安全」關卡（Req 7.8、10.11、23.2）：寫入 Build_Record 後才判定。
-  dastStep('')
-  if (recordDastSecurityGate('') != 0) {
-    error('Release_Gate「安全」（含 DAST）未通過（未符合的條件見 Build_Record 與 reports/security/evaluation-dast.json）')
-  }
-}
-
-void dastPostAlways() {
-  // 先停止 DAST_Scanner 並銷毀 Test_Environment 與 Ephemeral_Database（Req 7.5、7.11），再記錄關卡。
-  stopDastScanner()
-  saveContainerLog(env.LM_DAST_APP, 'reports/dast/app.log')
-  destroyEphemeralDb()
-  if (env.LM_DAST_GATE_RECORDED != 'true') {
-    catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-      evaluateDastReports()
-    }
-    recordDastSecurityGate(dastStageError())
-  }
-}
-
 // ci/stages.mjs 只在 main_push 規劃 Image Build → Image Scan → SBOM → Image Push → Image Sign（TRUSTED_ONLY_STAGES；
-// Req 1.3、2.8、16.1）。Release_Tag 建置不重新建置 App_Image（Req 1.4），由 Resolve Digest 沿用 main 的 Image_Digest。
+// Req 1.3、2.8、16.1）。
 // 「映像」關卡分兩次評估並寫入 Build_Record（Req 23.2、23.5）：SBOM 之後評估推送前部分（掃描秘密數 0、未處理
 // Critical/High 為 0、SBOM 已保存），簽章之後評估完整條件（另含簽章已推送且可驗證、Build_Record 記錄 digest 與 commit）。
 // 任一映像階段在關卡評估前失敗、逾時或中止 → post 記錄「映像」未通過（Req 23.1、23.3），不執行後續推送與部署階段。
 //
-// App_Image 建置（Req 16.1、16.8、16.9；Design §11）：確認本次「QA」與「安全」（含 DAST）關卡皆已通過 →
-// 驗證並拉取映像工具 → ci/scripts/build-image.sh（OCI 標籤、`<repo>:<完整 SHA>`、映像內容檢查）→
-// ci/scripts/image-smoke.sh（以打包後的映像連線 Ephemeral_Database、遷移、啟動並執行 Smoke_Test）。
+// App_Image 建置（Req 16.1、16.8、16.9；Design §11；plan.md D4）：確認本次「QA」與「安全」關卡皆已通過 →
+// 驗證並拉取映像工具 → ci/scripts/build-image.sh（根目錄 Dockerfile 的 runtime 階段：lm-server、trunk dist 與
+// supabase/migrations；OCI 標籤、`<repo>:<完整 SHA>`、映像內容檢查）→ ci/scripts/image-smoke.sh（以打包後的映像連線
+// Ephemeral_Database、確認 /app/migrations 與 supabase/migrations 相同、啟動並檢查 HTTP 回應）。
 // 本階段沒有推送憑證，不推送任何映像或標籤；建置日誌不論成敗都寫入 Build_Record（Req 16.8）。
 void runImageBuildStage() {
   enterStage('Image Build')
@@ -1270,7 +882,7 @@ void runImageBuildStage() {
   env.LM_IMAGE_REF = ref
   env.LM_IMAGE_ID = id
 
-  // 打包後伺服器的行為（Req 16.2）：推送前以映像本身執行 Migration_Runner、啟動與 Smoke_Test。
+  // 打包後伺服器的行為（Req 16.2）：推送前以映像本身啟動 lm-server 並檢查 HTTP 回應（ci/scripts/image-smoke.sh）。
   imgStep('映像層級 Smoke_Test 未通過（見 reports/image-smoke-summary.json）')
   int smokeRc
   timeout(time: 30, unit: 'MINUTES') {
@@ -1437,8 +1049,9 @@ void runSbomStage() {
   }
 }
 
-// 推送與 digest 比對（Req 16.10、17.5、17.6、21.2）：推送帳號只在此 withCredentials 內，docker 登入資訊只存在
-// 本建置暫存目錄（結束即刪除）。`<repo>:<完整 SHA>` 已存在即拒絕覆寫（每次建置的 OCI created 標籤不同，同一 commit
+// 推送與 digest 比對（Req 16.10、17.5、17.6、21.2；plan.md D2）：推送帳號只在此 withCredentials 內，docker 登入資訊只存在
+// 本建置暫存目錄（結束即刪除）。版本標籤 `<repo>:<LM_RELEASE_VERSION>` 已存在即拒絕（該版本已發布，須先提高 Cargo.toml 的
+// [workspace.package] version）→ `<repo>:<完整 SHA>` 已存在即拒絕覆寫（每次建置的 OCI created 標籤不同，同一 commit
 // 重建的內容必然不同；Req 16.10）→ docker push → 本機 RepoDigest、Registry 的標籤 digest 與以 digest 查詢的結果三者
 // 必須一致 → reports/image-digest.txt（內容恰為 `<digest>\n`）封存並 fingerprint，供 release/digest-lookup 查詢。
 void runImagePushStage() {
@@ -1447,7 +1060,11 @@ void runImagePushStage() {
     imgStep('SBOM 未保存或 App_Image 未建置，不推送')
     error('SBOM 未保存或 App_Image 未建置，不推送 App_Image（Req 17.4、17.5）')
   }
-  imgStep('App_Image 推送失敗、標籤已存在（拒絕覆寫）或 Registry 回報的 Image_Digest 與建置結果不一致')
+  if (!isReleaseTag(env.LM_RELEASE_VERSION ?: '')) {
+    imgStep('發布版本無效，不推送')
+    error('LM_RELEASE_VERSION 不是有效的版本（Init 由 Cargo.toml 取得），不推送 App_Image')
+  }
+  imgStep('App_Image 推送失敗、版本或標籤已存在（拒絕覆寫）或 Registry 回報的 Image_Digest 與建置結果不一致')
   int pushRc
   withCredentials([usernamePassword(
     credentialsId: env.LM_REGISTRY_PUSH_CREDENTIALS,
@@ -1478,6 +1095,16 @@ void runImagePushStage() {
         }
         out="$LM_IMG_DIR/out"
         rc=0
+        crane digest "$LM_IMAGE_REPO:$LM_RELEASE_VERSION" > "$out/version-digest.txt" 2> "$out/version-digest.err" || rc=$?
+        if [ "$rc" -eq 0 ]; then
+          echo "Registry 已存在版本標籤 $LM_RELEASE_VERSION（版本已發布）" >&2
+          exit 16
+        fi
+        if ! grep -Eq 'MANIFEST_UNKNOWN|unexpected status code 404' "$out/version-digest.err"; then
+          echo "Registry 查詢失敗，無法確認版本標籤是否已存在" >&2
+          exit 11
+        fi
+        rc=0
         crane digest "$LM_IMAGE_REF" > "$out/existing-digest.txt" 2> "$out/existing-digest.err" || rc=$?
         if [ "$rc" -eq 0 ]; then
           echo "Registry 已存在標籤 ${LM_IMAGE_REF##*:}，拒絕覆寫" >&2
@@ -1506,7 +1133,10 @@ void runImagePushStage() {
       ''')
     }
   }
-  if (pushRc == 10) {
+  if (pushRc == 16) {
+    appendSummary("版本 ${env.LM_RELEASE_VERSION} 已發布；請先提高 Cargo.toml 的 [workspace.package] version".toString())
+    error("版本 ${env.LM_RELEASE_VERSION} 已發布；請先提高 Cargo.toml 的 [workspace.package] version（plan.md D2），未推送 App_Image")
+  } else if (pushRc == 10) {
     error("Registry 已存在標籤 ${env.GIT_COMMIT_FULL}，拒絕覆寫並停止 Pipeline（Req 16.10）")
   } else if (pushRc == 11 || pushRc == 14) {
     error('Registry 查詢失敗，無法確認或比對 Image_Digest（Req 17.6）')
@@ -1529,7 +1159,7 @@ void runImagePushStage() {
     image: [digest: digest, tags: [env.GIT_COMMIT_FULL]],
     reports: [imageDigest: 'reports/image-digest.txt'],
   ])
-  // fingerprint ID 為 MD5(`<digest>\n`)，release/digest-lookup 與 Release_Tag 建置以此找回本 Build_Record（Req 21.7）。
+  // fingerprint ID 為 MD5(`<digest>\n`)，release/digest-lookup 以此找回本 Build_Record（Req 21.7）。
   archiveArtifacts(artifacts: 'reports/image-digest.txt', fingerprint: true)
   echo "App_Image 已推送：${env.LM_IMAGE_REPO}@${digest}"
   imgStep('')
@@ -1623,9 +1253,11 @@ void runImageSignStage() {
 // 通過後執行（Req 1.3、23.2）：
 //   lock('lm-staging')（排隊等待，同一時間最多 1 個建置部署至 Staging，Req 18.9）
 //   → 以 Credential_Store 的公鑰 `cosign verify` 該 Image_Digest；未通過即不連線 Deploy_Host（Req 17.7、17.8）
-//   → SSH 受限金鑰 `lm-deploy staging deploy <digest> --app-env-stdin`：備份並驗證 → app.env → Migration_Runner
-//     → 以 repo@digest 在閒置槽位啟動 → 120 秒內每 10 秒 Health_Check、連續 3 次成功 → 切換（Req 14.1–14.3、18.1–18.3、18.7）
-//   → Smoke_Test（10 分鐘內，Req 18.3）→ finalize → `cosign attest` staging-verified predicate → `cosign verify-attestation`
+//   → SSH 受限金鑰 `lm-deploy staging deploy <digest> --app-env-stdin`（stdin 為 lm-staging-supabase-env）：app.env
+//     → Supabase 服務（db、auth、realtime、gateway；plan.md D6）→ 備份並驗證 → 遷移（plan.md D7）→ 以 repo@digest 在閒置
+//     槽位啟動 → 120 秒內每 10 秒 Health_Check、連續 3 次成功 → 切換（Req 14.1–14.3、18.1–18.3、18.7）
+//   → Smoke_Test（ci/smoke.mjs --provision，10 分鐘內，Req 18.3；plan.md D9）→ finalize
+//   → `cosign attest` staging-verified predicate → `cosign verify-attestation`
 //   → Build_Record 與「Staging」關卡（Req 14.8、18.4、23.5）。
 // 驗證失敗（健康、Smoke_Test、逾時或結果不明）時，於 5 分鐘內 `lm-deploy staging rollback` 切回前一個已通過 Staging
 // 驗證的 Image_Digest 並以 `health --wait` 確認；不存在時新版容器已停止並記錄無可還原者（Req 18.5、18.8）。
@@ -1667,86 +1299,16 @@ void runStagingDeployStage() {
   stgStep('')
 }
 
-// Release_Tag 的 Image_Digest 解析與「映像」「Staging」關卡（Req 1.4、1.10、17.7、19.5、23.2、23.5；Design §17）。
-// 不重新建置 App_Image（Req 16.1）：以 main 建置推送的 `<repo>:<完整 SHA>` 標籤查得 Image_Digest
-//   → 查無即失敗並於建置摘要顯示原因，不進入核准、不執行任何 Production 階段（Req 1.10）；Registry 錯誤不視為查無
-//   →「映像」關卡：Credential_Store 公鑰 `cosign verify` 通過，且以 fingerprint 找回的 main Build_Record 記錄相同 commit、
-//     digest 與 SBOM
-//   →「Staging」關卡：該 digest 有 commit 相符、Smoke_Test 通過的 staging-verified attestation（Req 19.5）
-// crane／cosign 以 digest 固定的工具容器在 Agent 上執行，判讀在 ci/resolve-digest.mjs step（Agent 上沒有 Bun）。
-// 「Staging」關卡在版本標籤之前評估：不為未通過 Staging 驗證的 digest 建立版本標籤。
-void runResolveDigestStage() {
-  enterStage('Resolve Digest')
-  env.LM_REL_ELIGIBLE = 'false'
-  env.LM_REL_PENDING_GATE = ''
-  env.LM_REL_GATES_OK = 'false'
-  relStep('')
-
-  // 前一個關卡未通過時不評估「映像」（Req 23.2）。
-  requireReleaseQualityGates()
-  env.LM_REL_ELIGIBLE = 'true'
-
-  relStep('Release_Tag 設定無效或 crane／cosign 映像無法拉取')
-  assertReleaseConfig()
-  pullImages([env.LM_CRANE_IMAGE, env.LM_COSIGN_IMAGE])
-  prepareReleaseWork()
-  resolveReleaseImage()
-  relStep('')
-}
-
-// 版本標籤（Req 16.6、16.10）：`<repo>:<Release_Tag>` 不存在 → `crane tag <repo>@<digest>`（寫入後再次確認）；
-// 已指向相同 digest → 不動作；指向不同 digest → 拒絕覆寫並失敗。推送帳號只在此 withCredentials 內。
-void runVersionTagStage() {
-  enterStage('Version Tag')
-  env.LM_REL_VERSION_TAG = 'false'
-  requireReleaseGatesPassed()
-  prepareReleaseWork()
-  applyVersionTag()
-  env.LM_REL_VERSION_TAG = 'true'
-}
-
-// 正式核准（Req 12.6、19.1–19.8、23.2、23.5；Design §15）：
-//   核准畫面（Tag、完整 SHA、完整 digest、Staging 的 Health_Check／Smoke_Test 結果與完成時間、安全報告連結）
-//   → 24 小時 `input` 迴圈：submitter 限定 Release_Approver，送出者另以 ci/approval.mjs 再驗證（Jenkins 管理員可送出
-//     任何 input）；非 Release_Approver 的核准或拒絕不生效、維持等待並記錄帳號與時間（Req 19.3）
-//   → 破壞性遷移逐一另行核准（ci/approval.mjs destructive：Release_Approver 且非該遷移作者，Req 12.6）
-//   → `git ls-remote` 確認 Release_Tag 仍指向核准畫面的 Commit SHA（Req 19.8）
-// input 只有 submitterParameter，沒有任何參數或選項可以略過或放寬 Release_Gate（Req 23.4）；
-// 逾時與拒絕使建置成為 ABORTED，等待期間不對 Production 做任何變更（只讀取 `lm-deploy prod status`）。
-void runApprovalStage() {
-  enterStage('Approval')
-  env.LM_APR_ELIGIBLE = 'false'
-  env.LM_APR_GATE_DONE = 'false'
-  env.LM_APPROVED = 'false'
-  env.LM_TAG_REMOTE_COMMIT = ''
-  // Pipeline script binding 變數（與 lmScanErrors 相同方式）：不生效的嘗試、已核准與待核准的破壞性遷移。
-  lmApprovalAttempts = []
-  lmDestructiveApprovals = []
-  lmDestructivePending = []
-  aprStep('')
-
-  requireReleaseGatesPassed()
-  if (env.LM_REL_VERSION_TAG != 'true') {
-    error('Release_Tag 版本標籤未完成，不進入核准')
-  }
-  env.LM_APR_ELIGIBLE = 'true'
-
-  aprStep('核准前置作業失敗（Release_Approver 清單、Production 狀態或破壞性遷移判定）')
-  assertProductionConfig()
-  prepareReleaseWork()
-  prepareApproval()
-  aprStep('')
-  waitForApproval()
-}
-
-// Production 部署、觀察期與「上線後」關卡（Req 14.1–14.3、17.7、17.8、20.1–20.7、20.9、20.11、20.12、22.5、23.1）：
+// Production 部署、觀察期與「上線後」關卡（Req 14.1–14.3、17.7、17.8、20.1–20.7、20.9、20.11、20.12、22.5、23.1；plan.md D1、D10）。
+// main 的推送在「Staging」關卡通過後自動執行，沒有人工核准（合併到 main 即是發布的決定）：
 //   lock(resource: 'lm-prod', skipIfLocked: true)：取不到即以「已有部署進行中」失敗（Req 20.12）
-//   → 再次確認 Tag 未變更、Production 目前版本與核准時相同（破壞性遷移判定的基準）→ `cosign verify`
-//   → SSH 受限金鑰 `lm-deploy prod deploy <digest> --app-env-stdin`：備份並驗證 → app.env → Migration_Runner
-//     → 閒置槽位啟動 → 120 秒內每 5 秒 Health_Check、連續 3 次成功 → 切換（grace 30 秒）（Req 14.1–14.3、20.2–20.4）
+//   → `lm-deploy prod status`：沒有作用中的版本（尚未完成首次切換）即記錄「上線後」未通過並停止，不呼叫 deploy（D10）
+//   → `cosign verify` → SSH 受限金鑰 `lm-deploy prod deploy <digest> --app-env-stdin`（stdin 為 lm-prod-supabase-env）：
+//     app.env → Supabase 服務 → 備份並驗證 → 遷移 → 閒置槽位啟動 → 120 秒內每 5 秒 Health_Check、連續 3 次成功
+//     → 切換（grace 30 秒）（Req 14.1–14.3、20.2–20.4）
 //   → 10 分鐘觀察期：每 10 秒 `health`（共 60 次）、切換後與結束前各一次 Smoke_Test，每筆以 shouldRollback 判定
 //   → 通過：finalize（停止舊槽位、記錄目前版本、保留 3 個映像，Req 20.7）；未通過：`lm-deploy prod rollback`
-//     （切回舊槽位、停止新槽位、不執行 Migration_Runner）→ 舊槽位 `health --wait`（Req 20.6、20.9、20.11）
+//     （切回舊槽位、停止新槽位、不執行遷移）→ 舊槽位 `health --wait`（Req 20.6、20.9、20.11）
 // 判讀邏輯在 ci/production.mjs；回滾原因與前後 digest 顯示於建置摘要（Req 22.5）。
 void runProductionDeployStage() {
   enterStage('Production Deploy')
@@ -1759,8 +1321,8 @@ void runProductionDeployStage() {
   env.LM_PRD_RESTORE_DONE = 'false'
   prdStep('')
 
-  // 「正式核准」未通過時不部署也不評估「上線後」（Req 19.1、23.2）。
-  requireApprovalPassed()
+  // 「Staging」關卡未通過時不部署也不評估「上線後」（Req 23.2）。
+  requireStagingPassed()
   env.LM_PRD_ELIGIBLE = 'true'
 
   prdStep('Production 部署設定無效或 cosign 映像無法拉取')
@@ -1789,15 +1351,27 @@ void runProductionDeployStage() {
   }
 }
 
+// 版本標籤（plan.md D2；Req 16.6、16.10）：「上線後」關卡通過（Production 已執行此 Image_Digest）後，
+// `<repo>:<LM_RELEASE_VERSION>` 不存在 → `crane tag <repo>@<digest>`（寫入後再次確認）；已指向相同 digest → 不動作；
+// 指向不同 digest → 拒絕覆寫並失敗。推送帳號只在 pushVersionTag 的 withCredentials 內。
+void runVersionTagStage() {
+  enterStage('Version Tag')
+  requirePostDeployPassed()
+  assertProductionConfig()
+  pullImages([env.LM_CRANE_IMAGE])
+  prepareReleaseWork()
+  applyVersionTag()
+}
+
 // 收尾（Req 2.6、15.4、21.2、21.6、21.9、21.11、22.2–22.4、22.7、22.8、23.1；Design §9、§16、Error Handling）。
 // 所有階段（含各階段自己的 post）結束後依序執行；每一步以 postStep（catchError）隔離：任一步失敗只會讓建置結果
 // 變差（SUCCESS → FAILURE；FAILURE／ABORTED 不會被覆蓋），且不會略過後續步驟。
 //   1. Build_Record finalize：最終結果、結束時間、結果非 SUCCESS 時第一個失敗或中止的階段（LM_CURRENT_STAGE）
-//   2. 封存前遮罩：重新取得本建置用過的憑證 + 各階段 Ephemeral_Database 的秘密 → ci/scrub.mjs 處理 reports/
+//   2. 封存前遮罩：重新取得本建置用過的憑證（Supabase 金鑰檔逐行）→ ci/scrub.mjs 處理 reports/
 //      全部檔案至暫存目錄（仍有命中者只輸出 .withheld.txt 說明檔並使建置失敗）→ archiveArtifacts 遮罩後的副本
 //      （Build_Record fingerprint；image-digest.txt 已於產生時封存並 fingerprint，不重複封存）
-//   3. keepLog：Release_Tag 建置的 Image_Digest 已在 Production 執行時，以 Jenkins API 保留本建置與產生該 digest 的 main 建置
-//   4. 依 label lm.ci.build=$BUILD_TAG 移除本建置的容器、網路與卷（只移除本建置的資源）
+//   3. keepLog：main 建置的 Image_Digest 通過觀察期（已在 Production 執行）時，以 Jenkins API 保留本建置
+//   4. 依 label lm.ci.build=$BUILD_TAG 移除本建置的容器、網路與卷（只移除本建置的資源）與 Rust 工具鏈映像的本建置標籤
 //   5. notifyAll 最終狀態（GitHub commit status 與建置摘要；永不拋出例外、不改變結果）
 // cleanup（最後執行）：刪除收尾暫存目錄、cleanWs() 與 $WORKSPACE_TMP。
 void pipelinePostAlways() {
@@ -1851,14 +1425,76 @@ def inBuildImage(Closure body) {
 }
 
 /**
- * 在 Build_Image 容器內執行，且容器只連接本階段 Ephemeral_Database 的 `--internal` 網路（Req 4.8）：
- * 測試容器以容器名稱連線資料庫，資料庫不發布任何連接埠，也無法由 Agent 主機、LAN 或其他建置連線。
+ * Rust 工具鏈映像（plan.md D3）：以根目錄 Dockerfile 的 toolchain 階段、空的建置內容（$WORKSPACE_TMP 下的空目錄）建置，
+ * 標記為 <LM_RUST_TOOLCHAIN_IMAGE_REPO>:<完整 SHA>，只存在本 Agent、不推送。toolchain 階段不 COPY 任何 repository 檔案，
+ * FROM 以 digest 固定、下載的工具以 SHA-256 檢查；Docker 的層快取讓 Dockerfile 未變更時不重新下載。
+ * 同時準備 cargo 快取卷（CARGO_HOME）：名稱依信任等級加上 -ci／-release（兩個 Agent 共用同一個 Docker daemon，
+ * Untrusted 建置寫入的快取不得被 Trusted 建置讀取），第一次建立時根目錄屬於 root，交給 Agent 的 uid／gid。
+ * 建置日誌寫入 reports/rust-toolchain-build.log。需在 Agent 上執行。
  */
-def inBuildImageOn(String network, Closure body) {
-  if (!(network ==~ /^lm-edb-(unit|e2e|compat|dast)-[0-9a-f]{16}-net$/)) {
-    error('Ephemeral_Database 網路名稱無效')
+void buildRustToolchain() {
+  if (!((env.LM_RUST_TOOLCHAIN_IMAGE_REPO ?: '') ==~ /^[a-z0-9][a-z0-9._-]{0,63}$/) ||
+      !((env.LM_CARGO_CACHE_VOLUME ?: '') ==~ /^[a-z0-9][a-z0-9._-]{0,55}$/)) {
+    error('LM_RUST_TOOLCHAIN_IMAGE_REPO 或 LM_CARGO_CACHE_VOLUME 格式無效')
   }
-  buildImageContainer("--network ${network}", body)
+  env.LM_RUST_TOOLCHAIN_IMAGE = "${env.LM_RUST_TOOLCHAIN_IMAGE_REPO}:${env.GIT_COMMIT_FULL}".toString()
+  env.LM_CARGO_VOLUME = "${env.LM_CARGO_CACHE_VOLUME}-${env.LM_TRUSTED == 'true' ? 'release' : 'ci'}".toString()
+  int rc
+  timeout(time: 45, unit: 'MINUTES') {
+    rc = sh(label: 'docker build --target toolchain', returnStatus: true, script: '''
+      set -u
+      ctx="$WORKSPACE_TMP/lm-rust-toolchain-context"
+      rm -rf "$ctx"
+      mkdir -m 0700 "$ctx"
+      rc=0
+      DOCKER_BUILDKIT=1 docker build --target toolchain --file "$WORKSPACE/Dockerfile" \
+        --label "lm.ci.build=$BUILD_TAG" --tag "$LM_RUST_TOOLCHAIN_IMAGE" "$ctx" > reports/rust-toolchain-build.log 2>&1 || rc=$?
+      rm -rf "$ctx"
+      if [ "$rc" -ne 0 ]; then
+        echo 'docker build --target toolchain 的輸出（最後 40 行）：'
+        tail -n 40 reports/rust-toolchain-build.log || true
+        exit "$rc"
+      fi
+      docker volume create "$LM_CARGO_VOLUME" > /dev/null || exit 30
+      docker run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges:true \
+        --label "lm.ci.build=$BUILD_TAG" \
+        --mount "type=volume,src=$LM_CARGO_VOLUME,dst=/cargo-cache" \
+        --entrypoint chown "$LM_RUST_TOOLCHAIN_IMAGE" "$(id -u):$(id -g)" /cargo-cache || exit 31
+      exit 0
+    ''')
+  }
+  if (rc == 30 || rc == 31) {
+    error('無法準備 cargo 快取卷（LM_CARGO_CACHE_VOLUME）')
+  } else if (rc != 0) {
+    error("Rust 工具鏈映像建置失敗（docker build --target toolchain 結束碼 ${rc}，見 reports/rust-toolchain-build.log）")
+  }
+}
+
+/**
+ * 在 Rust 工具鏈映像內執行（plan.md D3、D15）。CARGO_HOME 為本信任等級的 cargo 快取卷，CARGO_TARGET_DIR 在工作目錄內，
+ * HOME 在本建置的暫存目錄。network=false（Toolchain 檢查、Build、Unit Tests）時容器以 --network none 執行，cargo 與
+ * trunk 皆為離線模式；只有 Install 的 `cargo fetch --locked` 可連網。需在 Agent 上呼叫。
+ */
+def inRustToolchain(boolean network, Closure body) {
+  if (!((env.LM_RUST_TOOLCHAIN_IMAGE ?: '') ==~ /^[a-z0-9][a-z0-9._-]{0,63}:[0-9a-f]{40}$/) ||
+      !((env.LM_CARGO_VOLUME ?: '') ==~ /^[a-z0-9][a-z0-9._-]{0,55}-(ci|release)$/)) {
+    error('Rust 工具鏈映像或 cargo 快取卷尚未準備（Toolchain 階段未完成）')
+  }
+  String args = (network ? '' : '--network none ') + "--mount type=volume,src=${env.LM_CARGO_VOLUME},dst=/cargo-cache"
+  String offline = network ? 'false' : 'true'
+  docker.image(env.LM_RUST_TOOLCHAIN_IMAGE).inside(args) {
+    withEnv([
+      "HOME=${env.WORKSPACE_TMP}/home",
+      'CARGO_HOME=/cargo-cache',
+      "CARGO_TARGET_DIR=${env.WORKSPACE}/target",
+      "CARGO_NET_OFFLINE=${offline}",
+      "TRUNK_OFFLINE=${offline}",
+      'CARGO_TERM_COLOR=never',
+      'CI=1',
+    ]) {
+      body()
+    }
+  }
 }
 
 def buildImageContainer(String args, Closure body) {
@@ -1869,23 +1505,7 @@ def buildImageContainer(String args, Closure body) {
   }
 }
 
-// ------------------------------------------------------------------ Ephemeral_Database 與「QA」關卡
-
-/**
- * 測試環境變數（Req 3.8、4.1、4.3）：只有本階段 Ephemeral_Database 的連線設定，不含任何 Staging／Production
- * 的 CAMPING_DATABASE_*。密碼不經 Groovy 或環境變數傳遞，由各 sh 腳本在 `set +x` 後自 0600 檔載入。
- */
-List testEnv() {
-  return [
-    "CAMPING_TEST_DATABASE_HOST=${env.LM_EDB_HOST}",
-    'CAMPING_TEST_DATABASE_PORT=5432',
-    "CAMPING_TEST_DATABASE_NAME=${env.LM_EDB_NAME}",
-    "CAMPING_TEST_DATABASE_USER=${env.LM_EDB_USER}",
-    'CAMPING_TEST_DATABASE_SSLMODE=disable',
-    'CHROME_PATH=/usr/local/bin/chromium',
-    'CAMPING_BUN=/usr/local/bin/bun',
-  ]
-}
+// ------------------------------------------------------------------ Rust 工具鏈與「QA」關卡
 
 /** 記錄目前步驟失敗時寫入「QA」關卡的原因（固定訊息，不含憑證值）。 */
 void qaStep(String reason) {
@@ -1896,8 +1516,22 @@ String qaStageError(String stage) {
   return env.LM_QA_STAGE_ERROR ?: "${stage} 階段執行失敗或已中止"
 }
 
+/** 「QA」關卡的 JUnit（plan.md D15）：cargo test、bats 與 bun test。 */
 List qaJunitReports() {
-  return ['reports/unit-junit.xml', 'reports/e2e-junit.xml']
+  return ['reports/cargo-junit.xml', 'reports/bats/report.xml', 'reports/unit-junit.xml']
+}
+
+/** Unit Tests 寫入 Build_Record 的報告（只保留實際存在者）。 */
+Map unitReports() {
+  return existingReports([
+    cargoJunit: 'reports/cargo-junit.xml',
+    batsJunit: 'reports/bats/report.xml',
+    unitJunit: 'reports/unit-junit.xml',
+    cargoFmt: 'reports/cargo-fmt.log',
+    cargoClippy: 'reports/cargo-clippy.log',
+    cargoTest: 'reports/cargo-test.log',
+    batsLog: 'reports/bats.log',
+  ])
 }
 
 /** 只保留實際存在的報告；不存在者由 finalizeRecord 標示「未執行」（Req 21.2）。 */
@@ -1907,171 +1541,6 @@ Map existingReports(Map candidates) {
     if (fileExists(path)) { out[key] = path }
   }
   return out
-}
-
-Map browserReports() {
-  return existingReports([
-    e2eJunit: 'reports/e2e-junit.xml',
-    e2eJson: 'reports/e2e.json',
-    qaInventory: 'reports/qa-inventory.json',
-    qaInventoryValidation: 'reports/qa-inventory-validate.json',
-    serverLog: 'reports/server.log',
-    verifyEnv: 'reports/verify-env.json',
-  ])
-}
-
-/** CHROME_PATH／CAMPING_BUN 必須存在且可執行（Req 3.9）；結果只含變數名稱與原因，寫入 reports/verify-env.json。 */
-void verifyTestEnv() {
-  qaStep('CHROME_PATH 或 CAMPING_BUN 無效（有問題的變數名稱見 reports/verify-env.json）')
-  int rc = sh(label: 'ci/verify-env.mjs', returnStatus: true, script: 'bun ci/verify-env.mjs --out reports/verify-env.json')
-  if (rc != 0) {
-    error('CHROME_PATH 或 CAMPING_BUN 未設定、不存在或不可執行（見 reports/verify-env.json），不執行測試')
-  }
-}
-
-/**
- * 以建置標籤啟動本階段專用的 Ephemeral_Database（Req 4.2、4.6、4.8）：
- *   * `docker network create --internal` 網路；PostgreSQL 容器不發布任何連接埠，PGDATA 為 tmpfs（不建立卷）。
- *   * 容器與網路帶 `lm.ci.edb=<run>` 與 `lm.ci.build=$BUILD_TAG` label，供 post 與 13.8 的收尾清除。
- *   * 密碼每次由 /dev/urandom 產生，只寫入 $WORKSPACE_TMP 下 0700 目錄的 0600 檔（docker 以 --env-file 讀取，
- *     不出現在命令列、Groovy 變數或主控台），階段 cleanup 時刪除。
- *   * 自開始起 120 秒內（含拉取映像）未就緒即失敗，不執行任何測試。
- * 需在 Agent 上執行（不在 Build_Image 容器內）。
- */
-void startEphemeralDb(String purpose) {
-  if (!(purpose ==~ /^(unit|e2e|compat|dast)$/)) { error('Ephemeral_Database 用途無效') }
-  qaStep('Ephemeral_Database 未於 120 秒內就緒或無法建立')
-  String suffix = sh(label: 'Ephemeral_Database id', returnStdout: true, script: 'od -An -N8 -tx1 /dev/urandom | tr -d " \\n"').trim()
-  if (!(suffix ==~ /^[0-9a-f]{16}$/)) { error('無法產生 Ephemeral_Database 識別碼') }
-  // 先設定名稱，讓 post 即使在建立途中失敗也能依 label 清除。
-  String run = "lm-edb-${purpose}-${suffix}"
-  env.LM_EDB_RUN = run
-  env.LM_EDB_NET = "${run}-net"
-  env.LM_EDB_HOST = "${run}-db"
-  env.LM_EDB_DIR = "${env.WORKSPACE_TMP}/${run}"
-  int rc
-  // 外層保護：docker CLI 卡住時仍於時限內失敗；腳本本身自開始起 120 秒未就緒即以結束碼 3 結束。
-  timeout(time: 150, unit: 'SECONDS') {
-    rc = sh(label: 'start Ephemeral_Database', returnStatus: true, script: '''
-      set +x
-      set -eu
-      deadline=$(( $(date +%s) + 120 ))
-      digest="${LM_POSTGRES_IMAGE##*@sha256:}"
-      if [ "$digest" = "$LM_POSTGRES_IMAGE" ] || ! printf '%s' "$digest" | grep -Eq '^[0-9a-f]{64}$'; then
-        echo "LM_POSTGRES_IMAGE 必須以 @sha256:<64 hex> 固定；請以實際 digest 取代 Jenkinsfile 中的 PLACEHOLDER" >&2
-        exit 2
-      fi
-      umask 077
-      rm -rf "$LM_EDB_DIR"
-      mkdir -m 0700 "$LM_EDB_DIR"
-      pw="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \\n')"
-      [ "${#pw}" -eq 48 ] || { echo "無法產生 Ephemeral_Database 密碼" >&2; exit 4; }
-      printf 'POSTGRES_PASSWORD=%s\\n' "$pw" > "$LM_EDB_DIR/db.env"
-      printf 'CAMPING_TEST_DATABASE_PASSWORD=%s\\n' "$pw" > "$LM_EDB_DIR/client.env"
-      printf '{"lm-ephemeral-db":"%s"}\\n' "$pw" > "$LM_EDB_DIR/scrub-secrets.json"
-      unset pw
-      docker network create --internal \
-        --label "lm.ci.edb=$LM_EDB_RUN" --label "lm.ci.build=$BUILD_TAG" \
-        "$LM_EDB_NET" > /dev/null || exit 4
-      docker run -d --name "$LM_EDB_HOST" --network "$LM_EDB_NET" \
-        --label "lm.ci.edb=$LM_EDB_RUN" --label "lm.ci.build=$BUILD_TAG" \
-        --security-opt no-new-privileges:true \
-        --env-file "$LM_EDB_DIR/db.env" \
-        -e "POSTGRES_USER=$LM_EDB_USER" -e "POSTGRES_DB=$LM_EDB_NAME" \
-        -e POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256 \
-        -e PGDATA=/var/lib/postgresql/data/pgdata \
-        --tmpfs /var/lib/postgresql/data:rw,nosuid,nodev,size=1g \
-        --shm-size 256m \
-        "$LM_POSTGRES_IMAGE" > /dev/null || exit 4
-      # 以 TCP 檢查：entrypoint 初始化期間的暫時伺服器不監聽 TCP，成功即代表正式啟動完成。
-      until docker exec "$LM_EDB_HOST" pg_isready -q -h 127.0.0.1 -p 5432 -U "$LM_EDB_USER" -d "$LM_EDB_NAME" > /dev/null 2>&1; do
-        running="$(docker inspect -f '{{.State.Running}}' "$LM_EDB_HOST" 2>/dev/null || echo false)"
-        if [ "$running" != "true" ]; then
-          echo "Ephemeral_Database 容器已停止" >&2
-          exit 3
-        fi
-        if [ "$(date +%s)" -ge "$deadline" ]; then
-          echo "Ephemeral_Database 未於 120 秒內就緒" >&2
-          exit 3
-        fi
-        sleep 2
-      done
-      echo "Ephemeral_Database $LM_EDB_RUN 就緒"
-    ''')
-  }
-  if (rc == 2) {
-    error('LM_POSTGRES_IMAGE 未以 @sha256: digest 固定，不建立 Ephemeral_Database')
-  } else if (rc == 3) {
-    error('Ephemeral_Database 未於 120 秒內就緒，不執行測試')
-  } else if (rc != 0) {
-    error('無法建立 Ephemeral_Database，不執行測試')
-  }
-  qaStep('')
-}
-
-/**
- * 依 label 移除本階段的 Ephemeral_Database 容器（含 tmpfs 資料）與網路，120 秒內完成（Req 4.2、4.7）。
- * 失敗時將建置標記為失敗但不中斷其餘 post 處理。可重複呼叫。需在 Agent 上執行。
- */
-void destroyEphemeralDb() {
-  if (!env.LM_EDB_RUN) { return }
-  catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-    timeout(time: 120, unit: 'SECONDS') {
-      sh(label: 'destroy Ephemeral_Database', script: '''
-        set +x
-        set -u
-        for id in $(docker ps -aq --filter "label=lm.ci.edb=$LM_EDB_RUN" 2>/dev/null); do
-          docker rm -fv "$id" > /dev/null 2>&1 || true
-        done
-        if docker network inspect "$LM_EDB_NET" > /dev/null 2>&1; then
-          for c in $(docker network inspect -f '{{range $k, $v := .Containers}}{{$k}} {{end}}' "$LM_EDB_NET" 2>/dev/null); do
-            docker network disconnect -f "$LM_EDB_NET" "$c" > /dev/null 2>&1 || true
-          done
-          docker network rm "$LM_EDB_NET" > /dev/null 2>&1 || true
-        fi
-        left="$(docker ps -aq --filter "label=lm.ci.edb=$LM_EDB_RUN" 2>/dev/null)"
-        if [ -n "$left" ] || docker network inspect "$LM_EDB_NET" > /dev/null 2>&1; then
-          echo "無法銷毀 Ephemeral_Database $LM_EDB_RUN" >&2
-          exit 1
-        fi
-        echo "Ephemeral_Database $LM_EDB_RUN 已銷毀"
-      ''')
-    }
-    env.LM_EDB_RUN = ''
-  }
-}
-
-/**
- * 刪除 Ephemeral_Database 密碼檔（失敗證據遮罩完成後才執行）。刪除前將本階段的 scrub-secrets.json 以 0600 複製到
- * 建置層級的 $WORKSPACE_TMP/lm-scrub-secrets（0700），供收尾 post { always } 遮罩所有待封存檔案（Req 15.4、21.9）；
- * 該目錄於收尾遮罩完成後與 post { cleanup } 刪除。
- */
-void removeEphemeralDbSecrets() {
-  if (!env.LM_EDB_DIR) { return }
-  int rc = sh(label: 'remove Ephemeral_Database secrets', returnStatus: true, script: '''
-    set +x
-    set -u
-    umask 077
-    rc=0
-    case "$LM_EDB_DIR" in
-      "$WORKSPACE_TMP"/lm-edb-*)
-        if [ -f "$LM_EDB_DIR/scrub-secrets.json" ]; then
-          # 複製失敗時收尾無法遮罩本階段的秘密：仍刪除密碼檔，但使建置失敗（fail closed）。
-          { mkdir -p -m 0700 "$WORKSPACE_TMP/lm-scrub-secrets" \
-            && cp "$LM_EDB_DIR/scrub-secrets.json" "$WORKSPACE_TMP/lm-scrub-secrets/${LM_EDB_DIR##*/}.json"; } || rc=1
-        fi
-        rm -rf -- "$LM_EDB_DIR"
-        ;;
-    esac
-    [ "$rc" -eq 0 ] || echo "無法保存 Ephemeral_Database 的遮罩用秘密，收尾將無法完整遮罩封存檔" >&2
-    exit "$rc"
-  ''')
-  env.LM_EDB_DIR = ''
-  if (rc != 0) {
-    // 收尾 archiveScrubbedReports 見到此旗標即不封存任何報告（秘密集合不完整，fail closed）。
-    env.LM_SCRUB_INCOMPLETE = 'true'
-    error('無法保存 Ephemeral_Database 的遮罩用秘密；收尾不會封存任何報告')
-  }
 }
 
 /**
@@ -2112,39 +1581,6 @@ int recordQa(Map args) {
     env.LM_QA_GATE_RECORDED = 'true'
   }
   return rc
-}
-
-/**
- * 瀏覽器測試失敗證據（Req 5.6）：test-results/ 下的截圖與 trace（目錄名含測試標題中的 TC ID 與 project
- * desktop／mobile）、reports/server.log 與 reports/e2e.json，經 ci/scrub.mjs 遮罩 Ephemeral_Database 密碼
- * 後寫入 reports/evidence/browser/ 並封存。遮罩後仍偵測到秘密的檔案只封存說明檔。不改變原本的失敗原因。
- */
-void archiveBrowserEvidence() {
-  catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-    inBuildImage {
-      sh(label: 'scrub browser evidence', script: '''
-        set +x
-        set -u
-        src="$WORKSPACE_TMP/lm-browser-evidence"
-        rm -rf "$src" reports/evidence/browser
-        mkdir -p "$src" reports/evidence/browser
-        [ -d test-results ] && cp -R test-results "$src/test-results"
-        [ -f reports/server.log ] && cp reports/server.log "$src/server.log"
-        [ -f reports/e2e.json ] && cp reports/e2e.json "$src/e2e.json"
-        rc=0
-        if [ -n "${LM_EDB_DIR:-}" ] && [ -f "$LM_EDB_DIR/scrub-secrets.json" ]; then
-          bun ci/scrub.mjs --secrets "$LM_EDB_DIR/scrub-secrets.json" --in "$src" --out reports/evidence/browser \
-            --report reports/evidence/browser-scrub.json || rc=$?
-        else
-          # 資料庫未建立即失敗：沒有本階段的秘密，證據原樣保存。
-          cp -R "$src/." reports/evidence/browser/
-        fi
-        rm -rf "$src"
-        exit "$rc"
-      ''')
-    }
-  }
-  archiveArtifacts(artifacts: 'reports/evidence/browser/**, reports/evidence/browser-scrub.json', allowEmptyArchive: true)
 }
 
 // ------------------------------------------------------------------ 靜態安全掃描與「安全」關卡
@@ -2370,31 +1806,6 @@ int recordSecurityGate(String stageError) {
 }
 
 /**
- * 含 DAST 的「安全」關卡（Req 7.8、7.11、10.11、23.2）：靜態掃描、ZAP 與安全測試套件的正規化報告一起由
- * ci/policy/evaluate.mjs 評估（reports/security/evaluation-dast.json）。DAST 報告、各類別測試結果、目標驗證與
- * 隔離探測結果的路徑寫入 Build_Record；被拒絕的目標與可連線的位址列於關卡的未符合條件（Req 7.3、7.9）。
- * 與 Security Scan 的關卡分開追加一筆（Build_Record 保留兩次評估）。回傳 0 通過、1 未通過。可在 Agent 上呼叫。
- */
-int recordDastSecurityGate(String stageError) {
-  Map reports = existingReports([
-    zap: 'reports/dast/zap-report.json',
-    zapNormalized: 'reports/security/zap.json',
-    securitySuite: 'reports/security/security-suite.json',
-    securitySuiteJunit: 'reports/security-junit.xml',
-    dastTargets: 'reports/dast/targets.json',
-    dastPlan: 'reports/dast/zap-plan.yaml',
-    dastIsolation: 'reports/dast/isolation.json',
-    securityEvaluationDast: 'reports/security/evaluation-dast.json',
-  ])
-  // lmDastErrors 於 DAST 階段一開始即設定（與 lmScanErrors 相同方式）。
-  List errors = lmDastErrors instanceof List ? (List) lmDastErrors : []
-  int rc = writeSecurityGate(reports, 'reports/security/evaluation-dast.json', errors, stageError,
-    'reports/gate-security-dast.json', 'reports/security-dast-record-patch.json')
-  env.LM_DAST_GATE_RECORDED = 'true'
-  return rc
-}
-
-/**
  * 組成「安全」關卡結果並與報告路徑一起寫入 Build_Record（Req 23.1、23.3、23.5）。
  * 參數皆為 Jenkinsfile 內的固定路徑，經環境變數傳給 sh。寫入失敗即 error()。回傳 0 通過、1 未通過。
  */
@@ -2523,514 +1934,11 @@ void cleanupSecurityScan() {
   env.LM_SCAN_RUN = ''
 }
 
-// ------------------------------------------------------------------ 遷移相容性與 DAST 共用
+// ------------------------------------------------------------------ 發布版本
 
-/** Release_Tag 格式（與 ci/policy/tag.mjs 的 RELEASE_TAG_RE 相同）。 */
+/** 版本標籤格式 v<major>.<minor>.<patch>（各段 0 至 999999、無前導零；LM_RELEASE_VERSION 使用）。 */
 boolean isReleaseTag(String tag) {
   return tag ==~ /^v(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$/
-}
-
-/** `git diff --name-only -- migrations/` 的輸出 → 遷移檔清單（只取 .sql）；含無效檔名時回傳 null。 */
-@NonCPS
-List migrationFiles(String text) {
-  List out = []
-  for (String line : (text ?: '').split('\n')) {
-    String f = line.trim()
-    if (!f || !f.endsWith('.sql')) { continue }
-    if (!(f ==~ /^migrations\/[A-Za-z0-9][A-Za-z0-9._\-]{0,127}\.sql$/)) { return null }
-    out << f
-  }
-  return out
-}
-
-void compatStep(String reason) {
-  env.LM_COMPAT_STAGE_ERROR = reason
-}
-
-String compatStageError() {
-  return env.LM_COMPAT_STAGE_ERROR ?: 'Migration Compatibility 階段執行失敗或已中止'
-}
-
-/**
- * 拉取最近 Release_Tag 的 App_Image（`<LM_IMAGE_REPO>:<tag>`，唯讀拉取帳號），並回傳其 `<LM_IMAGE_REPO>@sha256:<digest>`；
- * 之後只以 digest 執行。repository 必須位於 Build_Image 的 LAN Registry。需在 Agent 上執行。
- */
-String pullReleaseImage(String tag) {
-  String registry = env.BUILD_IMAGE.substring(0, env.BUILD_IMAGE.indexOf('/'))
-  String repo = env.LM_IMAGE_REPO ?: ''
-  if (!(repo ==~ /^[a-z0-9][a-z0-9.\-]*(:[0-9]+)?\/[a-z0-9][a-z0-9._\/\-]*$/) || !repo.startsWith(registry + '/')) {
-    error('LM_IMAGE_REPO 必須是 Build_Image 所在 LAN Registry 內的 repository（不含 tag 或 digest）')
-  }
-  if (!isReleaseTag(tag)) { error('Release_Tag 格式無效') }
-  String tagged = "${repo}:${tag}".toString()
-  pullImages([tagged])
-  String ref
-  withEnv(["LM_PULLED_REF=${tagged}"]) {
-    ref = sh(label: 'Release_Tag App_Image digest', returnStdout: true, script: '''
-      set -eu
-      docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$LM_PULLED_REF" \
-        | awk -v p="$LM_IMAGE_REPO@sha256:" 'index($0, p) == 1 { print; exit }'
-    ''').trim()
-  }
-  if (!isPinnedImage(ref) || !ref.startsWith(repo + '@sha256:')) {
-    error('無法取得最近 Release_Tag App_Image 的 digest')
-  }
-  echo "最近 Release_Tag 的 App_Image：${ref}"
-  return ref
-}
-
-/**
- * 在 startEphemeralDb 的 0700 目錄內產生 App 容器與測試輔助腳本所需的秘密檔（0600，docker 以 --env-file 讀取、
- * 測試腳本在 `set +x` 後載入）：app.env（Ephemeral_Database 密碼）、setup.env（Setup_Token，48 字元）、
- * seed.env／smoke.env（合成帳號密碼）。scrub-secrets.json 同步加入新秘密，供失敗證據遮罩。需在 Agent 上執行。
- */
-void writeAppSecrets() {
-  sh(label: 'Test_Environment secrets', script: '''
-    set +x
-    set -eu
-    umask 077
-    set -a
-    . "$LM_EDB_DIR/client.env"
-    set +a
-    token="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \\n')"
-    smoke="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \\n')"
-    if [ "${#token}" -ne 48 ] || [ "${#smoke}" -ne 48 ]; then
-      echo "無法產生 Test_Environment 秘密" >&2
-      exit 4
-    fi
-    printf 'CAMPING_DATABASE_PASSWORD=%s\\n' "$CAMPING_TEST_DATABASE_PASSWORD" > "$LM_EDB_DIR/app.env"
-    printf 'CAMPING_SETUP_TOKEN=%s\\n' "$token" > "$LM_EDB_DIR/setup.env"
-    printf 'CAMPING_SMOKE_PASSWORD=%s\\nCAMPING_SETUP_TOKEN=%s\\n' "$smoke" "$token" > "$LM_EDB_DIR/seed.env"
-    printf 'CAMPING_SMOKE_PASSWORD=%s\\n' "$smoke" > "$LM_EDB_DIR/smoke.env"
-    printf '{"lm-ephemeral-db":"%s","lm-setup-token":"%s","lm-smoke-password":"%s"}\\n' \
-      "$CAMPING_TEST_DATABASE_PASSWORD" "$token" "$smoke" > "$LM_EDB_DIR/scrub-secrets.json"
-    unset token smoke CAMPING_TEST_DATABASE_PASSWORD
-  ''')
-}
-
-/**
- * 以本次 commit 的 Migration_Runner（scripts/migrate.mjs）套用遷移至本階段的 Ephemeral_Database。
- * 需在 inBuildImageOn(env.LM_EDB_NET) + withEnv(testEnv()) 內呼叫。回傳結束碼。
- */
-int migrateEphemeralDb(String logFile) {
-  int rc
-  withEnv(["LM_MIGRATE_LOG=${logFile}"]) {
-    rc = sh(label: 'Migration_Runner', returnStatus: true, script: '''
-      set +x
-      set -eu
-      set -a
-      . "$LM_EDB_DIR/client.env"
-      set +a
-      CAMPING_DATABASE_HOST="$CAMPING_TEST_DATABASE_HOST" \
-      CAMPING_DATABASE_PORT="$CAMPING_TEST_DATABASE_PORT" \
-      CAMPING_DATABASE_NAME="$CAMPING_TEST_DATABASE_NAME" \
-      CAMPING_DATABASE_USER="$CAMPING_TEST_DATABASE_USER" \
-      CAMPING_DATABASE_PASSWORD="$CAMPING_TEST_DATABASE_PASSWORD" \
-      CAMPING_DATABASE_SSLMODE="$CAMPING_TEST_DATABASE_SSLMODE" \
-      CAMPING_BIND_ADDRESS=127.0.0.1 \
-        timeout --kill-after=10 300 bun scripts/migrate.mjs > "$LM_MIGRATE_LOG" 2>&1
-    ''')
-  }
-  return rc
-}
-
-/**
- * 等待 App 於 120 秒內連續 3 次 Health_Check 成功，再以 Setup_Token 建立合成管理員與 smoke-fixture 行程
- * （ci/scripts/image-smoke-seed.mjs；只存在於本階段的 Ephemeral_Database）。需在 inBuildImageOn 內、
- * 且已設定 CAMPING_SMOKE_BASE_URL 時呼叫。回傳 0 成功、5 未就緒、6 合成資料建立失敗。
- */
-int seedTestApp(String prefix) {
-  int rc
-  withEnv(["LM_APP_PREFIX=${prefix}"]) {
-    rc = sh(label: 'Test_Environment health + seed', returnStatus: true, script: '''
-      set +x
-      set -u
-      rc=0
-      timeout --kill-after=10 180 bun ci/scripts/image-smoke-seed.mjs wait-healthy > "$LM_APP_PREFIX-health.json" || rc=$?
-      [ "$rc" -eq 0 ] || exit 5
-      set -a
-      . "$LM_EDB_DIR/seed.env"
-      set +a
-      timeout --kill-after=10 120 bun ci/scripts/image-smoke-seed.mjs seed > "$LM_APP_PREFIX-seed.json" || rc=$?
-      [ "$rc" -eq 0 ] || exit 6
-      exit 0
-    ''')
-  }
-  return rc
-}
-
-/** 容器是否仍在執行。需在 Agent 上執行。 */
-boolean containerRunning(String name) {
-  if (!name) { return false }
-  String state
-  withEnv(["LM_CHECK_CONTAINER=${name}"]) {
-    state = sh(label: 'container state', returnStdout: true, script: '''
-      docker inspect -f '{{.State.Running}}' "$LM_CHECK_CONTAINER" 2>/dev/null || echo false
-    ''').trim()
-  }
-  return state == 'true'
-}
-
-/** 保存 Test_Environment 容器日誌（不含秘密：Setup_Token 由環境變數提供，App 不輸出）。不改變建置結果。 */
-void saveContainerLog(String name, String file) {
-  if (!name) { return }
-  catchError(buildResult: null, stageResult: null) {
-    withEnv(["LM_LOG_CONTAINER=${name}", "LM_LOG_FILE=${file}"]) {
-      sh(label: 'save container log', script: '''
-        set +x
-        set -u
-        mkdir -p "$(dirname "$LM_LOG_FILE")"
-        if docker inspect "$LM_LOG_CONTAINER" > /dev/null 2>&1; then
-          docker logs "$LM_LOG_CONTAINER" > "$LM_LOG_FILE" 2>&1 || true
-        fi
-      ''')
-    }
-  }
-}
-
-/**
- * 遷移相容性結果寫入 Build_Record（Req 12.5、12.8、21.2）：reports.migrationCompat 含狀態（pass／fail／skipped）、
- * 最近 Release_Tag、其 App_Image digest、相關遷移檔、失敗或略過原因與失敗的 Smoke_Test 項目；另記錄各日誌路徑。
- */
-void recordMigrationCompat(String status, String reason) {
-  String smokeText = fileExists('reports/migration-compat-smoke.json') ? readFile('reports/migration-compat-smoke.json') : null
-  Map compat = [
-    status: status,
-    releaseTag: env.LM_COMPAT_TAG ?: '',
-    image: env.LM_COMPAT_IMAGE ?: '',
-    migrations: (env.LM_COMPAT_MIGRATIONS ?: '').tokenize(' '),
-    reason: gateText(reason ?: ''),
-    failedSmokeSteps: smokeText != null ? smokeFailures(smokeText) : [],
-  ]
-  writeFile(file: 'reports/migration-compat.json', text: JsonOutput.toJson(compat))
-  Map reports = existingReports([
-    lintMigrations: 'reports/lint-migrations.log',
-    migrationCompatOldMigrate: 'reports/migration-compat-old-migrate.log',
-    migrationCompatNewMigrate: 'reports/migration-compat-new-migrate.log',
-    migrationCompatSmoke: 'reports/migration-compat-smoke.json',
-    migrationCompatReport: 'reports/migration-compat.json',
-  ])
-  reports.migrationCompat = compat
-  writeFile(file: 'reports/migration-compat-record-patch.json', text: JsonOutput.toJson([reports: reports]))
-  inBuildImage {
-    sh(label: 'Build_Record migration compatibility', script: 'bun ci/record.mjs merge --record "$LM_RECORD" --patch reports/migration-compat-record-patch.json')
-  }
-  env.LM_COMPAT_RECORDED = 'true'
-}
-
-/** scripts/smoke.mjs 的 JSON 輸出 → 失敗的步驟（步驟名稱、狀態碼、失敗類別；不含回應內容）。 */
-@NonCPS
-List smokeFailures(String text) {
-  List out = []
-  try {
-    Object doc = parseJsonText(text ?: '')
-    List steps = doc instanceof Map && doc.steps instanceof List ? (List) doc.steps : []
-    for (Object s : steps) {
-      Map m = s instanceof Map ? (Map) s : [:]
-      if (m.result == 'fail') {
-        out << gateText("${m.step}（狀態碼 ${m.status == null ? '無' : m.status}，${m.reason ?: 'fail'}）")
-      }
-    }
-  } catch (Exception ignored) {
-    out << 'Smoke_Test 輸出無法解析'
-  }
-  return out
-}
-
-void dastStep(String reason) {
-  env.LM_DAST_STAGE_ERROR = reason
-}
-
-String dastStageError() {
-  return env.LM_DAST_STAGE_ERROR ?: 'DAST 階段執行失敗或已中止'
-}
-
-/** ZAP 映像必須位於 Build_Image 的 LAN Registry 並以 @sha256: digest 固定。 */
-List dastImages() {
-  String registry = env.BUILD_IMAGE.substring(0, env.BUILD_IMAGE.indexOf('/'))
-  String ref = env.LM_ZAP_IMAGE ?: ''
-  if (!isPinnedImage(ref) || !ref.startsWith(registry + '/')) {
-    error('LM_ZAP_IMAGE 必須以 <LAN Registry>/<repo>@sha256:<64 hex> 引用；請以實際 digest 取代 Jenkinsfile 中的 PLACEHOLDER')
-  }
-  return [ref]
-}
-
-/** 隔離探測目標：IP 位址字面值 + 連接埠，至少一個（PLACEHOLDER 未取代即失敗）。 */
-List dastProbeTargets() {
-  List out = []
-  for (String t : (env.LM_DAST_PROBE_TARGETS ?: '').tokenize(' ')) {
-    if (!(t ==~ /^([0-9]{1,3}(\.[0-9]{1,3}){3}|\[[0-9A-Fa-f:.]+\]):[0-9]{1,5}$/)) {
-      error('LM_DAST_PROBE_TARGETS 必須是以空白分隔的 <IP>:<port>；請以實際位址取代 Jenkinsfile 中的 PLACEHOLDER')
-    }
-    out << t
-  }
-  if (out.isEmpty()) { error('LM_DAST_PROBE_TARGETS 未設定') }
-  return out
-}
-
-/** DAST 階段本體（於 60 分鐘 timeout 內執行）。失敗原因寫入 lmDastErrors 與 dastStep，供含 DAST 的「安全」關卡記錄。 */
-void runDast() {
-  dastStep('DAST 設定無效：ZAP 映像或隔離探測目標未設定（見主控台）')
-  List images = dastImages()
-  env.LM_DAST_PROBE_ARGS = dastProbeTargets().join(' ')
-  dastStep('ZAP 映像無法拉取')
-  pullImages(images)
-
-  dastStep('Ephemeral_Database 未於 120 秒內就緒或無法建立')
-  startEphemeralDb('dast')
-  env.LM_DAST_APP = "${env.LM_EDB_RUN}-app"
-  env.LM_DAST_ORIGIN = "http://${env.LM_DAST_APP}:5173"
-
-  // 1. Target_Allowlist 只含本次 Test_Environment 的 origin；計畫的每個目標（起始 URL、context、爬蟲範圍）都必須在內，
-  //    且速率／執行緒／時間上限符合，才產生 ZAP 實際執行的計畫（Req 7.2、7.3、7.4）。此時尚未發出任何掃描請求。
-  dastStep('DAST 目標驗證未通過，未發出任何掃描請求（被拒絕的目標見 Build_Record）')
-  int targetsRc
-  inBuildImage {
-    targetsRc = sh(label: 'ci/dast/targets.mjs', returnStatus: true, script: '''
-      set -u
-      rm -rf reports/dast
-      mkdir -p reports/dast
-      DAST_TARGET_ORIGIN="$LM_DAST_ORIGIN" DAST_REPORT_DIR=/zap/wrk \
-        bun ci/dast/targets.mjs --plan ci/dast/zap-automation.yaml --allowlist "$LM_DAST_ORIGIN" \
-        --render reports/dast/zap-plan.yaml --out reports/dast/targets.json
-    ''')
-  }
-  if (targetsRc != 0) {
-    String result = fileExists('reports/dast/targets.json') ? readFile('reports/dast/targets.json') : ''
-    lmDastErrors.addAll(dastTargetProblems(result))
-    error('DAST 目標不在 Target_Allowlist 內、Target_Allowlist 為空或掃描限制不符，已中止 DAST（Req 7.3）')
-  }
-
-  // 2. Test_Environment：本次 commit 的 Migration_Runner → App（Build_Image 執行 checkout，唯讀掛載工作目錄）。
-  writeAppSecrets()
-  dastStep('本次 commit 的 Migration_Runner 無法套用遷移至 Ephemeral_Database')
-  inBuildImageOn(env.LM_EDB_NET) {
-    withEnv(testEnv()) {
-      int migrateRc = migrateEphemeralDb('reports/dast/migrate.log')
-      if (migrateRc != 0) {
-        error("Migration_Runner 以結束碼 ${migrateRc} 結束（見 reports/dast/migrate.log），不啟動 Test_Environment")
-      }
-    }
-  }
-  dastStep('Test_Environment 無法啟動')
-  sh(label: 'start Test_Environment', script: '''
-    set +x
-    set -eu
-    docker run -d --name "$LM_DAST_APP" --network "$LM_EDB_NET" \
-      --label "lm.ci.edb=$LM_EDB_RUN" --label "lm.ci.build=$BUILD_TAG" \
-      --user "$(id -u):$(id -g)" --read-only --tmpfs /tmp:rw,nosuid,nodev,size=256m -e HOME=/tmp \
-      --cap-drop ALL --security-opt no-new-privileges:true \
-      --env-file "$LM_EDB_DIR/app.env" --env-file "$LM_EDB_DIR/setup.env" \
-      -e "CAMPING_DATABASE_HOST=$LM_EDB_HOST" -e CAMPING_DATABASE_PORT=5432 -e "CAMPING_DATABASE_NAME=$LM_EDB_NAME" \
-      -e "CAMPING_DATABASE_USER=$LM_EDB_USER" -e CAMPING_DATABASE_SSLMODE=disable \
-      -e CAMPING_BIND_ADDRESS=0.0.0.0 -e PORT=5173 -e "CAMPING_ALLOWED_HOSTS=$LM_DAST_APP" \
-      --mount "type=bind,src=$WORKSPACE,dst=/app,readonly" -w /app \
-      --entrypoint bun "$BUILD_IMAGE" scripts/serve.mjs > /dev/null
-  ''')
-  inBuildImageOn(env.LM_EDB_NET) {
-    withEnv(testEnv() + ["CAMPING_SMOKE_BASE_URL=${env.LM_DAST_ORIGIN}".toString()]) {
-      dastStep('Test_Environment 未於 120 秒內就緒或無法建立合成資料')
-      int seedRc = seedTestApp('reports/dast/app')
-      if (seedRc != 0) {
-        error("Test_Environment 未就緒或無法建立合成資料（結束碼 ${seedRc}，見 reports/dast/app-health.json、reports/dast/app-seed.json）")
-      }
-    }
-  }
-
-  // 3. 網路隔離（Req 7.7、7.9）：在 Test_Environment 的網路命名空間內，只有 Ephemeral_Database 可連線。
-  dastStep('網路隔離檢查未通過，未啟動 DAST_Scanner（可連線的位址見 Build_Record）')
-  int probeRc = sh(label: 'ci/dast/isolation-probe.sh', returnStatus: true, script: '''
-    set -u
-    set -f
-    set --
-    for t in ${LM_DAST_PROBE_ARGS:-}; do
-      set -- "$@" --probe "$t"
-    done
-    rc=0
-    timeout --kill-after=10 300 docker run --rm --name "$LM_EDB_RUN-probe" --network "container:$LM_DAST_APP" \
-      --label "lm.ci.edb=$LM_EDB_RUN" --label "lm.ci.build=$BUILD_TAG" \
-      --user "$(id -u):$(id -g)" --read-only --tmpfs /tmp:rw,nosuid,nodev,size=16m -e HOME=/tmp \
-      --cap-drop ALL --security-opt no-new-privileges:true \
-      --mount "type=bind,src=$WORKSPACE/ci/dast/isolation-probe.sh,dst=/probe/isolation-probe.sh,readonly" \
-      --entrypoint bash "$BUILD_IMAGE" /probe/isolation-probe.sh --allow "$LM_EDB_HOST:5432" "$@" \
-      > reports/dast/isolation.log || rc=$?
-    tail -n 1 reports/dast/isolation.log > reports/dast/isolation.json 2>/dev/null || true
-    exit "$rc"
-  ''')
-  if (probeRc == 1) {
-    lmDastErrors.addAll(isolationReachable(fileExists('reports/dast/isolation.json') ? readFile('reports/dast/isolation.json') : ''))
-    error('Test_Environment 可連線至 Ephemeral_Database 以外的位址，不啟動 DAST_Scanner（Req 7.9）')
-  } else if (probeRc == 3) {
-    lmDastErrors << 'Test_Environment 無法連線至 Ephemeral_Database，隔離探測結果不可信'
-    error('隔離探測無法連線至 Ephemeral_Database，不啟動 DAST_Scanner')
-  } else if (probeRc != 0) {
-    lmDastErrors << "隔離探測無法執行（結束碼 ${probeRc}）".toString()
-    error("隔離探測無法執行（結束碼 ${probeRc}），不啟動 DAST_Scanner")
-  }
-
-  // 4. 安全測試套件（Req 7.6、10.10、10.11）：loopback 組與 lan 組（Bind_Address 0.0.0.0、Allowed_Hosts 含非 loopback Host
-  //    名稱、所有請求經該 Host 名稱送出）。綁定 0.0.0.0 只在本階段的 --internal 網路內（CAMPING_SECURITY_LAN_BIND）。
-  dastStep('安全測試套件（tests/security）未通過或無法完成（失敗類別見 reports/security/security-suite.json）')
-  int suiteRc
-  inBuildImageOn(env.LM_EDB_NET) {
-    withEnv(testEnv() + ['CAMPING_SECURITY_GROUPS=loopback,lan', 'CAMPING_SECURITY_LAN_BIND=0.0.0.0', 'CAMPING_SECURITY_LAN_HOST=lm-test.lan']) {
-      suiteRc = sh(label: 'tests/security', returnStatus: true, script: '''
-        set +x
-        set -u
-        set -a
-        . "$LM_EDB_DIR/client.env"
-        set +a
-        rm -f reports/security-junit.xml reports/security-junit-loopback.xml reports/security-junit-lan.xml
-        rc=0
-        timeout --kill-after=30 900 bun scripts/security-suite.mjs > reports/dast/security-suite.log 2>&1 || rc=$?
-        exit "$rc"
-      ''')
-    }
-  }
-  if (suiteRc != 0) {
-    lmDastErrors << "安全測試套件（tests/security，含 Req 10.10 非 loopback 設定）未通過（結束碼 ${suiteRc}）".toString()
-    error("安全測試套件未通過（結束碼 ${suiteRc}，見 reports/security-junit.xml）")
-  }
-  if (!containerRunning(env.LM_DAST_APP)) {
-    lmDastErrors << 'Test_Environment 在掃描開始前異常結束'
-    error('Test_Environment 在掃描開始前異常結束')
-  }
-
-  // 5. OWASP ZAP：只執行已驗證的計畫；速率上限 20 rps（Rate Limit 規則）+ 5 執行緒、250 ms 間隔（計畫內）。
-  //    異常結束或逾時 → 刪除不完整的報告，不視為通過（Req 7.10）。
-  dastStep('DAST_Scanner（ZAP）異常結束、逾時或未產生報告，掃描未完成')
-  int zapRc = sh(label: 'OWASP ZAP', returnStatus: true, script: '''
-    set -u
-    zapdir="$LM_EDB_DIR/zap"
-    rm -rf "$zapdir" reports/dast/zap-report.json
-    mkdir -m 0700 "$zapdir"
-    cp reports/dast/zap-plan.yaml "$zapdir/zap-plan.yaml"
-    rc=0
-    timeout --kill-after=30 3300 docker run --rm --name "$LM_EDB_RUN-zap" --network "$LM_EDB_NET" \
-      --label "lm.ci.edb=$LM_EDB_RUN" --label "lm.ci.build=$BUILD_TAG" --label "lm.ci.dast=$LM_EDB_RUN" \
-      --user "$(id -u):$(id -g)" --tmpfs /tmp:rw,nosuid,nodev,size=2g -e HOME=/tmp \
-      --cap-drop ALL --security-opt no-new-privileges:true \
-      --mount "type=bind,src=$zapdir,dst=/zap/wrk" \
-      "$LM_ZAP_IMAGE" zap.sh -cmd -silent -dir /tmp/zap-home -autorun /zap/wrk/zap-plan.yaml \
-      -config 'network.ratelimit.rules.rule(0).description=lm-dast' \
-      -config 'network.ratelimit.rules.rule(0).enabled=true' \
-      -config 'network.ratelimit.rules.rule(0).matchStr=.*' \
-      -config 'network.ratelimit.rules.rule(0).regex=true' \
-      -config 'network.ratelimit.rules.rule(0).reqsPerSec=20' \
-      -config 'network.ratelimit.rules.rule(0).groupBy=RULE' \
-      > reports/dast/zap.log 2>&1 || rc=$?
-    if [ "$rc" -eq 0 ] && [ -s "$zapdir/zap-report.json" ]; then
-      cp "$zapdir/zap-report.json" reports/dast/zap-report.json
-    elif [ "$rc" -eq 0 ]; then
-      rc=3
-    fi
-    rm -rf "$zapdir"
-    exit "$rc"
-  ''')
-  if (zapRc == 124 || zapRc == 137) {
-    lmDastErrors << 'DAST_Scanner（ZAP）超過時間上限被終止，掃描未完成'
-    error('DAST_Scanner 超過時間上限被終止，掃描未完成')
-  } else if (zapRc == 3) {
-    lmDastErrors << 'DAST_Scanner（ZAP）未產生報告，掃描未完成'
-    error('DAST_Scanner 未產生報告，掃描未完成')
-  } else if (zapRc != 0) {
-    lmDastErrors << "DAST_Scanner（ZAP）異常結束（結束碼 ${zapRc}），掃描未完成".toString()
-    error("DAST_Scanner 異常結束（結束碼 ${zapRc}，見 reports/dast/zap.log），掃描未完成")
-  }
-  if (!containerRunning(env.LM_DAST_APP)) {
-    lmDastErrors << 'Test_Environment 在掃描完成前異常結束'
-    error('Test_Environment 在掃描完成前異常結束，不將掃描視為通過（Req 7.10）')
-  }
-
-  // 6. 正規化 → 政策評估（靜態掃描 + ZAP + 安全測試套件）。
-  dastStep('DAST 報告正規化或安全政策評估失敗')
-  evaluateDastReports()
-  dastStep('')
-}
-
-/**
- * ZAP 與安全測試套件報告正規化，連同 Security Scan 的正規化報告由 ci/policy/evaluate.mjs 評估
- * （reports/security/evaluation-dast.json）。報告缺失時 normalize／evaluate 視為掃描未完成（fail closed）。
- * 評估無法執行（結束碼 2）時記錄於 lmDastErrors。需在 Agent 上呼叫。
- */
-void evaluateDastReports() {
-  int rc
-  inBuildImage {
-    rc = sh(label: 'DAST normalize + evaluate', returnStatus: true, script: '''
-      set -u
-      mkdir -p reports/security
-      bun ci/policy/normalize.mjs --tool zap --in reports/dast/zap-report.json --out reports/security/zap.json || true
-      bun ci/policy/normalize.mjs --tool security-suite --in reports/security-junit.xml --out reports/security/security-suite.json || true
-      rm -f reports/security/evaluation-dast.json
-      bun ci/policy/evaluate.mjs \
-        --reports reports/security/gitleaks-dir.json reports/security/gitleaks-git.json reports/security/osv.json reports/security/trivy-node-modules.json reports/security/semgrep.json reports/security/zap.json reports/security/security-suite.json \
-        --exceptions security/exceptions.json --commit "$GIT_COMMIT_FULL" --today "$(date +%F)" \
-        --out reports/security/evaluation-dast.json
-    ''')
-  }
-  if (rc != 0 && rc != 1) {
-    lmDastErrors << "含 DAST 的安全政策評估無法執行（ci/policy/evaluate.mjs 結束碼 ${rc}）".toString()
-  }
-}
-
-/** 60 秒內停止 DAST_Scanner（依 label 強制移除 ZAP 容器），使其不再發出新請求（Req 7.5）。需在 Agent 上執行。 */
-void stopDastScanner() {
-  if (!env.LM_EDB_RUN) { return }
-  catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-    timeout(time: 60, unit: 'SECONDS') {
-      sh(label: 'stop DAST_Scanner', script: '''
-        set +x
-        set -u
-        for id in $(docker ps -aq --filter "label=lm.ci.dast=$LM_EDB_RUN" 2>/dev/null); do
-          docker rm -f "$id" > /dev/null 2>&1 || true
-        done
-      ''')
-    }
-  }
-}
-
-/** ci/dast/targets.mjs --out 的結果 → 關卡未符合條件（被拒絕的目標位址、無效的 allowlist 項目、限制不符；Req 7.3）。 */
-@NonCPS
-List dastTargetProblems(String text) {
-  List out = []
-  try {
-    Object doc = parseJsonText(text ?: '')
-    Map t = doc instanceof Map && doc.targets instanceof Map ? (Map) doc.targets : [:]
-    Map l = doc instanceof Map && doc.limits instanceof Map ? (Map) doc.limits : [:]
-    for (Object e : (t.errors instanceof List ? (List) t.errors : [])) {
-      out << gateText(e == 'empty_allowlist' ? 'Target_Allowlist 為空' : "DAST 目標驗證失敗：${e}")
-    }
-    for (Object a : (t.invalidAllowlist instanceof List ? (List) t.invalidAllowlist : [])) {
-      out << gateText("Target_Allowlist 項目無效：${a}")
-    }
-    for (Object r : (t.rejected instanceof List ? (List) t.rejected : [])) {
-      out << gateText("DAST 目標被拒絕（不在 Target_Allowlist 內）：${r}")
-    }
-    for (Object p : (l.problems instanceof List ? (List) l.problems : [])) {
-      Map m = p instanceof Map ? (Map) p : [:]
-      out << gateText("DAST 掃描限制不符：${m.job} ${m.field} ${m.reason}")
-    }
-  } catch (Exception ignored) {
-    out << 'DAST 計畫無法解析或目標驗證結果（reports/dast/targets.json）缺失'
-  }
-  if (out.isEmpty()) { out << 'DAST 目標驗證未通過' }
-  return out.size() > 50 ? out.subList(0, 50) : out
-}
-
-/** ci/dast/isolation-probe.sh 的 JSON 摘要 → 可連線的位址（Req 7.9）。 */
-@NonCPS
-List isolationReachable(String text) {
-  List out = []
-  try {
-    Object doc = parseJsonText(text ?: '')
-    for (Object r : (doc instanceof Map && doc.reachable instanceof List ? (List) doc.reachable : [])) {
-      out << gateText("Test_Environment 可連線至 Ephemeral_Database 以外的位址：${r}")
-    }
-  } catch (Exception ignored) {
-    out << '隔離探測結果（reports/dast/isolation.json）無法解析'
-  }
-  if (out.isEmpty()) { out << 'Test_Environment 可連線至 Ephemeral_Database 以外的位址' }
-  return out
 }
 
 // ------------------------------------------------------------------ App_Image 建置、掃描、SBOM、推送、簽章與「映像」關卡
@@ -3045,14 +1953,13 @@ String imgStageError(String stage) {
 }
 
 /**
- * Image Build 的前提（Req 16.1、23.2）：本次建置的「QA」、「安全」與含 DAST 的「安全」關卡結果檔都存在、
- * 皆為通過且 commit 為本次 Commit SHA。任一不符即失敗，且不評估「映像」關卡。
+ * Image Build 的前提（Req 16.1、23.2）：本次建置的「QA」與「安全」關卡結果檔都存在、皆為通過且 commit 為本次
+ * Commit SHA。任一不符即失敗，且不評估「映像」關卡。
  */
 void requireQaAndSecurityPassed() {
   List checks = [
     ['reports/gate-qa.json', 'QA'],
     ['reports/gate-security.json', '安全'],
-    ['reports/gate-security-dast.json', '安全（含 DAST）'],
   ]
   List failed = []
   for (List c : checks) {
@@ -3313,6 +2220,30 @@ String stgStageError() {
 }
 
 /**
+ * Production 部署的前提（Req 23.2；plan.md D1）：本建置的「Staging」關卡（reports/gate-staging.json）已記錄、通過且屬於
+ * 本次 commit，Staging 已驗證此 Image_Digest，且 Image Push 取得的 Image_Digest 有效。任一不符即失敗，不評估「上線後」。
+ */
+void requireStagingPassed() {
+  String text = fileExists('reports/gate-staging.json') ? readFile('reports/gate-staging.json') : ''
+  if (env.LM_STG_GATE_DONE != 'true' || env.LM_STG_VERIFIED != 'true' || !gatePassed(text, env.GIT_COMMIT_FULL ?: '') ||
+      !((env.LM_IMAGE_DIGEST ?: '') ==~ /^sha256:[0-9a-f]{64}$/)) {
+    error('Release_Gate「Staging」未通過或結果缺失，不部署至 Production（Req 23.2）')
+  }
+}
+
+/**
+ * Version Tag 的前提（plan.md D2）：本建置的「上線後」關卡（reports/gate-post-deploy.json）已記錄、通過且屬於本次 commit，
+ * 觀察期已通過（Production 正在執行此 Image_Digest），且版本有效。任一不符即失敗，不建立版本標籤。
+ */
+void requirePostDeployPassed() {
+  String text = fileExists('reports/gate-post-deploy.json') ? readFile('reports/gate-post-deploy.json') : ''
+  if (env.LM_PRD_OBSERVED != 'true' || env.LM_PRD_GATE_DONE != 'true' || !gatePassed(text, env.GIT_COMMIT_FULL ?: '') ||
+      !((env.LM_IMAGE_DIGEST ?: '') ==~ /^sha256:[0-9a-f]{64}$/) || !isReleaseTag(env.LM_RELEASE_VERSION ?: '')) {
+    error('Release_Gate「上線後」未通過或結果缺失，不建立版本標籤（plan.md D2）')
+  }
+}
+
+/**
  * Staging 部署的前提（Req 1.3、23.2）：完整的「映像」關卡（reports/gate-image-final.json）已記錄、通過且屬於本次 commit，
  * 且 Image Push 取得的 Image_Digest 有效。任一不符即失敗，且不評估「Staging」關卡。
  */
@@ -3335,14 +2266,8 @@ void assertStagingConfig() {
   if (!((env.LM_STAGING_URL ?: '') ==~ /^https?:\/\/[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[1-9][0-9]{0,4})?$/)) {
     error('LM_STAGING_URL 必須是 http(s)://<host>[:port]（不含路徑）')
   }
-  if (!((env.LM_STAGING_DB_NAME ?: '') ==~ /^[A-Za-z_][A-Za-z0-9_]{0,62}$/)) {
-    error('LM_STAGING_DB_NAME 格式無效')
-  }
   if (env.LM_STAGING_PREDICATE_TYPE != 'https://little-moments.lan/attestations/staging-verified/v1') {
     error('LM_STAGING_PREDICATE_TYPE 必須與 ci/resolve-digest.mjs 的 STAGING_PREDICATE_TYPE 相同')
-  }
-  if (env.LM_STAGING_RECEIPT_AI != 'disabled') {
-    error('LM_STAGING_RECEIPT_AI 只能是 disabled（Staging 不啟用收據 AI）')
   }
   String ca = env.LM_SCAN_CA_BUNDLE ?: ''
   if (!(ca ==~ /^\/[A-Za-z0-9._\/-]+$/) || ca.contains('..')) {
@@ -3414,7 +2339,7 @@ void deployStaging() {
     error('Image_Digest 沒有簽章、簽章無法以設定的公鑰驗證或簽章對象不符，中止 Staging 部署；Deploy_Host 上的 App_Image 維持不變（Req 17.8）')
   }
 
-  // 2. 部署：備份並驗證 → app.env → Migration_Runner → 以 repo@digest 啟動 → 每 10 秒 Health_Check → 切換。
+  // 2. 部署：app.env → Supabase 服務 → 備份並驗證 → 遷移 → 以 repo@digest 啟動 → 每 10 秒 Health_Check → 切換。
   //    逾時或中止時結果不明，仍查詢狀態並還原。
   stgStep('Staging 部署失敗（見 reports/staging/deploy.jsonl）')
   env.LM_STG_DEPLOY_CALLED = 'true'
@@ -3565,27 +2490,25 @@ void restoreStaging() {
   }
 }
 
-/** 以 SSH 受限金鑰執行 `lm-deploy staging deploy <digest> --app-env-stdin`；回傳 SSH 結束碼（即 lm-deploy 結束碼，連線失敗為 255）。 */
+/**
+ * 以 SSH 受限金鑰執行 `lm-deploy staging deploy <digest> --app-env-stdin`；回傳 SSH 結束碼（即 lm-deploy 結束碼，連線失敗為 255）。
+ * app.env（Supabase 金鑰：Secret file lm-staging-supabase-env，lm-supabase-keys 的輸出）只以 `<` 重新導向成為 stdin，
+ * 內容不經 Groovy 變數、readFile、命令列或主控台（Req 15.1、15.2；plan.md D6、D13）；lm-deploy 在任何 docker 呼叫前
+ * 檢查鍵名與格式，再以 0600 寫入 /srv/lm/staging/app.env。
+ */
 int stagingDeployCommand() {
   int rc
   withCredentials([sshUserPrivateKey(credentialsId: env.LM_SSH_STAGING_CREDENTIALS, keyFileVariable: 'LM_SSH_KEY', usernameVariable: 'LM_SSH_USER')]) {
     withCredentials([file(credentialsId: env.LM_KNOWN_HOSTS_CREDENTIALS, variable: 'LM_KNOWN_HOSTS')]) {
-      withCredentials([usernamePassword(credentialsId: env.LM_STAGING_DB_CREDENTIALS, usernameVariable: 'LM_STG_DB_USER', passwordVariable: 'LM_STG_DB_PASSWORD')]) {
-        withCredentials([string(credentialsId: env.LM_STAGING_SETUP_TOKEN_CREDENTIALS, variable: 'LM_STG_SETUP_TOKEN')]) {
-          // app.env 只經 stdin 交給 lm-deploy（Deploy_Host 驗證鍵名後以 0600 寫入）；printf 為 shell 內建指令，
-          // 值不出現在任何程序的命令列、主控台或檔案（Req 15.1、15.2）。第一行的 LM_RECEIPT_AI=disabled 是控制鍵
-          // （不寫入 app.env）：Staging 不啟用收據 AI，不綁定任何 OpenAI 憑證（assertStagingConfig；Components 第 25.3 節）。
-          rc = sh(label: 'lm-deploy staging deploy', returnStatus: true, script: stagingSshPrelude() + '''
-            rm -f reports/staging/deploy.jsonl
-            {
-              printf 'LM_RECEIPT_AI=disabled\\n'
-              printf 'CAMPING_DATABASE_NAME=%s\\n' "$LM_STAGING_DB_NAME"
-              printf 'CAMPING_DATABASE_USER=%s\\n' "$LM_STG_DB_USER"
-              printf 'CAMPING_DATABASE_PASSWORD=%s\\n' "$LM_STG_DB_PASSWORD"
-              printf 'CAMPING_SETUP_TOKEN=%s\\n' "$LM_STG_SETUP_TOKEN"
-            } | lm_ssh deploy "$LM_IMAGE_DIGEST" --app-env-stdin > reports/staging/deploy.jsonl
-          ''')
-        }
+      withCredentials([file(credentialsId: env.LM_STAGING_STACK_ENV_CREDENTIALS, variable: 'LM_STACK_ENV_FILE')]) {
+        rc = sh(label: 'lm-deploy staging deploy', returnStatus: true, script: stagingSshPrelude() + '''
+          rm -f reports/staging/deploy.jsonl
+          if [ ! -s "$LM_STACK_ENV_FILE" ]; then
+            echo 'lm-staging-supabase-env 的檔案不存在或為空，未連線 Deploy_Host' >&2
+            exit 2
+          fi
+          lm_ssh deploy "$LM_IMAGE_DIGEST" --app-env-stdin < "$LM_STACK_ENV_FILE" > reports/staging/deploy.jsonl
+        ''')
       }
     }
   }
@@ -3730,27 +2653,29 @@ int attestStaging() {
 }
 
 /**
- * Smoke_Test（Req 18.3）：Build_Image 容器內經 LAN 對 Staging 代理執行 scripts/smoke.mjs，10 分鐘上限（每步另有 10 秒逾時）。
- * 合成帳號 smoke-bot 的密碼只以 Jenkins file credential 的路徑（CAMPING_SMOKE_PASSWORD_FILE）提供。逾時或中止回傳 124。
+ * Smoke_Test（Req 18.3；plan.md D9）：Build_Image 容器內經 LAN 對 Staging 代理執行 `ci/smoke.mjs --provision`，10 分鐘上限
+ * （每步另有逾時）。登入回應 401 時以同一密碼註冊 smoke-bot（Staging 的 Database 是全新的，第一個帳號成為其管理員；
+ * staging.env 的 LM_PUBLIC_SIGNUP=true）。密碼只以 Jenkins file credential 的路徑（LM_SMOKE_PASSWORD_FILE）提供。
+ * 逾時或中止回傳 124。
  */
 int runStagingSmoke() {
   int rc = 124
   String failure = null
   try {
     timeout(time: 10, unit: 'MINUTES') {
-      withCredentials([file(credentialsId: env.LM_STAGING_SMOKE_CREDENTIALS, variable: 'CAMPING_SMOKE_PASSWORD_FILE')]) {
+      withCredentials([file(credentialsId: env.LM_STAGING_SMOKE_CREDENTIALS, variable: 'LM_SMOKE_PASSWORD_FILE')]) {
         // LM_SCAN_CA_BUNDLE 已由 assertStagingConfig 驗證為絕對路徑；HTTPS 時 Bun 以 NODE_EXTRA_CA_CERTS 信任內部 CA。
         buildImageContainer("--mount type=bind,src=${env.LM_SCAN_CA_BUNDLE},dst=/etc/lm/lan-ca.crt,readonly") {
           withEnv([
-            "CAMPING_SMOKE_BASE_URL=${env.LM_STAGING_URL}",
-            'CAMPING_SMOKE_USERNAME=smoke-bot',
+            "LM_SMOKE_BASE_URL=${env.LM_STAGING_URL}",
+            'LM_SMOKE_USERNAME=smoke-bot',
             'NODE_EXTRA_CA_CERTS=/etc/lm/lan-ca.crt',
           ]) {
             rc = sh(label: 'Smoke_Test（Staging）', returnStatus: true, script: '''
               set +x
               set -u
               rm -f reports/staging/smoke.json
-              bun scripts/smoke.mjs > reports/staging/smoke.json
+              bun ci/smoke.mjs --provision > reports/staging/smoke.json
             ''')
           }
         }
@@ -3847,71 +2772,12 @@ void stagingStageFailed() {
   }
 }
 
-// ------------------------------------------------------------------ Release_Tag：Image_Digest 解析、「映像」「Staging」關卡與版本標籤
-
-void relStep(String reason) {
-  env.LM_REL_STAGE_ERROR = reason
-}
-
-String relStageError() {
-  return env.LM_REL_STAGE_ERROR ?: 'Resolve Digest 階段執行失敗或已中止'
-}
+// ------------------------------------------------------------------ 版本標籤與共用的 Registry 操作
 
 /** 建置摘要附加一行（不覆寫既有描述）；內容只含固定文字、已驗證的 SHA、digest、Tag 與 Jenkins 帳號。 */
 void appendSummary(String line) {
   String current = currentBuild.description ?: ''
   currentBuild.description = current ? "${current}<br>${line}".toString() : line
-}
-
-/** Build_Agent 本地時間（含時區的 ISO 8601，例如 2026-01-01T08:00:00+08:00）。 */
-String isoNow() {
-  String now = sh(label: 'date', returnStdout: true, script: 'date +%Y-%m-%dT%H:%M:%S%:z').trim()
-  if (!(now ==~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$/)) {
-    error('無法取得含時區的時間')
-  }
-  return now
-}
-
-/** Release_Tag 的前提（Req 1.4、23.2）：本次建置的「QA」、「安全」與含 DAST 的「安全」關卡皆已記錄、通過且屬於本次 commit。 */
-void requireReleaseQualityGates() {
-  List checks = [
-    ['reports/gate-qa.json', 'QA'],
-    ['reports/gate-security.json', '安全'],
-    ['reports/gate-security-dast.json', '安全（含 DAST）'],
-  ]
-  List failed = []
-  for (List c : checks) {
-    String text = fileExists(c[0]) ? readFile(c[0]) : ''
-    if (!gatePassed(text, env.GIT_COMMIT_FULL ?: '')) { failed << c[1] }
-  }
-  if (!failed.isEmpty()) {
-    error("Release_Gate ${failed.join('、')} 未通過或結果缺失，不評估「映像」關卡、不進入核准（Req 1.4、23.2）")
-  }
-}
-
-/** Release_Tag 階段的非秘密設定：Tag 格式、App_Image repository、crane／cosign 映像（digest 固定）、CA 與 predicate type。 */
-void assertReleaseConfig() {
-  if (!isReleaseTag(env.TAG_NAME ?: '')) {
-    error('TAG_NAME 不是有效的 Release_Tag')
-  }
-  String registry = env.BUILD_IMAGE.substring(0, env.BUILD_IMAGE.indexOf('/'))
-  for (Object ref in [env.LM_CRANE_IMAGE, env.LM_COSIGN_IMAGE]) {
-    String s = ref ? ref.toString() : ''
-    if (!isPinnedImage(s) || !s.startsWith(registry + '/')) {
-      error('LM_CRANE_IMAGE／LM_COSIGN_IMAGE 必須以 <LAN Registry>/<repo>@sha256:<64 hex> 引用；請以實際 digest 取代 Jenkinsfile 中的 PLACEHOLDER')
-    }
-  }
-  String repo = env.LM_IMAGE_REPO ?: ''
-  if (!(repo ==~ /^[a-z0-9][a-z0-9.\-]*(:[0-9]+)?\/[a-z0-9][a-z0-9._\/\-]*$/) || !repo.startsWith(registry + '/')) {
-    error('LM_IMAGE_REPO 必須是 Build_Image 所在 LAN Registry 內的 repository（不含 tag 或 digest）')
-  }
-  String ca = env.LM_SCAN_CA_BUNDLE ?: ''
-  if (!(ca ==~ /^\/[A-Za-z0-9._\/-]+$/) || ca.contains('..')) {
-    error('LM_SCAN_CA_BUNDLE 必須是絕對路徑')
-  }
-  if (env.LM_STAGING_PREDICATE_TYPE != 'https://little-moments.lan/attestations/staging-verified/v1') {
-    error('LM_STAGING_PREDICATE_TYPE 必須與 ci/resolve-digest.mjs 的 STAGING_PREDICATE_TYPE 相同')
-  }
 }
 
 /** 本階段的工作目錄（$WORKSPACE_TMP/lm-release-<id>，0700：docker 登入資訊與 Jenkins API token 暫存檔）。需在 Agent 上執行。 */
@@ -3945,16 +2811,13 @@ void cleanupReleaseWork() {
 }
 
 /**
- * 唯讀 Registry 操作（唯讀拉取帳號 + Credential_Store 的 cosign 公鑰）；結束碼與輸出保存於 reports/，由 ci/resolve-digest.mjs
- * 或 ci/production.mjs 判讀。action 只有固定的六種；digest 只經環境變數傳入。回傳 crane／cosign 的結束碼（登入失敗為 20）。
+ * 唯讀 Registry 操作（唯讀拉取帳號 + Credential_Store 的 cosign 公鑰）；結束碼與輸出保存於 reports/ 供判讀。action 只有固定的
+ * 兩種：tag-get（版本標籤 `<repo>:<LM_RELEASE_VERSION>` 目前指向的 digest，由 ci/resolve-digest.mjs step version-tag 判讀）與
+ * verify-prod（Production 部署前的簽章驗證）。digest 與版本只經環境變數傳入。回傳 crane／cosign 的結束碼（登入失敗為 20）。
  */
 int releaseRegistry(String action) {
-  if (!(action in ['lookup', 'verify', 'attestation', 'tag-get', 'config', 'verify-prod'])) {
+  if (!(action in ['tag-get', 'verify-prod'])) {
     error('內部錯誤：未知的 Registry 操作')
-  }
-  // config 的 digest 由呼叫端以 withEnv 提供（LM_REL_CONFIG_DIGEST），其餘操作不使用。
-  if (action == 'config' && !((env.LM_REL_CONFIG_DIGEST ?: '') ==~ /^sha256:[0-9a-f]{64}$/)) {
-    error('內部錯誤：crane config 需要有效的 digest')
   }
   int rc
   withEnv(["LM_REL_ACTION=${action}"]) {
@@ -3986,31 +2849,10 @@ int releaseRegistry(String action) {
             ref="$LM_IMAGE_REPO@${LM_IMAGE_DIGEST:-}"
             rc=0
             case "$LM_REL_ACTION" in
-              lookup)
-                rm -f reports/release/sha-tag.out reports/release/sha-tag.err
-                tool "$LM_CRANE_IMAGE" digest "$LM_IMAGE_REPO:$GIT_COMMIT_FULL" \
-                  > reports/release/sha-tag.out 2> reports/release/sha-tag.err || rc=$?
-                ;;
-              verify)
-                rm -f reports/release/signature.json reports/release/verify.log
-                tool "$LM_COSIGN_IMAGE" verify --key /keys/cosign.pub --insecure-ignore-tlog=true --output json "$ref" \
-                  > reports/release/signature.json 2> reports/release/verify.log || rc=$?
-                ;;
-              attestation)
-                rm -f reports/release/staging-attestation.jsonl reports/release/verify-attestation.log
-                tool "$LM_COSIGN_IMAGE" verify-attestation --key /keys/cosign.pub --insecure-ignore-tlog=true \
-                  --type "$LM_STAGING_PREDICATE_TYPE" "$ref" \
-                  > reports/release/staging-attestation.jsonl 2> reports/release/verify-attestation.log || rc=$?
-                ;;
               tag-get)
                 rm -f reports/release/version-tag.out reports/release/version-tag.err
-                tool "$LM_CRANE_IMAGE" digest "$LM_IMAGE_REPO:$TAG_NAME" \
+                tool "$LM_CRANE_IMAGE" digest "$LM_IMAGE_REPO:$LM_RELEASE_VERSION" \
                   > reports/release/version-tag.out 2> reports/release/version-tag.err || rc=$?
-                ;;
-              config)
-                rm -f reports/production/active-config.json
-                tool "$LM_CRANE_IMAGE" config "$LM_IMAGE_REPO@$LM_REL_CONFIG_DIGEST" \
-                  > reports/production/active-config.json 2> /dev/null || rc=$?
                 ;;
               verify-prod)
                 rm -f reports/production/signature.json reports/production/verify.log
@@ -4031,15 +2873,15 @@ int releaseRegistry(String action) {
 }
 
 /**
- * 寫入版本標籤（Req 16.6、16.10）：推送帳號只在此 withCredentials 內，docker 登入資訊只存在本階段工作目錄。
- * `crane tag <repo>@<digest> <Release_Tag>` 後立即 `crane digest <repo>:<Release_Tag>`，結束碼寫入檔案供判讀
+ * 寫入版本標籤（Req 16.6、16.10；plan.md D2）：推送帳號只在此 withCredentials 內，docker 登入資訊只存在本階段工作目錄。
+ * `crane tag <repo>@<digest> <LM_RELEASE_VERSION>` 後立即 `crane digest <repo>:<LM_RELEASE_VERSION>`，結束碼寫入檔案供判讀
  * （檢查與寫入之間的並行寫入由 version-tag-verify 偵測）。回傳 0 已寫入；20 登入失敗；30 crane tag 失敗。
  */
 int pushVersionTag() {
   int rc
   withCredentials([usernamePassword(credentialsId: env.LM_REGISTRY_PUSH_CREDENTIALS, usernameVariable: 'LM_PUSH_USER', passwordVariable: 'LM_PUSH_PASSWORD')]) {
     timeout(time: 10, unit: 'MINUTES') {
-      rc = sh(label: 'crane tag（Release_Tag 版本標籤）', returnStatus: true, script: '''
+      rc = sh(label: 'crane tag（版本標籤）', returnStatus: true, script: '''
         set +x
         set -u
         rm -f reports/release/version-tag-set.log reports/release/version-tag-after.out reports/release/version-tag-after.err reports/release/version-tag-after.exit
@@ -4060,9 +2902,9 @@ int pushVersionTag() {
             --mount "type=bind,src=$LM_SCAN_CA_BUNDLE,dst=/etc/ssl/certs/ca-certificates.crt,readonly" \
             "$LM_CRANE_IMAGE" "$@"
         }
-        crane tag "$LM_IMAGE_REPO@$LM_IMAGE_DIGEST" "$TAG_NAME" > reports/release/version-tag-set.log 2>&1 || exit 30
+        crane tag "$LM_IMAGE_REPO@$LM_IMAGE_DIGEST" "$LM_RELEASE_VERSION" > reports/release/version-tag-set.log 2>&1 || exit 30
         rc=0
-        crane digest "$LM_IMAGE_REPO:$TAG_NAME" > reports/release/version-tag-after.out 2> reports/release/version-tag-after.err || rc=$?
+        crane digest "$LM_IMAGE_REPO:$LM_RELEASE_VERSION" > reports/release/version-tag-after.out 2> reports/release/version-tag-after.err || rc=$?
         printf '%s\\n' "$rc" > reports/release/version-tag-after.exit
         exit 0
       ''')
@@ -4082,206 +2924,14 @@ int releaseCli(String label, List extraEnv, String script) {
   return rc
 }
 
-/** 將 ci/resolve-digest.mjs step 產生的關卡結果寫入 Build_Record（Req 23.5）；寫入失敗即 error()。 */
-void recordReleaseGate(String file) {
-  int rc
-  withEnv(["LM_REL_GATE_FILE=${file}"]) {
-    inBuildImage {
-      rc = sh(label: 'Release_Gate（Release_Tag）', returnStatus: true, script: 'bun ci/record.mjs gate --record "$LM_RECORD" --result "$LM_REL_GATE_FILE"')
-    }
-  }
-  if (rc != 0) {
-    error('無法將關卡結果寫入 Build_Record')
-  }
-  env.LM_REL_PENDING_GATE = ''
-}
-
 /**
- * 以 fingerprint（MD5(`<digest>\n`)）找回產生該 Image_Digest 的 main Build_Record（Design §17）：唯讀 Jenkins API token
- * 寫入本階段 0700 目錄的 0600 檔再交給 Build_Image 容器讀取（不經 docker exec --env），結束時一律刪除。
- * 回傳 ci/digest-lookup.mjs 的結束碼（0 查得；1 查無；2 參數錯誤；3 Jenkins 查詢失敗）。
+ * 版本標籤（plan.md D2；Req 16.10）：create → crane tag → 確認；noop（已指向此 digest）→ 不動作；conflict → 拒絕覆寫並失敗。
+ * 版本為 Init 由 Cargo.toml 取得的 LM_RELEASE_VERSION。
  */
-int fetchMainRecord() {
-  int rc = 3
-  withEnv(["LM_REL_TOKEN_DIR=${env.LM_REL_DIR}/jenkins-api"]) {
-    try {
-      withCredentials([usernamePassword(credentialsId: env.LM_JENKINS_API_CREDENTIALS, usernameVariable: 'LM_JENKINS_API_USER_SRC', passwordVariable: 'LM_JENKINS_API_TOKEN_SRC')]) {
-        sh(label: 'stage Jenkins API token', script: '''
-          set +x
-          set -eu
-          umask 077
-          rm -rf "$LM_REL_TOKEN_DIR"
-          mkdir -m 0700 "$LM_REL_TOKEN_DIR"
-          printf '%s' "$LM_JENKINS_API_TOKEN_SRC" > "$LM_REL_TOKEN_DIR/token"
-          printf '%s' "$LM_JENKINS_API_USER_SRC" > "$LM_REL_TOKEN_DIR/user"
-        ''')
-      }
-      inBuildImage {
-        rc = sh(label: 'ci/digest-lookup.mjs（main Build_Record）', returnStatus: true, script: '''
-          set +x
-          set -u
-          rm -f reports/release/main-build-record.json reports/release/digest-lookup.json
-          LM_JENKINS_API_USER="$(cat "$LM_REL_TOKEN_DIR/user")"
-          LM_JENKINS_API_TOKEN_FILE="$LM_REL_TOKEN_DIR/token"
-          export LM_JENKINS_API_USER LM_JENKINS_API_TOKEN_FILE
-          bun ci/digest-lookup.mjs --digest "$LM_IMAGE_DIGEST" --commit "$GIT_COMMIT_FULL" \
-            --out reports/release/digest-lookup.json --main-record-out reports/release/main-build-record.json > /dev/null
-        ''')
-      }
-    } finally {
-      sh(label: 'remove Jenkins API token', script: '''
-        set +x
-        case "$LM_REL_TOKEN_DIR" in
-          "$WORKSPACE_TMP"/lm-release-*/jenkins-api) rm -rf -- "$LM_REL_TOKEN_DIR" ;;
-        esac
-      ''')
-    }
-  }
-  return rc
-}
-
-/**
- * 持有 Release_Tag 的工作目錄時執行：完整 SHA 標籤 → digest（Req 1.10）→「映像」關卡 →「Staging」關卡（Req 19.5）。
- * 任一步未通過即記錄關卡、於建置摘要顯示原因並失敗；不進入核准。
- */
-void resolveReleaseImage() {
-  String sha = env.GIT_COMMIT_FULL ?: ''
-  // 查得 digest 為評估「映像」關卡的第一步：此後任何失敗由 post 記錄「映像」未通過（Req 23.3）。
-  env.LM_REL_PENDING_GATE = 'image'
-
-  // 1. `<repo>:<完整 SHA>` → Image_Digest（Req 1.4、1.10）
-  relStep('Registry 查詢失敗，無法確認該 commit 的 Image_Digest（不視為查無）')
-  int craneRc = releaseRegistry('lookup')
-  if (craneRc == 20) {
-    appendSummary("Release_Tag ${env.TAG_NAME}：無法以 ${env.LM_REGISTRY_PULL_CREDENTIALS} 登入 Registry，未能查詢 Image_Digest".toString())
-    error("無法以 ${env.LM_REGISTRY_PULL_CREDENTIALS} 登入 Registry，無法查詢 Image_Digest；不進入核准")
-  }
-  int rc = releaseCli('ci/resolve-digest.mjs step lookup', ["LM_REL_EXIT=${craneRc}"], '''
-    set -u
-    rm -f reports/release/lookup.json
-    bun ci/resolve-digest.mjs step lookup --commit "$GIT_COMMIT_FULL" --exit "$LM_REL_EXIT" \
-      --stdout reports/release/sha-tag.out --stderr reports/release/sha-tag.err --out reports/release/lookup.json
-  ''')
-  if (rc == 1) {
-    String why = "commit ${sha} 查無由 main 建置產生的 Image_Digest".toString()
-    relStep(why)
-    appendSummary("${why}；未進入核准，Production 未變更（Req 1.10）".toString())
-    mergeRecordPatch('reports/release-lookup-record-patch.json', [
-      image: [digest: '不適用'],
-      reports: [releaseLookup: 'reports/release/lookup.json'],
-    ])
-    error("${why}，不進入核准、不執行任何 Production 階段（Req 1.10）")
-  }
-  if (rc != 0) {
-    appendSummary("commit ${sha}：Registry 查詢失敗，無法確認 Image_Digest（不視為查無）".toString())
-    error('Registry 查詢失敗，無法確認該 commit 的 Image_Digest（見 reports/release/lookup.json）；不進入核准')
-  }
-  Map lookup = readJsonFile('reports/release/lookup.json')
-  String digest = lookup.digest instanceof String ? lookup.digest : ''
-  if (!(digest ==~ /^sha256:[0-9a-f]{64}$/) || lookup.commit != sha) {
-    error('Image_Digest 查詢結果無效（見 reports/release/lookup.json）')
-  }
-  env.LM_IMAGE_DIGEST = digest
-  writeFile(file: 'reports/image-digest.txt', text: "${digest}\n".toString())
-  mergeRecordPatch('reports/release-digest-record-patch.json', [
-    image: [digest: digest, tags: [sha]],
-    reports: [imageDigest: 'reports/image-digest.txt', releaseLookup: 'reports/release/lookup.json'],
-  ])
-  // 與 main 建置相同的 fingerprint（MD5(`<digest>\n`)），release/digest-lookup 可由 digest 找回本 Build_Record（Req 21.7）。
-  archiveArtifacts(artifacts: 'reports/image-digest.txt', fingerprint: true)
-
-  // 2. 「映像」關卡：Credential_Store 公鑰驗證簽章 + main Build_Record 的 commit、digest 與 SBOM（Req 1.4、23.2）
-  relStep('Image_Digest 的簽章驗證或 main Build_Record 查詢無法完成')
-  int sigRc = releaseRegistry('verify')
-  if (sigRc == 20) {
-    error("無法以 ${env.LM_REGISTRY_PULL_CREDENTIALS} 登入 Registry，未驗證簽章；不進入核准")
-  }
-  int recRc = fetchMainRecord()
-  rc = releaseCli('ci/resolve-digest.mjs step image', ["LM_REL_SIG_EXIT=${sigRc}"], '''
-    set -u
-    rm -f reports/gate-image-release.json
-    bun ci/resolve-digest.mjs step image --commit "$GIT_COMMIT_FULL" --lookup reports/release/lookup.json \
-      --signature-exit "$LM_REL_SIG_EXIT" --signature reports/release/signature.json \
-      --main-record reports/release/main-build-record.json --out-gate reports/gate-image-release.json
-  ''')
-  if (!fileExists('reports/gate-image-release.json')) {
-    error('「映像」關卡結果缺失，不進入核准')
-  }
-  recordReleaseGate('reports/gate-image-release.json')
-  if (rc != 0) {
-    String note = recRc == 0 ? '' : '；無法以 fingerprint 取得產生該 digest 的 main Build_Record'
-    appendSummary("Release_Gate「映像」未通過：Image_Digest ${digest} 的簽章或 SBOM 條件未符合${note}（見 reports/gate-image-release.json）".toString())
-    error('Release_Gate「映像」未通過（未符合的條件見 Build_Record 與 reports/gate-image-release.json），不進入核准')
-  }
-  mergeRecordPatch('reports/release-image-record-patch.json', [
-    image: [signature: 'verified'],
-    reports: [imageSignature: 'reports/release/signature.json', mainBuildRecord: 'reports/release/main-build-record.json'],
-  ])
-
-  // 3. 「Staging」關卡：staging-verified attestation（Req 19.5）
-  env.LM_REL_PENDING_GATE = 'staging'
-  relStep('staging-verified attestation 驗證無法完成')
-  int attRc = releaseRegistry('attestation')
-  if (attRc == 20) {
-    error("無法以 ${env.LM_REGISTRY_PULL_CREDENTIALS} 登入 Registry，未驗證 Staging 紀錄；不進入核准")
-  }
-  rc = releaseCli('ci/resolve-digest.mjs step staging', ["LM_REL_ATT_EXIT=${attRc}"], '''
-    set -u
-    rm -f reports/gate-staging-release.json
-    bun ci/resolve-digest.mjs step staging --commit "$GIT_COMMIT_FULL" --lookup reports/release/lookup.json \
-      --image-gate reports/gate-image-release.json --attestation-exit "$LM_REL_ATT_EXIT" \
-      --attestation reports/release/staging-attestation.jsonl --out-gate reports/gate-staging-release.json
-  ''')
-  if (!fileExists('reports/gate-staging-release.json')) {
-    error('「Staging」關卡結果缺失，不進入核准')
-  }
-  recordReleaseGate('reports/gate-staging-release.json')
-  if (rc != 0) {
-    appendSummary("Release_Gate「Staging」未通過：Image_Digest ${digest} 缺少 Staging 驗證（Req 19.5）；未進入核准，Production 未變更".toString())
-    error('Image_Digest 未記錄為已通過 Staging 驗證，拒絕正式部署且不進入核准（Req 19.5）')
-  }
-  mergeRecordPatch('reports/release-staging-record-patch.json', [
-    reports: [stagingAttestation: 'reports/release/staging-attestation.jsonl'],
-  ])
-  env.LM_REL_GATES_OK = 'true'
-  echo "Release_Tag ${env.TAG_NAME}：${env.LM_IMAGE_REPO}@${digest}（「映像」與「Staging」關卡通過）"
-}
-
-/** Resolve Digest 失敗、逾時或中止：尚未記錄時記錄進行中的關卡未通過（Req 23.1、23.3）。不改變原本的失敗原因。 */
-void releaseStageFailed() {
-  catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-    String pending = env.LM_REL_PENDING_GATE ?: ''
-    if (env.LM_REL_ELIGIBLE == 'true' && (pending == 'image' || pending == 'staging')) {
-      String file = pending == 'image' ? 'reports/gate-image-release.json' : 'reports/gate-staging-release.json'
-      writeFile(file: file, text: JsonOutput.toJson([
-        gate: pending == 'image' ? '映像' : 'Staging', pass: false, status: 'error',
-        commit: env.GIT_COMMIT_FULL ?: '未執行', unmet: [gateText(relStageError())], reports: [],
-      ]))
-      recordReleaseGate(file)
-    }
-  }
-}
-
-/** Version Tag／Approval 的前提：「映像」與「Staging」關卡（Release_Tag）皆已記錄、通過且屬於本次 commit，digest 有效。 */
-void requireReleaseGatesPassed() {
-  List failed = []
-  for (List c : [['reports/gate-image-release.json', '映像'], ['reports/gate-staging-release.json', 'Staging']]) {
-    String text = fileExists(c[0]) ? readFile(c[0]) : ''
-    if (!gatePassed(text, env.GIT_COMMIT_FULL ?: '')) { failed << c[1] }
-  }
-  if (env.LM_REL_GATES_OK != 'true' || !((env.LM_IMAGE_DIGEST ?: '') ==~ /^sha256:[0-9a-f]{64}$/)) {
-    failed << 'Resolve Digest'
-  }
-  if (!failed.isEmpty()) {
-    error("Release_Gate ${failed.join('、')} 未通過或結果缺失，不進入核准或 Production 部署（Req 19.5、23.2）")
-  }
-}
-
-/** 版本標籤：create → crane tag → 確認；noop → 不動作；conflict → 拒絕覆寫並失敗（Req 16.10）。 */
 void applyVersionTag() {
-  String tag = env.TAG_NAME ?: ''
+  String tag = env.LM_RELEASE_VERSION ?: ''
   if (!isReleaseTag(tag)) {
-    error('TAG_NAME 不是有效的 Release_Tag')
+    error('LM_RELEASE_VERSION 不是有效的版本（v<major>.<minor>.<patch>）')
   }
   int getRc = releaseRegistry('tag-get')
   if (getRc == 20) {
@@ -4294,7 +2944,7 @@ void applyVersionTag() {
       --stdout reports/release/version-tag.out --stderr reports/release/version-tag.err --out reports/release/version-tag.json
   ''')
   if (rc == 4) {
-    appendSummary("版本標籤 ${tag} 已指向不同的 Image_Digest，拒絕覆寫（Req 16.10）".toString())
+    appendSummary("版本標籤 ${tag} 已指向不同的 Image_Digest，拒絕覆寫（Req 16.10）；請提高 Cargo.toml 的 [workspace.package] version".toString())
     error("Registry 中的版本標籤 ${tag} 已指向不同的 Image_Digest，拒絕覆寫並停止 Pipeline（Req 16.10）")
   }
   if (rc != 0) {
@@ -4325,18 +2975,35 @@ void applyVersionTag() {
     image: [tags: [env.GIT_COMMIT_FULL, tag]],
     reports: [versionTag: 'reports/release/version-tag.json'],
   ])
+  appendSummary("版本 ${tag}：${env.LM_IMAGE_REPO}@${env.LM_IMAGE_DIGEST}".toString())
   echo "版本標籤 ${tag} → ${env.LM_IMAGE_DIGEST}（${d.decision}）"
 }
 
-// ------------------------------------------------------------------ 正式核准與「正式核准」關卡
+// ------------------------------------------------------------------ Production 設定
 
-void aprStep(String reason) {
-  env.LM_APR_STAGE_ERROR = reason
-}
-
-/** Production 的非秘密設定只接受固定格式；共用的 Release_Tag 設定同樣檢查。 */
+/**
+ * Production 與版本標籤的非秘密設定只接受固定格式：發布版本、crane／cosign 映像（digest 固定）、App_Image repository、
+ * CA bundle、Deploy_Host 與 Production 的 LAN origin。
+ */
 void assertProductionConfig() {
-  assertReleaseConfig()
+  if (!isReleaseTag(env.LM_RELEASE_VERSION ?: '')) {
+    error('LM_RELEASE_VERSION 不是有效的版本（v<major>.<minor>.<patch>；Init 由 Cargo.toml 的 [workspace.package] version 取得）')
+  }
+  String registry = env.BUILD_IMAGE.substring(0, env.BUILD_IMAGE.indexOf('/'))
+  for (Object ref in [env.LM_CRANE_IMAGE, env.LM_COSIGN_IMAGE]) {
+    String s = ref ? ref.toString() : ''
+    if (!isPinnedImage(s) || !s.startsWith(registry + '/')) {
+      error('LM_CRANE_IMAGE／LM_COSIGN_IMAGE 必須以 <LAN Registry>/<repo>@sha256:<64 hex> 引用；請以實際 digest 取代 Jenkinsfile 中的 PLACEHOLDER')
+    }
+  }
+  String repo = env.LM_IMAGE_REPO ?: ''
+  if (!(repo ==~ /^[a-z0-9][a-z0-9.\-]*(:[0-9]+)?\/[a-z0-9][a-z0-9._\/\-]*$/) || !repo.startsWith(registry + '/')) {
+    error('LM_IMAGE_REPO 必須是 Build_Image 所在 LAN Registry 內的 repository（不含 tag 或 digest）')
+  }
+  String ca = env.LM_SCAN_CA_BUNDLE ?: ''
+  if (!(ca ==~ /^\/[A-Za-z0-9._\/-]+$/) || ca.contains('..')) {
+    error('LM_SCAN_CA_BUNDLE 必須是絕對路徑')
+  }
   if (!((env.LM_DEPLOY_HOST ?: '') ==~ /^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/)) {
     error('LM_DEPLOY_HOST 格式無效')
   }
@@ -4345,364 +3012,6 @@ void assertProductionConfig() {
   }
   if (!((env.LM_PROD_URL ?: '') ==~ /^https?:\/\/[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[1-9][0-9]{0,4})?$/)) {
     error('LM_PROD_URL 必須是 http(s)://<host>[:port]（不含路徑）')
-  }
-  if (!((env.LM_PROD_DB_NAME ?: '') ==~ /^[A-Za-z_][A-Za-z0-9_]{0,62}$/)) {
-    error('LM_PROD_DB_NAME 格式無效')
-  }
-  if (env.LM_PROD_RECEIPT_AI != 'enabled' && env.LM_PROD_RECEIPT_AI != 'disabled') {
-    error('LM_PROD_RECEIPT_AI 只能是 enabled 或 disabled')
-  }
-  if (env.LM_PROD_RECEIPT_AI == 'enabled' && env.LM_PROD_OPENAI_CREDENTIALS != 'lm-prod-openai-api-key') {
-    error('LM_PROD_RECEIPT_AI 為 enabled 時，LM_PROD_OPENAI_CREDENTIALS 必須是 lm-prod-openai-api-key')
-  }
-}
-
-/**
- * 核准前置作業（只讀取，不變更 Production）：Release_Approver 清單 → `lm-deploy prod status` 的目前版本與其 OCI revision
- * → 需另行核准的破壞性遷移（本次 commit 有、目前版本沒有；無法判定目前版本時為所有破壞性遷移，fail closed）
- * → 封存安全報告供核准畫面連結 → 核准畫面文字。
- */
-void prepareApproval() {
-  int arc
-  inBuildImage {
-    arc = sh(label: 'ci/rollback.mjs approvers', returnStatus: true, script: 'bun ci/rollback.mjs approvers > reports/production/approvers.json')
-  }
-  Map approvers = readJsonFile('reports/production/approvers.json')
-  List ids = approvers.approvers instanceof List ? (List) approvers.approvers : []
-  boolean idsOk = arc == 0 && !ids.isEmpty()
-  for (Object id : ids) {
-    if (!(id instanceof String) || !(id ==~ /^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$/)) { idsOk = false }
-  }
-  if (!idsOk) {
-    error('Release_Approver 清單無效或為空（ci/release-approvers.json），不進入核准')
-  }
-  env.LM_APR_SUBMITTERS = ids.join(',')
-
-  env.LM_PRD_BASE_DIGEST = ''
-  env.LM_PRD_BASE_COMMIT = ''
-  int stRc = prodHost('status', 'status-approval.json')
-  if (stRc == 0) {
-    releaseCli('ci/production.mjs active', [], 'bun ci/production.mjs active --status reports/production/status-approval.json > reports/production/active-approval.json')
-    Map a = readJsonFile('reports/production/active-approval.json')
-    String base = a.digest instanceof String ? a.digest : ''
-    if (base ==~ /^sha256:[0-9a-f]{64}$/) {
-      env.LM_PRD_BASE_DIGEST = base
-      int cfgRc
-      withEnv(["LM_REL_CONFIG_DIGEST=${base}"]) {
-        cfgRc = releaseRegistry('config')
-      }
-      if (cfgRc == 0) {
-        releaseCli('ci/production.mjs deployed-commit', [], '''
-          bun ci/production.mjs deployed-commit --status reports/production/status-approval.json \
-            --config reports/production/active-config.json > reports/production/deployed-commit.json
-        ''')
-        Map dc = readJsonFile('reports/production/deployed-commit.json')
-        if (dc.digest == base && dc.commit instanceof String && dc.commit ==~ /^[0-9a-f]{40}$/) {
-          env.LM_PRD_BASE_COMMIT = dc.commit
-        }
-      }
-    }
-  } else {
-    echo '無法讀取 Production 狀態；所有破壞性遷移皆需另行核准'
-  }
-
-  sh(label: 'Production 目前版本的遷移檔', script: '''
-    set -u
-    rm -f reports/production/deployed-migrations.txt
-    if [ -n "${LM_PRD_BASE_COMMIT:-}" ] && git cat-file -e "${LM_PRD_BASE_COMMIT:-}^{commit}" 2>/dev/null; then
-      git ls-tree --name-only "${LM_PRD_BASE_COMMIT:-}" -- migrations/ > reports/production/deployed-migrations.txt \
-        || rm -f reports/production/deployed-migrations.txt
-    fi
-  ''')
-  int drc = releaseCli('ci/production.mjs destructive', [], '''
-    set -u
-    rm -f reports/production/destructive.json
-    deployed=unknown
-    if [ -f reports/production/deployed-migrations.txt ]; then
-      deployed=reports/production/deployed-migrations.txt
-    fi
-    bun ci/production.mjs destructive --migrations migrations --deployed "$deployed" --out reports/production/destructive.json
-  ''')
-  Map dd = readJsonFile('reports/production/destructive.json')
-  if (drc != 0 || !(dd.pending instanceof List)) {
-    error('無法判定需另行核准的破壞性遷移，不進入核准（Req 12.6）')
-  }
-  List pending = []
-  for (Object p : (List) dd.pending) {
-    if (!(p instanceof Map) || !(p.version instanceof Integer) || !(p.migration instanceof String) ||
-        !(p.migration ==~ /^migrations\/[0-9]{4,}_[a-z0-9_]+\.sql$/)) {
-      error('破壞性遷移判定結果無效（見 reports/production/destructive.json）')
-    }
-    pending << [version: p.version, migration: p.migration]
-  }
-  lmDestructivePending = pending
-  env.LM_PRD_DESTRUCTIVE_KNOWN = dd.known == true ? 'true' : 'false'
-
-  // 核准畫面的安全報告連結（Req 19.2）：只封存評估結果與關卡結果（不含掃描原始輸出或秘密值）。
-  archiveArtifacts(
-    artifacts: 'reports/security/evaluation.json, reports/security/evaluation-dast.json, reports/gate-security.json, reports/gate-security-dast.json',
-    allowEmptyArchive: true
-  )
-  int mrc = releaseCli('ci/production.mjs approval-message', [], '''
-    set -u
-    rm -f reports/production/approval-message.txt
-    bun ci/production.mjs approval-message --tag "$TAG_NAME" --commit "$GIT_COMMIT_FULL" --digest "$LM_IMAGE_DIGEST" \
-      --main-record reports/release/main-build-record.json --attestation reports/release/staging-attestation.jsonl \
-      --destructive reports/production/destructive.json --build-url "$BUILD_URL" --out reports/production/approval-message.txt
-  ''')
-  if (mrc != 0 || !fileExists('reports/production/approval-message.txt')) {
-    error('無法產生核准畫面內容，不進入核准')
-  }
-}
-
-/** input 被中止時的操作者（Rejection 的帳號；匿名為空字串）；不是 Rejection（逾時、停止建置）時回傳 null。 */
-String inputRejecter(Object err) {
-  if (!(err instanceof org.jenkinsci.plugins.workflow.steps.FlowInterruptedException)) { return null }
-  for (Object c : err.getCauses()) {
-    if (c instanceof org.jenkinsci.plugins.workflow.support.steps.input.Rejection) {
-      def u = c.getUser()
-      return u == null ? '' : u.getId().toString()
-    }
-  }
-  return null
-}
-
-/** input 的送出者（submitterParameter）。 */
-String inputSubmitter(Object r) {
-  if (r instanceof Map) { return r.approver == null ? '' : r.approver.toString() }
-  return r == null ? '' : r.toString()
-}
-
-/** 以 ci/approval.mjs isReleaseApprover 再次驗證帳號（Jenkins 管理員可送出任何 input，Req 19.3）。 */
-boolean isApprover(String who) {
-  if (!(who ==~ /^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$/)) { return false }
-  int rc = releaseCli('ci/approval.mjs release', ["LM_APR_WHO=${who}"], '''
-    set -u
-    bun ci/approval.mjs release --approver "$LM_APR_WHO" >> reports/production/approval-checks.jsonl 2>&1
-  ''')
-  return rc == 0
-}
-
-/** 破壞性遷移核准人：Release_Approver 且非該遷移的 commit 作者（ci/approval.mjs destructiveApprovalAllowed，Req 12.6）。 */
-boolean destructiveAllowed(String who, String migration) {
-  if (!(who ==~ /^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$/) || !(migration ==~ /^migrations\/[0-9]{4,}_[a-z0-9_]+\.sql$/)) { return false }
-  int rc = releaseCli('ci/approval.mjs destructive', ["LM_APR_WHO=${who}", "LM_APR_MIGRATION=${migration}"], '''
-    set -u
-    bun ci/approval.mjs destructive --approver "$LM_APR_WHO" --migration "$LM_APR_MIGRATION" >> reports/production/approval-checks.jsonl 2>&1
-  ''')
-  return rc == 0
-}
-
-/** 不生效的核准／拒絕嘗試（Req 19.3）：只記錄帳號（格式驗證後）、時間、動作與遷移路徑。 */
-void recordAttempt(String who, String action, String migration) {
-  String at = isoNow()
-  String id = who ==~ /^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$/ ? who : ''
-  lmApprovalAttempts << [id: id, at: at, action: action, migration: migration]
-  echo "${id ?: '（帳號格式無效）'} 不是${migration ? '可核准此破壞性遷移的' : ''} Release_Approver，操作不生效，維持等待（${action}）"
-}
-
-/** 正式核准 input 迴圈：只有 Release_Approver 的核准或拒絕才結束等待。 */
-Map releaseApprovalLoop(String message) {
-  while (true) {
-    def r
-    try {
-      r = input(id: 'ReleaseApproval', message: message, ok: '核准正式部署', submitter: env.LM_APR_SUBMITTERS, submitterParameter: 'approver')
-    } catch (err) {
-      String who = inputRejecter(err)
-      if (who == null) { throw err }
-      if (isApprover(who)) {
-        return [decision: 'rejected', rejectedBy: who, rejectedAt: isoNow(), error: err]
-      }
-      recordAttempt(who, 'reject', '')
-      continue
-    }
-    String who = inputSubmitter(r)
-    if (isApprover(who)) {
-      return [decision: 'approved', approver: who, at: isoNow()]
-    }
-    recordAttempt(who, 'approve', '')
-  }
-}
-
-/** 單一破壞性遷移的核准（與正式發布核准分開，Req 12.6）：Release_Approver 且非該遷移作者才生效。 */
-Map destructiveApprovalLoop(Map m) {
-  String migration = m.migration.toString()
-  String version = m.version.toString()
-  if (!(version ==~ /^[0-9]{1,10}$/)) { error('破壞性遷移版本號無效') }
-  String message = "破壞性遷移 ${migration}（版本 ${version}）將在部署時套用至 Production 並移除或重新命名欄位或資料表。" +
-    "此核准須由非該遷移 commit 作者的 Release_Approver 進行，且與正式發布核准分開。" +
-    "Release_Tag：${env.TAG_NAME}；Commit SHA：${env.GIT_COMMIT_FULL}；Image_Digest：${env.LM_IMAGE_DIGEST}"
-  while (true) {
-    def r
-    try {
-      r = input(id: "DestructiveMigration${version}", message: message, ok: '核准此破壞性遷移', submitter: env.LM_APR_SUBMITTERS, submitterParameter: 'approver')
-    } catch (err) {
-      String who = inputRejecter(err)
-      if (who == null) { throw err }
-      if (isApprover(who)) {
-        return [decision: 'rejected', rejectedBy: who, rejectedAt: isoNow(), error: err]
-      }
-      recordAttempt(who, 'destructive_reject', migration)
-      continue
-    }
-    String who = inputSubmitter(r)
-    if (destructiveAllowed(who, migration)) {
-      return [decision: 'approved', approver: who, at: isoNow()]
-    }
-    recordAttempt(who, 'destructive_approve', migration)
-  }
-}
-
-/**
- * 24 小時核准（Req 19.1–19.4、19.6–19.8、12.6）：正式核准 → 破壞性遷移逐一核准 → `git ls-remote` 確認 Tag 未變更
- * → ci/production.mjs approval-record 寫入 Build_Record 與「正式核准」關卡。逾時、拒絕或中止：記錄後以 ABORTED 結束；
- * Tag 已變更：記錄後失敗。等待期間不對 Production 做任何變更。
- */
-void waitForApproval() {
-  String message = readFile('reports/production/approval-message.txt').trim()
-  if (message.length() > 4000) { message = message.substring(0, 4000) }
-  Map decision = [decision: 'aborted']
-  def interrupted = null
-  long started = System.currentTimeMillis()
-  try {
-    timeout(time: 24, unit: 'HOURS') {
-      Map r = releaseApprovalLoop(message)
-      decision = r
-      if (r.decision == 'approved') {
-        for (Object p : lmDestructivePending) {
-          Map m = (Map) p
-          Map d = destructiveApprovalLoop(m)
-          if (d.decision != 'approved') {
-            decision = [decision: 'destructive_rejected', approver: r.approver, at: r.at, error: d.error]
-            break
-          }
-          lmDestructiveApprovals << [version: m.version, migration: m.migration, approver: d.approver, at: d.at]
-        }
-      }
-    }
-  } catch (err) {
-    interrupted = err
-    boolean timedOut = System.currentTimeMillis() - started >= 24L * 60L * 60L * 1000L - 60000L
-    decision = [decision: timedOut ? 'timeout' : 'aborted', approver: decision.approver, at: decision.at]
-  }
-  def rethrow = interrupted ?: decision.error
-  if (decision.decision == 'approved' && !verifyTagUnchanged('tag-remote-approval.txt')) {
-    decision.decision = 'tag_changed'
-  }
-  int rc = recordApproval(decision)
-  String tag = env.TAG_NAME
-  if (decision.decision == 'approved' && rc == 0) {
-    env.LM_APPROVED = 'true'
-    env.LM_APPROVER = decision.approver.toString()
-    echo "正式核准：${env.LM_APPROVER}（${decision.at}），Image_Digest ${env.LM_IMAGE_DIGEST}"
-    return
-  }
-  if (decision.decision == 'rejected' || decision.decision == 'destructive_rejected') {
-    String who = decision.rejectedBy ?: (rethrow == null ? '' : inputRejecter(rethrow))
-    appendSummary("正式核准：${who ?: 'Release_Approver'} 拒絕${decision.decision == 'rejected' ? '正式部署' : '破壞性遷移'}，已中止；Production 未變更（Req 19.7）".toString())
-  } else if (decision.decision == 'timeout') {
-    appendSummary("正式核准：${tag} 於 24 小時內未收到 Release_Approver 的核准或拒絕，已中止；Production 未變更（Req 19.4）".toString())
-  } else if (decision.decision == 'tag_changed') {
-    appendSummary("Release_Tag ${tag} 已變更或無法確認：目前指向的 Commit SHA 與核准畫面的 ${env.GIT_COMMIT_FULL} 不一致，拒絕正式部署（Req 19.8）".toString())
-    error("Release_Tag ${tag} 指向的 Commit SHA 與核准畫面顯示的不一致或無法確認，拒絕正式部署（Req 19.8）")
-  } else if (decision.decision == 'approved') {
-    error('Release_Gate「正式核准」未通過（見 Build_Record 與 reports/gate-approval.json）')
-  } else {
-    appendSummary("正式核准：${tag} 的核准等待被中止；Production 未變更".toString())
-  }
-  if (rethrow != null) {
-    throw rethrow
-  }
-  currentBuild.result = 'ABORTED'
-  error('正式核准未完成，已中止正式發布；Production 未變更')
-}
-
-/**
- * `git ls-remote` 確認 Release_Tag 仍指向本次 Commit SHA（Req 19.8）；annotated tag 取 peeled 值（ci/production.mjs tag-remote）。
- * 無法查詢時視為無法確認（回傳 false，fail closed）。
- */
-boolean verifyTagUnchanged(String outName) {
-  if (!(outName ==~ /^[a-z-]+\.txt$/)) { error('內部錯誤：輸出檔名無效') }
-  int lsRc
-  int matchRc = 1
-  withEnv(["LM_TAG_OUT=reports/production/${outName}"]) {
-    withCredentials([gitUsernamePassword(credentialsId: env.LM_GIT_CREDENTIALS)]) {
-      lsRc = sh(label: 'git ls-remote（Release_Tag）', returnStatus: true, script: '''
-        set -u
-        mkdir -p reports/production
-        rm -f "$LM_TAG_OUT" "$LM_TAG_OUT.json"
-        git ls-remote origin "refs/tags/$TAG_NAME" "refs/tags/$TAG_NAME^{}" > "$LM_TAG_OUT"
-      ''')
-    }
-    if (lsRc == 0) {
-      matchRc = releaseCli('ci/production.mjs tag-remote', [], '''
-        set -u
-        bun ci/production.mjs tag-remote --result "$LM_TAG_OUT" --tag "$TAG_NAME" --commit "$GIT_COMMIT_FULL" > "$LM_TAG_OUT.json"
-      ''')
-    }
-  }
-  Map t = readJsonFile("reports/production/${outName}.json")
-  env.LM_TAG_REMOTE_COMMIT = (t.remote instanceof String && t.remote ==~ /^[0-9a-f]{40}$/) ? t.remote : ''
-  return lsRc == 0 && matchRc == 0
-}
-
-/** 「正式核准」關卡與 Build_Record（ci/production.mjs approval-record → record.mjs merge → gate）。回傳 0 通過、1 未通過。 */
-int recordApproval(Map d) {
-  Map input = [
-    decision: (d.decision ?: 'aborted').toString(),
-    approver: d.approver == null ? '' : d.approver.toString(),
-    at: d.at == null ? '' : d.at.toString(),
-    rejectedBy: d.rejectedBy == null ? '' : d.rejectedBy.toString(),
-    rejectedAt: d.rejectedAt == null ? '' : d.rejectedAt.toString(),
-    digest: env.LM_IMAGE_DIGEST ?: '',
-    tag: env.TAG_NAME ?: '',
-    commit: env.GIT_COMMIT_FULL ?: '',
-    remoteCommit: env.LM_TAG_REMOTE_COMMIT ?: '',
-    attempts: lmApprovalAttempts,
-    destructive: lmDestructiveApprovals,
-    pendingDestructive: lmDestructivePending,
-  ]
-  sh(label: 'reports/production', script: 'mkdir -p reports/production')
-  writeFile(file: 'reports/production/approval-input.json', text: JsonOutput.toJson(input))
-  int rc
-  inBuildImage {
-    rc = sh(label: 'Release_Gate 正式核准', returnStatus: true, script: '''
-      set -u
-      rm -f reports/gate-approval.json reports/production/approval-record-patch.json
-      rc=0
-      bun ci/production.mjs approval-record --in reports/production/approval-input.json \
-        --out-patch reports/production/approval-record-patch.json --out-gate reports/gate-approval.json \
-        --out-evidence reports/production/approval.json || rc=$?
-      if [ "$rc" -gt 1 ]; then
-        exit "$rc"
-      fi
-      bun ci/record.mjs merge --record "$LM_RECORD" --patch reports/production/approval-record-patch.json || exit 3
-      bun ci/record.mjs gate --record "$LM_RECORD" --result reports/gate-approval.json || exit 3
-      exit "$rc"
-    ''')
-  }
-  if (rc != 0 && rc != 1) {
-    error('無法將核准結果與「正式核准」關卡寫入 Build_Record')
-  }
-  env.LM_APR_GATE_DONE = 'true'
-  return rc
-}
-
-/** Approval 失敗、逾時或中止：尚未記錄時記錄「正式核准」未通過（Req 23.1、23.3）。不改變原本的結果。 */
-void approvalStageFailed() {
-  catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-    if (env.LM_APR_ELIGIBLE == 'true' && env.LM_APR_GATE_DONE != 'true') {
-      recordApproval([decision: 'aborted'])
-    }
-  }
-}
-
-/** Production 部署的前提（Req 19.1、23.2）：「正式核准」關卡已記錄、通過且屬於本次 commit，digest 有效。 */
-void requireApprovalPassed() {
-  String text = fileExists('reports/gate-approval.json') ? readFile('reports/gate-approval.json') : ''
-  if (env.LM_APPROVED != 'true' || env.LM_APR_GATE_DONE != 'true' || !gatePassed(text, env.GIT_COMMIT_FULL ?: '') ||
-      !((env.LM_IMAGE_DIGEST ?: '') ==~ /^sha256:[0-9a-f]{64}$/)) {
-    error('Release_Gate「正式核准」未通過或結果缺失，不部署至 Production（Req 19.1、23.2）')
   }
 }
 
@@ -4717,29 +3026,28 @@ String prdStageError() {
 }
 
 /**
- * 持有 lm-prod 鎖時執行（Req 20.12）：Tag 與目前版本再確認 → 簽章驗證 → deploy → 觀察期 → finalize 或回滾 →「上線後」關卡。
+ * 持有 lm-prod 鎖時執行（Req 20.12）：狀態與首次部署保護 → 簽章驗證 → deploy → 觀察期 → finalize 或回滾 →「上線後」關卡。
  */
 void deployProduction() {
   String digest = env.LM_IMAGE_DIGEST ?: ''
 
-  // 0. 核准後到取得鎖之間可能經過一段時間：再次確認 Tag 未變更（Req 19.8），且 Production 目前版本與核准時相同
-  //    （破壞性遷移判定的基準；核准時無法判定目前版本者已要求所有破壞性遷移另行核准，不受影響）。
-  prdStep('無法確認 Release_Tag 仍指向核准的 Commit SHA')
-  if (!verifyTagUnchanged('tag-remote-deploy.txt')) {
-    prdStep('')
-    recordProductionGate('Release_Tag 已變更或無法確認，未部署')
-    appendSummary("Release_Tag ${env.TAG_NAME}：部署前無法確認 Tag 仍指向 ${env.GIT_COMMIT_FULL}，拒絕正式部署（Req 19.8）".toString())
-    error('Release_Tag 已變更或無法確認，拒絕正式部署；Production 未變更（Req 19.8）')
-  }
+  // 0. 首次部署的保護（plan.md D10）：Production 沒有作用中的版本時不自動部署。觀察期的 Smoke_Test 需要 smoke-bot 與
+  //    管理員帳號，兩者只能在執行中的 stack 上建立（deploy/README.md 的首次切換），自動的第一次部署必然在觀察期失敗。
   prdStep('無法取得 Production 狀態')
   int stRc = prodHost('status', 'status-locked.json')
-  releaseCli('ci/production.mjs active', [], 'bun ci/production.mjs active --status reports/production/status-locked.json > reports/production/active-locked.json')
+  if (stRc != 0) {
+    prdStep('')
+    recordProductionGate('無法取得 Production 狀態（lm-deploy prod status），未部署')
+    error("無法取得 Production 狀態（lm-deploy prod status 結束碼 ${stRc}）；未變更 Production")
+  }
+  int activeRc = releaseCli('ci/production.mjs active', [], 'bun ci/production.mjs active --status reports/production/status-locked.json > reports/production/active-locked.json')
   Map a = readJsonFile('reports/production/active-locked.json')
   String base = a.digest instanceof String ? a.digest : ''
-  if (stRc != 0 || (env.LM_PRD_DESTRUCTIVE_KNOWN == 'true' && base != (env.LM_PRD_BASE_DIGEST ?: ''))) {
+  if (activeRc != 0 || !(base ==~ /^sha256:[0-9a-f]{64}$/)) {
     prdStep('')
-    recordProductionGate('Production 目前版本在核准期間已變更或無法取得，破壞性遷移判定已失效，未部署')
-    error('Production 目前版本在核准期間已變更或無法取得；未變更 Production，請重新執行 Release_Tag 建置')
+    recordProductionGate('Production 尚未完成首次部署，請依 deploy/README.md 的首次切換步驟完成 bootstrap')
+    appendSummary('Production 尚未完成首次部署（見 deploy/README.md 的首次切換）；未呼叫 lm-deploy prod deploy，Production 未變更')
+    error('Production 尚未完成首次部署（見 deploy/README.md 的首次切換）；未呼叫 lm-deploy prod deploy')
   }
 
   // 1. 部署前以公鑰驗證簽章（Req 17.7、17.8）：未通過即不呼叫 deploy，Production 維持不變。
@@ -4754,7 +3062,7 @@ void deployProduction() {
     error('Image_Digest 沒有簽章、簽章無法以設定的公鑰驗證或簽章對象不符，中止 Production 部署；Production 維持不變（Req 17.8）')
   }
 
-  // 2. 部署：備份並驗證 → app.env → Migration_Runner → 閒置槽位以 repo@digest 啟動 → 每 5 秒 Health_Check → 切換。
+  // 2. 部署：app.env → Supabase 服務 → 備份並驗證 → 遷移 → 閒置槽位以 repo@digest 啟動 → 每 5 秒 Health_Check → 切換。
   prdStep('Production 部署失敗（見 reports/production/deploy.jsonl）')
   env.LM_PRD_DEPLOY_CALLED = 'true'
   int deployRc = 124
@@ -4774,9 +3082,6 @@ void deployProduction() {
       --digest "$LM_IMAGE_DIGEST" --out reports/production/deploy-verdict.json
   ''')
   Map c = readJsonFile('reports/production/deploy-verdict.json')
-  // lm-deploy 寫入後的收據 AI 狀態（app-env 結果行的 receiptAi）；只有列舉值，不含金鑰（Components 第 25.3 節）。
-  String receiptAi = (c.receiptAi == 'enabled' || c.receiptAi == 'disabled') ? c.receiptAi : '未執行'
-  appendSummary("收據 AI（Production）：${receiptAi}".toString())
   if (interrupted == null && c.outcome == 'refused') {
     prdStep('')
     recordProductionGate('')
@@ -4829,7 +3134,7 @@ void deployProduction() {
     }
     error('Release_Gate「上線後」未通過（見 Build_Record 與 reports/gate-post-deploy.json）')
   }
-  echo "Production 已部署：${env.LM_IMAGE_REPO}@${digest}（${env.TAG_NAME}）"
+  echo "Production 已部署：${env.LM_IMAGE_REPO}@${digest}（${env.LM_RELEASE_VERSION}）"
 }
 
 /** 回滾或還原結果的摘要文字（固定訊息；不含 lm-deploy 輸出內容）。 */
@@ -4895,8 +3200,8 @@ int observeStep(String type, int exitCode, String result, long ms, String phase)
 }
 
 /**
- * Smoke_Test（Req 20.5）：Build_Image 容器內經 LAN 對 Production 代理執行 scripts/smoke.mjs（每步 10 秒逾時，整體 90 秒）。
- * Production 合成帳號 smoke-bot 的密碼只以 Jenkins file credential 的路徑提供。逾時或中止回傳 124。
+ * Smoke_Test（Req 20.5）：Build_Image 容器內經 LAN 對 Production 代理執行 `ci/smoke.mjs`（不註冊帳號；每步另有逾時，整體 90 秒）。
+ * Production 合成帳號 smoke-bot 的密碼只以 Jenkins file credential 的路徑（LM_SMOKE_PASSWORD_FILE）提供。逾時或中止回傳 124。
  */
 int runProductionSmoke(String outName) {
   if (!(outName ==~ /^smoke-[a-z-]+\.json$/)) { error('內部錯誤：Smoke_Test 輸出檔名無效') }
@@ -4904,11 +3209,11 @@ int runProductionSmoke(String outName) {
   String failure = null
   try {
     timeout(time: 90, unit: 'SECONDS') {
-      withCredentials([file(credentialsId: env.LM_PROD_SMOKE_CREDENTIALS, variable: 'CAMPING_SMOKE_PASSWORD_FILE')]) {
+      withCredentials([file(credentialsId: env.LM_PROD_SMOKE_CREDENTIALS, variable: 'LM_SMOKE_PASSWORD_FILE')]) {
         buildImageContainer("--mount type=bind,src=${env.LM_SCAN_CA_BUNDLE},dst=/etc/lm/lan-ca.crt,readonly") {
           withEnv([
-            "CAMPING_SMOKE_BASE_URL=${env.LM_PROD_URL}",
-            'CAMPING_SMOKE_USERNAME=smoke-bot',
+            "LM_SMOKE_BASE_URL=${env.LM_PROD_URL}",
+            'LM_SMOKE_USERNAME=smoke-bot',
             'NODE_EXTRA_CA_CERTS=/etc/lm/lan-ca.crt',
             "LM_PRD_SMOKE_OUT=reports/production/${outName}",
           ]) {
@@ -4916,7 +3221,7 @@ int runProductionSmoke(String outName) {
               set +x
               set -u
               rm -f "$LM_PRD_SMOKE_OUT"
-              bun scripts/smoke.mjs > "$LM_PRD_SMOKE_OUT"
+              bun ci/smoke.mjs > "$LM_PRD_SMOKE_OUT"
             ''')
           }
         }
@@ -4989,56 +3294,23 @@ void restoreProduction() {
   }
 }
 
-/** 以 SSH 受限金鑰執行 `lm-deploy prod deploy <digest> --app-env-stdin`；回傳 SSH 結束碼（即 lm-deploy 結束碼，連線失敗為 255）。 */
+/**
+ * 以 SSH 受限金鑰執行 `lm-deploy prod deploy <digest> --app-env-stdin`；回傳 SSH 結束碼（即 lm-deploy 結束碼，連線失敗為 255）。
+ * app.env 的來源為 Secret file lm-prod-supabase-env，交給 lm-deploy 的方式與 Staging 相同（只以 `<` 重新導向成為 stdin）。
+ */
 int productionDeployCommand() {
   int rc
   withCredentials([sshUserPrivateKey(credentialsId: env.LM_SSH_PROD_CREDENTIALS, keyFileVariable: 'LM_SSH_KEY', usernameVariable: 'LM_SSH_USER')]) {
     withCredentials([file(credentialsId: env.LM_KNOWN_HOSTS_CREDENTIALS, variable: 'LM_KNOWN_HOSTS')]) {
-      withCredentials([usernamePassword(credentialsId: env.LM_PROD_DB_CREDENTIALS, usernameVariable: 'LM_PRD_DB_USER', passwordVariable: 'LM_PRD_DB_PASSWORD')]) {
-        withCredentials([string(credentialsId: env.LM_PROD_SETUP_TOKEN_CREDENTIALS, variable: 'LM_PRD_SETUP_TOKEN')]) {
-          // app.env 只經 stdin 交給 lm-deploy（Deploy_Host 驗證鍵名後以 0600 寫入）；printf 為 shell 內建指令，
-          // 值不出現在任何程序的命令列、主控台或檔案（Req 15.1、15.2）。
-          // 收據 AI（Components 第 25.3 節）：第一行是控制鍵 LM_RECEIPT_AI（不寫入 app.env）；enabled 時最後一行為
-          // LM_OPENAI_API_KEY，金鑰只以內建 read 讀入子 shell 的變數、以內建 printf 寫入 stdin，不經 Groovy 變數、
-          // readFile 或 returnStdout，也不輸出到主控台。開關在第一行，讀取中途失敗時 lm-deploy 收到的是「enabled 但
-          // 沒有金鑰」或缺少必要的鍵，兩者都在備份前被拒絕。
-          String script = productionSshPrelude() + '''
-            rm -f reports/production/deploy.jsonl
-            case "${LM_PROD_RECEIPT_AI:-}" in
-              enabled)
-                if [ ! -s "${LM_PRD_OPENAI_KEY_FILE:-}" ]; then
-                  echo 'lm-prod-openai-api-key 的金鑰檔不存在或為空，未連線 Deploy_Host' >&2
-                  exit 2
-                fi
-                ;;
-              disabled) ;;
-              *)
-                echo 'LM_PROD_RECEIPT_AI 只能是 enabled 或 disabled，未連線 Deploy_Host' >&2
-                exit 2
-                ;;
-            esac
-            {
-              printf 'LM_RECEIPT_AI=%s\\n' "$LM_PROD_RECEIPT_AI"
-              printf 'CAMPING_DATABASE_NAME=%s\\n' "$LM_PROD_DB_NAME"
-              printf 'CAMPING_DATABASE_USER=%s\\n' "$LM_PRD_DB_USER"
-              printf 'CAMPING_DATABASE_PASSWORD=%s\\n' "$LM_PRD_DB_PASSWORD"
-              printf 'CAMPING_SETUP_TOKEN=%s\\n' "$LM_PRD_SETUP_TOKEN"
-              if [ "$LM_PROD_RECEIPT_AI" = enabled ]; then
-                k=''
-                IFS= read -r k < "$LM_PRD_OPENAI_KEY_FILE" || [ -n "$k" ]
-                printf 'LM_OPENAI_API_KEY=%s\\n' "$k"
-              fi
-            } | lm_ssh deploy "$LM_IMAGE_DIGEST" --app-env-stdin > reports/production/deploy.jsonl
-          '''
-          if (env.LM_PROD_RECEIPT_AI == 'enabled') {
-            // 金鑰的綁定範圍只有這一次 SSH 呼叫（Req 15.2）；Approval、觀察期、回滾、finalize 與 keepLog 都不綁定。
-            withCredentials([file(credentialsId: env.LM_PROD_OPENAI_CREDENTIALS, variable: 'LM_PRD_OPENAI_KEY_FILE')]) {
-              rc = sh(label: 'lm-deploy prod deploy', returnStatus: true, script: script)
-            }
-          } else {
-            rc = sh(label: 'lm-deploy prod deploy', returnStatus: true, script: script)
-          }
-        }
+      withCredentials([file(credentialsId: env.LM_PROD_STACK_ENV_CREDENTIALS, variable: 'LM_STACK_ENV_FILE')]) {
+        rc = sh(label: 'lm-deploy prod deploy', returnStatus: true, script: productionSshPrelude() + '''
+          rm -f reports/production/deploy.jsonl
+          if [ ! -s "$LM_STACK_ENV_FILE" ]; then
+            echo 'lm-prod-supabase-env 的檔案不存在或為空，未連線 Deploy_Host' >&2
+            exit 2
+          fi
+          lm_ssh deploy "$LM_IMAGE_DIGEST" --app-env-stdin < "$LM_STACK_ENV_FILE" > reports/production/deploy.jsonl
+        ''')
       }
     }
   }
@@ -5091,7 +3363,7 @@ int recordProductionGate(String stageError) {
         set -u
         rm -f reports/gate-post-deploy.json reports/production-record-patch.json reports/production/rollback-summary.txt
         mkdir -p reports/production
-        set -- --dir reports/production --commit "$GIT_COMMIT_FULL" --digest "${LM_IMAGE_DIGEST:-}" --tag "$TAG_NAME" \
+        set -- --dir reports/production --commit "$GIT_COMMIT_FULL" --digest "${LM_IMAGE_DIGEST:-}" --tag "${LM_RELEASE_VERSION:-}" \
           --signature "$LM_PRD_SIGNATURE" --finalize "$LM_PRD_FINALIZE" \
           --out-patch reports/production-record-patch.json --out-gate reports/gate-post-deploy.json
         if [ -n "${LM_PRD_STAGE_ERROR:-}" ]; then
@@ -5148,8 +3420,7 @@ void pullBuildImage() {
 }
 
 /**
- * 以唯讀的 Registry 拉取帳號拉取映像（皆位於 Build_Image 所在的 Registry，已驗證為 digest 引用；
- * 唯一例外是 pullReleaseImage 的 `<LM_IMAGE_REPO>:<Release_Tag>`，拉取後立即解析為 digest）；
+ * 以唯讀的 Registry 拉取帳號拉取映像（皆位於 Build_Image 所在的 Registry，且以 digest 引用）；
  * docker 登入資訊只存在本建置的暫存目錄並於結束時刪除。
  */
 void pullImages(List refs) {
@@ -5172,14 +3443,7 @@ void pullImages(List refs) {
         for ref in ${LM_PULL_IMAGES:-}; do
           case "$ref" in
             "$registry"/*@sha256:*) ;;
-            # 只允許 App_Image repository 的 Release_Tag 版本標籤（不覆寫；拉取後由呼叫端解析為 digest）。
-            "$LM_IMAGE_REPO":v[0-9]*.[0-9]*.[0-9]*)
-              case "$LM_IMAGE_REPO" in
-                "$registry"/*) ;;
-                *) echo "LM_IMAGE_REPO 不在 Build_Image 的 Registry" >&2; exit 1 ;;
-              esac
-              ;;
-            *) echo "映像不在 Build_Image 的 Registry、未以 digest 固定且不是 Release_Tag 版本標籤" >&2; exit 1 ;;
+            *) echo "映像不在 Build_Image 的 Registry 或未以 digest 固定" >&2; exit 1 ;;
           esac
           docker pull --quiet "$ref" >/dev/null
         done
@@ -5216,11 +3480,10 @@ Map readPlan(String path) {
   return (Map) parsed
 }
 
-/** 觸發被拒絕時（例如 Tag 格式不符）仍需建立 Build_Record，觸發類型依 Multibranch 環境變數推定。 */
+/** 觸發被拒絕時（例如 Tag 事件）仍需建立 Build_Record，觸發類型依 Multibranch 環境變數推定（Tag 事件不是 Trusted）。 */
 String fallbackTriggerKind() {
   if (env.CHANGE_ID) { return 'pull_request' }
-  if (env.TAG_NAME) { return 'release_tag' }
-  if (env.BRANCH_NAME == 'main') { return 'main_push' }
+  if (env.BRANCH_NAME == 'main' && !env.TAG_NAME) { return 'main_push' }
   return 'branch_push'
 }
 
@@ -5231,7 +3494,7 @@ void assertJobFolder(boolean trusted) {
     error('Trusted_Ref 建置只能在 release/ 資料夾的 Job 執行')
   }
   if (!trusted && inRelease) {
-    error('release/ 資料夾只建置 main 與 Release_Tag')
+    error('release/ 資料夾只建置 main')
   }
 }
 
@@ -5298,7 +3561,8 @@ void finalizeBuildRecord(Map outcome) {
 /**
  * 封存前遮罩所需的 Credential_Store 憑證（Req 15.4、21.9）：只列本建置已進入的階段用過的秘密，Untrusted 建置只有
  * Registry 拉取帳號與 Git 憑證（Req 2.4）。known_hosts 與 cosign 公鑰不是秘密，不列入。
- * kind：password（usernamePassword 的密碼）、secret（string）、file（file 的內容）、ssh（sshUserPrivateKey 的私鑰）。
+ * kind：password（usernamePassword 的密碼）、secret（string）、file（file 的內容）、ssh（sshUserPrivateKey 的私鑰）、
+ * envfile（KEY=VALUE 的 Secret file：lm-*-supabase-env，每行的 VALUE 各為一個秘密；plan.md D13）。
  */
 List scrubCredentialSpecs() {
   List entered = (env.LM_STAGES_ENTERED ?: '').tokenize('|')
@@ -5310,19 +3574,12 @@ List scrubCredentialSpecs() {
     [id: env.LM_COSIGN_KEY_CREDENTIALS, kind: 'file', trusted: true, stages: ['Image Sign', 'Staging Deploy']],
     [id: env.LM_COSIGN_PASSPHRASE_CREDENTIALS, kind: 'secret', trusted: true, stages: ['Image Sign', 'Staging Deploy']],
     [id: env.LM_SSH_STAGING_CREDENTIALS, kind: 'ssh', trusted: true, stages: ['Staging Deploy']],
-    [id: env.LM_STAGING_DB_CREDENTIALS, kind: 'password', trusted: true, stages: ['Staging Deploy']],
-    [id: env.LM_STAGING_SETUP_TOKEN_CREDENTIALS, kind: 'secret', trusted: true, stages: ['Staging Deploy']],
+    [id: env.LM_STAGING_STACK_ENV_CREDENTIALS, kind: 'envfile', trusted: true, stages: ['Staging Deploy']],
     [id: env.LM_STAGING_SMOKE_CREDENTIALS, kind: 'file', trusted: true, stages: ['Staging Deploy']],
-    [id: env.LM_JENKINS_API_CREDENTIALS, kind: 'password', trusted: true, stages: ['Resolve Digest']],
-    [id: env.LM_SSH_PROD_CREDENTIALS, kind: 'ssh', trusted: true, stages: ['Approval', 'Production Deploy']],
-    [id: env.LM_PROD_DB_CREDENTIALS, kind: 'password', trusted: true, stages: ['Production Deploy']],
-    [id: env.LM_PROD_SETUP_TOKEN_CREDENTIALS, kind: 'secret', trusted: true, stages: ['Production Deploy']],
+    [id: env.LM_SSH_PROD_CREDENTIALS, kind: 'ssh', trusted: true, stages: ['Production Deploy']],
+    [id: env.LM_PROD_STACK_ENV_CREDENTIALS, kind: 'envfile', trusted: true, stages: ['Production Deploy']],
     [id: env.LM_PROD_SMOKE_CREDENTIALS, kind: 'file', trusted: true, stages: ['Production Deploy']],
   ]
-  // 收據 AI 的金鑰只在啟用時綁定（productionDeployCommand）；停用時從未綁定，也不要求 Credential_Store 有此憑證。
-  if (env.LM_PROD_RECEIPT_AI == 'enabled') {
-    all << [id: env.LM_PROD_OPENAI_CREDENTIALS, kind: 'file', trusted: true, stages: ['Production Deploy']]
-  }
   List out = []
   for (Map s : all) {
     if (s.trusted && !trusted) { continue }
@@ -5337,17 +3594,19 @@ List scrubCredentialSpecs() {
 
 /**
  * 在 withCredentials 內把一個憑證的值寫入 $WORKSPACE_TMP/lm-scrub-secrets/cred-<ID>（目錄 0700、檔案 0600）。
- * 值只經 shell 內建 printf 或 cat 寫入（不出現在任何程序的命令列、Groovy 變數或主控台）。需在 Agent 上執行。
+ * 值只經 shell 內建 printf 或 cat 寫入（不出現在任何程序的命令列、Groovy 變數或主控台）。envfile 寫成 cred-<ID>.env，
+ * ci/scrub.mjs 依副檔名把每行的 VALUE 各列為一個秘密（不是整份檔案）。需在 Agent 上執行。
  */
 void stageScrubSecret(Map s) {
   String id = s.id ? s.id.toString() : ''
   if (!(id ==~ /^[a-z0-9][a-z0-9-]{0,63}$/)) { error('遮罩用的憑證 ID 無效') }
-  withEnv(["LM_SCRUB_NAME=cred-${id}"]) {
+  String name = s.kind == 'envfile' ? "cred-${id}.env".toString() : "cred-${id}".toString()
+  withEnv(["LM_SCRUB_NAME=${name}"]) {
     if (s.kind == 'secret') {
       withCredentials([string(credentialsId: id, variable: 'LM_SCRUB_VALUE')]) { writeScrubValue() }
     } else if (s.kind == 'password') {
       withCredentials([usernamePassword(credentialsId: id, usernameVariable: 'LM_SCRUB_USER', passwordVariable: 'LM_SCRUB_VALUE')]) { writeScrubValue() }
-    } else if (s.kind == 'file') {
+    } else if (s.kind == 'file' || s.kind == 'envfile') {
       withCredentials([file(credentialsId: id, variable: 'LM_SCRUB_FILE')]) { writeScrubFile() }
     } else if (s.kind == 'ssh') {
       withCredentials([sshUserPrivateKey(credentialsId: id, keyFileVariable: 'LM_SCRUB_FILE', usernameVariable: 'LM_SCRUB_USER')]) { writeScrubFile() }
@@ -5414,7 +3673,7 @@ List stageScrubSecrets() {
   return missing
 }
 
-/** 收尾遮罩後刪除秘密目錄（含各階段 Ephemeral_Database 的秘密副本）；可重複呼叫。需在 Agent 上執行。 */
+/** 收尾遮罩後刪除秘密目錄；可重複呼叫。需在 Agent 上執行。 */
 void removeScrubSecrets() {
   sh(label: 'remove scrub secrets', script: '''
     set +x
@@ -5472,10 +3731,6 @@ void archiveScrubbedReports(Map outcome) {
     return
   }
   try {
-    if (env.LM_SCRUB_INCOMPLETE == 'true') {
-      appendSummary('封存前秘密遮罩：Ephemeral_Database 的遮罩用秘密未能保存，未封存任何報告（Req 15.4）')
-      error('秘密集合不完整，未封存任何報告')
-    }
     if (!env.BUILD_IMAGE_DIGEST) {
       appendSummary('封存前秘密遮罩：Build_Image 無法使用，未封存任何報告（Req 15.4）')
       error('Build_Image 無法使用，無法遮罩待封存檔案')
@@ -5495,7 +3750,7 @@ void archiveScrubbedReports(Map outcome) {
       error("封存前秘密遮罩無法完成（ci/scrub.mjs 結束碼 ${rc}）")
     }
     dir("${env.WORKSPACE_TMP}/lm-post/archive") {
-      // image-digest.txt 已於 Image Push／Resolve Digest 封存並 fingerprint（內容只有 digest），不重複封存。
+      // image-digest.txt 已於 Image Push 封存並 fingerprint（內容只有 digest），不重複封存。
       archiveArtifacts(artifacts: 'reports/**', excludes: 'reports/image-digest.txt, reports/build-record.json', allowEmptyArchive: true)
       if (fileExists('reports/build-record.json')) {
         archiveArtifacts(artifacts: 'reports/build-record.json', fingerprint: true)
@@ -5512,13 +3767,13 @@ void archiveScrubbedReports(Map outcome) {
 }
 
 /**
- * Production 執行中的 Image_Digest 之建置保留（Req 21.6；Design「Jenkins 資料夾與 Job」）：Release_Tag 建置通過觀察期後，
- * 以 ci/keep-log.mjs 經 Jenkins API 對本建置與產生該 digest 的 main 建置設定 keepLog=true。API token 寫入 0700 目錄的
- * 0600 檔再交給 Build_Image 容器（不經 docker exec --env），結束時一律刪除。失敗只寫入建置摘要，不改變建置結果
+ * Production 執行中的 Image_Digest 之建置保留（Req 21.6；Design「Jenkins 資料夾與 Job」）：main 建置通過觀察期後，以
+ * ci/keep-log.mjs 經 Jenkins API 對本建置設定 keepLog=true（本建置即建置、部署並觀察該 digest 的建置）。API token 寫入
+ * 0700 目錄的 0600 檔再交給 Build_Image 容器（不經 docker exec --env），結束時一律刪除。失敗只寫入建置摘要，不改變建置結果
  * （Production 已切換完成；需由 Jenkins 管理員手動保留）。需在 Agent 上呼叫。
  */
 void keepProductionBuildLog() {
-  if (env.LM_TRUSTED != 'true' || env.LM_TRIGGER_KIND != 'release_tag' || env.LM_PRD_OBSERVED != 'true') { return }
+  if (env.LM_TRUSTED != 'true' || env.LM_TRIGGER_KIND != 'main_push' || env.LM_PRD_OBSERVED != 'true') { return }
   if (!(env.JOB_NAME ?: '').startsWith('release/') || !env.BUILD_IMAGE_DIGEST) { return }
   int rc = 2
   String failure = null
@@ -5544,9 +3799,6 @@ void keepProductionBuildLog() {
             LM_JENKINS_API_TOKEN_FILE="$LM_KEEP_DIR/token"
             export LM_JENKINS_API_USER LM_JENKINS_API_TOKEN_FILE
             set -- --job "$JOB_NAME" --number "$BUILD_NUMBER" --trigger "$LM_TRIGGER_KIND" --observed "$LM_PRD_OBSERVED"
-            if [ -n "${LM_IMAGE_DIGEST:-}" ] && [ -f reports/release/main-build-record.json ]; then
-              set -- "$@" --digest "$LM_IMAGE_DIGEST" --main-record reports/release/main-build-record.json
-            fi
             bun ci/keep-log.mjs "$@"
           ''')
         }
@@ -5567,15 +3819,15 @@ void keepProductionBuildLog() {
     echo "keepProductionBuildLog: ${failure}"
   }
   if (rc == 0) {
-    appendSummary('已保留（keepLog）本建置與產生該 Image_Digest 的 main 建置（Req 21.6）')
+    appendSummary('已保留（keepLog）本建置：其 Image_Digest 正在 Production 執行（Req 21.6）')
   } else {
-    appendSummary("無法設定 keepLog（ci/keep-log.mjs 結束碼 ${rc}）：請 Jenkins 管理員手動保留本建置與產生該 Image_Digest 的 main 建置（Req 21.6）".toString())
+    appendSummary("無法設定 keepLog（ci/keep-log.mjs 結束碼 ${rc}）：請 Jenkins 管理員手動保留本建置（Req 21.6）".toString())
   }
 }
 
 /**
- * 依 label `lm.ci.build=$BUILD_TAG` 移除本建置建立的所有容器（含匿名卷）、網路與卷（Req 2.6）。只依本建置的 label
- * 篩選，不使用 prune，不影響其他建置；之後確認沒有殘留，否則失敗。需在 Agent 上執行。
+ * 依 label `lm.ci.build=$BUILD_TAG` 移除本建置建立的所有容器（含匿名卷）、網路與卷（Req 2.6），並移除 Rust 工具鏈映像的
+ * 本建置標籤。只依本建置的 label 與標籤篩選，不使用 prune，不影響其他建置；之後確認沒有殘留，否則失敗。需在 Agent 上執行。
  */
 void cleanupBuildResources() {
   timeout(time: 5, unit: 'MINUTES') {
@@ -5599,6 +3851,10 @@ void cleanupBuildResources() {
       for vol in $(docker volume ls -q --filter "label=$label" 2>/dev/null); do
         docker volume rm -f "$vol" > /dev/null 2>&1 || true
       done
+      # Rust 工具鏈映像的本建置標籤（plan.md D3）：只移除標籤；BuildKit 的快取保留給下一次建置。cargo 快取卷沒有建置 label，不受影響。
+      if [ -n "${LM_RUST_TOOLCHAIN_IMAGE:-}" ]; then
+        docker image rm "$LM_RUST_TOOLCHAIN_IMAGE" > /dev/null 2>&1 || true
+      fi
       left="$(docker ps -aq --filter "label=$label" 2>/dev/null)$(docker network ls -q --filter "label=$label" 2>/dev/null)$(docker volume ls -q --filter "label=$label" 2>/dev/null)"
       if [ -n "$left" ]; then
         echo "無法移除本建置的部分容器、網路或卷" >&2

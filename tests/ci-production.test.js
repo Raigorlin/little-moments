@@ -29,17 +29,15 @@ const healthy5 = [{ t: 0, ok: true, durationMs: 12 }, { t: 5, ok: true, duration
 const tmp = mkdtempSync(join(tmpdir(), 'lm-production-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
-/** 與 deploy/bin/lm-deploy do_deploy 相同形狀的輸出（每行一個 JSON）。 */
-function deployOutput({ results = healthy5, color = 'green', digest = D, upTo = 'switch', failure = null, receiptAi = undefined } = {}) {
+/** 與 deploy/bin/lm-deploy do_deploy 相同形狀的輸出（每行一個 JSON；app-env → stack → backup → migrate → start → health → switch）。 */
+function deployOutput({ results = healthy5, color = 'green', digest = D, upTo = 'switch', failure = null, stack = true } = {}) {
   const lines = [];
   const add = (step, line) => { lines.push(j(line)); return step === upTo; };
   const stop = () => (failure ? [...lines, j({ ok: false, env: 'prod', ...failure })] : lines).join('\n') + '\n';
-  if (add('backup', { ok: true, command: 'backup', id: BACKUP_ID, env: 'prod', createdAt: '2026-01-01T00:00:00+00:00', sizeBytes: 4096, sha256: SHA, tables: 9, emptyDatabase: false, pruned: [] })) return stop();
-  // deploy 的 app-env 結果行帶有寫入後的收據 AI 狀態（deploy/bin/lm-deploy emit_app_env；Components 第 25.4 節）。
-  const appEnv = { ok: true, command: 'app-env', env: 'prod', keys: ['CAMPING_DATABASE_NAME'] };
-  if (receiptAi !== undefined) appEnv.receiptAi = receiptAi;
-  if (add('app-env', appEnv)) return stop();
-  if (add('migrate', { ok: true, command: 'migrate', env: 'prod', digest, backupId: BACKUP_ID })) return stop();
+  if (add('app-env', { ok: true, command: 'app-env', env: 'prod', keys: ['LM_ANON_KEY', 'LM_DB_PASSWORD'] })) return stop();
+  if (stack && add('stack', { ok: true, command: 'stack', env: 'prod', services: ['db', 'auth', 'realtime', 'gateway'], setup: 'db-setup.sql' })) return stop();
+  if (add('backup', { ok: true, command: 'backup', id: BACKUP_ID, env: 'prod', createdAt: '2026-01-01T00:00:00+00:00', sizeBytes: 4096, sha256: SHA, tables: 9, appTables: 7, emptyDatabase: false, pruned: [] })) return stop();
+  if (add('migrate', { ok: true, command: 'migrate', env: 'prod', digest, backupId: BACKUP_ID, applied: ['20260101000000_app_schema.sql'], skipped: ['20250101000000_old.sql', '20250201000000_older.sql'] })) return stop();
   if (add('start', { ok: true, command: 'start', env: 'prod', color, digest, image: `${REPO}@${digest}` })) return stop();
   if (add('health', { ok: true, command: 'health', env: 'prod', color, healthy: true, results })) return stop();
   add('switch', { ok: true, command: 'switch', env: 'prod', from: { color: 'blue', digest: P }, to: { color, digest }, at: '2026-01-01T00:03:00+00:00' });
@@ -61,7 +59,7 @@ const healthWait = (color, ok = true) => j(ok
   : { ok: false, command: 'health', env: 'prod', reason: 'health_failed', color, healthy: false, results: [{ t: 0, ok: false, durationMs: 5000 }] }) + '\n';
 const smokeText = (failStep = null) => j({
   ok: failStep === null,
-  steps: ['login-page', 'session', 'login', 'trips', 'logout'].map((step) => ({
+  steps: ['index', 'robots', 'login', 'me', 'trips', 'realtime', 'logout'].map((step) => ({
     step, status: step === failStep ? 500 : 200, ms: 20, result: step === failStep ? 'fail' : 'pass',
   })),
 }) + '\n';
@@ -226,28 +224,21 @@ describe('productionRecord：Build_Record 與「上線後」關卡（Req 14.8、
     expect(productionRecord({ commit: COMMIT, digest: D, tag: TAG, deploy, observations: fullObservation(), signature: 'ok', finalize: 'fail' }).gate.unmet).toContain('lm-deploy prod finalize 未完成');
   });
 
-  test('收據 AI：app-env 結果行的 receiptAi 寫入 deployments[].receiptAi；缺少或其他值為「未執行」（Components 第 25.3 節）', () => {
-    const cases = [['enabled', 'enabled'], ['disabled', 'disabled'], [undefined, '未執行'], ['on', '未執行'], [true, '未執行'], ['ENABLED', '未執行']];
-    for (const [value, expected] of cases) {
-      const d = classifyDeploy(0, deployOutput({ receiptAi: value }), D);
-      expect(d.outcome).toBe('switched');
-      expect(d.receiptAi).toBe(expected === '未執行' ? null : expected);
-      const { patch, gate } = productionRecord({ commit: COMMIT, digest: D, tag: TAG, deploy: d, observations: fullObservation(), signature: 'ok', finalize: 'ok' });
-      expect(patch.deployments[0].receiptAi).toBe(expected);
-      expect(gate.pass).toBe(true);
-      expect(validateRecord(addGateResult(mergeRecord(tagRecord(), patch), gate)).ok).toBe(true);
+  test('Supabase 服務與遷移：stack 行為必要輸出；stack_* 與 migration_changed 為已知失敗；遷移數量寫入 deployments（plan.md D6、D7）', () => {
+    const d = classifyDeploy(0, deployOutput(), D);
+    expect(d).toMatchObject({ outcome: 'switched', stack: true, migrations: { applied: 1, skipped: 2 } });
+    expect(d).not.toHaveProperty('receiptAi');
+    const rec = productionRecord({ commit: COMMIT, digest: D, tag: TAG, deploy: d, signature: 'ok' });
+    expect(rec.patch.deployments[0].migrations).toEqual({ applied: 1, skipped: 2 });
+    expect(rec.patch.deployments[0]).not.toHaveProperty('receiptAi');
+    expect(classifyDeploy(0, deployOutput({ stack: false }), D).outcome).toBe('unknown');
+    for (const reason of ['stack_db_failed', 'stack_setup_failed', 'stack_auth_failed', 'stack_realtime_failed', 'stack_gateway_failed']) {
+      const r = classifyDeploy(1, deployOutput({ upTo: 'app-env', stack: false, failure: { command: 'deploy', reason } }), D);
+      expect(r).toMatchObject({ outcome: 'failed', failedStep: 'stack', code: reason, migrated: false, started: false });
     }
-    // 備份前就失敗（沒有 app-env 結果行）、沒有部署：「未執行」。
-    const early = classifyDeploy(1, j({ ok: false, command: 'backup', env: 'prod', reason: 'backup_create_failed' }) + '\n', D);
-    expect(early.outcome).toBe('failed');
-    expect(early.receiptAi).toBeNull();
-    expect(productionRecord({ commit: COMMIT, digest: D, tag: TAG, deploy: early, signature: 'ok' }).patch.deployments[0].receiptAi).toBe('未執行');
-    const none = productionRecord({ commit: COMMIT, digest: D, tag: TAG, signature: 'fail' });
-    expect(none.patch.deployments[0].receiptAi).toBe('未執行');
-    expect(validateRecord(mergeRecord(tagRecord(), none.patch)).ok).toBe(true);
-    // 失敗的 app-env 行（ok:false）不算寫入後的狀態。
-    const bad = classifyDeploy(2, j({ ok: false, command: 'app-env', env: 'prod', reason: 'app_env_invalid', receiptAi: 'enabled' }) + '\n', D);
-    expect(bad.receiptAi).toBeNull();
+    const changed = classifyDeploy(1, deployOutput({ upTo: 'backup', failure: { command: 'migrate', reason: 'migration_changed' } }), D);
+    expect(changed).toMatchObject({ outcome: 'failed', failedStep: 'migrate', code: 'migration_changed', started: false });
+    expect(classifyDeploy(2, j({ ok: false, command: 'app-env', env: 'prod', reason: 'app_env_invalid' }) + '\n', D).outcome).toBe('refused');
   });
 });
 

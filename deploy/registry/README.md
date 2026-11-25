@@ -188,7 +188,7 @@ sudo -u lm-untrusted -H env DOCKER_HOST=unix:///run/user/$uid/docker.sock \
 
 ## 7. 第三方工具鏡像（`mirror.sh`）
 
-Pipeline 的掃描器、Syft、crane、cosign 與 ZAP 只從 LAN Registry 以 digest 拉取。`mirror.sh` 以 `lm-push` 把 `mirror.list` 的每個映像（linux/amd64）複製到 `little-moments/mirror/<名稱>:<上游 tag>`，最後另複製 `mirror.gcr.io/aquasec/trivy-db:2`。以 root 執行：
+Pipeline 的掃描器、Syft、crane 與 cosign 只從 LAN Registry 以 digest 拉取。`mirror.sh` 以 `lm-push` 把 `mirror.list` 的每個映像（linux/amd64）複製到 `little-moments/mirror/<名稱>:<上游 tag>`，最後另複製 `mirror.gcr.io/aquasec/trivy-db:2`。以 root 執行：
 
 ```sh
 cd <repo>/deploy/registry
@@ -208,7 +208,6 @@ cat mirror.out
 | `syft` | `Jenkinsfile` 的 `LM_SYFT_IMAGE` |
 | `crane` | `Jenkinsfile` 與 `ci/jenkins/pipelines/build-image.Jenkinsfile` 的 `LM_CRANE_IMAGE`，以及 `/etc/lm-mirror-trivy-db.env` 的 `CRANE` |
 | `cosign` | `Jenkinsfile` 的 `LM_COSIGN_IMAGE` |
-| `zap` | `Jenkinsfile` 的 `LM_ZAP_IMAGE` |
 
 更新工具版本：
 

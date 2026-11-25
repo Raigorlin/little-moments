@@ -22,13 +22,15 @@ const ADMIN_USER = 'jacklin';
 const RETENTION_USER = 'lm-retention-bot';
 const JENKINS_URL = 'https://jenkins.our-littlemoments.com/';
 
-// 部署、簽章、資料庫、Setup_Token、smoke、OpenAI 金鑰與 Jenkins API 憑證：只能在 release/（Req 2.4、15.8）。
+// 部署、簽章、Supabase 金鑰檔、smoke 與 Jenkins API 憑證：只能在 release/（Req 2.4；plan.md D13）。
 const RELEASE_ONLY = [
   'lm-cosign-key', 'lm-cosign-passphrase', 'lm-cosign-pub', 'lm-deploy-known-hosts',
-  'lm-ssh-staging', 'lm-staging-db', 'lm-staging-setup-token', 'lm-staging-smoke',
-  'lm-ssh-prod', 'lm-prod-db', 'lm-prod-setup-token', 'lm-prod-smoke', 'lm-prod-openai-api-key',
+  'lm-ssh-staging', 'lm-staging-supabase-env', 'lm-staging-smoke',
+  'lm-ssh-prod', 'lm-prod-supabase-env', 'lm-prod-smoke',
   'lm-jenkins-api-readonly', 'lm-jenkins-api-retention',
 ];
+// Bun 版的資料庫帳號、Setup_Token 與收據 AI 金鑰（plan.md D13 已停用）：任何資料夾都不定義。
+const RETIRED = ['lm-staging-db', 'lm-staging-setup-token', 'lm-prod-db', 'lm-prod-setup-token', 'lm-prod-openai-api-key'];
 
 /** 移除 Groovy 的 // 註解行（只處理整行註解，足以用於結構比對）。 */
 const codeOnly = (text) => text.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
@@ -293,13 +295,27 @@ describe('jobs.groovy：資料夾範圍憑證（Req 2.4、2.5、15.1）', () => 
     expect(idsOf('ci').sort()).toEqual(['lm-github-app', 'lm-registry-pull']);
   });
 
-  test('部署、簽章、資料庫、Setup_Token、smoke 與 Jenkins API 憑證只定義於 release/', () => {
+  test('部署、簽章、Supabase 金鑰檔、smoke 與 Jenkins API 憑證只定義於 release/；各資料夾的憑證恰為 plan.md D13', () => {
     for (const id of RELEASE_ONLY) {
       expect(idsOf('release')).toContain(id);
       expect(idsOf('ci')).not.toContain(id);
       expect(idsOf('infra')).not.toContain(id);
     }
     expect(idsOf('ci')).not.toContain('lm-registry-push');
+    expect(idsOf('release').sort()).toEqual([
+      'lm-cosign-key', 'lm-cosign-passphrase', 'lm-cosign-pub', 'lm-deploy-known-hosts', 'lm-github-app',
+      'lm-jenkins-api-readonly', 'lm-jenkins-api-retention', 'lm-prod-smoke', 'lm-prod-supabase-env',
+      'lm-registry-pull', 'lm-registry-push', 'lm-ssh-prod', 'lm-ssh-staging', 'lm-staging-smoke', 'lm-staging-supabase-env',
+    ]);
+    expect(idsOf('infra').sort()).toEqual(['lm-github-app', 'lm-registry-push']);
+    for (const id of RETIRED) {
+      for (const folder of ['ci', 'release', 'infra']) expect(idsOf(folder)).not.toContain(id);
+      for (const text of Object.values(JENKINSFILES)) expect(text).not.toContain(id);
+    }
+    // Supabase 金鑰檔是 Secret file（lm-supabase-keys 的 KEY=VALUE 輸出），綁定時的檔名為 supabase.env。
+    for (const id of ['lm-staging-supabase-env', 'lm-prod-supabase-env']) {
+      expect(jobsText).toMatch(new RegExp(`\\[id: '${id}', type: 'file', fileName: 'supabase\\.env',`));
+    }
   });
 
   test('每個資料夾內憑證 ID 不重複', () => {
@@ -456,36 +472,35 @@ describe('jobs.groovy：Job 拓撲、信任策略與保留（Req 1.1、2.7、21.
     expect(ci).toMatch(/buildChangeRequests \{\s*ignoreTargetOnlyChanges\(false\)\s*ignoreUntrustedChanges\(false\)/);
   });
 
-  test('release/little-moments：只有 main 與 Tag（Tag build strategy），不探索 PR', () => {
+  test('release/little-moments：只建置 main，不探索 Tag 或 PR（plan.md D1）', () => {
     const rel = block(code, 'multibranchPipelineJob', 'release/little-moments');
-    expect(rel).toContain('gitHubTagDiscovery()');
+    expect(rel).toContain('gitHubBranchDiscovery { strategyId(3) }');
     expect(rel).toContain('headRegexFilter { regex(RELEASE_HEAD_REGEX) }');
-    expect(rel).not.toMatch(/PullRequestDiscovery|ForkDiscovery|buildChangeRequests|buildRegularBranches/);
-    expect(rel).toMatch(/buildTags \{\s*atLeastDays\(''\)\s*atMostDays\('7'\)/);
+    expect(rel).not.toMatch(/TagDiscovery|buildTags|PullRequestDiscovery|ForkDiscovery|buildChangeRequests|buildRegularBranches/);
     expect(rel).toMatch(/buildNamedBranches \{\s*filters \{\s*exact \{\s*name\(MAIN_BRANCH\)\s*caseSensitive\(true\)/);
+    expect(code).not.toMatch(/gitHubTagDiscovery|buildTags/);
   });
 
-  test('RELEASE_HEAD_REGEX 只接受 main 與 v<major>.<minor>.<patch>', () => {
+  test('RELEASE_HEAD_REGEX 只接受 main', () => {
     const re = new RegExp(groovyConst(jobsText, 'RELEASE_HEAD_REGEX').replace(/\\\\/g, '\\'));
-    for (const ok of ['main', 'v0.0.0', 'v1.2.3', 'v999999.10.0']) expect(re.test(ok)).toBe(true);
-    for (const bad of ['Main', 'main2', 'v01.2.3', 'v1.2.3-rc.1', 'release-1.2.3', 'v1000000.0.0', 'v1.2', 'feature/x', 'PR-1']) {
+    expect(re.test('main')).toBe(true);
+    for (const bad of ['Main', 'main2', 'rust', 'v1.2.3', 'v2.0.0', 'release-1.2.3', 'feature/main', 'PR-1']) {
       expect(re.test(bad)).toBe(false);
     }
   });
 
-  test('保留：PR 14 天、main 90 天、Tag 365 天；回滾與還原演練 365 天', () => {
+  test('保留：PR 14 天、main 90 天；回滾與還原演練 365 天', () => {
     expect(groovyConst(jobsText, 'KEEP_PR_DAYS')).toBe('14');
     expect(groovyConst(jobsText, 'KEEP_MAIN_DAYS')).toBe('90');
-    expect(groovyConst(jobsText, 'KEEP_TAG_DAYS')).toBe('365');
+    expect(jobsText).not.toMatch(/KEEP_TAG_DAYS|tagRetention/);
     expect(groovyConst(jobsText, 'KEEP_RELEASE_JOB_DAYS')).toBe('365');
     expect(code).toMatch(/Closure prRetention = retention\(KEEP_PR_DAYS\)/);
     expect(code).toMatch(/Closure mainRetention = retention\(KEEP_MAIN_DAYS\)/);
-    expect(code).toMatch(/Closure tagRetention = retention\(KEEP_TAG_DAYS\)/);
     const ci = block(code, 'multibranchPipelineJob', 'ci/little-moments');
     expect(ci).toMatch(/allBranchesSame \{\s*props\(prRetention\)/);
     expect(ci).toMatch(/discardOldItems \{\s*daysToKeep\(KEEP_PR_DAYS\.toInteger\(\)\)/);
     const rel = block(code, 'multibranchPipelineJob', 'release/little-moments');
-    expect(rel).toMatch(/defaultProperties\(tagRetention\)\s*namedExceptions \{\s*named \{\s*name\(MAIN_BRANCH\)\s*props\(mainRetention\)/);
+    expect(rel).toMatch(/allBranchesSame \{\s*props\(mainRetention\)/);
     expect(rel).toMatch(/discardOldItems \{\s*daysToKeep\(KEEP_RELEASE_JOB_DAYS\)/);
     for (const name of ['release/rollback', 'release/restore-drill']) {
       expect(block(code, 'pipelineJob', name)).toMatch(/logRotator \{\s*daysToKeep\(KEEP_RELEASE_JOB_DAYS\)/);

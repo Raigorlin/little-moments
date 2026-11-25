@@ -461,14 +461,10 @@ describe('Production 收據 AI（OpenAI）文件（Req 15.7、24.9；design.md C
   };
   const enable = sub('第一次啟用');
 
-  test('ci/jenkins/README.md：憑證表恰有一列 release/ 的 lm-prod-openai-api-key（Secret file、只在 Production Deploy），其他資料夾沒有 OpenAI 憑證', () => {
-    const rows = jenkinsReadme.split('\n').filter(l => l.startsWith('| `') && l.includes('`lm-prod-openai-api-key`'));
-    expect(rows.length).toBe(1);
-    expect(rows[0].startsWith('| `release/` | `lm-prod-openai-api-key` | Secret file')).toBe(true);
-    expect(rows[0]).toContain('只在 Production Deploy');
-    const others = jenkinsReadme.split('\n').filter(l => /^\| `(ci|infra)\/` \|/.test(l));
-    expect(others.length).toBeGreaterThan(0);
-    for (const row of others) expect(row.toLowerCase()).not.toContain('openai');
+  test('ci/jenkins/README.md：憑證表不再有 OpenAI 憑證（Rust 版移除收據 AI，D13）', () => {
+    const rows = jenkinsReadme.split('\n').filter(l => /^\| `(ci|release|infra)\/` \|/.test(l));
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row.toLowerCase()).not.toContain('openai');
   });
 
   test('ci/jenkins/README.md：規則改寫為目前狀態，憑證表之後有放置與輪替說明並連結 deploy/README.md 的新章節', () => {

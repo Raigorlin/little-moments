@@ -6,10 +6,13 @@
 //
 // Build_Record 內容（Req 14.6、14.7）：
 //   backup       使用的備份識別碼、環境、建立時間、大小與校驗碼（drill 讀取時重算的 sha256）
-//   deployments  一筆 { type: 'restore_drill', backupId, restoreSeconds, smokeResult, result, failedStep, digest, … }
+//   deployments  一筆 { type: 'restore_drill', backupId, restoreSeconds, verifyResult, restored, migrations, result, failedStep, digest, … }
 //                不使用 env 欄位，因此不會被 auditSummary 誤認為 Production 部署。
-//   result       建置結果與第一個失敗的步驟（演練失敗時為 drill 的失敗步驟，例如 restore、smoke）
-// 只記錄識別碼、數值、步驟名稱與狀態碼；不含備份內容、帳號、密碼或回應內容（Req 21.10）。
+//   result       建置結果與第一個失敗的步驟（演練失敗時為 drill 的失敗步驟，例如 restore、verify）
+// Rust 版的演練（plan.md D8）：全新的 Supabase 專案（db、auth、realtime、gateway）→ db-setup → 目前映像的遷移
+// → pg_restore --data-only → 筆數驗證（auth.users、app.profiles，profiles ≤ users）→ down -v。沒有 App 容器與 Smoke_Test；
+// 驗證結果（verifyResult）與還原後的筆數（restored）取代 Bun 版的 smokeResult。
+// 只記錄識別碼、數值、步驟名稱與狀態碼；不含備份內容、帳號、密碼或資料內容（Req 21.10）。
 // 演練永遠不刪除或修剪備份；backupCount 為演練結束時 Deploy_Host 上的已驗證備份數，供稽核確認（Req 14.7）。
 //
 // CLI（結束碼：0 通過；1 未通過；2 參數或輸入錯誤）：
@@ -24,20 +27,18 @@ import { NOT_APPLICABLE, NOT_RUN, RECORD_SCHEMA, REPORT_KEYS, finalizeRecord, va
 
 export const DRILL_TRIGGER = 'restore_drill';
 export const DRILL_REF = 'release/restore-drill';
-// lm-deploy drill 的步驟（Deploy_Host 端）與 /app/tools/drill.js 的步驟（drill 網路內）。
+// lm-deploy drill 的步驟（deploy/bin/lm-deploy 的 drill_fail；plan.md D8）。`output` 表示沒有可判讀的 drill 結果行。
 export const DRILL_STEPS = Object.freeze([
-  'backup_select', 'backup_verify', 'setup', 'db_start', 'restore', 'migrate', 'app_start',
-  'wait-healthy', 'seed-admin', 'fixture', 'smoke', 'drill_tool', 'cleanup',
+  'backup_select', 'backup_verify', 'setup', 'db_start', 'stack_start', 'migrate', 'restore', 'verify', 'cleanup',
 ]);
-const TOOL_STEPS = new Set(['wait-healthy', 'seed-admin', 'fixture', 'smoke']);
+const MIGRATION_RE = /^[0-9]{14}_[a-z0-9_]+\.sql$/;
+const MAX_COUNT = 1e12;
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 const BACKUP_ID_RE = /^prod-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{7}$/;
 const SHA_RE = /^[0-9a-f]{64}$/;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 const PROJECT_RE = /^lm-drill-prod-[0-9a-f]{8}$/;
 const CODE_RE = /^[a-z][a-z0-9_]{0,63}$/;
-const STEP_NAME_RE = /^[a-z][a-z-]{0,31}$/;
-const REASON_RE = /^[a-z][a-z0-9:-]{0,63}$/;
 
 export const isDigest = (v) => typeof v === 'string' && DIGEST_RE.test(v);
 
@@ -56,16 +57,20 @@ function lastJsonLine(text) {
   return null;
 }
 
-/** smoke／tool 步驟只保留名稱、狀態碼、耗時、結果與失敗類別（格式不符的步驟捨棄）。 */
-function cleanSteps(steps) {
-  if (!Array.isArray(steps)) return [];
-  return steps.slice(0, 20).filter((s) => s && typeof s === 'object' && STEP_NAME_RE.test(s.step ?? '')).map((s) => ({
-    step: s.step,
-    status: Number.isInteger(s.status) && s.status >= 100 && s.status <= 599 ? s.status : null,
-    ms: Number.isFinite(s.ms) && s.ms >= 0 ? Math.round(s.ms) : null,
-    result: ['pass', 'fail', 'skipped'].includes(s.result) ? s.result : 'fail',
-    ...(typeof s.reason === 'string' && REASON_RE.test(s.reason) ? { reason: s.reason } : {}),
-  }));
+/** 還原後的筆數 {authUsers, profiles}：皆為 0 以上的整數，否則 null。 */
+function parseVerify(v) {
+  if (!v || typeof v !== 'object') return null;
+  const ok = (n) => Number.isSafeInteger(n) && n >= 0 && n < MAX_COUNT;
+  return ok(v.authUsers) && ok(v.profiles) ? { authUsers: v.authUsers, profiles: v.profiles } : null;
+}
+
+/** 套用與略過的遷移檔名 → 數量（檔名格式不符時 null；不記錄檔名以外的內容）。 */
+function parseMigrations(v) {
+  if (!v || typeof v !== 'object') return null;
+  const count = (list) => (Array.isArray(list) && list.length <= 1000 && list.every((n) => typeof n === 'string' && MIGRATION_RE.test(n)) ? list.length : null);
+  const applied = count(v.applied);
+  const skipped = count(v.skipped);
+  return applied === null || skipped === null ? null : { applied, skipped };
 }
 
 function parseBackup(v, id) {
@@ -80,22 +85,22 @@ function parseBackup(v, id) {
 
 /**
  * 判讀 `lm-deploy prod drill` 的結果。通過的條件：結束碼 0、最後一行為 prod drill 的成功 JSON、result 為 pass、
- * 備份識別碼與 digest 格式正確、Smoke_Test 全部通過且 drill 專案已銷毀。其餘一律未通過（fail closed）。
+ * 備份識別碼與 digest 格式正確、還原後的筆數有效（profiles ≤ authUsers）且 drill 專案已銷毀。其餘一律未通過（fail closed）。
  * @returns {{passed:boolean, code:string, failedStep:string|null, backupId:string|null, backup:object|null,
- *   digest:string|null, project:string|null, restoreSeconds:number|null, smokeResult:'pass'|'fail'|'not_run',
- *   smokeSteps:object[], toolSteps:object[], cleanedUp:boolean|null, backupCount:number|null}}
+ *   digest:string|null, project:string|null, restoreSeconds:number|null, verifyResult:'pass'|'fail'|'not_run',
+ *   restored:{authUsers:number, profiles:number}|null, migrations:{applied:number, skipped:number}|null,
+ *   cleanedUp:boolean|null, backupCount:number|null}}
  */
 export function parseDrillResult(exitCode, text) {
   const r = lastJsonLine(text);
   const fromHost = r && r.command === 'drill' && r.env === 'prod';
   const backupId = fromHost && typeof r.backupId === 'string' && BACKUP_ID_RE.test(r.backupId) ? r.backupId : null;
-  const tool = fromHost && r.tool && typeof r.tool === 'object' ? r.tool : null;
-  const smoke = tool && tool.smoke && typeof tool.smoke === 'object' ? tool.smoke : null;
-  const smokeSteps = cleanSteps(smoke?.steps);
-  let smokeResult = 'not_run';
-  if (smoke) smokeResult = smoke.ok === true && smokeSteps.length > 0 && smokeSteps.every((s) => s.result === 'pass') ? 'pass' : 'fail';
+  const restored = fromHost ? parseVerify(r.verify) : null;
+  const failedStep = fromHost && typeof r.failedStep === 'string' && DRILL_STEPS.includes(r.failedStep) ? r.failedStep : null;
+  let verifyResult = 'not_run';
+  if (restored) verifyResult = restored.profiles <= restored.authUsers ? 'pass' : 'fail';
+  else if (failedStep === 'verify') verifyResult = 'fail';
   const restoreSeconds = fromHost && Number.isFinite(r.restoreSeconds) && r.restoreSeconds >= 0 ? r.restoreSeconds : null;
-  let failedStep = fromHost && typeof r.failedStep === 'string' && DRILL_STEPS.includes(r.failedStep) ? r.failedStep : null;
   const out = {
     passed: false,
     code: fromHost && typeof r.reason === 'string' && CODE_RE.test(r.reason) ? r.reason : 'unknown',
@@ -105,24 +110,25 @@ export function parseDrillResult(exitCode, text) {
     digest: fromHost && isDigest(r.digest) ? r.digest : null,
     project: fromHost && typeof r.project === 'string' && PROJECT_RE.test(r.project) ? r.project : null,
     restoreSeconds,
-    smokeResult,
-    smokeSteps,
-    toolSteps: cleanSteps(tool?.steps),
+    verifyResult,
+    restored,
+    migrations: fromHost ? parseMigrations(r.migrations) : null,
     cleanedUp: fromHost && typeof r.cleanedUp === 'boolean' ? r.cleanedUp : null,
     backupCount: fromHost && Number.isSafeInteger(r.backupCount) && r.backupCount >= 0 ? r.backupCount : null,
   };
   if (!fromHost) {
     out.code = exitCode === 255 ? 'ssh_failed' : 'invalid_output';
-    out.failedStep = 'drill_tool';
+    out.failedStep = 'output';
     return out;
   }
   const passed = exitCode === 0 && r.ok === true && r.result === 'pass' && failedStep === null
-    && backupId !== null && out.digest !== null && restoreSeconds !== null && smokeResult === 'pass' && out.cleanedUp === true;
+    && backupId !== null && out.digest !== null && restoreSeconds !== null && verifyResult === 'pass' && out.cleanedUp === true;
   if (passed) return { ...out, passed: true, code: 'passed' };
   if (exitCode === 4) out.code = 'drill_in_progress';
   if (!out.failedStep) {
-    const toolFailed = out.toolSteps.find((s) => s.result === 'fail');
-    out.failedStep = toolFailed && TOOL_STEPS.has(toolFailed.step) ? toolFailed.step : (smokeResult === 'pass' && out.cleanedUp !== true ? 'cleanup' : 'drill_tool');
+    if (verifyResult !== 'pass') out.failedStep = 'verify';
+    else if (out.cleanedUp !== true) out.failedStep = 'cleanup';
+    else out.failedStep = 'output';
   }
   return out;
 }
@@ -170,8 +176,9 @@ export function buildDrillRecord(input = {}) {
         by: orNA(by),
         backupId: drill.backupId ?? NOT_RUN,
         restoreSeconds: drill.restoreSeconds ?? NOT_RUN,
-        smokeResult: drill.smokeResult,
-        smokeSteps: drill.smokeSteps,
+        verifyResult: drill.verifyResult,
+        restored: drill.restored ?? NOT_RUN,
+        migrations: drill.migrations ?? NOT_RUN,
         result: drill.passed ? 'pass' : 'fail',
         code: drill.code,
         failedStep: drill.passed ? NOT_APPLICABLE : (drill.failedStep ?? NOT_RUN),

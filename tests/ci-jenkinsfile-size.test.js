@@ -120,7 +120,7 @@ describe('根目錄 Jenkinsfile：stage 只呼叫頂層函式（Components 第 2
   test('pipeline {} 的直接子區塊與 stage 數量', () => {
     // agent 為單行 `agent { label … }`，不是多行子區塊。
     expect(top.map((c) => c.kw)).toEqual(['options', 'environment', 'stages', 'post']);
-    expect(stages.map((s) => s.kw)).toEqual(Array(20).fill('stage'));
+    expect(stages.map((s) => s.kw)).toEqual(Array(14).fill('stage'));
   });
 
   test('每個 stage 的 steps 只有 script { run<階段名稱>Stage() }，且函式存在、依 stage 順序位於 pipeline {} 之後', () => {
@@ -149,7 +149,7 @@ describe('根目錄 Jenkinsfile：stage 只呼叫頂層函式（Components 第 2
     }
     const pipelinePost = top.find((c) => c.kw === 'post');
     for (const c of children(pipelinePost.start + 1, pipelinePost.end - 1, '    ')) conditions.push({ where: `pipeline/${c.kw}`, c, indent: '      ' });
-    expect(conditions.length).toBeGreaterThan(20);
+    expect(conditions.length).toBeGreaterThan(15);
     for (const { where, c, indent } of conditions) {
       const body = code(c.body);
       const joined = body.join('\n');
@@ -189,6 +189,7 @@ describe('根目錄 Jenkinsfile：stage 只呼叫頂層函式（Components 第 2
         expect(w.body[0]).toMatch(/^        expression \{ [^\n]+ \}$/);
       }
     }
-    expect(count).toBe(13);
+    // Image Build、Image Scan、SBOM、Image Push、Image Sign、Staging Deploy、Production Deploy、Version Tag（main_push 專用）。
+    expect(count).toBe(8);
   });
 });

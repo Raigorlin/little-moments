@@ -16,40 +16,47 @@ const SHA = 'aeecb96702dbd01b605994fa717382df0b63806e803487626b8877e5388160bd';
 const BACKUP_ID = 'prod-20300102T000000Z-aeecb96';
 const COMMIT = 'b'.repeat(40);
 
-const toolOk = {
-  ok: true, failedStep: null,
-  steps: [
-    { step: 'wait-healthy', status: 200, ms: 5, result: 'pass' }, { step: 'seed-admin', status: null, ms: 80, result: 'pass' },
-    { step: 'fixture', status: null, ms: 20, result: 'pass' }, { step: 'smoke', status: null, ms: 30, result: 'pass' },
-  ],
-  smoke: { ok: true, steps: ['login-page', 'session', 'login', 'trips', 'logout'].map((step) => ({ step, status: 200, ms: 3, result: 'pass' })) },
-};
 const hostLine = (over = {}) => JSON.stringify({
   ok: true, command: 'drill', env: 'prod', project: 'lm-drill-prod-5bfd36fa', backupId: BACKUP_ID,
   backup: { id: BACKUP_ID, createdAt: '2030-01-02T00:00:00+00:00', sizeBytes: 20, sha256: SHA },
-  digest: DIGEST, restoreSeconds: 12.5, result: 'pass', failedStep: null, tool: toolOk, cleanedUp: true, backupCount: 14,
+  digest: DIGEST, restoreSeconds: 12.5, result: 'pass', failedStep: null,
+  migrations: { applied: ['20260101000000_app_schema.sql', '20260102000000_realtime.sql'], skipped: [] },
+  verify: { authUsers: 3, profiles: 3 }, cleanedUp: true, backupCount: 14,
   startedAt: '2030-01-02T03:00:00+00:00', endedAt: '2030-01-02T03:05:00+00:00', ...over,
 });
-const failLine = (over = {}) => hostLine({ ok: false, reason: 'restore_failed', message: 'pg_restore 失敗', result: 'fail', failedStep: 'restore', tool: null, ...over });
+const failLine = (over = {}) => hostLine({ ok: false, reason: 'restore_failed', message: 'pg_restore 失敗', result: 'fail', failedStep: 'restore', verify: null, ...over });
 
-describe('parseDrillResult', () => {
-  test('結束碼 0 且 Smoke_Test 全部通過、drill 專案已銷毀 → 通過', () => {
+describe('parseDrillResult（plan.md D8）', () => {
+  test('結束碼 0、筆數驗證通過、drill 專案已銷毀 → 通過', () => {
     const d = parseDrillResult(0, `noise\n${hostLine()}\n`);
-    expect(d).toMatchObject({ passed: true, code: 'passed', failedStep: null, backupId: BACKUP_ID, digest: DIGEST, restoreSeconds: 12.5, smokeResult: 'pass', cleanedUp: true, backupCount: 14 });
+    expect(d).toMatchObject({
+      passed: true, code: 'passed', failedStep: null, backupId: BACKUP_ID, digest: DIGEST, restoreSeconds: 12.5,
+      verifyResult: 'pass', restored: { authUsers: 3, profiles: 3 }, migrations: { applied: 2, skipped: 0 }, cleanedUp: true, backupCount: 14,
+    });
     expect(d.backup).toEqual({ id: BACKUP_ID, createdAt: '2030-01-02T00:00:00+00:00', sizeBytes: 20, sha256: SHA });
-    expect(d.smokeSteps.map((s) => s.step)).toEqual(['login-page', 'session', 'login', 'trips', 'logout']);
   });
 
-  test('還原失敗：記錄失敗步驟與使用的備份識別碼，Smoke_Test 未執行', () => {
+  test('還原失敗：記錄失敗步驟與使用的備份識別碼，筆數驗證未執行', () => {
     const d = parseDrillResult(1, failLine());
-    expect(d).toMatchObject({ passed: false, code: 'restore_failed', failedStep: 'restore', backupId: BACKUP_ID, smokeResult: 'not_run', restoreSeconds: 12.5 });
+    expect(d).toMatchObject({ passed: false, code: 'restore_failed', failedStep: 'restore', backupId: BACKUP_ID, verifyResult: 'not_run', restored: null, restoreSeconds: 12.5 });
   });
 
-  test('Smoke_Test 任一項未通過 → 未通過，failedStep 為 smoke', () => {
-    const tool = { ...toolOk, ok: false, failedStep: 'smoke', smoke: { ok: false, steps: [{ step: 'trips', status: 200, ms: 4, result: 'fail', reason: 'fixture-missing' }] } };
-    const d = parseDrillResult(1, failLine({ reason: 'smoke_failed', failedStep: 'smoke', tool }));
-    expect(d).toMatchObject({ passed: false, failedStep: 'smoke', smokeResult: 'fail', backupId: BACKUP_ID });
-    expect(d.smokeSteps[0]).toEqual({ step: 'trips', status: 200, ms: 4, result: 'fail', reason: 'fixture-missing' });
+  test('筆數驗證失敗（profiles 多於 auth.users 或查詢失敗）→ 未通過，failedStep 為 verify', () => {
+    const more = parseDrillResult(1, failLine({ reason: 'verify_failed', failedStep: 'verify', verify: { authUsers: 1, profiles: 2 } }));
+    expect(more).toMatchObject({ passed: false, failedStep: 'verify', verifyResult: 'fail', restored: { authUsers: 1, profiles: 2 } });
+    const none = parseDrillResult(1, failLine({ reason: 'verify_failed', failedStep: 'verify', verify: null }));
+    expect(none).toMatchObject({ passed: false, failedStep: 'verify', verifyResult: 'fail', restored: null });
+    // 就算 lm-deploy 回報成功，profiles > authUsers 也不通過（fail closed）。
+    expect(parseDrillResult(0, hostLine({ verify: { authUsers: 1, profiles: 2 } }))).toMatchObject({ passed: false, failedStep: 'verify' });
+  });
+
+  test('Supabase 服務啟動與遷移失敗的步驟名稱屬於 DRILL_STEPS', () => {
+    for (const [reason, step] of [['stack_db_failed', 'db_start'], ['stack_auth_failed', 'stack_start'], ['migrate_failed', 'migrate'], ['drill_keys_failed', 'setup']]) {
+      const d = parseDrillResult(1, failLine({ reason, failedStep: step, restoreSeconds: null }));
+      expect(d).toMatchObject({ passed: false, code: reason, failedStep: step });
+      expect(DRILL_STEPS).toContain(d.failedStep);
+    }
+    expect(DRILL_STEPS).toEqual(['backup_select', 'backup_verify', 'setup', 'db_start', 'stack_start', 'migrate', 'restore', 'verify', 'cleanup']);
   });
 
   test('fail closed：結束碼非 0、result 非 pass、未銷毀、格式不符或非 prod drill 輸出皆不通過', () => {
@@ -60,28 +67,33 @@ describe('parseDrillResult', () => {
     expect(parseDrillResult(0, hostLine({ backupId: 'staging-20300102T000000Z-aeecb96' })).passed).toBe(false);
     expect(parseDrillResult(0, hostLine({ digest: 'sha256:abc' })).passed).toBe(false);
     expect(parseDrillResult(0, hostLine({ env: 'staging' }))).toMatchObject({ passed: false, code: 'invalid_output', backupId: null });
-    expect(parseDrillResult(0, hostLine({ tool: { ...toolOk, smoke: { ok: true, steps: [] } } })).passed).toBe(false);
-    expect(parseDrillResult(255, '')).toMatchObject({ passed: false, code: 'ssh_failed', failedStep: 'drill_tool' });
+    expect(parseDrillResult(0, hostLine({ verify: { authUsers: -1, profiles: 0 } }))).toMatchObject({ passed: false, verifyResult: 'not_run' });
+    expect(parseDrillResult(0, hostLine({ verify: { authUsers: '3', profiles: 3 } })).passed).toBe(false);
+    expect(parseDrillResult(255, '')).toMatchObject({ passed: false, code: 'ssh_failed', failedStep: 'output' });
     expect(parseDrillResult(4, JSON.stringify({ ok: false, command: 'drill', env: 'prod', reason: 'drill_in_progress' }))).toMatchObject({ passed: false, code: 'drill_in_progress' });
   });
 
-  test('不保留格式不符的步驟欄位（只留名稱、狀態碼、耗時、結果與失敗類別）', () => {
-    const tool = { ...toolOk, ok: false, smoke: { ok: false, steps: [{ step: 'login', status: 401, ms: 3, result: 'fail', reason: 'status', body: 'secret', extra: 1 }, { step: 'Bad Step!', result: 'pass' }] } };
-    const d = parseDrillResult(1, failLine({ failedStep: 'smoke', tool }));
-    expect(d.smokeSteps).toEqual([{ step: 'login', status: 401, ms: 3, result: 'fail', reason: 'status' }]);
-    expect(DRILL_STEPS).toContain(d.failedStep);
+  test('只保留數量：遷移檔名格式不符時不記錄遷移數量；不保留其他欄位', () => {
+    const d = parseDrillResult(0, hostLine({ migrations: { applied: ['../../etc/passwd'], skipped: [] }, extra: 'secret' }));
+    expect(d.migrations).toBeNull();
+    expect(JSON.stringify(d)).not.toContain('secret');
+    expect(JSON.stringify(d)).not.toContain('passwd');
   });
 });
 
 describe('buildDrillRecord（Req 14.6、14.7）', () => {
   const base = { job: 'release/restore-drill', number: 7, url: 'https://jenkins.lan.example/job/7/', startedAt: '2030-01-02T03:00:00+00:00', endedAt: '2030-01-02T03:06:00+00:00', commit: COMMIT, buildImageDigest: DIGEST, by: 'timer' };
 
-  test('通過：記錄備份識別碼、還原秒數與 Smoke_Test 結果，紀錄通過白名單驗證', () => {
+  test('通過：記錄備份識別碼、還原秒數、筆數驗證與遷移數量，紀錄通過白名單驗證', () => {
     const r = buildDrillRecord({ ...base, drill: parseDrillResult(0, hostLine()), status: 'SUCCESS' });
     expect(validateRecord(r).ok).toBe(true);
     expect(r.backup).toEqual({ id: BACKUP_ID, env: 'production', createdAt: '2030-01-02T00:00:00+00:00', sizeBytes: 20, sha256: SHA });
     expect(r.deployments).toHaveLength(1);
-    expect(r.deployments[0]).toMatchObject({ type: 'restore_drill', backupId: BACKUP_ID, restoreSeconds: 12.5, smokeResult: 'pass', result: 'pass', failedStep: NOT_APPLICABLE, backupsDeleted: 0, backupCount: 14, cleanedUp: true });
+    expect(r.deployments[0]).toMatchObject({
+      type: 'restore_drill', backupId: BACKUP_ID, restoreSeconds: 12.5, verifyResult: 'pass', restored: { authUsers: 3, profiles: 3 },
+      migrations: { applied: 2, skipped: 0 }, result: 'pass', failedStep: NOT_APPLICABLE, backupsDeleted: 0, backupCount: 14, cleanedUp: true,
+    });
+    expect(r.deployments[0]).not.toHaveProperty('smokeResult');
     expect(r.result).toEqual({ status: 'SUCCESS', firstFailedStage: NOT_APPLICABLE });
     expect(r.source).toEqual({ commit: COMMIT, trigger: 'restore_drill', ref: 'release/restore-drill' });
     // 演練紀錄不是 Production 部署：digest 查詢不會把它當成部署時間。
@@ -94,7 +106,7 @@ describe('buildDrillRecord（Req 14.6、14.7）', () => {
     expect(validateRecord(r).ok).toBe(true);
     expect(r.result).toEqual({ status: 'FAILURE', firstFailedStage: 'Drill:restore' });
     expect(r.backup.id).toBe(BACKUP_ID);
-    expect(r.deployments[0]).toMatchObject({ result: 'fail', failedStep: 'restore', smokeResult: 'not_run', backupId: BACKUP_ID, backupsDeleted: 0 });
+    expect(r.deployments[0]).toMatchObject({ result: 'fail', failedStep: 'restore', verifyResult: 'not_run', restored: NOT_RUN, backupId: BACKUP_ID, backupsDeleted: 0 });
   });
 
   test('Pipeline 回報 SUCCESS 但演練未通過或未執行時，一律記為 FAILURE', () => {
@@ -186,6 +198,9 @@ describe('restore-drill.Jenkinsfile', () => {
       expect(jfCode).toContain(arg);
     }
     expect(jfCode).toMatch(/if \(status == 'SUCCESS' && env\.LM_DRILL_PASSED != 'true'\) \{\s*status = 'FAILURE'/);
+    // 摘要與環境變數使用筆數驗證結果（verifyResult），沒有 Bun 版的 Smoke_Test。
+    expect(jfCode).toContain("env.LM_DRILL_VERIFY = (v.verifyResult ?: 'not_run').toString()");
+    expect(jf).not.toMatch(/smokeResult|LM_DRILL_SMOKE|Smoke_Test/);
   });
 
   test('SSH：憑證只以 withCredentials 綁定、嚴格主機金鑰檢查；Build_Image 以固定 digest 引用', () => {

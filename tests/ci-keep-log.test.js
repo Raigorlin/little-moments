@@ -22,8 +22,18 @@ describe('keepLogTargets', () => {
     });
   });
 
-  test('不是 Release_Tag 或觀察期未通過時不保留任何建置', () => {
-    expect(keepLogTargets({ job: 'release/little-moments/main', number: 3, trigger: 'main_push', observed: true }).targets).toEqual([]);
+  test('main 建置（plan.md D1）通過觀察期：只保留本建置；job 必須是 release/little-moments/main', () => {
+    expect(keepLogTargets({ job: 'release/little-moments/main', number: 3, trigger: 'main_push', observed: true })).toEqual({
+      targets: [{ job: 'release/little-moments/main', number: 3, role: 'main' }],
+    });
+    expect(keepLogTargets({ job: 'release/little-moments/main', number: 3, trigger: 'main_push', observed: false }).targets).toEqual([]);
+    expect(() => keepLogTargets({ job: 'release/little-moments/rust', number: 3, trigger: 'main_push', observed: true })).toThrow(TypeError);
+  });
+
+  test('其他觸發類型或觀察期未通過時不保留任何建置', () => {
+    for (const trigger of ['branch_push', 'pull_request', 'restore_drill']) {
+      expect(keepLogTargets({ job: 'release/little-moments/main', number: 3, trigger, observed: true }).targets).toEqual([]);
+    }
     expect(keepLogTargets({ job: RELEASE_JOB, number: 7, trigger: 'release_tag', observed: false, digest: DIGEST, mainRecord: mainRecord() }).targets).toEqual([]);
   });
 

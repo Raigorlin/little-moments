@@ -1,8 +1,10 @@
-// Release_Tag 的正式核准與 Production 部署判定（Requirement 12.6、14.1–14.3、19.1–19.8、20.1–20.7、20.9、20.11、
-// 20.12、22.5、23.1–23.3、23.5；Design「部署流程（Production）」、Components §12、§15、Property 40）。
+// Production 部署判定與「上線後」關卡（Requirement 14.1–14.3、20.1–20.7、20.9、20.11、20.12、22.5、23.1–23.3、23.5；
+// Design「部署流程（Production）」、Components §12、§15、Property 40；plan.md D1、D10）。
 //
-// 供根目錄 Jenkinsfile 的「Approval」與「Production Deploy」階段使用：Groovy 只負責流程（input、lock、SSH、
-// Smoke_Test、計時），所有判讀都在這裡以純函式完成，任何無法解析或不符的輸出一律視為未通過（fail closed）。
+// 供根目錄 Jenkinsfile 的「Production Deploy」階段使用（main 推送後自動執行，沒有人工核准）：Groovy 只負責流程
+// （lock、SSH、Smoke_Test、計時），所有判讀都在這裡以純函式完成，任何無法解析或不符的輸出一律視為未通過（fail closed）。
+// 破壞性遷移、Tag 與核准相關的函式與子命令（destructive、deployed-commit、tag-remote、approval-*）是 Bun 版 Release_Tag
+// 流程留下的，Jenkinsfile 不再呼叫。
 //
 // 觀察期（Req 20.5、20.6）：切換後 10 分鐘內每 10 秒一次 Health_Check（共 60 次），切換後 60 秒內與結束前 60 秒內
 // 各一次 Smoke_Test。每一筆觀察結果追加後立即以 ci/health.mjs 的 shouldRollback 判定；連續 3 次 Health_Check
@@ -55,7 +57,7 @@ import { HEALTH_TIMEOUT_MS, healthyWithin, isHealthSuccess, shouldRollback } fro
 import { NOT_APPLICABLE, NOT_RUN, validateRecord } from './record.mjs';
 import { STAGING_PREDICATE_TYPE } from './resolve-digest.mjs';
 import { classifyHealth, parseStatus } from './rollback.mjs';
-import { healthCadenceOk, parseJsonLines, parseSmoke } from './staging.mjs';
+import { healthCadenceOk, migrationCounts, parseJsonLines, parseSmoke } from './staging.mjs';
 import { parseReleaseTag } from './policy/tag.mjs';
 import { hasDestructiveMarker, parseMigrationFileName } from '../server/db/migrations.js';
 import { detectDestructive } from '../scripts/lint-migrations.mjs';
@@ -125,6 +127,12 @@ const FAILURES = Object.freeze({
   start_failed: ['start', '新版 App_Server 容器無法啟動；已移除新容器，reverse proxy 未變更'],
   health_failed: ['health', '新版 App_Server 容器未在 120 秒內連續 3 次 Health_Check 成功；已停止並移除新容器，reverse proxy 未變更（Req 20.4）'],
   switch_failed: ['switch', 'reverse proxy 切換失敗；新版容器仍在執行，需回滾'],
+  stack_db_failed: ['stack', 'Supabase Database 未啟動或未通過健康檢查；未備份、未遷移，Production 的 App 容器未變更'],
+  stack_setup_failed: ['stack', 'supabase/db-setup.sql 執行失敗；未備份、未遷移，Production 的 App 容器未變更'],
+  stack_auth_failed: ['stack', 'Supabase Auth 未啟動或未通過健康檢查；未備份、未遷移，Production 的 App 容器未變更'],
+  stack_realtime_failed: ['stack', 'Supabase Realtime 未啟動或未通過健康檢查；未備份、未遷移，Production 的 App 容器未變更'],
+  stack_gateway_failed: ['stack', 'API gateway 未啟動或未通過健康檢查；未備份、未遷移，Production 的 App 容器未變更'],
+  migration_changed: ['migrate', '已套用的遷移檔內容已變更（sha256 不符）；未套用任何遷移，未啟動新版容器'],
 });
 const BACKUP_FAILURE_KIND = Object.freeze({
   backup_create_failed: 'create', backup_verify_failed: 'verify', backup_timeout: 'timeout', backup_dir_invalid: 'create',
@@ -135,13 +143,8 @@ const REFUSED = Object.freeze({
   locked: '已有部署進行中（Deploy_Host 的 lm-prod 鎖已被持有）；未變更 Production',
 });
 
-/** app-env 結果行的收據 AI 狀態（lm-deploy 寫入後的實際狀態；Components 第 25.3 節）：只接受 enabled／disabled。 */
-function receiptAiOf(line) {
-  return line?.receiptAi === 'enabled' || line?.receiptAi === 'disabled' ? line.receiptAi : null;
-}
-
 /**
- * 判讀 `lm-deploy prod deploy <digest> --app-env-stdin`（backup → app-env → migrate → start → health --wait → switch）。
+ * 判讀 `lm-deploy prod deploy <digest> --app-env-stdin`（app-env → stack → backup → migrate → start → health --wait → switch）。
  * outcome：switched | failed | refused | unknown（意義與 ci/staging.mjs classifyDeploy 相同）。
  * 啟動健康檢查為 120 秒內每 5 秒一次、連續 3 次成功（Req 20.3、20.4）。
  */
@@ -151,6 +154,7 @@ export function classifyDeploy(exitCode, text, digest) {
   const failure = lastOf(lines, (l) => l.ok === false);
   const code = safeCode(failure?.reason);
   const backup = sanitizeBackup(ok('backup'));
+  const stack = ok('stack');
   const migrate = ok('migrate');
   const start = ok('start');
   const healthLine = lastOf(lines, (l) => l.command === 'health');
@@ -167,18 +171,20 @@ export function classifyDeploy(exitCode, text, digest) {
     code,
     backup,
     backupFailure: code && BACKUP_FAILURE_KIND[code] ? BACKUP_FAILURE_KIND[code] : null,
+    stack: !!stack && stack.env === 'prod',
     migrated: !!migrate && migrate.digest === digest,
+    migrations: migrate ? migrationCounts(migrate) : null,
     started,
     color: started ? start.color : null,
     health,
     healthy,
     cadenceOk,
     previous: sw ? slotOf(sw.from) : null,
-    receiptAi: receiptAiOf(ok('app-env')),
   };
   if (!isDigest(digest)) return { ...base, outcome: 'refused', failedStep: 'input', message: 'digest 格式無效' };
   if (exitCode === 0) {
     const unmet = [];
+    if (!base.stack) unmet.push('缺少 Supabase 服務（db、auth、realtime、gateway）就緒的輸出');
     if (!backup) unmet.push('缺少已驗證備份的輸出');
     if (!base.migrated) unmet.push('缺少 Migration_Runner 完成的輸出');
     if (!started) unmet.push('新版容器的 Image_Digest 與 Staging 驗證紀錄不一致');
@@ -397,8 +403,6 @@ export function productionRecord({
     result,
     signature,
     migrationsRun: !!deploy?.migrated,
-    // 沒有 app-env 結果行（例如備份前就失敗）或值不是 enabled／disabled 時為「未執行」。
-    receiptAi: receiptAiOf(deploy) ?? NOT_RUN,
   };
   if (deploy) {
     entry.outcome = deploy.outcome;
@@ -406,6 +410,7 @@ export function productionRecord({
     if (deploy.code) entry.code = deploy.code;
     entry.backupId = deploy.backup?.id ?? NOT_APPLICABLE;
     if (deploy.backupFailure) entry.backupFailure = deploy.backupFailure;
+    if (deploy.migrations) entry.migrations = { ...deploy.migrations };
     if (deploy.color) entry.color = deploy.color;
     if (Array.isArray(deploy.health)) entry.startupHealthChecks = deploy.health;
     if (deploy.previous) entry.previousDigest = deploy.previous.digest;

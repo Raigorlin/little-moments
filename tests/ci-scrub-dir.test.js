@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { MASK, findLeaks, loadSecretsDir, main, rawSecretEntries } from '../ci/scrub.mjs';
+import { MASK, envFileSecretEntries, findLeaks, loadSecretsDir, main, rawSecretEntries } from '../ci/scrub.mjs';
 
 let root;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'lm-scrub-dir-')); });
@@ -117,5 +117,46 @@ describe('CLI --secrets-dir', () => {
     expect(main(['--secrets-dir', dir, '--secrets-dir', dir, '--in', input], quiet)).toBe(2);
     expect(main(['--secrets-dir', join(root, 'nope'), '--in', input, '--out', join(root, 'out2')], quiet)).toBe(2);
     expect(existsSync(join(root, 'out2'))).toBe(false);
+  });
+});
+
+describe('*.env 秘密檔（lm-*-supabase-env；plan.md D13）', () => {
+  // 假值：與 deploy/bin/lm-supabase-keys 的輸出同形（鍵名固定、值為隨機字串），不是真實金鑰。
+  const env = [
+    '# 由 lm-supabase-keys env staging 產生',
+    'LM_DB_PASSWORD=0123456789abcdef0123456789abcdef',
+    'LM_JWT_SECRET=fedcba9876543210fedcba9876543210fedcba98',
+    '',
+    'LM_ANON_KEY=eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.c2lnbmF0dXJlLWZha2U',
+    'LM_REALTIME_DB_ENC_KEY=a1b2c3d4e5f6a7b8\r',
+    'not a key line with secret-ish content',
+  ].join('\n') + '\n';
+
+  test('每個 KEY=VALUE 行的 VALUE 各為一個秘密；註解與空行略過；格式不符的行整行列為秘密', () => {
+    expect(envFileSecretEntries('cred-lm-staging-supabase-env.env', env)).toEqual([
+      { id: 'cred-lm-staging-supabase-env.env#LM_DB_PASSWORD', value: '0123456789abcdef0123456789abcdef' },
+      { id: 'cred-lm-staging-supabase-env.env#LM_JWT_SECRET', value: 'fedcba9876543210fedcba9876543210fedcba98' },
+      { id: 'cred-lm-staging-supabase-env.env#LM_ANON_KEY', value: 'eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.c2lnbmF0dXJlLWZha2U' },
+      { id: 'cred-lm-staging-supabase-env.env#LM_REALTIME_DB_ENC_KEY', value: 'a1b2c3d4e5f6a7b8' },
+      { id: 'cred-lm-staging-supabase-env.env#7', value: 'not a key line with secret-ish content' },
+    ]);
+    // 值可含 `=`；空值不列入。
+    expect(envFileSecretEntries('x.env', 'A=b=c\nB=\n')).toEqual([{ id: 'x.env#A', value: 'b=c' }]);
+  });
+
+  test('loadSecretsDir 以 VALUE 遮罩：單獨出現的值（例如日誌裡的密碼）被遮罩，鍵名保留', () => {
+    const dir = secretDir({ 'cred-lm-prod-supabase-env.env': env });
+    const r = loadSecretsDir(dir);
+    expect(r.ok).toBe(true);
+    expect(r.secrets.map((x) => x.id)).not.toContain('cred-lm-prod-supabase-env.env');
+    const inDir = join(root, 'in');
+    const outDir = join(root, 'out');
+    mkdirSync(inDir);
+    writeFileSync(join(inDir, 'deploy.log'), 'password=0123456789abcdef0123456789abcdef key=LM_JWT_SECRET\n');
+    const quiet = { log: () => {}, error: () => {} };
+    expect(main(['--secrets-dir', dir, '--in', inDir, '--out', outDir], quiet)).toBe(0);
+    const text = readFileSync(join(outDir, 'deploy.log'), 'utf8');
+    expect(text).toBe(`password=${MASK} key=LM_JWT_SECRET\n`);
+    expect(findLeaks(text, r.secrets)).toEqual([]);
   });
 });

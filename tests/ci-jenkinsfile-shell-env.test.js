@@ -327,7 +327,7 @@ describe('Jenkinsfile 與 ci/jenkins/pipelines/*.Jenkinsfile', () => {
     const withEnvNames = new Set(r.withEnvVars.map((v) => v.name));
     for (const n of ['LM_GATE_JUNIT', 'LM_GATE_INVENTORY', 'LM_GATE_STAGE_ERROR', 'LM_SCAN_BASE_REF', 'LM_STG_STAGE_ERROR',
       'LM_PRD_STAGE_ERROR', 'LM_PULL_IMAGES', 'LM_POST_FAILED_STAGE']) expect(withEnvNames).toContain(n);
-    for (const n of ['LM_DAST_PROBE_ARGS', 'LM_PRD_BASE_COMMIT']) expect(r.envVars).toContain(n);
+    for (const n of ['LM_STAGES', 'LM_REF']) expect(r.envVars).toContain(n);
   });
 
   for (const f of FILES) {

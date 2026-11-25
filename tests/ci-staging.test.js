@@ -24,17 +24,15 @@ const BACKUP_ID = 'staging-20260101T000000Z-eeeeeee';
 const j = (o) => JSON.stringify(o);
 const healthy10 = [{ t: 0, ok: true, durationMs: 12 }, { t: 10, ok: true, durationMs: 9 }, { t: 20, ok: true, durationMs: 11 }];
 
-/** 與 deploy/bin/lm-deploy do_deploy 相同形狀的輸出（每行一個 JSON）。 */
-function deployOutput({ results = healthy10, color = 'green', digest = D, upTo = 'switch', failure = null, receiptAi = undefined } = {}) {
+/** 與 deploy/bin/lm-deploy do_deploy 相同形狀的輸出（每行一個 JSON；app-env → stack → backup → migrate → start → health → switch）。 */
+function deployOutput({ results = healthy10, color = 'green', digest = D, upTo = 'switch', failure = null, stack = true } = {}) {
   const lines = [];
   const add = (step, line) => { lines.push(j(line)); return step === upTo; };
   const stop = () => (failure ? [...lines, j({ ok: false, env: 'staging', ...failure })] : lines).join('\n') + '\n';
-  if (add('backup', { ok: true, command: 'backup', id: BACKUP_ID, env: 'staging', createdAt: '2026-01-01T00:00:00+00:00', sizeBytes: 4096, sha256: SHA, tables: 9, emptyDatabase: false, pruned: [] })) return stop();
-  // deploy 的 app-env 結果行帶有寫入後的收據 AI 狀態（deploy/bin/lm-deploy emit_app_env；Components 第 25.4 節）。
-  const appEnv = { ok: true, command: 'app-env', env: 'staging', keys: ['CAMPING_DATABASE_NAME'] };
-  if (receiptAi !== undefined) appEnv.receiptAi = receiptAi;
-  if (add('app-env', appEnv)) return stop();
-  if (add('migrate', { ok: true, command: 'migrate', env: 'staging', digest, backupId: BACKUP_ID })) return stop();
+  if (add('app-env', { ok: true, command: 'app-env', env: 'staging', keys: ['LM_ANON_KEY', 'LM_DB_PASSWORD'] })) return stop();
+  if (stack && add('stack', { ok: true, command: 'stack', env: 'staging', services: ['db', 'auth', 'realtime', 'gateway'], setup: 'db-setup.sql' })) return stop();
+  if (add('backup', { ok: true, command: 'backup', id: BACKUP_ID, env: 'staging', createdAt: '2026-01-01T00:00:00+00:00', sizeBytes: 4096, sha256: SHA, tables: 9, appTables: 7, emptyDatabase: false, pruned: [] })) return stop();
+  if (add('migrate', { ok: true, command: 'migrate', env: 'staging', digest, backupId: BACKUP_ID, applied: ['20260101000000_app_schema.sql'], skipped: ['20250101000000_old.sql', '20250201000000_older.sql'] })) return stop();
   if (add('start', { ok: true, command: 'start', env: 'staging', color, digest, image: `${REPO}@${digest}` })) return stop();
   if (add('health', { ok: true, command: 'health', env: 'staging', color, healthy: true, results })) return stop();
   add('switch', { ok: true, command: 'switch', env: 'staging', from: { color: 'blue', digest: P }, to: { color, digest }, at: '2026-01-01T00:03:00+00:00' });
@@ -51,7 +49,7 @@ const healthLine = (color, results = healthy10, ok = true) => j(ok
 
 const smokeText = (failStep = null) => j({
   ok: failStep === null,
-  steps: ['login-page', 'session', 'login', 'trips', 'logout'].map((step) => ({
+  steps: ['index', 'robots', 'login', 'me', 'trips', 'realtime', 'logout'].map((step) => ({
     step, status: step === failStep ? 500 : 200, ms: 20, result: step === failStep ? 'fail' : 'pass', ...(step === failStep ? { reason: 'status' } : {}),
   })),
 }) + '\n';
@@ -83,7 +81,7 @@ describe('classifyDeploy（lm-deploy staging deploy 的判讀）', () => {
   });
 
   test('遷移失敗不啟動新容器；啟動健康失敗與切換前失敗的步驟不同（Req 18.5、18.7）', () => {
-    const mig = classifyDeploy(1, deployOutput({ upTo: 'app-env', failure: { command: 'migrate', reason: 'migrate_failed' } }), D);
+    const mig = classifyDeploy(1, deployOutput({ upTo: 'backup', failure: { command: 'migrate', reason: 'migrate_failed' } }), D);
     expect(mig).toMatchObject({ outcome: 'failed', failedStep: 'migrate', started: false });
     expect(mig.message).toContain('Req 18.7');
     const health = classifyDeploy(1, deployOutput({ upTo: 'start', failure: { command: 'health', reason: 'health_failed', results: [{ t: 0, ok: false }] } }), D);
@@ -203,26 +201,30 @@ describe('stagingRecord：Build_Record 與「Staging」關卡（Req 14.8、18.4�
     expect(() => stagingRecord({ commit: COMMIT, digest: D, signature: 'yes' })).toThrow();
   });
 
-  test('收據 AI：app-env 結果行的 receiptAi 寫入 deployments[].receiptAi；缺少或其他值為「未執行」（Components 第 25.3 節）', () => {
-    // Staging 由 lm-deploy 固定為 disabled；判讀只接受 enabled／disabled，與 Production 相同。
-    const cases = [['disabled', 'disabled'], ['enabled', 'enabled'], [undefined, '未執行'], ['off', '未執行'], [false, '未執行']];
-    for (const [value, expected] of cases) {
-      const d = classifyDeploy(0, deployOutput({ receiptAi: value }), D);
-      expect(d.outcome).toBe('switched');
-      expect(d.receiptAi).toBe(expected === '未執行' ? null : expected);
-      const v = stagingVerdict({ deploy: d, smokeExit: 0, smokeText: smokeText() });
-      const { patch, gate } = stagingRecord({ commit: COMMIT, digest: D, deploy: d, verdict: v, signature: 'ok', finalize: 'ok', attestation: 'ok' });
-      expect(patch.deployments[0].receiptAi).toBe(expected);
-      expect(gate.pass).toBe(true);
-      expect(validateRecord(addGateResult(mergeRecord(base(), patch), gate)).ok).toBe(true);
+  test('Supabase 服務與遷移：stack 行為必要輸出；stack_* 與 migration_changed 為已知失敗；遷移數量寫入 deployments（plan.md D6、D7）', () => {
+    const d = classifyDeploy(0, deployOutput(), D);
+    expect(d).toMatchObject({ outcome: 'switched', stack: true, migrations: { applied: 1, skipped: 2 } });
+    const v = stagingVerdict({ deploy: d, smokeExit: 0, smokeText: smokeText() });
+    const { patch, gate } = stagingRecord({ commit: COMMIT, digest: D, deploy: d, verdict: v, signature: 'ok', finalize: 'ok', attestation: 'ok' });
+    expect(gate.pass).toBe(true);
+    expect(patch.deployments[0].migrations).toEqual({ applied: 1, skipped: 2 });
+    expect(patch.deployments[0]).not.toHaveProperty('receiptAi');
+    expect(validateRecord(addGateResult(mergeRecord(base(), patch), gate)).ok).toBe(true);
+    // 缺少 stack 行或 stack 行屬於其他環境時不視為成功（fail closed）。
+    const noStack = classifyDeploy(0, deployOutput({ stack: false }), D);
+    expect(noStack.outcome).toBe('unknown');
+    expect(noStack.message).toContain('Supabase 服務');
+    for (const reason of ['stack_db_failed', 'stack_setup_failed', 'stack_auth_failed', 'stack_realtime_failed', 'stack_gateway_failed']) {
+      const r = classifyDeploy(1, deployOutput({ upTo: 'app-env', stack: false, failure: { command: 'deploy', reason } }), D);
+      expect(r).toMatchObject({ outcome: 'failed', failedStep: 'stack', code: reason, migrated: false, started: false, backup: null });
     }
-    // lm-deploy 在備份前拒絕（receipt_ai_forbidden，沒有 app-env 結果行）與未部署：「未執行」。
-    const refused = classifyDeploy(2, j({ ok: false, command: 'deploy', env: 'staging', reason: 'receipt_ai_forbidden' }) + '\n', D);
-    expect(refused).toMatchObject({ outcome: 'refused', receiptAi: null });
-    expect(stagingRecord({ commit: COMMIT, digest: D, deploy: refused, signature: 'ok' }).patch.deployments[0].receiptAi).toBe('未執行');
-    const none = stagingRecord({ commit: COMMIT, digest: D, signature: 'fail' });
-    expect(none.patch.deployments[0].receiptAi).toBe('未執行');
-    expect(validateRecord(mergeRecord(base(), none.patch)).ok).toBe(true);
+    const changed = classifyDeploy(1, deployOutput({ upTo: 'backup', failure: { command: 'migrate', reason: 'migration_changed', migration: '20260101000000_app_schema.sql' } }), D);
+    expect(changed).toMatchObject({ outcome: 'failed', failedStep: 'migrate', code: 'migration_changed', started: false });
+    // migrate 行的檔名格式不符時不記錄數量。
+    const bad = deployOutput().replace('20260101000000_app_schema.sql', '../evil.sql');
+    expect(classifyDeploy(0, bad, D).migrations).toBeNull();
+    // app.env 鍵不符（app_env_invalid）在任何 docker 呼叫前以結束碼 2 拒絕。
+    expect(classifyDeploy(2, j({ ok: false, command: 'app-env', env: 'staging', reason: 'app_env_invalid' }) + '\n', D).outcome).toBe('refused');
   });
 });
 
@@ -251,7 +253,7 @@ describe('CLI（Jenkinsfile 使用的檔名與參數）', () => {
   });
 
   test('Smoke_Test 失敗時不寫 predicate；restore／rollback-needed／active 的結束碼', () => {
-    writeFileSync(f('smoke-fail.json'), smokeText('session'));
+    writeFileSync(f('smoke-fail.json'), smokeText('me'));
     rmSync(f('predicate-2.json'), { force: true });
     expect(main(['verdict', '--deploy', f('deploy-verdict.json'), '--smoke', f('smoke-fail.json'), '--smoke-exit', '1', '--commit', COMMIT, '--digest', D,
       '--build', 'b#1', '--out', f('verdict-2.json'), '--out-predicate', f('predicate-2.json')], quiet)).toBe(1);

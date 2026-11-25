@@ -134,15 +134,12 @@ secrets/
 | `release/` | `lm-cosign-pub` | Secret file（`cosign.pub`） | `lm-cosign-pub` | 部署前驗證簽章（Req 17.7） |
 | `release/` | `lm-deploy-known-hosts` | Secret file（`known_hosts`） | `lm-deploy-known-hosts` | Deploy_Host 主機金鑰 |
 | `release/` | `lm-ssh-staging` | SSH Username with private key | `.username`（`lm-deploy-staging`）、`.key` | Staging forced command `lm-deploy staging` |
-| `release/` | `lm-staging-db` | Username with password | `.username`、`.password` | Staging Database |
-| `release/` | `lm-staging-setup-token` | Secret text | `lm-staging-setup-token` | Staging Setup_Token |
+| `release/` | `lm-staging-supabase-env` | Secret file（`supabase.env`） | `lm-staging-supabase-env` | Staging 的 Supabase 金鑰（`deploy/bin/lm-supabase-keys env staging` 的輸出），經 SSH stdin 交給 `lm-deploy staging deploy` |
 | `release/` | `lm-staging-smoke` | Secret file | `lm-staging-smoke` | Staging smoke-bot 密碼；帳號由 `lm-deploy staging smoke-account` 建立，見 [`deploy/README.md`](../../deploy/README.md#首次部署與-smoke-bot) |
 | `release/` | `lm-ssh-prod` | SSH Username with private key | `.username`（`lm-deploy-prod`）、`.key` | Production 部署、回滾、還原演練 |
-| `release/` | `lm-prod-db` | Username with password | `.username`、`.password` | Production Database |
-| `release/` | `lm-prod-setup-token` | Secret text | `lm-prod-setup-token` | Production Setup_Token |
+| `release/` | `lm-prod-supabase-env` | Secret file（`supabase.env`） | `lm-prod-supabase-env` | Production 的 Supabase 金鑰（`deploy/bin/lm-supabase-keys env prod` 的輸出，與 Staging 不同） |
 | `release/` | `lm-prod-smoke` | Secret file | `lm-prod-smoke` | Production smoke-bot 密碼；帳號由 `lm-deploy prod smoke-account` 建立，見 [`deploy/README.md`](../../deploy/README.md#首次部署與-smoke-bot) |
-| `release/` | `lm-prod-openai-api-key` | Secret file（`openai-api-key`） | `lm-prod-openai-api-key` | Production 收據 AI 的 OpenAI 金鑰，只在 Production Deploy 綁定 |
-| `release/` | `lm-jenkins-api-readonly` | Username with password | `.username`（`lm-api-readonly`）、`.password`（API token） | fingerprint 查詢 main 的 Build_Record、`release/digest-lookup` |
+| `release/` | `lm-jenkins-api-readonly` | Username with password | `.username`（`lm-api-readonly`）、`.password`（API token） | `release/digest-lookup` |
 | `release/` | `lm-jenkins-api-retention` | Username with password | `.username`（`lm-retention-bot`）、`.password`（API token） | `ci/keep-log.mjs` 設定 keepLog（Req 21.6） |
 | `infra/` | `lm-github-app` | GitHub App | 同上 | checkout |
 | `infra/` | `lm-registry-push` | Username with password | `.username`、`.password` | 推送 Build_Image（與 `release/` 同一個 `lm-push` 帳號與密碼） |
@@ -262,7 +259,7 @@ Jenkins 解除 keepLog 需要 Run/Delete，與 Req 21.12「非管理員不可刪
 - `ci/jenkins/local-security.yaml`：`jacklin`、`lm-retention-bot`、`lm-api-readonly`（密碼只引用 `${VAR}`）。
 - `ci/release-approvers.json`：唯一的 Release_Approver `jacklin` 與其 git email。
 - LAN Registry 一律為 `registry.our-littlemoments.com:8443`：`Jenkinsfile`、`ci/jenkins/pipelines/*.Jenkinsfile` 與 `deploy/compose/*.env.example` 的 `LM_IMAGE_REPO`。
-- 映像 digest：`Jenkinsfile` 與 `build-image.Jenkinsfile` 的鏡像工具映像（gitleaks、osv-scanner、Trivy、Semgrep、Syft、crane、cosign、ZAP）、`LM_POSTGRES_IMAGE`、`deploy/compose/` 的 db 與 proxy、`deploy/registry/compose.yaml` 的 Caddy 與 registry、`Dockerfile` 與 `ci/build-image/Dockerfile` 的 `FROM`、`BUN_SHA256`、`NODE_SHA256`（Bun 1.4.4，見 `ci/toolchain.json`）。
+- 映像 digest：`Jenkinsfile` 與 `build-image.Jenkinsfile` 的鏡像工具映像（gitleaks、osv-scanner、Trivy、Semgrep、Syft、crane、cosign）、`LM_POSTGRES_IMAGE`、`deploy/compose/` 的 db 與 proxy、`deploy/registry/compose.yaml` 的 Caddy 與 registry、`Dockerfile` 與 `ci/build-image/Dockerfile` 的 `FROM`、`BUN_SHA256`、`NODE_SHA256`（Bun 1.4.4，見 `ci/toolchain.json`）。
 - `BUILD_IMAGE`（`Jenkinsfile`、`rollback.Jenkinsfile`、`restore-drill.Jenkinsfile`、`digest-lookup.Jenkinsfile`）：四個檔案使用同一個 `registry.our-littlemoments.com:8443/little-moments/build-image@sha256:` digest，為 `infra/build-image` 建置 commit `a302149` 的輸出。`ci/build-image/Dockerfile` 或 `ci/toolchain.json` 變更後，重新執行 `infra/build-image`，以建置描述與 `reports/build-image-digest.txt` 的新 digest 在同一個 commit 內取代這四個檔案的 `BUILD_IMAGE`，並同步更新斷言此值的測試（`tests/ci-lint.test.js` 的 `BUILD_IMAGE_REF`、`ci-rollback-pipeline`、`ci-restore-drill`、`ci-digest-lookup`）。
 - `deploy/registry/htpasswd.example` 刻意只含佔位符；實際的 `secrets/htpasswd` 只存在 Registry 主機上（見 [`deploy/registry/README.md`](../../deploy/registry/README.md)）。
 - 同主機部署值（Deploy_Host、Jenkins controller、兩個 agent 與 LAN Registry 都在 `192.168.1.121`；design.md 第 18.6 節）：

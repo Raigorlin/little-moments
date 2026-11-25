@@ -25,7 +25,7 @@ const FILES = [
 const read = (f) => readFileSync(resolve(root, f), 'utf8').replace(/\r\n/g, '\n');
 
 /** 延後重新拋出：把例外存入變數，之後由同一函式拋出（Components 第 23.3 節）。 */
-const DEFERRED_RETHROW = { Jenkinsfile: ['deployStaging', 'deployProduction', 'waitForApproval'] };
+const DEFERRED_RETHROW = { Jenkinsfile: ['deployStaging', 'deployProduction'] };
 
 const STEPS = ['echo', 'sh', 'readFile', 'writeFile', 'fileExists', 'error', 'input', 'sleep', 'load', 'dir', 'withEnv',
   'withCredentials', 'timeout', 'catchError', 'retry', 'archiveArtifacts', 'githubNotify'];

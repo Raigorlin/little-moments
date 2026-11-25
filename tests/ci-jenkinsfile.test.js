@@ -1,8 +1,8 @@
-// Jenkinsfile 骨架的靜態檢查（Req 1.1、1.6、3.1、3.3、3.4、3.6、22.1、23.4）。
+// Jenkinsfile 骨架的靜態檢查（Req 1.1、1.6、3.1、3.3、3.4、3.6、22.1、23.4；Rust + Supabase 版：plan.md D1–D16）。
 // 本機沒有 Jenkins／Groovy，這裡只檢查結構與關鍵字，不能取代 Jenkins 的實際語法驗證。
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -60,40 +60,11 @@ describe('Jenkinsfile 結構', () => {
     for (const opt of ['skipDefaultCheckout()', 'timestamps()', 'disableResume()']) expect(options).toContain(opt);
   });
 
-  test('不提供任何建置參數；唯一的 input 是 Release_Tag 的核准迴圈，且沒有可略過關卡的參數或選項（Req 23.4、19.3、12.6）', () => {
+  test('不提供任何建置參數，也沒有任何 input 步驟（Req 23.4；plan.md D1：合併到 main 即發布）', () => {
     expect(structure).not.toMatch(/\bparameters\s*[{(]/);
     expect(structure).not.toMatch(/\bparams\./);
-    // 13.7 起 Release_Tag 的正式核准（Req 19）使用 Pipeline: Input Step。input 只允許出現在兩個核准迴圈內：
-    // 只有 submitterParameter（沒有 parameters，也就沒有任何可略過或放寬 Release_Gate 的選項），submitter 限定
-    // Release_Approver，送出者另以 ci/approval.mjs 再驗證（Jenkins 管理員可送出任何 input），不生效時繼續等待。
-    const loops = [functionBody('Map releaseApprovalLoop(String message)'), functionBody('Map destructiveApprovalLoop(Map m)')];
-    const inside = (i, block) => { const s = code.indexOf(block); return i > s && i < s + block.length; };
-    const inputs = [...code.matchAll(/\binput\s*\(/g)].map((m) => m.index);
-    expect(inputs.length).toBe(2);
-    for (const i of inputs) expect(loops.some((b) => inside(i, b))).toBe(true);
-    for (const b of loops) {
-      const call = /\binput\(([^\n]*)\)\n/.exec(b)?.[1] ?? '';
-      expect(call).toContain('submitter: env.LM_APR_SUBMITTERS');
-      expect(call).toContain("submitterParameter: 'approver'");
-      expect(call).not.toMatch(/\bparameters\s*:/);
-      expect(b).toContain('while (true)');
-      expect(b).toContain('recordAttempt(who, ');
-      expect(b).toContain('String who = inputRejecter(err)');
-    }
-    expect(loops[0]).toContain('if (isApprover(who))');
-    expect(loops[1]).toContain('if (destructiveAllowed(who, migration))');
-    expect(functionBody('boolean isApprover(String who)')).toContain('bun ci/approval.mjs release --approver "$LM_APR_WHO"');
-    expect(functionBody('boolean destructiveAllowed(String who, String migration)'))
-      .toContain('bun ci/approval.mjs destructive --approver "$LM_APR_WHO" --migration "$LM_APR_MIGRATION"');
-    // 核准迴圈只由 Release_Tag 的 Approval 階段呼叫，且整體 24 小時逾時（Req 19.4）。
-    const approval = stageCode(STAGE.APPROVAL);
-    expect(approval).toContain("env.LM_TRIGGER_KIND == 'release_tag'");
-    expect(approval).toContain('waitForApproval()');
-    const wait = functionBody('void waitForApproval()');
-    expect(wait).toContain("timeout(time: 24, unit: 'HOURS')");
-    expect(wait).toContain('releaseApprovalLoop(message)');
-    expect(wait).toContain('destructiveApprovalLoop(m)');
-    expect([...code.matchAll(/releaseApprovalLoop\(|destructiveApprovalLoop\(/g)].length).toBe(4);
+    expect(code).not.toMatch(/\binput\s*\(/);
+    expect(code).not.toMatch(/submitter/);
   });
 
   test('Build_Image 以 @sha256: digest 引用（Req 3.1）', () => {
@@ -112,13 +83,13 @@ describe('Jenkinsfile 結構', () => {
     expect(code.match(/checkout scm/g)?.length).toBe(1);
   });
 
-  test('階段名稱屬於 ci/stages.mjs 且依序為 Init → Tag Verify → Toolchain → Install → Build → Unit Tests → Browser Tests → Security Scan', () => {
+  test('階段名稱屬於 ci/stages.mjs，順序與 main 的規劃相同（plan.md D1）', async () => {
     const names = [...code.matchAll(/stage\('([^']+)'\)/g)].map((m) => m[1]);
     const known = new Set(Object.values(STAGE));
     for (const n of names) expect(known.has(n)).toBe(true);
-    expect(names.slice(0, 8)).toEqual([
-      STAGE.INIT, STAGE.TAG_VERIFY, STAGE.TOOLCHAIN, STAGE.INSTALL, STAGE.BUILD, STAGE.UNIT, STAGE.BROWSER, STAGE.SECURITY,
-    ]);
+    const { planStages } = await import('../ci/stages.mjs');
+    expect(names).toEqual(planStages({ event: 'push', ref: 'main' }).stages.filter((n) => n !== STAGE.NOTIFY));
+    expect(names.slice(0, 6)).toEqual([STAGE.INIT, STAGE.TOOLCHAIN, STAGE.INSTALL, STAGE.BUILD, STAGE.UNIT, STAGE.SECURITY]);
     // enterStage 名稱與 stage 名稱一致。
     expect([...code.matchAll(/enterStage\('([^']+)'\)/g)].map((m) => m[1])).toEqual(names);
   });
@@ -128,9 +99,10 @@ describe('Jenkinsfile 結構', () => {
     const install = at('bun install --frozen-lockfile\n');
     expect(at("notifyAll('pending'")).toBeLessThan(install);
     expect(at('bun ci/record.mjs init')).toBeLessThan(install);
-    expect(at('bun ci/policy/tag.mjs')).toBeLessThan(install);
     expect(at('bun ci/verify-toolchain.mjs')).toBeLessThan(install);
-    expect(at("'bun run build'")).toBeGreaterThan(install);
+    expect(at('sh ci/verify-rust-toolchain.sh')).toBeLessThan(install);
+    expect(at("'cargo build --workspace --locked'")).toBeGreaterThan(install);
+    expect(at("'trunk build --release --config crates/web/Trunk.toml'")).toBeGreaterThan(install);
   });
 
   test('只使用 --frozen-lockfile 安裝，不執行會修改 bun.lock 的指令（Req 3.4）', () => {
@@ -262,166 +234,144 @@ function dockerRunsIn(text) {
   return [...text.matchAll(/docker (?:run|create)\b((?:[^\n]*\\\n)*[^\n]*)/g)].map((m) => m[1]);
 }
 
-describe('Unit Tests 與 Browser Tests 階段（Req 4、5、23.1、23.5）', () => {
-  const unit = stageCode('Unit Tests');
-  const browser = stageCode('Browser Tests');
-  const startDb = functionBody('void startEphemeralDb(String purpose)');
-  const destroyDb = functionBody('void destroyEphemeralDb()');
+describe('Rust 工具鏈、Install、Build 與 Unit Tests（plan.md D3、D15；Req 3、4、23.1、23.5）', () => {
+  const toolchain = stageCode(STAGE.TOOLCHAIN);
+  const install = stageCode(STAGE.INSTALL);
+  const build = stageCode(STAGE.BUILD);
+  const unit = stageCode(STAGE.UNIT);
+  const buildRust = functionBody('void buildRustToolchain()');
+  const inRust = functionBody('def inRustToolchain(boolean network, Closure body)');
   const recordQa = functionBody('int recordQa(Map args)');
   const at = (text, s) => { const i = text.indexOf(s); expect(i).toBeGreaterThan(-1); return i; };
+  const inOrder = (text, list) => { const idx = list.map((s) => at(text, s)); expect(idx).toEqual([...idx].sort((a, b) => a - b)); };
 
-  test('所有 sh 腳本皆為單引號字串，不經 Groovy 插值（含新增階段）', () => {
+  test('所有 sh 腳本皆為單引號字串，不經 Groovy 插值', () => {
     expect(code).not.toMatch(/script:\s*"/);
     expect(code).not.toMatch(/\bsh\s*\(?\s*"/);
     expect(code).not.toMatch(/script:\s*"""/);
   });
 
-  test('Ephemeral_Database：digest 固定、internal 網路、tmpfs、不發布連接埠、建置標籤（Req 4.2、4.8）', () => {
-    const ref = /LM_POSTGRES_IMAGE\s*=\s*'([^']+)'/.exec(source)?.[1];
-    expect(ref).toMatch(/^postgres:[^@\s]+@sha256:/);
-    // 與 deploy/compose/compose.yaml 的 db 使用同一個 repo:tag 與 digest。
-    expect(ref).toMatch(/@sha256:[0-9a-f]{64}$/);
-    const compose = readFileSync(resolve(root, 'deploy/compose/compose.yaml'), 'utf8');
-    expect(compose).toContain(`image: ${ref}`);
-    expect(startDb).toContain('docker network create --internal');
-    expect(startDb).toContain('--tmpfs /var/lib/postgresql/data');
-    expect(startDb).toContain('--label "lm.ci.build=$BUILD_TAG"');
-    expect(startDb).toContain('--label "lm.ci.edb=$LM_EDB_RUN"');
-    expect(startDb).toMatch(/grep -Eq '\^\[0-9a-f\]\{64\}\$'/);
-    // 整份 Jenkinsfile 都不發布連接埠、不使用 host 網路、不建立卷。
+  test('docker run 不發布連接埠、不使用 host 網路、不以 -v 掛載；唯一的具名卷是 cargo 快取（Req 2.6；plan.md D3）', () => {
     for (const cmd of dockerRunsIn(source)) {
       expect(cmd).not.toMatch(/\s(-p|--publish|--publish-all|-P)(\s|=)/);
       expect(cmd).not.toMatch(/\s(-v|--volume)(\s|=)/);
-    }
-    // Ephemeral_Database 容器不掛載任何主機路徑，只連接本階段網路。
-    const edbRuns = dockerRunsIn(startDb);
-    expect(edbRuns.length).toBeGreaterThan(0);
-    for (const cmd of edbRuns) {
-      expect(cmd).not.toMatch(/\s--mount(\s|=)/);
-      expect(cmd).toContain('--network "$LM_EDB_NET"');
+      for (const m of cmd.matchAll(/--mount "?type=volume,([^"\s]+)/g)) expect(m[1]).toBe('src=$LM_CARGO_VOLUME,dst=/cargo-cache');
     }
     expect(code).not.toMatch(/--network[ =]host/);
-    expect(code).not.toMatch(/docker volume create/);
     expect(code).not.toMatch(/--publish/);
-    // 測試容器只連接本階段網路，名稱格式受限。
-    // 13.4 起 Migration Compatibility 與 DAST 也各自建立 Ephemeral_Database（用途 compat／dast）。
-    expect(code).toMatch(/inBuildImageOn\(String network, Closure body\)[\s\S]*?\^lm-edb-\(unit\|e2e\|compat\|dast\)-\[0-9a-f\]\{16\}-net\$/);
-    expect(startDb).toContain("purpose ==~ /^(unit|e2e|compat|dast)$/");
-    expect(code).toContain('buildImageContainer("--network ${network}", body)');
-    expect(unit).toContain("startEphemeralDb('unit')");
-    expect(browser).toContain("startEphemeralDb('e2e')");
-    expect(unit).toContain('inBuildImageOn(env.LM_EDB_NET)');
-    expect(browser).toContain('inBuildImageOn(env.LM_EDB_NET)');
-  });
-
-  test('120 秒內未就緒即失敗，且不執行測試（Req 4.6）', () => {
-    expect(startDb).toContain('deadline=$(( $(date +%s) + 120 ))');
-    expect(startDb).toContain('pg_isready');
-    expect(startDb).toMatch(/rc == 3\)\s*\{\s*error\(/);
-    expect(startDb).toMatch(/rc != 0\)\s*\{\s*error\(/);
-    expect(at(unit, "startEphemeralDb('unit')")).toBeLessThan(at(unit, 'bun scripts/migrate.mjs'));
-  });
-
-  test('隨機密碼只存在 0600 檔，不進入 Groovy、命令列或主控台（Req 4.3、15.2）', () => {
-    expect(startDb).toContain('umask 077');
-    expect(startDb).toContain('mkdir -m 0700 "$LM_EDB_DIR"');
-    expect(startDb).toContain('/dev/urandom');
-    expect(startDb).toContain('--env-file "$LM_EDB_DIR/db.env"');
-    expect(code).not.toMatch(/-e\s+"?POSTGRES_PASSWORD/);
-    expect(functionBody('List testEnv()')).not.toContain('PASSWORD');
-    expect(code).not.toMatch(/env\.\w*PASSWORD/);
-    // 讀取或產生密碼的腳本第一行一律關閉 xtrace（Jenkins sh 預設 -x）。
-    const secretScripts = tripleScripts.filter((s) => /client\.env|POSTGRES_PASSWORD|scrub-secrets/.test(s));
-    expect(secretScripts.length).toBeGreaterThanOrEqual(4);
-    for (const s of secretScripts) expect(s.trim().split('\n')[0].trim()).toBe('set +x');
-    for (const s of tripleScripts) expect(s).not.toMatch(/echo[^\n]*\$(pw|CAMPING_TEST_DATABASE_PASSWORD|CAMPING_DATABASE_PASSWORD)/);
-  });
-
-  test('測試只取得 Ephemeral_Database 的連線設定（Req 4.1、4.3）與 CHROME_PATH／CAMPING_BUN（Req 3.8）', () => {
-    const envList = functionBody('List testEnv()');
-    for (const name of ['CAMPING_TEST_DATABASE_HOST', 'CAMPING_TEST_DATABASE_PORT', 'CAMPING_TEST_DATABASE_NAME', 'CAMPING_TEST_DATABASE_USER', 'CHROME_PATH=/', 'CAMPING_BUN=/']) {
-      expect(envList).toContain(name);
+    expect([...code.matchAll(/docker volume create ([^\n]+)/g)].map((m) => m[1].trim())).toEqual(['"$LM_CARGO_VOLUME" > /dev/null || exit 30']);
+    // Ephemeral_Database、Browser Tests、Migration Compatibility 與 DAST 已移除（plan.md D14、D15）。
+    for (const gone of ['startEphemeralDb', 'inBuildImageOn', 'LM_EDB_', 'check-accounts.mjs', 'qa-inventory', 'zap.sh', 'ci/dast/', 'scripts/migrate.mjs', 'image-smoke-seed']) {
+      expect({ gone, found: code.includes(gone) }).toEqual({ gone, found: false });
     }
-    expect(envList).not.toMatch(/CAMPING_DATABASE_/);
-    // 唯一使用 CAMPING_DATABASE_* 的地方是 Migration_Runner，且值全部來自 CAMPING_TEST_DATABASE_*。
-    for (const m of code.matchAll(/CAMPING_DATABASE_(\w+)="([^"]*)"/g)) {
-      expect(m[2]).toBe(`$CAMPING_TEST_DATABASE_${m[1]}`);
+  });
+
+  test('Rust 工具鏈映像：根目錄 Dockerfile 的 toolchain 階段、空的建置內容、本機標籤；cargo 快取卷依信任等級分開', () => {
+    inOrder(buildRust, [
+      "env.LM_RUST_TOOLCHAIN_IMAGE = \"${env.LM_RUST_TOOLCHAIN_IMAGE_REPO}:${env.GIT_COMMIT_FULL}\".toString()",
+      "env.LM_CARGO_VOLUME = \"${env.LM_CARGO_CACHE_VOLUME}-${env.LM_TRUSTED == 'true' ? 'release' : 'ci'}\".toString()",
+      'ctx="$WORKSPACE_TMP/lm-rust-toolchain-context"', 'mkdir -m 0700 "$ctx"',
+      'docker build --target toolchain --file "$WORKSPACE/Dockerfile"', '--label "lm.ci.build=$BUILD_TAG" --tag "$LM_RUST_TOOLCHAIN_IMAGE" "$ctx"',
+      'docker volume create "$LM_CARGO_VOLUME"', '--entrypoint chown "$LM_RUST_TOOLCHAIN_IMAGE" "$(id -u):$(id -g)" /cargo-cache',
+    ]);
+    const [chown] = dockerRunsIn(buildRust);
+    for (const flag of ['--rm', '--network none', '--user 0:0', '--cap-drop ALL --cap-add CHOWN', '--security-opt no-new-privileges:true', '--label "lm.ci.build=$BUILD_TAG"']) {
+      expect(chown).toContain(flag);
     }
-    expect(code).not.toMatch(/withCredentials[\s\S]{0,200}(DATABASE|POSTGRES)/);
+    expect(buildRust).toMatch(/rc != 0\) \{\s*error\(/);
+    expect(/LM_RUST_TOOLCHAIN_IMAGE_REPO = '([^']+)'/.exec(source)?.[1]).toBe('lm-rust-toolchain');
+    expect(/LM_CARGO_CACHE_VOLUME = '([^']+)'/.exec(source)?.[1]).toBe('lm-cargo-cache');
+    // Dockerfile 有 toolchain 階段，且其中沒有 COPY（空的建置內容即可建置）。
+    const dockerfile = readFileSync(resolve(root, 'Dockerfile'), 'utf8').replace(/\r\n/g, '\n');
+    const stage = dockerfile.slice(dockerfile.search(/^FROM \S+ AS toolchain$/m), dockerfile.search(/^FROM \S+ AS build$/m));
+    expect(stage.length).toBeGreaterThan(0);
+    expect(stage).not.toMatch(/^(COPY|ADD) /m);
   });
 
-  test('Unit Tests：Migration_Runner → verify-env → bun test（15 分鐘）→ JUnit 與測試數量檢查（Req 4.1、4.4、4.5、4.7）', () => {
-    const migrate = at(unit, 'bun scripts/migrate.mjs');
-    const verify = at(unit, 'verifyTestEnv()');
-    const test_ = at(unit, 'bun test --reporter=junit --reporter-outfile=reports/unit-junit.xml tests/*.test.js');
-    const gate = at(unit, 'bun ci/gates.mjs junit --gate QA');
-    expect(migrate).toBeLessThan(verify);
-    expect(verify).toBeLessThan(test_);
-    expect(test_).toBeLessThan(gate);
-    expect(unit).toContain('timeout --kill-after=30 900 bun test');
-    expect(unit).toMatch(/migrateRc != 0\)\s*\{\s*error\(/);
-    expect(unit).toMatch(/testRc != 0 \|\| junitRc != 0\)\s*\{\s*error\(/);
-    expect(functionBody('void verifyTestEnv()')).toContain('bun ci/verify-env.mjs --out reports/verify-env.json');
-    expect(unit).toContain("junit(testResults: 'reports/unit-junit.xml', allowEmptyResults: true)");
-    expect(unit).toContain("unitJunit: 'reports/unit-junit.xml'");
+  test('inRustToolchain：離線時 --network none、CARGO_NET_OFFLINE／TRUNK_OFFLINE；只有 Install 的 cargo fetch 可連網', () => {
+    expect(inRust).toContain("String args = (network ? '' : '--network none ') + \"--mount type=volume,src=${env.LM_CARGO_VOLUME},dst=/cargo-cache\"");
+    expect(inRust).toContain('docker.image(env.LM_RUST_TOOLCHAIN_IMAGE).inside(args)');
+    for (const v of ["'CARGO_HOME=/cargo-cache'", '"CARGO_TARGET_DIR=${env.WORKSPACE}/target"', '"CARGO_NET_OFFLINE=${offline}"', '"TRUNK_OFFLINE=${offline}"', '"HOME=${env.WORKSPACE_TMP}/home"']) {
+      expect(inRust).toContain(v);
+    }
+    expect(inRust).toContain("String offline = network ? 'false' : 'true'");
+    const calls = [...code.matchAll(/inRustToolchain\((true|false)\)/g)].map((m) => m[1]);
+    expect(calls.filter((c) => c === 'true')).toHaveLength(1);
+    expect(install).toContain('inRustToolchain(true)');
+    for (const block of [toolchain, build, unit]) {
+      expect(block).toContain('inRustToolchain(false)');
+      expect(block).not.toContain('inRustToolchain(true)');
+    }
   });
 
-  test('Browser Tests：validate → check-accounts（60 分鐘，不傳 --reporter）→ compare →「QA」關卡（Req 5.3、5.4、5.8、5.9）', () => {
-    const validate = at(browser, 'bun scripts/qa-inventory.mjs validate qa/inventory.json');
-    const db = at(browser, "startEphemeralDb('e2e')");
-    const e2e = at(browser, 'node scripts/check-accounts.mjs');
-    const compare = at(browser, 'bun scripts/qa-inventory.mjs compare qa/inventory.json reports/e2e.json --out reports/qa-inventory.json');
-    const gate = at(browser, 'gate: true');
-    expect(validate).toBeLessThan(db);
-    expect(db).toBeLessThan(e2e);
-    expect(e2e).toBeLessThan(compare);
-    expect(compare).toBeLessThan(gate);
-    expect(browser).toMatch(/validateRc != 0\)\s*\{\s*error\(/);
-    expect(browser).toContain('timeout --kill-after=60 3600 node scripts/check-accounts.mjs');
-    expect(browser).toMatch(/e2eRc != 0\)\s*\{\s*error\(/);
-    expect(browser).toMatch(/gateRc != 0\)\s*\{\s*error\(/);
-    // CI 不覆寫 playwright.config.js 的 reporter（reports/e2e.json 與 JUnit 由設定檔產生），也不重試。
-    expect(code).not.toMatch(/check-accounts\.mjs[^\n]*--(reporter|retries)/);
-    expect(code).not.toMatch(/--retries/);
-    expect(browser).toContain("inventory: 'reports/qa-inventory.json'");
-    expect(code).toMatch(/List qaJunitReports\(\)\s*\{\s*return \['reports\/unit-junit\.xml', 'reports\/e2e-junit\.xml'\]/);
+  test('Toolchain：Bun 工具鏈 → Rust 工具鏈映像 → verify-rust-toolchain.sh；版本寫入 Build_Record 後才判定（Req 3.3）', () => {
+    inOrder(toolchain, [
+      'bun ci/verify-toolchain.mjs --out reports/toolchain.json', 'buildRustToolchain()',
+      'sh ci/verify-rust-toolchain.sh --expected ci/rust-toolchain.json --out reports/rust-toolchain.json',
+      "rustToolchain: 'reports/rust-toolchain.json'", 'mergeRecordPatch(', 'if (rustRc != 0)',
+    ]);
+    expect(toolchain).toMatch(/if \(rustRc != 0\) \{\s*error\('Rust 工具鏈版本與 ci\/rust-toolchain\.json 不一致/);
   });
 
-  test('「QA」關卡以 ci/gates.mjs 評估並寫入 Build_Record；階段失敗時記錄為未通過（Req 23.1、23.3、23.5）', () => {
+  test('Install：bun install --frozen-lockfile 與 cargo fetch --locked，lockfile 被修改即失敗（Req 3.4、3.5）', () => {
+    inOrder(install, ['bun install --frozen-lockfile', 'inRustToolchain(true)', 'before="$(sha256sum Cargo.lock)"', 'cargo fetch --locked\n', 'after="$(sha256sum Cargo.lock)"']);
+    expect(install).toContain('Cargo.lock 在 cargo fetch 期間被修改，安裝中止');
+    // 每個 cargo 指令都帶 --locked（fmt 除外，它不解析相依）；沒有會修改 Cargo.lock 的指令。
+    for (const m of code.matchAll(/\bcargo (build|test|clippy|fetch) (?=-)[^\n]*/g)) expect(m[0]).toContain('--locked');
+    expect(code).not.toMatch(/\bcargo (update|add|remove|generate-lockfile|install)\b/);
+  });
+
+  test('Build：cargo build --workspace --locked → trunk build --release（Req 3.6、3.7）', () => {
+    inOrder(build, ['inRustToolchain(false)', "script: 'cargo build --workspace --locked'", "script: 'trunk build --release --config crates/web/Trunk.toml'"]);
+    expect(build).not.toContain('bun run build');
+  });
+
+  test('Unit Tests：fmt → clippy -D warnings → cargo test → bats → cargo-junit → bun test →「QA」關卡（plan.md D15）', () => {
+    inOrder(unit, [
+      'inRustToolchain(false)', 'cargo fmt --all --check > reports/cargo-fmt.log', 'cargo clippy --workspace --locked -- -D warnings > reports/cargo-clippy.log',
+      'timeout --kill-after=30 1800 cargo test --workspace --locked > reports/cargo-test.log', 'timeout --kill-after=30 900 bats --report-formatter junit --output reports/bats deploy/tests',
+      'inBuildImage {', 'bun ci/cargo-junit.mjs --log reports/cargo-test.log --out reports/cargo-junit.xml --exit "$LM_CARGO_TEST_EXIT"',
+      'timeout --kill-after=30 900 bun test --reporter=junit --reporter-outfile=reports/unit-junit.xml ${LM_BUN_TESTS}',
+      'if (cargoRc != 0 || batsRc != 0 || testRc != 0)', 'recordQa(patch:',
+    ]);
+    // fmt 與 clippy 未通過時以指名該檢查的固定訊息失敗。
+    expect(unit).toMatch(/if \(fmtRc != 0\) \{\s*error\('cargo fmt --all --check 未通過/);
+    expect(unit).toMatch(/if \(clippyRc != 0\) \{\s*error\('cargo clippy --workspace --locked -- -D warnings 未通過/);
+    expect(unit).toMatch(/Release_Gate「QA」未通過/);
+    // cargo test 與 bats 在無網路的工具鏈映像內；bun test 在 Build_Image 內。
+    const rustPart = unit.slice(unit.indexOf('inRustToolchain(false)'), unit.indexOf('inBuildImage {'));
+    for (const s of ['cargo fmt', 'cargo clippy', 'cargo test', 'bats ']) expect(rustPart).toContain(s);
+    expect(rustPart).not.toContain('bun ');
+    expect(functionBody('List qaJunitReports()')).toContain("return ['reports/cargo-junit.xml', 'reports/bats/report.xml', 'reports/unit-junit.xml']");
+    expect(unit).toContain("junit(testResults: 'reports/cargo-junit.xml, reports/bats/report.xml, reports/unit-junit.xml', allowEmptyResults: true)");
+  });
+
+  test('LM_BUN_TESTS 為 plan.md D15 的清單，且每個項目都對應到存在的測試檔', () => {
+    const list = /LM_BUN_TESTS = '([^']+)'/.exec(source)?.[1].split(' ');
+    expect(list).toEqual(['tests/ci-*.test.js', 'tests/deploy-*.test.js', 'tests/schedule-css-parity.test.js', 'tests/storybook-studio-parity.test.js', 'tests/readme.test.js', 'tests/secret-scan.test.js']);
+    const files = readdirSync(resolve(root, 'tests'));
+    for (const p of list) {
+      const re = new RegExp(`^${p.slice('tests/'.length).replace(/\./g, '\\.').replace(/\*/g, '.*')}$`);
+      expect({ p, n: files.filter((f) => re.test(f)).length > 0 }).toEqual({ p, n: true });
+    }
+  });
+
+  test('「QA」關卡以 ci/gates.mjs 評估並寫入 Build_Record；階段失敗時 post 記錄為未通過（Req 23.1、23.3、23.5）', () => {
     expect(recordQa).toContain('bun ci/gates.mjs junit --gate QA --commit "$GIT_COMMIT_FULL" --out reports/gate-qa.json');
     // Jenkins 不傳空值的環境變數（JENKINS-43632），可能為空的變數以 ${X:-} 展開（Components 第 24.4 節）。
-    expect(recordQa).toContain('--inventory "${LM_GATE_INVENTORY:-}"');
     expect(recordQa).toContain('--stage-error "${LM_GATE_STAGE_ERROR:-}"');
     expect(recordQa).toContain('bun ci/record.mjs gate --record "$LM_RECORD" --result reports/gate-qa.json');
     expect(recordQa).toContain('bun ci/record.mjs merge --record "$LM_RECORD"');
-    // Unit 失敗、Browser 在評估前失敗時，post 以 stage-error 記錄「QA」未通過。
-    expect(unit).toMatch(/gate: failed,[\s\S]*stageError: failed \? qaStageError\('Unit Tests'\)/);
-    expect(browser).toMatch(/LM_QA_GATE_RECORDED != 'true'[\s\S]*stageError: qaStageError\('Browser Tests'\)/);
-  });
-
-  test('post：always 於 120 秒內銷毀資料庫；失敗時遮罩並封存截圖、trace 與伺服器日誌（Req 4.2、5.6）', () => {
-    // always 只呼叫該階段的 post 函式（Components 第 22.1 節），函式的第一個敘述是 destroyEphemeralDb()。
-    for (const [name, fn] of [['Unit Tests', 'unitTestsPostAlways'], ['Browser Tests', 'browserTestsPostAlways']]) {
-      const block = stageBlock(name);
-      const post = block.slice(at(block, 'post {'));
-      expect(post).toMatch(new RegExp(`always\\s*\\{\\s*script\\s*\\{\\s*${fn}\\(\\)`));
-      expect(functionBody(`void ${fn}()`)).toMatch(new RegExp(`^void ${fn}\\(\\) \\{\\s*destroyEphemeralDb\\(\\)`));
-      expect(post).toMatch(/cleanup\s*\{\s*script\s*\{\s*removeEphemeralDbSecrets\(\)/);
-    }
-    expect(destroyDb).toContain("timeout(time: 120, unit: 'SECONDS')");
-    expect(destroyDb).toContain('docker rm -fv');
-    expect(destroyDb).toContain('docker network rm "$LM_EDB_NET"');
-    expect(destroyDb).toContain('label=lm.ci.edb=$LM_EDB_RUN');
-    expect(browser).toMatch(/unsuccessful\s*\{[\s\S]*archiveBrowserEvidence\(\)/);
-    const evidence = functionBody('void archiveBrowserEvidence()');
-    for (const s of ['test-results', 'reports/server.log', 'bun ci/scrub.mjs --secrets "$LM_EDB_DIR/scrub-secrets.json"', 'archiveArtifacts']) {
-      expect(evidence).toContain(s);
-    }
-    // playwright.config.js 在失敗時保留截圖與 trace，目錄依 project（desktop／mobile）區分。
-    const pw = readFileSync(resolve(root, 'playwright.config.js'), 'utf8');
-    expect(pw).toContain("screenshot: 'only-on-failure'");
-    expect(pw).toContain("trace: 'retain-on-failure'");
-    expect(pw).toContain('retries: 0');
+    const post = functionBody('void unitTestsPostAlways()');
+    inOrder(post, ["junit(testResults:", "if (env.LM_QA_GATE_RECORDED == 'true') { return }", 'recordQa(', "stageError: qaStageError('Unit Tests')"]);
+    expect(stageBlock(STAGE.UNIT)).toMatch(/always\s*\{\s*script\s*\{\s*unitTestsPostAlways\(\)/);
+    const keys = Object.fromEntries([...functionBody('Map unitReports()').matchAll(/(\w+): '(reports\/[^']+)'/g)].map((m) => [m[1], m[2]]));
+    expect(Object.keys(keys).sort()).toEqual(['batsJunit', 'batsLog', 'cargoClippy', 'cargoFmt', 'cargoJunit', 'cargoTest', 'unitJunit']);
+    const rec = createRecord({
+      job: 'ci/little-moments/rust', number: 1, url: 'https://jenkins.invalid/job/1/',
+      commit: 'a'.repeat(40), trigger: 'branch_push', ref: 'rust', buildImageDigest: `sha256:${'b'.repeat(64)}`,
+    });
+    expect(validateRecord(mergeRecord(rec, { reports: keys })).ok).toBe(true);
   });
 });
 
@@ -434,8 +384,8 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
   const at = (text, s) => { const i = text.indexOf(s); expect(i).toBeGreaterThan(-1); return i; };
   const scanRuns = [...dockerRunsIn(sec), ...dockerRunsIn(functionBody('void scannerVersions()'))];
 
-  test('位於 Browser Tests 之後；依序 Gitleaks（dir、git）→ osv-scanner → Trivy → Semgrep → normalize → evaluate → 關卡', () => {
-    expect(code.indexOf("stage('Security Scan')")).toBeGreaterThan(code.indexOf("stage('Browser Tests')"));
+  test('位於 Unit Tests 之後；依序 Gitleaks（dir、git）→ osv-scanner → Trivy → Semgrep → normalize → evaluate → 關卡', () => {
+    expect(code.indexOf("stage('Security Scan')")).toBeGreaterThan(code.indexOf("stage('Unit Tests')"));
     const order = [
       'pullImages(scannerImages())', 'prepareScanSources()', 'scannerVersions()',
       "'gitleaks-dir.json'", "'gitleaks-git.json'", "'osv.json'", "'trivy-node-modules.json'", "'semgrep.json'",
@@ -646,8 +596,8 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
   });
 
   test('拉取帳號只在 withCredentials 內、經 set +x 腳本與 docker -e NAME 傳遞（Req 15.1、15.2）', () => {
-    // pullImages、Trivy（node_modules）、13.5 起的 Trivy（App_Image）、13.6 起的 Staging 部署前 cosign verify，
-    // 與 13.7 起 Release_Tag 的唯讀 Registry 操作（releaseRegistry：crane digest／config、cosign verify／verify-attestation）五個腳本使用拉取帳號。
+    // pullImages、Trivy（node_modules）、Trivy（App_Image）、Staging 部署前 cosign verify，
+    // 與唯讀 Registry 操作（releaseRegistry：版本標籤查詢、Production 部署前 cosign verify）五個腳本使用拉取帳號。
     const regScripts = tripleScripts.filter((s) => /LM_REG_PASSWORD|TRIVY_PASSWORD/.test(s));
     expect(regScripts.length).toBe(5);
     for (const s of regScripts) expect(s.trim().split('\n')[0].trim()).toBe('set +x');
@@ -662,7 +612,7 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
     const evalReports = /--reports ([^\\\n]+)/.exec(sec)?.[1].trim().split(/\s+/) ?? [];
     expect(evalReports).toEqual(specs.map((s) => `reports/security/${s.split(':')[1]}.json`));
     expect(sec).toContain('--exceptions security/exceptions.json --commit "$GIT_COMMIT_FULL" --today "$LM_SCAN_TODAY"');
-    // 寫入 Build_Record 的步驟由 writeSecurityGate 共用（Security Scan 與含 DAST 的評估），路徑經環境變數傳入。
+    // 寫入 Build_Record 的步驟在 writeSecurityGate，路徑經環境變數傳入。
     expect(recordGate).toContain("writeSecurityGate(reports, 'reports/security/evaluation.json', errors, stageError,");
     expect(recordGate).toContain("'reports/gate-security.json', 'reports/security-record-patch.json')");
     const writeGate = functionBody('int writeSecurityGate(Map reports, String evaluationPath, List errors, String stageError, String gateFile, String patchFile)');
@@ -685,241 +635,6 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
   });
 });
 
-describe('Trusted_Ref 專用階段：Migration Compatibility 與 DAST（Req 7、10.10、10.11、12.5、12.8、12.9）', () => {
-  const compat = stageCode('Migration Compatibility');
-  const dast = stageCode('DAST');
-  const runDast = functionBody('void runDast()');
-  const at = (text, s) => { const i = text.indexOf(s); expect(i).toBeGreaterThan(-1); return i; };
-  const inOrder = (text, list) => { const idx = list.map((s) => at(text, s)); expect(idx).toEqual([...idx].sort((a, b) => a - b)); };
-  const base = () => createRecord({
-    job: 'release/little-moments/main', number: 1, url: 'https://jenkins.invalid/job/1/',
-    commit: 'a'.repeat(40), trigger: 'main_push', ref: 'main', buildImageDigest: `sha256:${'b'.repeat(64)}`,
-  });
-
-  test('緊接 Security Scan 之後依序為 Migration Compatibility → DAST，且只在 Trusted_Ref 規劃中執行（Req 2.8、7.1）', async () => {
-    const names = [...code.matchAll(/stage\('([^']+)'\)/g)].map((m) => m[1]);
-    expect(names.slice(7, 10)).toEqual([STAGE.SECURITY, STAGE.MIGRATION_COMPAT, STAGE.DAST]);
-    expect(compat).toMatch(/when\s*\{\s*expression\s*\{\s*planned\('Migration Compatibility'\) && env\.LM_TRUSTED == 'true'\s*\}/);
-    expect(dast).toMatch(/when\s*\{\s*expression\s*\{\s*planned\('DAST'\) && env\.LM_TRUSTED == 'true'\s*\}/);
-    const { TRUSTED_ONLY_STAGES, planStages } = await import('../ci/stages.mjs');
-    expect(TRUSTED_ONLY_STAGES).toContain(STAGE.MIGRATION_COMPAT);
-    expect(TRUSTED_ONLY_STAGES).toContain(STAGE.DAST);
-    for (const t of [{ event: 'pull_request', ref: 'feature', isPullRequest: true, manual: true }, { event: 'push', ref: 'feature' }]) {
-      const { stages } = planStages(t);
-      expect(stages).not.toContain(STAGE.MIGRATION_COMPAT);
-      expect(stages).not.toContain(STAGE.DAST);
-    }
-    for (const t of [{ event: 'push', ref: 'main' }, { event: 'tag', ref: 'v1.2.3' }]) {
-      const { stages } = planStages(t);
-      expect(stages.indexOf(STAGE.BROWSER)).toBeLessThan(stages.indexOf(STAGE.DAST));
-      expect(stages.indexOf(STAGE.MIGRATION_COMPAT)).toBeGreaterThan(-1);
-    }
-    // 瀏覽器測試未全部通過時不執行 DAST（Req 7.1）。
-    expect(dast).toMatch(/LM_BROWSER_DONE != 'true'\)\s*\{[\s\S]*?error\(/);
-  });
-
-  test('Migration Compatibility：lint → git describe → 舊映像遷移 → 新增遷移 → 舊映像啟動 → 合成資料 → Smoke_Test（Req 12.5、12.9）', () => {
-    inOrder(compat, [
-      'bun scripts/lint-migrations.mjs', "'+refs/tags/v*:refs/tags/v*'", 'git describe --tags --abbrev=0',
-      'git diff --name-only --no-renames "refs/tags/$LM_COMPAT_TAG" "$GIT_COMMIT_FULL" -- migrations/',
-      'pullReleaseImage(tag)', "startEphemeralDb('compat')", 'writeAppSecrets()', '/app/server/migrate.js',
-      "migrateEphemeralDb('reports/migration-compat-new-migrate.log')", 'docker run -d --name "$LM_COMPAT_APP"',
-      "seedTestApp('reports/migration-compat')", 'bun scripts/smoke.mjs', "recordMigrationCompat('pass', '')",
-    ]);
-    expect(compat).toMatch(/lintRc != 0\)\s*\{\s*error\(/);
-    expect(compat).toMatch(/oldRc != 0\)\s*\{\s*error\(/);
-    expect(compat).toMatch(/newRc != 0\)\s*\{\s*error\(/);
-    expect(compat).toMatch(/smokeRc != 0\)\s*\{\s*error\(/);
-    // 只看本次 commit 的祖先，Release_Tag 建置不會選到自己的 Tag；結果須通過 Release_Tag 格式驗證。
-    expect(compat).toContain('base="$GIT_COMMIT_FULL^1"');
-    expect(compat).toContain("--match 'v[0-9]*.[0-9]*.[0-9]*'");
-    expect(compat).toMatch(/!isReleaseTag\(tag\)\)\s*\{\s*error\(/);
-    // 無 Tag 或無遷移變更：記錄略過原因後結束，不拉取映像、不建立資料庫（Req 12.5）。
-    const skips = [...compat.matchAll(/recordMigrationCompat\('skipped', [^\n]+\n\s*echo [^\n]+\n\s*return\n/g)];
-    expect(skips.length).toBe(2);
-    for (const s of skips) expect(s.index).toBeLessThan(at(compat, 'pullReleaseImage(tag)'));
-    // 舊映像只以 pullReleaseImage 解析出的 digest 執行；兩個容器都在本階段的 --internal 網路內。
-    expect([...compat.matchAll(/"\$LM_COMPAT_IMAGE"/g)].length).toBe(2);
-    for (const cmd of dockerRunsIn(compat)) {
-      expect(cmd).toContain('--network "$LM_EDB_NET"');
-      expect(cmd).toContain('--label "lm.ci.edb=$LM_EDB_RUN"');
-      expect(cmd).toContain('--cap-drop ALL');
-      expect(cmd).toContain('--read-only');
-    }
-    // post：銷毀資料庫（含依 label 移除 App 容器）、失敗時記錄失敗原因，最後刪除秘密檔。
-    // always 只呼叫 migrationCompatibilityPostAlways()（Components 第 22.1 節），cleanup 在其後。
-    const block = stageBlock('Migration Compatibility');
-    const post = block.slice(at(block, 'post {'));
-    inOrder(post, ['always {', 'migrationCompatibilityPostAlways()', 'cleanup {', 'removeEphemeralDbSecrets()']);
-    inOrder(functionBody('void migrationCompatibilityPostAlways()'), ['saveContainerLog(env.LM_COMPAT_APP', 'destroyEphemeralDb()', "recordMigrationCompat('fail', compatStageError())"]);
-  });
-
-  test('Release_Tag 格式與 ci/policy/tag.mjs 一致；舊映像以版本標籤拉取後立即解析為 digest', async () => {
-    const { parseReleaseTag } = await import('../ci/policy/tag.mjs');
-    const src = /==~ \/(\^v[^\n]+\$)\//.exec(functionBody('boolean isReleaseTag(String tag)'))?.[1];
-    const re = new RegExp(src);
-    for (const t of ['v0.0.0', 'v1.2.3', 'v999999.0.1', 'v01.2.3', 'v1.2', 'v1.2.3-rc1', '1.2.3', 'v1234567.0.0', 'v1.2.3+x']) {
-      expect(re.test(t)).toBe(parseReleaseTag(t) !== null);
-    }
-    const pull = functionBody('String pullReleaseImage(String tag)');
-    inOrder(pull, ['!repo.startsWith(registry', 'isReleaseTag(tag)', 'pullImages([tagged])', '{{range .RepoDigests}}', "!isPinnedImage(ref) || !ref.startsWith(repo + '@sha256:')"]);
-    // pullImages 只額外接受 LM_IMAGE_REPO 的 Release_Tag 版本標籤，且 LM_IMAGE_REPO 必須位於同一 Registry。
-    const pullImagesFn = functionBody('void pullImages(List refs)');
-    expect(pullImagesFn).toContain('"$LM_IMAGE_REPO":v[0-9]*.[0-9]*.[0-9]*)');
-    expect(pullImagesFn).toContain('"$registry"/*@sha256:*) ;;');
-    expect(/LM_IMAGE_REPO\s*=\s*'([^']+)'/.exec(source)?.[1]).toBe('registry.our-littlemoments.com:8443/little-moments');
-  });
-
-  test('遷移相容性結果寫入 Build_Record：狀態、Release_Tag、digest、遷移檔、原因與失敗的 Smoke_Test 項目（Req 12.5、12.8）', () => {
-    const fn = functionBody('void recordMigrationCompat(String status, String reason)');
-    for (const k of ['status: status', 'releaseTag:', 'image:', 'migrations:', 'reason:', 'failedSmokeSteps:']) expect(fn).toContain(k);
-    expect(fn).toContain('reports.migrationCompat = compat');
-    expect(fn).toContain('bun ci/record.mjs merge --record "$LM_RECORD" --patch reports/migration-compat-record-patch.json');
-    const paths = Object.fromEntries([...fn.matchAll(/(\w+): '(reports\/[^']+)'/g)].map((m) => [m[1], m[2]]));
-    expect(Object.keys(paths)).toContain('lintMigrations');
-    const patch = {
-      reports: {
-        ...paths,
-        migrationCompat: {
-          status: 'fail', releaseTag: 'v1.2.3', image: `registry.lan.example:8443/little-moments@sha256:${'c'.repeat(64)}`,
-          migrations: ['migrations/0002_add_notes.sql'], reason: 'v1.2.3 的 App_Image 在新增遷移後 Smoke_Test 失敗',
-          failedSmokeSteps: ['trips（狀態碼 500，status）'],
-        },
-      },
-    };
-    expect(validateRecord(mergeRecord(base(), patch)).ok).toBe(true);
-    const skipped = { reports: { migrationCompat: { status: 'skipped', releaseTag: '', image: '', migrations: [], reason: '尚無 Release_Tag', failedSmokeSteps: [] } } };
-    expect(validateRecord(mergeRecord(base(), skipped)).ok).toBe(true);
-  });
-
-  test('DAST：60 分鐘上限；逾時視為失敗、使用者中止則重新拋出（Req 7.4、7.5）', () => {
-    expect(dast).toMatch(/timeout\(time: 60, unit: 'MINUTES'\)\s*\{\s*runDast\(\)\s*\}/);
-    expect(dast).toMatch(/catch \(org\.jenkinsci\.plugins\.workflow\.steps\.FlowInterruptedException e\)\s*\{[\s\S]*?error\([\s\S]*?throw e/);
-    expect(dast).toMatch(/recordDastSecurityGate\(''\) != 0\)\s*\{\s*error\(/);
-    // post：先停止 ZAP（60 秒內）→ 保存日誌 → 銷毀 Test_Environment 與資料庫 → 未記錄時評估並記錄關卡 → 刪除秘密檔。
-    // always 只呼叫 dastPostAlways()（Components 第 22.1 節），cleanup 在其後。
-    const block = stageBlock('DAST');
-    const post = block.slice(at(block, 'post {'));
-    inOrder(post, ['always {', 'dastPostAlways()', 'cleanup {', 'removeEphemeralDbSecrets()']);
-    inOrder(functionBody('void dastPostAlways()'), ['stopDastScanner()', 'saveContainerLog(env.LM_DAST_APP', 'destroyEphemeralDb()', 'evaluateDastReports()', 'recordDastSecurityGate(dastStageError())']);
-    const stop = functionBody('void stopDastScanner()');
-    expect(stop).toContain("timeout(time: 60, unit: 'SECONDS')");
-    expect(stop).toContain('label=lm.ci.dast=$LM_EDB_RUN');
-  });
-
-  test('DAST 順序：目標驗證 → Test_Environment → 隔離探測 → 安全測試套件 → ZAP → 評估（Req 7.2、7.3、7.6、7.9）', () => {
-    inOrder(runDast, [
-      'dastImages()', 'dastProbeTargets()', 'pullImages(images)', "startEphemeralDb('dast')", 'bun ci/dast/targets.mjs',
-      'writeAppSecrets()', "migrateEphemeralDb('reports/dast/migrate.log')", 'docker run -d --name "$LM_DAST_APP"',
-      "seedTestApp('reports/dast/app')", '/probe/isolation-probe.sh', 'bun scripts/security-suite.mjs', 'zap.sh', 'evaluateDastReports()',
-    ]);
-    // Target_Allowlist 只含本次 Test_Environment 的 origin；ZAP 只執行驗證通過後產生的計畫。
-    expect(runDast).toContain('--allowlist "$LM_DAST_ORIGIN"');
-    expect(runDast).toContain('--render reports/dast/zap-plan.yaml --out reports/dast/targets.json');
-    expect(runDast).toMatch(/targetsRc != 0\)\s*\{[\s\S]*?lmDastErrors\.addAll\(dastTargetProblems\(result\)\)\s*\n\s*error\(/);
-    expect(runDast).toContain('cp reports/dast/zap-plan.yaml "$zapdir/zap-plan.yaml"');
-    expect(runDast).toContain('-autorun /zap/wrk/zap-plan.yaml');
-    expect(runDast).toContain("env.LM_DAST_ORIGIN = \"http://${env.LM_DAST_APP}:5173\"");
-    // 隔離探測在 Test_Environment 的網路命名空間內，只允許 Ephemeral_Database；可連線位址寫入關卡（Req 7.9）。
-    expect(runDast).toContain('--network "container:$LM_DAST_APP"');
-    expect(runDast).toContain('--allow "$LM_EDB_HOST:5432"');
-    expect(runDast).toMatch(/probeRc == 1\)\s*\{\s*lmDastErrors\.addAll\(isolationReachable\([\s\S]*?\)\)\s*\n\s*error\(/);
-    expect(runDast).toMatch(/probeRc != 0\)\s*\{[\s\S]*?error\(/);
-    // ZAP 異常結束、逾時、未產生報告或 Test_Environment 停止 → 失敗（Req 7.10）。
-    expect(runDast).toMatch(/zapRc == 124 \|\| zapRc == 137\)\s*\{[\s\S]*?error\(/);
-    expect(runDast).toMatch(/zapRc != 0\)\s*\{[\s\S]*?error\(/);
-    expect([...runDast.matchAll(/!containerRunning\(env\.LM_DAST_APP\)\)\s*\{[\s\S]*?error\(/g)].length).toBe(2);
-  });
-
-  test('ZAP：digest 固定、--internal 網路、速率 20 rps；ZAP 計畫通過 ci/dast/targets.mjs 驗證（Req 7.2、7.4）', async () => {
-    const ref = /LM_ZAP_IMAGE\s*=\s*'([^']+)'/.exec(source)?.[1];
-    expect(ref).toMatch(/^registry\.our-littlemoments\.com:8443\/[^@\s]+@sha256:[0-9a-f]{64}$/);
-    expect(functionBody('List dastImages()')).toContain('isPinnedImage(ref)');
-    for (const k of ['description=lm-dast', 'enabled=true', 'matchStr=.*', 'regex=true', 'reqsPerSec=20', 'groupBy=RULE']) {
-      expect(runDast).toContain(`-config 'network.ratelimit.rules.rule(0).${k}'`);
-    }
-    expect(runDast).toContain('-cmd -silent');
-    const { substituteVars, validateDastTargets, validateDastLimits } = await import('../ci/dast/targets.mjs');
-    const plan = Bun.YAML.parse(readFileSync(resolve(root, 'ci/dast/zap-automation.yaml'), 'utf8'));
-    const origin = `http://lm-edb-dast-${'0123456789abcdef'}-app:5173`;
-    const rendered = substituteVars(plan, { DAST_TARGET_ORIGIN: origin, DAST_REPORT_DIR: '/zap/wrk' });
-    expect(validateDastTargets(rendered, origin).ok).toBe(true);
-    expect(validateDastLimits(rendered).ok).toBe(true);
-    expect(validateDastTargets(rendered, 'http://lm-staging.lan').rejected.length).toBeGreaterThan(0);
-  });
-
-  test('DAST 容器：只在本階段網路、建置 label、--cap-drop ALL、no-new-privileges、不掛載可寫的工作目錄（Req 7.7）', () => {
-    const runs = dockerRunsIn(runDast);
-    expect(runs.length).toBe(3);
-    for (const cmd of runs) {
-      expect(cmd).toMatch(/--network "(\$LM_EDB_NET|container:\$LM_DAST_APP)"/);
-      for (const flag of ['--label "lm.ci.edb=$LM_EDB_RUN"', '--label "lm.ci.build=$BUILD_TAG"', '--cap-drop ALL', '--security-opt no-new-privileges:true', '--user "$(id -u):$(id -g)"']) {
-        expect(cmd).toContain(flag);
-      }
-      expect(cmd).not.toMatch(/--privileged|docker\.sock/);
-      for (const m of cmd.matchAll(/--mount "([^"]+)"/g)) {
-        if (!m[1].endsWith(',readonly')) expect(m[1]).toBe('type=bind,src=$zapdir,dst=/zap/wrk');
-      }
-    }
-    // Test_Environment：綁定 0.0.0.0 只在 --internal 網路內；Allowed_Hosts 只有本次 Test_Environment 名稱。
-    const app = runs.find((c) => c.includes('scripts/serve.mjs'));
-    expect(app).toContain('-e CAMPING_BIND_ADDRESS=0.0.0.0');
-    expect(app).toContain('-e "CAMPING_ALLOWED_HOSTS=$LM_DAST_APP"');
-    expect(app).toContain('--mount "type=bind,src=$WORKSPACE,dst=/app,readonly"');
-    // 隔離探測目標：同主機 192.168.1.121 上所有已發布的連接埠（design.md 第 18.6 節），每項都通過格式檢查；
-    // 主機名稱與未取代的佔位符不是 IP 位址字面值，格式檢查拒絕（fail closed）。
-    const probeFn = functionBody('List dastProbeTargets()');
-    const probeRe = new RegExp(/==~ \/(\^[^\n]+\$)\//.exec(probeFn)?.[1]);
-    const targets = /LM_DAST_PROBE_TARGETS\s*=\s*'([^']+)'/.exec(source)?.[1].split(' ');
-    expect(targets).toEqual([22, 80, 443, 81, 8080, 8081, 8082, 8090, 8443].map((p) => `192.168.1.121:${p}`));
-    for (const t of targets) expect(probeRe.test(t)).toBe(true);
-    for (const t of ['192.168.1.10:22', '[fd00::1]:443']) expect(probeRe.test(t)).toBe(true);
-    for (const t of ['<deploy-host-ip>:22', 'deploy-host.lan.example:22', '192.168.1.121']) expect(probeRe.test(t)).toBe(false);
-    expect(runDast).toContain('set -f');
-  });
-
-  test('安全測試套件以 Req 10.10 的非 loopback 設定在 --internal 網路內執行，失敗即中止（Req 7.6、10.10、10.11）', () => {
-    const suite = runDast.slice(at(runDast, "dastStep('安全測試套件"), at(runDast, 'zap.sh'));
-    expect(suite).toContain('inBuildImageOn(env.LM_EDB_NET)');
-    expect(suite).toContain("'CAMPING_SECURITY_GROUPS=loopback,lan', 'CAMPING_SECURITY_LAN_BIND=0.0.0.0'");
-    expect(suite).toContain('timeout --kill-after=30 900 bun scripts/security-suite.mjs');
-    expect(suite).toMatch(/suiteRc != 0\)\s*\{\s*lmDastErrors << [^\n]+\n\s*error\(/);
-    // scripts/security-suite.mjs 的 lan 組使用 CAMPING_SECURITY_LAN_BIND 並輸出 reports/security-junit.xml。
-    const runner = readFileSync(resolve(root, 'scripts/security-suite.mjs'), 'utf8');
-    expect(runner).toContain('process.env.CAMPING_SECURITY_LAN_BIND');
-    expect(runner).toContain("resolve(reports, 'security-junit.xml')");
-  });
-
-  test('含 DAST 的「安全」關卡：靜態掃描 + ZAP + 安全測試套件一起評估並寫入 Build_Record（Req 7.8、7.11、23.5）', () => {
-    const ev = functionBody('void evaluateDastReports()');
-    expect(ev).toContain('bun ci/policy/normalize.mjs --tool zap --in reports/dast/zap-report.json --out reports/security/zap.json');
-    expect(ev).toContain('bun ci/policy/normalize.mjs --tool security-suite --in reports/security-junit.xml --out reports/security/security-suite.json');
-    const evalReports = /--reports ([^\\\n]+)/.exec(ev)?.[1].trim().split(/\s+/) ?? [];
-    const staticReports = /--reports ([^\\\n]+)/.exec(stageCode('Security Scan'))?.[1].trim().split(/\s+/) ?? [];
-    expect(evalReports).toEqual([...staticReports, 'reports/security/zap.json', 'reports/security/security-suite.json']);
-    expect(ev).toContain('--out reports/security/evaluation-dast.json');
-    expect(ev).toMatch(/rc != 0 && rc != 1\)\s*\{\s*lmDastErrors << /);
-    const rec = functionBody('int recordDastSecurityGate(String stageError)');
-    expect(rec).toContain("writeSecurityGate(reports, 'reports/security/evaluation-dast.json', errors, stageError,");
-    expect(rec).toContain('lmDastErrors');
-    const keys = Object.fromEntries([...rec.matchAll(/(\w+): '(reports\/[^']+)'/g)].map((m) => [m[1], m[2]]));
-    expect(keys.zap).toBe('reports/dast/zap-report.json');
-    for (const k of ['securitySuite', 'dastTargets', 'dastIsolation', 'securityEvaluationDast']) expect(keys[k]).toBeDefined();
-    expect(validateRecord(mergeRecord(base(), { reports: keys })).ok).toBe(true);
-  });
-
-  test('Test_Environment 秘密只存在 0600 檔並以 --env-file／set +x 腳本載入（Req 15.2）', () => {
-    const secrets = functionBody('void writeAppSecrets()');
-    expect(secrets.indexOf("'''") > -1 && secrets.slice(secrets.indexOf("'''") + 3).trim().startsWith('set +x')).toBe(true);
-    expect(secrets).toContain('umask 077');
-    for (const f of ['app.env', 'setup.env', 'seed.env', 'smoke.env', 'scrub-secrets.json']) expect(secrets).toContain(`"$LM_EDB_DIR/${f}"`);
-    const users = tripleScripts.filter((s) => /\$LM_EDB_DIR\/(app|setup|seed|smoke)\.env/.test(s));
-    expect(users.length).toBeGreaterThanOrEqual(5);
-    for (const s of users) expect(s.trim().split('\n')[0].trim()).toBe('set +x');
-    expect(code).not.toMatch(/-e\s+"?CAMPING_(SETUP_TOKEN|SMOKE_PASSWORD|DATABASE_PASSWORD)/);
-  });
-});
-
 describe('main 專用的映像階段：Image Build → Image Scan → SBOM → Image Push → Image Sign（Req 15.1–15.3、16、17.1–17.6、21.2）', () => {
   const IMAGE_STAGES = [STAGE.IMAGE_BUILD, STAGE.IMAGE_SCAN, STAGE.SBOM, STAGE.IMAGE_PUSH, STAGE.IMAGE_SIGN];
   const blocks = Object.fromEntries(IMAGE_STAGES.map((n) => [n, stageCode(n)]));
@@ -938,9 +653,9 @@ describe('main 專用的映像階段：Image Build → Image Scan → SBOM → I
     commit: 'a'.repeat(40), trigger: 'main_push', ref: 'main', buildImageDigest: `sha256:${'b'.repeat(64)}`,
   });
 
-  test('緊接 DAST 之後依序執行，且只在 main_push 的 Trusted 規劃中執行（Req 1.3、1.4、2.8）', async () => {
+  test('緊接 Security Scan 之後依序執行，且只在 main_push 的 Trusted 規劃中執行（Req 1.3、2.8）', async () => {
     const names = [...code.matchAll(/stage\('([^']+)'\)/g)].map((m) => m[1]);
-    expect(names.slice(9, 15)).toEqual([STAGE.DAST, ...IMAGE_STAGES]);
+    expect(names.slice(5, 11)).toEqual([STAGE.SECURITY, ...IMAGE_STAGES]);
     for (const n of IMAGE_STAGES) {
       expect(blocks[n]).toContain(`when {\n        expression { planned('${n}') && env.LM_TRUSTED == 'true' && env.LM_TRIGGER_KIND == 'main_push' }`);
       expect(blocks[n]).toMatch(/unsuccessful\s*\{\s*script\s*\{\s*imageStageFailed\('[^']+'\)/);
@@ -950,22 +665,23 @@ describe('main 專用的映像階段：Image Build → Image Scan → SBOM → I
     for (const n of IMAGE_STAGES) expect(TRUSTED_ONLY_STAGES).toContain(n);
     const main = planStages({ event: 'push', ref: 'main' }).stages;
     expect(main.slice(main.indexOf(STAGE.IMAGE_BUILD), main.indexOf(STAGE.IMAGE_SIGN) + 1)).toEqual(IMAGE_STAGES);
-    expect(main.indexOf(STAGE.DAST)).toBeLessThan(main.indexOf(STAGE.IMAGE_BUILD));
-    // Release_Tag 不重新建置（Req 1.4、16.1）；PR 與其他分支（含手動重跑）沒有任何映像階段（Req 2.8）。
-    for (const t of [{ event: 'tag', ref: 'v1.2.3' }, { event: 'pull_request', ref: 'x', isPullRequest: true, manual: true }, { event: 'push', ref: 'feature', manual: true }]) {
+    expect(main.indexOf(STAGE.SECURITY)).toBeLessThan(main.indexOf(STAGE.IMAGE_BUILD));
+    // Tag 事件被拒絕；PR 與其他分支（含 rust、手動重跑）沒有任何映像階段（Req 2.8；plan.md D1）。
+    for (const t of [{ event: 'tag', ref: 'v1.2.3' }, { event: 'push', ref: 'rust' }, { event: 'pull_request', ref: 'x', isPullRequest: true, manual: true }, { event: 'push', ref: 'feature', manual: true }]) {
       for (const n of IMAGE_STAGES) expect(planStages(t).stages).not.toContain(n);
     }
     expect(sign).toMatch(/cleanup\s*\{\s*script\s*\{\s*cleanupImageWork\(\)/);
   });
 
-  test('Image Build：QA 與安全（含 DAST）關卡通過後才建置；build-image.sh → image-smoke.sh，皆不使用憑證（Req 16.1、16.8、16.9）', () => {
+  test('Image Build：QA 與安全關卡通過後才建置；build-image.sh → image-smoke.sh，皆不使用憑證（Req 16.1、16.8、16.9）', () => {
     inOrder(build, [
       'requireQaAndSecurityPassed()', "env.LM_IMAGE_GATE_ELIGIBLE = 'true'", 'pullImages(imageToolImages())', 'prepareImageWork()',
       'bash ci/scripts/build-image.sh --commit "$GIT_COMMIT_FULL" --repo "$LM_IMAGE_REPO" --reports reports',
       "readFile('reports/image-ref.txt')", 'bash ci/scripts/image-smoke.sh --image "$LM_IMAGE_REF" --postgres-image "$LM_POSTGRES_IMAGE"',
     ]);
     const req = functionBody('void requireQaAndSecurityPassed()');
-    for (const f of ['reports/gate-qa.json', 'reports/gate-security.json', 'reports/gate-security-dast.json']) expect(req).toContain(f);
+    for (const f of ['reports/gate-qa.json', 'reports/gate-security.json']) expect(req).toContain(f);
+    expect(req).not.toContain('gate-security-dast');
     expect(functionBody('boolean gatePassed(String text, String commit)')).toContain('g.pass == true && String.valueOf(g.commit) == commit');
     expect(build).toMatch(/buildRc == 1\)\s*\{\s*error\(/);
     expect(build).toMatch(/buildRc == 3\)\s*\{\s*error\(/);
@@ -1083,9 +799,10 @@ describe('main 專用的映像階段：Image Build → Image Scan → SBOM → I
 
   test('Image Push：拒絕覆寫既有標籤 → docker push → 三方 digest 比對 → image-digest.txt 封存並 fingerprint（Req 16.10、17.5、17.6、21.7）', () => {
     inOrder(push, [
-      "env.LM_SBOM_OK != 'true'", 'credentialsId: env.LM_REGISTRY_PUSH_CREDENTIALS',
+      "env.LM_SBOM_OK != 'true'", "isReleaseTag(env.LM_RELEASE_VERSION ?: '')", 'credentialsId: env.LM_REGISTRY_PUSH_CREDENTIALS',
       'DOCKER_CONFIG="$LM_IMG_DIR/docker-push"', 'mkdir -m 0700 "$DOCKER_CONFIG"', 'trap ', '--password-stdin "$registry"',
-      'crane digest "$LM_IMAGE_REF" > "$out/existing-digest.txt"', 'exit 10', "MANIFEST_UNKNOWN|unexpected status code 404",
+      'crane digest "$LM_IMAGE_REPO:$LM_RELEASE_VERSION" > "$out/version-digest.txt"', 'exit 16',
+      'crane digest "$LM_IMAGE_REF" > "$out/existing-digest.txt"', 'exit 10', 'grep -Eq \'MANIFEST_UNKNOWN|unexpected status code 404\' "$out/existing-digest.err"',
       'docker push --quiet "$LM_IMAGE_REF"', '{{range .RepoDigests}}', 'remote="$(crane digest "$LM_IMAGE_REF"',
       'by_digest="$(crane digest "$LM_IMAGE_REPO@$digest"', '[ "$remote" != "$digest" ] || [ "$by_digest" != "$digest" ]',
       "printf '%s\\\\n' \"$digest\" > reports/image-digest.txt",
@@ -1093,6 +810,9 @@ describe('main 專用的映像階段：Image Build → Image Scan → SBOM → I
     ]);
     expect(push).toContain("trap 'docker logout \"$registry\" > /dev/null 2>&1 || true; rm -rf \"$DOCKER_CONFIG\"' EXIT");
     expect(push).toMatch(/pushRc == 10\)\s*\{\s*error\(/);
+    // 版本標籤已存在（版本已發布）時，在推送任何東西之前拒絕（plan.md D2）。
+    expect(push).toMatch(/if \(pushRc == 16\) \{[\s\S]*?error\("版本 \$\{env\.LM_RELEASE_VERSION\} 已發布；請先提高 Cargo\.toml 的 \[workspace\.package\] version/);
+    expect(push.indexOf('exit 16')).toBeLessThan(push.indexOf('docker push --quiet'));
     expect(push).toMatch(/pushRc != 0\)\s*\{\s*error\(/);
     expect(push).toContain('digestFile != "${digest}\\n".toString()');
     // Registry 只以 Build_Image 所在 LAN Registry 的 repository 引用（標籤為完整 40 字元 SHA，Req 16.6）。
@@ -1125,8 +845,8 @@ describe('main 專用的映像階段：Image Build → Image Scan → SBOM → I
     expect(/LM_COSIGN_PASSPHRASE_CREDENTIALS = '([^']+)'/.exec(source)?.[1]).toBe('lm-cosign-passphrase');
     const uses = (re) => [...code.matchAll(re)].map((m) => m.index);
     const inside = (i, block) => { const s = code.indexOf(block); return i > s && i < s + block.length; };
-    // 13.6 起 Staging Deploy 的 attestStaging()（cosign attest 需推送帳號、私鑰與密碼）是第三個使用處；
-    // 13.7 起 Release_Tag 的 pushVersionTag()（crane tag 寫入版本標籤，不需私鑰）是第四個、也是唯一另外的使用處。
+    // Staging Deploy 的 attestStaging()（cosign attest 需推送帳號、私鑰與密碼）是第三個使用處；
+    // Version Tag 的 pushVersionTag()（crane tag 寫入版本標籤，不需私鑰）是第四個、也是唯一另外的使用處。
     const attest = functionBody('int attestStaging()');
     const versionTag = functionBody('int pushVersionTag()');
     // Components 第 22 節起 withCredentials 隨指令位於 Image Push／Image Sign 的階段函式內（Req 15.2）。
@@ -1209,7 +929,7 @@ describe('main 專用的 Staging Deploy 階段（Req 14.1–14.3、14.8、15.9�
 
   test('緊接 Image Sign 之後、只在 main_push 的 Trusted 規劃中執行，且在「映像」關卡通過後才部署（Req 1.3、2.8、23.2）', async () => {
     const names = [...code.matchAll(/stage\('([^']+)'\)/g)].map((m) => m[1]);
-    expect(names.slice(14, 16)).toEqual([STAGE.IMAGE_SIGN, STAGE.STAGING]);
+    expect(names.slice(10, 12)).toEqual([STAGE.IMAGE_SIGN, STAGE.STAGING]);
     expect(stg).toContain(`when {\n        expression { planned('${STAGE.STAGING}') && env.LM_TRUSTED == 'true' && env.LM_TRIGGER_KIND == 'main_push' }`);
     const { TRUSTED_ONLY_STAGES, planStages } = await import('../ci/stages.mjs');
     expect(TRUSTED_ONLY_STAGES).toContain(STAGE.STAGING);
@@ -1243,9 +963,12 @@ describe('main 專用的 Staging Deploy 階段（Req 14.1–14.3、14.8、15.9�
     // 驗證未通過一律還原、記錄關卡並失敗，不寫 attestation。
     expect(deploy).toMatch(/if \(!verified\)\s*\{[\s\S]*?restoreStaging\(\)[\s\S]*?recordStagingGate\([\s\S]*?error\(/);
     expect(smoke).toContain("timeout(time: 10, unit: 'MINUTES')");
-    expect(smoke).toContain('bun scripts/smoke.mjs > reports/staging/smoke.json');
-    expect(smoke).toContain('credentialsId: env.LM_STAGING_SMOKE_CREDENTIALS, variable: \'CAMPING_SMOKE_PASSWORD_FILE\'');
-    expect(smoke).toContain('"CAMPING_SMOKE_BASE_URL=${env.LM_STAGING_URL}"');
+    expect(smoke).toContain('bun ci/smoke.mjs --provision > reports/staging/smoke.json');
+    expect(smoke).toContain('credentialsId: env.LM_STAGING_SMOKE_CREDENTIALS, variable: \'LM_SMOKE_PASSWORD_FILE\'');
+    expect(smoke).toContain('"LM_SMOKE_BASE_URL=${env.LM_STAGING_URL}"');
+    expect(smoke).toContain("'LM_SMOKE_USERNAME=smoke-bot'");
+    // ci/staging.mjs 的 Smoke_Test 步驟與 ci/smoke.mjs 相同（FEAT-001）。
+    expect(staging).toContain("SMOKE_STEPS = Object.freeze(['index', 'robots', 'login', 'me', 'trips', 'realtime', 'logout'])");
     // 還原整體 5 分鐘：status → rollback（需要時）→ status → health --wait → restore 判讀（Req 18.5、18.8）。
     inOrder(restore, [
       "timeout(time: 5, unit: 'MINUTES')", "stagingHost('status', 'status-before-restore.json')", 'bun ci/staging.mjs rollback-needed',
@@ -1262,7 +985,7 @@ describe('main 專用的 Staging Deploy 階段（Req 14.1–14.3、14.8、15.9�
     expect(/LM_SSH_STAGING_CREDENTIALS = '([^']+)'/.exec(source)?.[1]).toBe('lm-ssh-staging');
     const rollbackJf = readFileSync(resolve(root, 'ci/jenkins/pipelines/rollback.Jenkinsfile'), 'utf8');
     expect(/LM_SSH_PROD_CREDENTIALS = '([^']+)'/.exec(rollbackJf)?.[1]).toBe('lm-ssh-prod');
-    // 13.7 起 Production Deploy 使用與 release/rollback 相同的 Production 金鑰；Staging 的函式從不引用它。
+    // Production Deploy 使用與 release/rollback 相同的 Production 金鑰；Staging 的函式從不引用它。
     expect(/LM_SSH_PROD_CREDENTIALS = '([^']+)'/.exec(source)?.[1]).toBe('lm-ssh-prod');
     expect(code.match(/lm-ssh-prod/g)?.length).toBe(1);
     for (const body of [deployCmd, host, stg, deploy, restore]) expect(body).not.toMatch(/LM_SSH_PROD_CREDENTIALS|lm-ssh-prod/);
@@ -1280,20 +1003,11 @@ describe('main 專用的 Staging Deploy 階段（Req 14.1–14.3、14.8、15.9�
     const cmds = [...(deployCmd + host).matchAll(/lm_ssh ([a-z-]+)/g)].map((m) => m[1]).sort();
     expect(cmds).toEqual(['deploy', 'finalize', 'health', 'rollback', 'status']);
     expect(deployCmd + host).not.toMatch(/lm_ssh [^>\n]*\b(prod|staging)\b/);
-    expect(deployCmd).toContain('lm_ssh deploy "$LM_IMAGE_DIGEST" --app-env-stdin > reports/staging/deploy.jsonl');
+    expect(deployCmd).toContain('lm_ssh deploy "$LM_IMAGE_DIGEST" --app-env-stdin < "$LM_STACK_ENV_FILE" > reports/staging/deploy.jsonl');
     expect(host).toContain('lm_ssh health "$LM_STG_COLOR" --wait');
-    // app.env 只經 stdin（printf 內建指令）；DB 與 Setup_Token 憑證只在 deploy 的 withCredentials 內（Req 15.1、15.2）。
-    for (const k of ['CAMPING_DATABASE_NAME', 'CAMPING_DATABASE_USER', 'CAMPING_DATABASE_PASSWORD', 'CAMPING_SETUP_TOKEN']) {
-      expect(deployCmd).toMatch(new RegExp(`printf '${k}=%s\\\\\\\\n' "\\$[A-Z_]+"`));
-    }
-    const uses = (re) => [...code.matchAll(re)].map((m) => m.index);
-    const inside = (i, block) => { const s = code.indexOf(block); return i > s && i < s + block.length; };
-    for (const re of [/credentialsId: env\.LM_STAGING_DB_CREDENTIALS/g, /credentialsId: env\.LM_STAGING_SETUP_TOKEN_CREDENTIALS/g]) {
-      const found = uses(re);
-      expect(found.length).toBe(1);
-      expect(inside(found[0], deployCmd)).toBe(true);
-    }
-    expect(code).not.toMatch(/echo[^\n]*\$(LM_STG_DB_PASSWORD|LM_STG_SETUP_TOKEN|LM_REG_PASSWORD)/);
+    // app.env（lm-staging-supabase-env）只以 `<` 重新導向成為 stdin（plan.md D6、D13）；細節見 Production 的測試。
+    expect(deployCmd).toContain("withCredentials([file(credentialsId: env.LM_STAGING_STACK_ENV_CREDENTIALS, variable: 'LM_STACK_ENV_FILE')]) {");
+    expect(code).not.toMatch(/echo[^\n]*\$(LM_REG_PASSWORD|LM_PUSH_PASSWORD)/);
   });
 
   test('部署前以 Credential_Store 的公鑰驗證簽章；attestation 以 digest、--tlog-upload=false 推送後再驗證（Req 17.7、18.4）', () => {
@@ -1438,152 +1152,85 @@ describe('verify-toolchain --record-patch（Req 3.3）', () => {
   });
 });
 
-describe('Release_Tag 專用階段：Resolve Digest → Version Tag → Approval → Production Deploy（Req 1.4、1.10、12.6、14.1–14.3、19、20、22.5、23）', () => {
-  const RELEASE_STAGES = [STAGE.RESOLVE_DIGEST, STAGE.VERSION_TAG, STAGE.APPROVAL, STAGE.PRODUCTION];
+describe('main 的 Production Deploy 與 Version Tag（plan.md D1、D2、D10；Req 14.1–14.3、16.10、20、22.5、23）', () => {
+  const RELEASE_STAGES = [STAGE.PRODUCTION, STAGE.VERSION_TAG];
   const blocks = Object.fromEntries(RELEASE_STAGES.map((n) => [n, stageCode(n)]));
-  const resolveFn = functionBody('void resolveReleaseImage()');
+  const init = stageCode(STAGE.INIT);
   const registryFn = functionBody('int releaseRegistry(String action)');
   const versionFn = functionBody('void applyVersionTag()');
   const pushTag = functionBody('int pushVersionTag()');
-  const prepare = functionBody('void prepareApproval()');
-  const wait = functionBody('void waitForApproval()');
-  const tagCheck = functionBody('boolean verifyTagUnchanged(String outName)');
-  const recordApr = functionBody('int recordApproval(Map d)');
   const deploy = functionBody('void deployProduction()');
   const observe = functionBody('boolean observeProduction(String color)');
   const observeStepFn = functionBody('int observeStep(String type, int exitCode, String result, long ms, String phase)');
   const restore = functionBody('void restoreProduction()');
   const deployCmd = functionBody('int productionDeployCommand()');
+  const stgDeployCmd = functionBody('int stagingDeployCommand()');
   const host = functionBody('int prodHost(String action, String outName)');
   const smoke = functionBody('int runProductionSmoke(String outName)');
   const recordPrd = functionBody('int recordProductionGate(String stageError)');
-  const lookupMain = functionBody('int fetchMainRecord()');
   const at = (text, s) => { const i = text.indexOf(s); expect(i).toBeGreaterThan(-1); return i; };
   const inOrder = (text, list) => { const idx = list.map((s) => at(text, s)); expect(idx).toEqual([...idx].sort((a, b) => a - b)); };
   const production = readFileSync(resolve(root, 'ci/production.mjs'), 'utf8');
   const resolveDigest = readFileSync(resolve(root, 'ci/resolve-digest.mjs'), 'utf8');
 
-  test('緊接 Staging Deploy 之後依序執行，且只在 release_tag 的 Trusted 規劃中執行（Req 1.4、2.8）', async () => {
+  test('緊接 Staging Deploy 之後依序為 Production Deploy → Version Tag，只在 main_push 的 Trusted 規劃中執行（plan.md D1）', async () => {
     const names = [...code.matchAll(/stage\('([^']+)'\)/g)].map((m) => m[1]);
-    expect(names.slice(15)).toEqual([STAGE.STAGING, ...RELEASE_STAGES]);
+    expect(names.slice(11)).toEqual([STAGE.STAGING, ...RELEASE_STAGES]);
     for (const n of RELEASE_STAGES) {
-      expect(blocks[n]).toContain(`when {\n        expression { planned('${n}') && env.LM_TRUSTED == 'true' && env.LM_TRIGGER_KIND == 'release_tag' }`);
+      expect(blocks[n]).toContain(`when {\n        expression { planned('${n}') && env.LM_TRUSTED == 'true' && env.LM_TRIGGER_KIND == 'main_push' }`);
+      expect(blocks[n]).toMatch(/cleanup\s*\{\s*script\s*\{\s*cleanupReleaseWork\(\)/);
     }
+    expect(code).not.toContain("env.LM_TRIGGER_KIND == 'release_tag'");
     const { TRUSTED_ONLY_STAGES, planStages } = await import('../ci/stages.mjs');
     for (const n of RELEASE_STAGES) expect(TRUSTED_ONLY_STAGES).toContain(n);
-    const tag = planStages({ event: 'tag', ref: 'v1.2.3' }).stages;
-    expect(tag.slice(tag.indexOf(STAGE.RESOLVE_DIGEST), tag.indexOf(STAGE.PRODUCTION) + 1)).toEqual(RELEASE_STAGES);
-    for (const t of [{ event: 'push', ref: 'main' }, { event: 'pull_request', ref: 'x', isPullRequest: true, manual: true }, { event: 'push', ref: 'feature', manual: true }]) {
+    const main = planStages({ event: 'push', ref: 'main' }).stages;
+    expect(main.slice(main.indexOf(STAGE.STAGING), main.indexOf(STAGE.VERSION_TAG) + 1)).toEqual([STAGE.STAGING, ...RELEASE_STAGES]);
+    for (const t of [{ event: 'push', ref: 'rust' }, { event: 'pull_request', ref: 'x', isPullRequest: true, manual: true }, { event: 'tag', ref: 'v2.0.0' }]) {
       for (const n of RELEASE_STAGES) expect(planStages(t).stages).not.toContain(n);
     }
-    // 每個階段的前提都是前一個關卡已記錄且通過（Req 23.2）。
-    inOrder(blocks[STAGE.RESOLVE_DIGEST], ['requireReleaseQualityGates()', "env.LM_REL_ELIGIBLE = 'true'", 'assertReleaseConfig()', 'pullImages([env.LM_CRANE_IMAGE, env.LM_COSIGN_IMAGE])', 'prepareReleaseWork()', 'resolveReleaseImage()']);
-    inOrder(blocks[STAGE.VERSION_TAG], ['requireReleaseGatesPassed()', 'applyVersionTag()', "env.LM_REL_VERSION_TAG = 'true'"]);
-    inOrder(blocks[STAGE.APPROVAL], ['requireReleaseGatesPassed()', "env.LM_REL_VERSION_TAG != 'true'", "env.LM_APR_ELIGIBLE = 'true'", 'assertProductionConfig()', 'prepareApproval()', 'waitForApproval()']);
-    inOrder(blocks[STAGE.PRODUCTION], ['requireApprovalPassed()', "env.LM_PRD_ELIGIBLE = 'true'", 'assertProductionConfig()', 'pullImages([env.LM_COSIGN_IMAGE])', "lock(resource: 'lm-prod', skipIfLocked: true)", 'deployProduction()', 'restoreProduction()']);
-    for (const [n, fn] of [[STAGE.RESOLVE_DIGEST, 'releaseStageFailed()'], [STAGE.APPROVAL, 'approvalStageFailed()'], [STAGE.PRODUCTION, 'productionStageFailed()']]) {
-      expect(blocks[n]).toMatch(new RegExp(`unsuccessful\\s*\\{\\s*script\\s*\\{\\s*${fn.replace(/[()]/g, '\\$&')}`));
-    }
-    for (const n of RELEASE_STAGES) expect(blocks[n]).toMatch(/cleanup\s*\{\s*script\s*\{\s*cleanupReleaseWork\(\)/);
-    for (const [f, s] of [['void requireReleaseGatesPassed()', 'reports/gate-staging-release.json'], ['void requireApprovalPassed()', 'reports/gate-approval.json'], ['void requireReleaseQualityGates()', 'reports/gate-security-dast.json']]) {
-      expect(functionBody(f)).toContain(s);
-      expect(functionBody(f)).toContain('gatePassed(text, env.GIT_COMMIT_FULL');
+    // 前一個關卡已記錄且通過才執行（Req 23.2）：Production 需要「Staging」，Version Tag 需要「上線後」。
+    inOrder(blocks[STAGE.PRODUCTION], ['requireStagingPassed()', "env.LM_PRD_ELIGIBLE = 'true'", 'assertProductionConfig()', 'pullImages([env.LM_COSIGN_IMAGE])', "lock(resource: 'lm-prod', skipIfLocked: true)", 'deployProduction()', 'restoreProduction()']);
+    inOrder(blocks[STAGE.VERSION_TAG], ['requirePostDeployPassed()', 'assertProductionConfig()', 'pullImages([env.LM_CRANE_IMAGE])', 'prepareReleaseWork()', 'applyVersionTag()']);
+    expect(blocks[STAGE.PRODUCTION]).toMatch(/unsuccessful\s*\{\s*script\s*\{\s*productionStageFailed\(\)/);
+    for (const [f, list] of [
+      ['void requireStagingPassed()', ['reports/gate-staging.json', "env.LM_STG_GATE_DONE != 'true'", "env.LM_STG_VERIFIED != 'true'", 'gatePassed(text, env.GIT_COMMIT_FULL']],
+      ['void requirePostDeployPassed()', ['reports/gate-post-deploy.json', "env.LM_PRD_OBSERVED != 'true'", "env.LM_PRD_GATE_DONE != 'true'", 'gatePassed(text, env.GIT_COMMIT_FULL', "isReleaseTag(env.LM_RELEASE_VERSION ?: '')"]],
+    ]) {
+      for (const s of list) expect(functionBody(f)).toContain(s);
     }
   });
 
-  test('Resolve Digest：完整 SHA 標籤 → 查無即於摘要顯示並失敗（不進入核准）→「映像」→「Staging」（Req 1.10、19.5）', () => {
-    inOrder(resolveFn, [
-      "releaseRegistry('lookup')", 'bun ci/resolve-digest.mjs step lookup --commit "$GIT_COMMIT_FULL"', 'if (rc == 1)',
-      'appendSummary("${why}', "image: [digest: '不適用']", 'error("${why}，不進入核准',
-      "archiveArtifacts(artifacts: 'reports/image-digest.txt', fingerprint: true)",
-      "releaseRegistry('verify')", 'fetchMainRecord()', 'bun ci/resolve-digest.mjs step image', "recordReleaseGate('reports/gate-image-release.json')",
-      "releaseRegistry('attestation')", 'bun ci/resolve-digest.mjs step staging', "recordReleaseGate('reports/gate-staging-release.json')",
-      "env.LM_REL_GATES_OK = 'true'",
-    ]);
-    expect(resolveFn).toMatch(/if \(rc != 0\)\s*\{\s*appendSummary\([^\n]*Staging/);
-    // 查得的 digest 寫入 Build_Record 與 image-digest.txt（內容恰為 `<digest>\n`），與 main 建置相同的 fingerprint。
-    expect(resolveFn).toContain('writeFile(file: \'reports/image-digest.txt\', text: "${digest}\\n".toString())');
-    // crane／cosign：唯讀拉取帳號 + Credential_Store 公鑰，以 digest（不是標籤）驗證。
-    inOrder(registryFn, [
-      'credentialsId: env.LM_REGISTRY_PULL_CREDENTIALS', 'file(credentialsId: env.LM_COSIGN_PUBLIC_KEY_CREDENTIALS', 'set +x',
-      'DOCKER_CONFIG="$LM_REL_DIR/docker-pull"', '--password-stdin "$registry"',
-      'digest "$LM_IMAGE_REPO:$GIT_COMMIT_FULL"', 'verify --key /keys/cosign.pub --insecure-ignore-tlog=true --output json "$ref"',
-      'verify-attestation --key /keys/cosign.pub --insecure-ignore-tlog=true', 'digest "$LM_IMAGE_REPO:$TAG_NAME"', 'config "$LM_IMAGE_REPO@$LM_REL_CONFIG_DIGEST"',
-    ]);
-    expect(registryFn).toContain('ref="$LM_IMAGE_REPO@${LM_IMAGE_DIGEST:-}"');
-    const runs = [...dockerRunsIn(registryFn), ...dockerRunsIn(pushTag)];
-    expect(runs.length).toBe(2);
-    for (const cmd of runs) {
-      for (const flag of ['--rm', '--user "$(id -u):$(id -g)"', '--read-only', '--cap-drop ALL', '--security-opt no-new-privileges:true', '--label "lm.ci.build=$BUILD_TAG"', '--label "lm.ci.release=$LM_REL_RUN"']) {
-        expect(cmd).toContain(flag);
-      }
-      expect(cmd).not.toMatch(/--privileged|docker\.sock/);
-      for (const m of cmd.matchAll(/--mount "([^"]+)"/g)) expect(m[1].endsWith(',readonly')).toBe(true);
+  test('沒有任何人工核准：無 input 步驟、無核准迴圈、無 Release_Tag 的 Tag 驗證或 digest 解析（plan.md D1）', () => {
+    expect(code).not.toMatch(/\binput\s*\(/);
+    for (const gone of ['releaseApprovalLoop', 'waitForApproval', 'requireApprovalPassed', 'verifyTagUnchanged', 'resolveReleaseImage', 'fetchMainRecord',
+      'ci/approval.mjs', 'ci/policy/tag.mjs', 'step lookup', 'step image', 'step staging', 'TAG_NAME"', 'LM_JENKINS_API_CREDENTIALS']) {
+      expect({ gone, found: code.includes(gone) }).toEqual({ gone, found: false });
     }
-    // main Build_Record：唯讀 Jenkins API token 只經 0600 檔交給 Build_Image 容器，結束時刪除。
-    expect(/LM_JENKINS_API_CREDENTIALS = '([^']+)'/.exec(source)?.[1]).toBe('lm-jenkins-api-readonly');
-    const lookupJf = readFileSync(resolve(root, 'ci/jenkins/pipelines/digest-lookup.Jenkinsfile'), 'utf8');
-    expect(/LM_JENKINS_API_CREDENTIALS = '([^']+)'/.exec(lookupJf)?.[1]).toBe('lm-jenkins-api-readonly');
-    inOrder(lookupMain, [
-      'credentialsId: env.LM_JENKINS_API_CREDENTIALS', 'set +x', 'umask 077', 'mkdir -m 0700 "$LM_REL_TOKEN_DIR"',
-      'LM_JENKINS_API_TOKEN_FILE="$LM_REL_TOKEN_DIR/token"', '--main-record-out reports/release/main-build-record.json', 'finally', 'rm -rf -- "$LM_REL_TOKEN_DIR"',
-    ]);
-    expect(lookupMain).not.toMatch(/LM_JENKINS_API_TOKEN=/);
-    // step 子命令存在於 ci/resolve-digest.mjs。
-    for (const s of ['lookup', 'image', 'staging', 'version-tag', 'version-tag-verify']) expect(resolveDigest).toContain(`'${s}'`);
-    for (const s of ["case 'lookup'", "case 'image'", "case 'staging'", "case 'version-tag'", "case 'version-tag-verify'"]) expect(resolveDigest).toContain(s);
   });
 
-  test('Version Tag：不覆寫既有標籤；推送帳號只在 pushVersionTag 內（Req 16.6、16.10）', () => {
-    inOrder(versionFn, [
-      "releaseRegistry('tag-get')", 'bun ci/resolve-digest.mjs step version-tag --digest "$LM_IMAGE_DIGEST"', 'if (rc == 4)',
-      "d.decision == 'create'", 'pushVersionTag()', 'bun ci/resolve-digest.mjs step version-tag-verify', "d.decision != 'noop'",
-      'image: [tags: [env.GIT_COMMIT_FULL, tag]]',
+  test('Init：main_push 由 Cargo.toml 取得發布版本 v<版本>（ci/release-version.mjs），格式無效即失敗（plan.md D2）', () => {
+    inOrder(init, [
+      'bun ci/record.mjs init', 'if (planRc != 0 || plan.reject || !plan.kind)', "if (env.LM_TRIGGER_KIND == 'main_push')",
+      "'bun ci/release-version.mjs > reports/release-version.txt'", 'if (!isReleaseTag(version))', 'env.LM_RELEASE_VERSION = version',
     ]);
-    expect(versionFn).toMatch(/if \(rc == 4\)\s*\{\s*appendSummary\([\s\S]*?error\(/);
-    inOrder(pushTag, [
-      'credentialsId: env.LM_REGISTRY_PUSH_CREDENTIALS', 'set +x', 'DOCKER_CONFIG="$LM_REL_DIR/docker-push"', 'trap ',
-      'crane tag "$LM_IMAGE_REPO@$LM_IMAGE_DIGEST" "$TAG_NAME"', 'crane digest "$LM_IMAGE_REPO:$TAG_NAME"',
-    ]);
+    expect(readFileSync(resolve(root, 'ci/release-version.mjs'), 'utf8')).toContain('[workspace.package]');
   });
 
-  test('Approval：核准畫面內容、24 小時迴圈、破壞性遷移另行核准、git ls-remote、記錄「正式核准」（Req 12.6、19.2–19.8）', () => {
-    inOrder(prepare, [
-      'bun ci/rollback.mjs approvers', 'env.LM_APR_SUBMITTERS = ids.join', "prodHost('status', 'status-approval.json')",
-      "releaseRegistry('config')", 'bun ci/production.mjs deployed-commit', 'git ls-tree --name-only "${LM_PRD_BASE_COMMIT:-}" -- migrations/',
-      'bun ci/production.mjs destructive --migrations migrations --deployed "$deployed"', 'lmDestructivePending = pending',
-      'archiveArtifacts(', 'bun ci/production.mjs approval-message --tag "$TAG_NAME" --commit "$GIT_COMMIT_FULL" --digest "$LM_IMAGE_DIGEST"',
-    ]);
-    // 核准等待期間對 Production 只執行 status（唯讀）。
-    expect(prepare.match(/prodHost\('([a-z-]+)'/g)).toEqual(["prodHost('status'"]);
-    expect(wait.match(/prodHost\(/g)).toBeNull();
-    inOrder(wait, [
-      "timeout(time: 24, unit: 'HOURS')", 'releaseApprovalLoop(message)', 'destructiveApprovalLoop(m)', 'lmDestructiveApprovals <<',
-      "verifyTagUnchanged('tag-remote-approval.txt')", 'recordApproval(decision)', "env.LM_APPROVED = 'true'",
-    ]);
-    expect(wait).toContain("decision.decision = 'tag_changed'");
-    expect(wait).toContain('throw rethrow');
-    expect(wait).toContain("currentBuild.result = 'ABORTED'");
-    inOrder(tagCheck, ['gitUsernamePassword(credentialsId: env.LM_GIT_CREDENTIALS)', 'git ls-remote origin "refs/tags/$TAG_NAME" "refs/tags/$TAG_NAME^{}"', 'bun ci/production.mjs tag-remote']);
-    inOrder(recordApr, [
-      "writeFile(file: 'reports/production/approval-input.json'", 'bun ci/production.mjs approval-record', 'bun ci/record.mjs merge --record "$LM_RECORD" --patch reports/production/approval-record-patch.json',
-      'bun ci/record.mjs gate --record "$LM_RECORD" --result reports/gate-approval.json', "env.LM_APR_GATE_DONE = 'true'",
-    ]);
-    for (const s of ['attempts: lmApprovalAttempts', 'destructive: lmDestructiveApprovals', 'pendingDestructive: lmDestructivePending']) expect(recordApr).toContain(s);
-    // 送出者與拒絕者的帳號只經環境變數交給 ci/approval.mjs，且先以格式驗證。
-    expect(functionBody('void recordAttempt(String who, String action, String migration)')).toContain('lmApprovalAttempts << [id: id, at: at, action: action, migration: migration]');
-    expect(functionBody('String inputRejecter(Object err)')).toContain('org.jenkinsci.plugins.workflow.support.steps.input.Rejection');
-  });
-
-  test('Production Deploy：Tag 與目前版本再確認 → 簽章 → deploy → 觀察期 → 回滾或 finalize →「上線後」（Req 17.8、20.1–20.7、20.12）', () => {
+  test('Production Deploy：狀態 → 首次部署保護 → 簽章 → deploy → 觀察期 → 回滾或 finalize →「上線後」（Req 17.8、20.1–20.7、20.12；plan.md D10）', () => {
     expect(blocks[STAGE.PRODUCTION]).toMatch(/if \(!acquired\)\s*\{\s*recordProductionGate\([^\n]*\)\s*error\('已有部署進行中/);
     inOrder(deploy, [
-      "verifyTagUnchanged('tag-remote-deploy.txt')", "prodHost('status', 'status-locked.json')", "env.LM_PRD_DESTRUCTIVE_KNOWN == 'true' && base != (env.LM_PRD_BASE_DIGEST",
+      "prodHost('status', 'status-locked.json')", 'bun ci/production.mjs active --status reports/production/status-locked.json',
+      "recordProductionGate('Production 尚未完成首次部署，請依 deploy/README.md 的首次切換步驟完成 bootstrap')",
       "releaseRegistry('verify-prod')", 'signatureCovers(sigText, digest)', "env.LM_PRD_DEPLOY_CALLED = 'true'",
       "timeout(time: 75, unit: 'MINUTES')", 'productionDeployCommand()', 'bun ci/production.mjs classify --exit "$LM_PRD_EXIT"',
       "c.outcome == 'refused'", 'restoreProduction()', "timeout(time: 15, unit: 'MINUTES')", 'observeProduction(color)',
       "prdStep('「上線後」關卡未通過；已自動回滾", "env.LM_PRD_OBSERVED = 'true'", "prodHost('finalize', 'finalize.jsonl')", "recordProductionGate('') != 0",
     ]);
+    // 沒有作用中的版本時記錄「上線後」未通過並停止，不呼叫 deploy（plan.md D10）。
+    const guard = deploy.slice(0, deploy.indexOf("releaseRegistry('verify-prod')"));
+    expect(guard).toMatch(/if \(activeRc != 0 \|\| !\(base ==~ \/\^sha256:\[0-9a-f\]\{64\}\$\/\)\) \{[\s\S]*?recordProductionGate\([\s\S]*?error\('Production 尚未完成首次部署/);
+    expect(guard).not.toContain('productionDeployCommand()');
+    expect(guard).toMatch(/if \(stRc != 0\) \{[\s\S]*?recordProductionGate\([\s\S]*?error\(/);
     // 簽章未通過時不呼叫 Deploy_Host 的 deploy（Req 17.8）。
     expect(deploy.slice(0, deploy.indexOf('productionDeployCommand()'))).toMatch(/if \(!sigOk\)\s*\{[\s\S]*?recordProductionGate\([\s\S]*?error\(/);
     // 觀察期：每 10 秒一次 Health_Check（共 60 次）、切換後與結束前各一次 Smoke_Test、10 分鐘（Req 20.5）。
@@ -1594,30 +1241,33 @@ describe('Release_Tag 專用階段：Resolve Digest → Version Tag → Approval
     expect(observe.match(/return false/g)?.length).toBe(2);
     expect(observeStepFn).toContain('bun ci/production.mjs observe "$@"');
     expect(observeStepFn).toContain('--t "$(( LM_PRD_OBS_MS / 1000 ))"');
-    // 回滾：status → rollback（自動，不執行 Migration_Runner）→ status → 舊槽位 health --wait → 判讀（Req 20.6、20.9、20.11）。
     inOrder(restore, [
       "timeout(time: 5, unit: 'MINUTES')", "prodHost('status', 'status-before-restore.json')", 'bun ci/production.mjs rollback-needed',
       "prodHost('rollback', 'rollback.jsonl')", "prodHost('status', 'status-after-restore.json')", 'bun ci/production.mjs active',
       "prodHost('health-wait', 'restore-health.jsonl')", 'bun ci/production.mjs restore',
     ]);
     expect(restore).toContain("code: 'restore_unconfirmed'");
+    // Production 的 Smoke_Test 不註冊帳號（smoke-bot 於首次切換時建立）；Staging 以 --provision 執行（plan.md D9）。
     expect(smoke).toContain("timeout(time: 90, unit: 'SECONDS')");
-    expect(smoke).toContain("credentialsId: env.LM_PROD_SMOKE_CREDENTIALS, variable: 'CAMPING_SMOKE_PASSWORD_FILE'");
-    expect(smoke).toContain('"CAMPING_SMOKE_BASE_URL=${env.LM_PROD_URL}"');
-    expect(smoke).toContain('bun scripts/smoke.mjs > "$LM_PRD_SMOKE_OUT"');
+    expect(smoke).toContain("credentialsId: env.LM_PROD_SMOKE_CREDENTIALS, variable: 'LM_SMOKE_PASSWORD_FILE'");
+    expect(smoke).toContain('"LM_SMOKE_BASE_URL=${env.LM_PROD_URL}"');
+    expect(smoke).toContain('bun ci/smoke.mjs > "$LM_PRD_SMOKE_OUT"');
+    expect(smoke).not.toContain('--provision');
+    expect(functionBody('int runStagingSmoke()')).toContain('bun ci/smoke.mjs --provision > reports/staging/smoke.json');
+    expect(code).not.toContain('scripts/smoke.mjs');
     inOrder(recordPrd, [
       'bun ci/production.mjs record "$@"', 'bun ci/record.mjs merge --record "$LM_RECORD" --patch reports/production-record-patch.json',
       'bun ci/record.mjs gate --record "$LM_RECORD" --result reports/gate-post-deploy.json', "env.LM_PRD_GATE_DONE = 'true'",
       "fileExists('reports/production/rollback-summary.txt')", 'appendSummary(',
     ]);
+    expect(recordPrd).toContain('--tag "${LM_RELEASE_VERSION:-}"');
     expect(recordPrd).toContain('--signature "$LM_PRD_SIGNATURE" --finalize "$LM_PRD_FINALIZE"');
     expect(functionBody('void productionStageFailed()')).toMatch(/LM_PRD_ELIGIBLE == 'true' && env\.LM_PRD_GATE_DONE != 'true'[\s\S]*recordProductionGate\(prdStageError\(\)\)/);
-    // 觀察期通過前的未預期錯誤或中止一律回滾。
     expect(blocks[STAGE.PRODUCTION]).toMatch(/catch \(err\)\s*\{[\s\S]*?LM_PRD_DEPLOY_CALLED == 'true' && env\.LM_PRD_OBSERVED != 'true' && env\.LM_PRD_RESTORE_DONE != 'true'[\s\S]*?restoreProduction\(\)[\s\S]*?throw err/);
   });
 
-  test('Production SSH 與憑證：lm-ssh-prod、known_hosts、forced command 子命令；DB 與 Setup_Token 只經 stdin（Req 15.1、15.2、15.9）', () => {
-    for (const [name, id] of [['LM_PROD_DB_CREDENTIALS', 'lm-prod-db'], ['LM_PROD_SETUP_TOKEN_CREDENTIALS', 'lm-prod-setup-token'], ['LM_PROD_SMOKE_CREDENTIALS', 'lm-prod-smoke']]) {
+  test('Production SSH 與 Supabase 金鑰檔：lm-ssh-prod、known_hosts、forced command 子命令；金鑰檔只以 `<` 交給 lm-deploy（Req 15.1、15.2、15.9）', () => {
+    for (const [name, id] of [['LM_PROD_STACK_ENV_CREDENTIALS', 'lm-prod-supabase-env'], ['LM_STAGING_STACK_ENV_CREDENTIALS', 'lm-staging-supabase-env'], ['LM_PROD_SMOKE_CREDENTIALS', 'lm-prod-smoke']]) {
       expect(new RegExp(`${name} = '([^']+)'`).exec(source)?.[1]).toBe(id);
     }
     for (const body of [deployCmd, host]) {
@@ -1630,59 +1280,69 @@ describe('Release_Tag 專用階段：Resolve Digest → Version Tag → Approval
     const cmds = [...(deployCmd + host).matchAll(/lm_ssh ([a-z-]+)/g)].map((m) => m[1]).sort();
     expect(cmds).toEqual(['deploy', 'finalize', 'health', 'health', 'rollback', 'status']);
     expect(deployCmd + host).not.toMatch(/lm_ssh [^>\n]*\b(prod|staging)\b/);
-    expect(host).toContain(`'health-once': 'lm_ssh health "$LM_PRD_COLOR" > "$LM_PRD_OUT"\\n'`);
-    expect(host).toContain(`'health-wait': 'lm_ssh health "$LM_PRD_COLOR" --wait > "$LM_PRD_OUT"\\n'`);
-    expect(deployCmd).toContain('lm_ssh deploy "$LM_IMAGE_DIGEST" --app-env-stdin > reports/production/deploy.jsonl');
-    for (const k of ['CAMPING_DATABASE_NAME', 'CAMPING_DATABASE_USER', 'CAMPING_DATABASE_PASSWORD', 'CAMPING_SETUP_TOKEN']) {
-      expect(deployCmd).toMatch(new RegExp(`printf '${k}=%s\\\\\\\\n' "\\$[A-Z_]+"`));
+    // 兩個環境的 deploy：Secret file 只在 deploy 的 withCredentials 內，只以 -s 檢查與 `<` 重新導向使用。
+    for (const [body, env, out] of [[deployCmd, 'LM_PROD_STACK_ENV_CREDENTIALS', 'reports/production/deploy.jsonl'], [stgDeployCmd, 'LM_STAGING_STACK_ENV_CREDENTIALS', 'reports/staging/deploy.jsonl']]) {
+      expect(body).toContain(`withCredentials([file(credentialsId: env.${env}, variable: 'LM_STACK_ENV_FILE')]) {`);
+      expect(body).toContain(`lm_ssh deploy "$LM_IMAGE_DIGEST" --app-env-stdin < "$LM_STACK_ENV_FILE" > ${out}`);
+      expect(body).toMatch(/if \[ ! -s "\$LM_STACK_ENV_FILE" \]; then\n\s*echo '[^'$]*' >&2\n\s*exit 2\n/);
+      expect(body).not.toMatch(/printf|readFile|returnStdout|\bcat\b|set -x/);
     }
-    const uses = (re) => [...code.matchAll(re)].map((m) => m.index);
+    const uses = [...code.matchAll(/^.*LM_STACK_ENV_FILE.*$/gm)].map((m) => m[0].trim());
+    expect(uses.sort()).toEqual([
+      ...Array(2).fill('if [ ! -s "$LM_STACK_ENV_FILE" ]; then'),
+      'lm_ssh deploy "$LM_IMAGE_DIGEST" --app-env-stdin < "$LM_STACK_ENV_FILE" > reports/production/deploy.jsonl',
+      'lm_ssh deploy "$LM_IMAGE_DIGEST" --app-env-stdin < "$LM_STACK_ENV_FILE" > reports/staging/deploy.jsonl',
+      "withCredentials([file(credentialsId: env.LM_PROD_STACK_ENV_CREDENTIALS, variable: 'LM_STACK_ENV_FILE')]) {",
+      "withCredentials([file(credentialsId: env.LM_STAGING_STACK_ENV_CREDENTIALS, variable: 'LM_STACK_ENV_FILE')]) {",
+    ].sort());
+    const uses2 = (re) => [...code.matchAll(re)].map((m) => m.index);
     const inside = (i, block) => { const s = code.indexOf(block); return i > s && i < s + block.length; };
-    for (const re of [/credentialsId: env\.LM_PROD_DB_CREDENTIALS/g, /credentialsId: env\.LM_PROD_SETUP_TOKEN_CREDENTIALS/g]) {
-      const found = uses(re);
+    for (const [re, body] of [[/credentialsId: env\.LM_PROD_STACK_ENV_CREDENTIALS/g, deployCmd], [/credentialsId: env\.LM_STAGING_STACK_ENV_CREDENTIALS/g, stgDeployCmd]]) {
+      const found = uses2(re);
       expect(found.length).toBe(1);
-      expect(inside(found[0], deployCmd)).toBe(true);
+      expect(inside(found[0], body)).toBe(true);
     }
-    for (const i of uses(/credentialsId: env\.LM_SSH_PROD_CREDENTIALS/g)) expect(inside(i, deployCmd) || inside(i, host)).toBe(true);
-    expect(code).not.toMatch(/echo[^\n]*\$(LM_PRD_DB_PASSWORD|LM_PRD_SETUP_TOKEN|LM_JENKINS_API_TOKEN_SRC)/);
-    // lm-deploy 的單次 health 不取鎖，輸出 healthy／durationMs（觀察期由 Pipeline 每 10 秒呼叫）；prod 啟動健康每 5 秒（Req 20.3）。
+    for (const i of uses2(/credentialsId: env\.LM_SSH_PROD_CREDENTIALS/g)) expect(inside(i, deployCmd) || inside(i, host)).toBe(true);
+    // Bun 版的 Database 帳號、Setup_Token 與收據 AI 已移除（plan.md D13、D14）。
+    expect(code).not.toMatch(/CAMPING_|LM_RECEIPT_AI|OPENAI|_DB_CREDENTIALS|SETUP_TOKEN|LM_STAGING_DB_NAME|LM_PROD_DB_NAME/i);
     const lmDeploy = readFileSync(resolve(root, 'deploy/bin/lm-deploy'), 'utf8');
     expect(lmDeploy).toContain('\\"healthy\\":true,\\"at\\":$(jstr "$at"),\\"durationMs\\":$H_MS}');
-    expect(lmDeploy).toMatch(/health\)\n\s+local color="" wait=0[\s\S]*?load_state\n\s+load_env_config/);
   });
 
-  test('收據 AI（Components 第 25.3 節；Req 15.6–15.8）：設定檢查、Production 的金鑰綁定範圍與建置摘要', () => {
-    const value = (name) => new RegExp(`^    ${name} = '([^']*)'$`, 'm').exec(code)?.[1];
-    expect(value('LM_STAGING_RECEIPT_AI')).toBe('disabled');
-    expect(['enabled', 'disabled']).toContain(value('LM_PROD_RECEIPT_AI'));
-    expect(value('LM_PROD_OPENAI_CREDENTIALS')).toBe('lm-prod-openai-api-key');
-    // 設定檢查在連線 Deploy_Host 之前（Staging Deploy 與 Approval／Production Deploy 都先呼叫）。
-    const stgCfg = functionBody('void assertStagingConfig()');
-    expect(stgCfg).toMatch(/if \(env\.LM_STAGING_RECEIPT_AI != 'disabled'\) \{\s*error\('LM_STAGING_RECEIPT_AI 只能是 disabled（Staging 不啟用收據 AI）'\)/);
-    const prdCfg = functionBody('void assertProductionConfig()');
-    expect(prdCfg).toMatch(/if \(env\.LM_PROD_RECEIPT_AI != 'enabled' && env\.LM_PROD_RECEIPT_AI != 'disabled'\) \{\s*error\(/);
-    expect(prdCfg).toMatch(/if \(env\.LM_PROD_RECEIPT_AI == 'enabled' && env\.LM_PROD_OPENAI_CREDENTIALS != 'lm-prod-openai-api-key'\) \{\s*error\(/);
-    // 啟用時金鑰檔只綁定在 deploy 那一次 sh；停用時執行同一段腳本、不綁定。
-    expect(deployCmd).toMatch(/if \(env\.LM_PROD_RECEIPT_AI == 'enabled'\) \{[^{}]*withCredentials\(\[file\(credentialsId: env\.LM_PROD_OPENAI_CREDENTIALS, variable: 'LM_PRD_OPENAI_KEY_FILE'\)\]\) \{\s*rc = sh\(label: 'lm-deploy prod deploy', returnStatus: true, script: script\)\s*\}\s*\} else \{\s*rc = sh\(label: 'lm-deploy prod deploy', returnStatus: true, script: script\)\s*\}/);
-    expect(deployCmd.match(/String script = productionSshPrelude\(\) \+ '''/g)?.length).toBe(1);
-    // 啟用時金鑰檔必須非空，否則不連線（exit 2）；stdin 第一行是開關，金鑰在最後一行。
-    inOrder(deployCmd, [
-      'rm -f reports/production/deploy.jsonl', 'case "${LM_PROD_RECEIPT_AI:-}" in', 'if [ ! -s "${LM_PRD_OPENAI_KEY_FILE:-}" ]; then', 'exit 2',
-      "printf 'LM_RECEIPT_AI=%s\\\\n' \"$LM_PROD_RECEIPT_AI\"", "printf 'CAMPING_DATABASE_NAME=%s\\\\n'", "printf 'CAMPING_SETUP_TOKEN=%s\\\\n'",
-      'if [ "$LM_PROD_RECEIPT_AI" = enabled ]; then', 'IFS= read -r k < "$LM_PRD_OPENAI_KEY_FILE" || [ -n "$k" ]',
-      "printf 'LM_OPENAI_API_KEY=%s\\\\n' \"$k\"", '} | lm_ssh deploy "$LM_IMAGE_DIGEST" --app-env-stdin > reports/production/deploy.jsonl',
+  test('Version Tag：v<版本> 不覆寫既有標籤；推送帳號只在 pushVersionTag 內（Req 16.6、16.10；plan.md D2）', () => {
+    inOrder(versionFn, [
+      "String tag = env.LM_RELEASE_VERSION ?: ''", 'isReleaseTag(tag)', "releaseRegistry('tag-get')",
+      'bun ci/resolve-digest.mjs step version-tag --digest "$LM_IMAGE_DIGEST"', 'if (rc == 4)',
+      "d.decision == 'create'", 'pushVersionTag()', 'bun ci/resolve-digest.mjs step version-tag-verify', "d.decision != 'noop'",
+      'image: [tags: [env.GIT_COMMIT_FULL, tag]]',
     ]);
-    // 建置摘要只有列舉值（不含金鑰、長度或前綴），在 classify 之後、拒絕判斷之前。
-    inOrder(deploy, [
-      'bun ci/production.mjs classify --exit "$LM_PRD_EXIT"', "Map c = readJsonFile('reports/production/deploy-verdict.json')",
-      "String receiptAi = (c.receiptAi == 'enabled' || c.receiptAi == 'disabled') ? c.receiptAi : '未執行'",
-      'appendSummary("收據 AI（Production）：${receiptAi}".toString())', "c.outcome == 'refused'",
+    expect(versionFn).toMatch(/if \(rc == 4\)\s*\{\s*appendSummary\([\s\S]*?error\(/);
+    inOrder(pushTag, [
+      'credentialsId: env.LM_REGISTRY_PUSH_CREDENTIALS', 'set +x', 'DOCKER_CONFIG="$LM_REL_DIR/docker-push"', 'trap ',
+      'crane tag "$LM_IMAGE_REPO@$LM_IMAGE_DIGEST" "$LM_RELEASE_VERSION"', 'crane digest "$LM_IMAGE_REPO:$LM_RELEASE_VERSION"',
     ]);
+    // Registry 唯讀操作只剩版本標籤查詢與 Production 部署前的簽章驗證。
+    expect(registryFn).toContain("if (!(action in ['tag-get', 'verify-prod']))");
+    inOrder(registryFn, [
+      'credentialsId: env.LM_REGISTRY_PULL_CREDENTIALS', 'file(credentialsId: env.LM_COSIGN_PUBLIC_KEY_CREDENTIALS', 'set +x',
+      'DOCKER_CONFIG="$LM_REL_DIR/docker-pull"', '--password-stdin "$registry"',
+      'digest "$LM_IMAGE_REPO:$LM_RELEASE_VERSION"', 'verify --key /keys/cosign.pub --insecure-ignore-tlog=true --output json "$ref"',
+    ]);
+    const runs = [...dockerRunsIn(registryFn), ...dockerRunsIn(pushTag)];
+    expect(runs.length).toBe(2);
+    for (const cmd of runs) {
+      for (const flag of ['--rm', '--user "$(id -u):$(id -g)"', '--read-only', '--cap-drop ALL', '--security-opt no-new-privileges:true', '--label "lm.ci.build=$BUILD_TAG"', '--label "lm.ci.release=$LM_REL_RUN"']) {
+        expect(cmd).toContain(flag);
+      }
+      expect(cmd).not.toMatch(/--privileged|docker\.sock/);
+      for (const m of cmd.matchAll(/--mount "([^"]+)"/g)) expect(m[1].endsWith(',readonly')).toBe(true);
+    }
+    for (const s of ["case 'version-tag'", "case 'version-tag-verify'"]) expect(resolveDigest).toContain(s);
   });
 
   test('Jenkinsfile 呼叫的 ci/production.mjs 子命令皆存在', () => {
     const used = [...new Set([...code.matchAll(/bun ci\/production\.mjs ([a-z-]+)/g)].map((m) => m[1]))].sort();
-    expect(used).toEqual(['active', 'approval-message', 'approval-record', 'classify', 'deployed-commit', 'destructive', 'observe', 'record', 'restore', 'rollback-needed', 'summary', 'tag-remote']);
+    expect(used).toEqual(['active', 'classify', 'observe', 'record', 'restore', 'rollback-needed', 'summary']);
     for (const s of used) expect(production).toContain(`case '${s}'`);
   });
 });
@@ -1707,7 +1367,7 @@ describe('收尾 post { always } 與 post { cleanup }（13.8；Req 2.6、15.4、
   const outcome = functionBody('Map finalOutcome(String result, String currentStage, String postFailure)');
 
   test('管線層級 post 位於 stages 之後；always 依序 finalize → 遮罩封存 → keepLog → 清除資源 → 通知；cleanup 最後 cleanWs()', () => {
-    expect(postStart).toBeGreaterThan(code.indexOf("stage('Production Deploy')"));
+    expect(postStart).toBeGreaterThan(code.indexOf("stage('Version Tag')"));
     expect(helpers).toBeGreaterThan(postStart);
     expect(post).toMatch(/^\n  post \{\n    always \{\n      script \{ pipelinePostAlways\(\) \}\n    \}\n    cleanup \{\n      script \{ pipelinePostCleanup\(\) \}\n    \}\n  \}\n\}\n$/);
     expect(code.indexOf('\nvoid pipelinePostAlways()')).toBeLessThan(helpers);
@@ -1750,8 +1410,8 @@ describe('收尾 post { always } 與 post { cleanup }（13.8；Req 2.6、15.4、
   });
 
   test('封存前遮罩：重新取得秘密 → ci/scrub.mjs → 只封存遮罩後副本；秘密集合不完整或無法完成時不封存（Req 15.4、21.9、23.1）', () => {
+    expect(code).not.toContain('LM_SCRUB_INCOMPLETE');
     inOrder(archive, [
-      "env.LM_SCRUB_INCOMPLETE == 'true'",
       'stageScrubSecrets()',
       'int rc = scrubReports()',
       'markRecordArchiveFailure()',
@@ -1780,18 +1440,18 @@ describe('收尾 post { always } 與 post { cleanup }（13.8；Req 2.6、15.4、
     expect(scrubRun).toContain("timeout(time: 10, unit: 'MINUTES')");
     // 遮罩後仍有檔案被扣留且原本成功：Build_Record 改記錄為失敗後重新遮罩，使封存的紀錄與最終結果一致。
     expect(functionBody('void markRecordArchiveFailure()')).toContain("[result: [status: 'FAILURE', firstFailedStage: 'Post Archive']]");
-    // image-digest.txt 的 fingerprint 仍只在產生時封存（Image Push 與 Resolve Digest 各一次）。
-    expect(code.match(/archiveArtifacts\(artifacts: 'reports\/image-digest\.txt', fingerprint: true\)/g)?.length).toBe(2);
+    // image-digest.txt 的 fingerprint 只在產生時（Image Push）封存一次。
+    expect(code.match(/archiveArtifacts\(artifacts: 'reports\/image-digest\.txt', fingerprint: true\)/g)?.length).toBe(1);
   });
 
   test('遮罩用秘密：只取本建置進入過的階段用過的憑證，Untrusted 只有拉取帳號與 Git 憑證；值只寫入 0600 檔（Req 2.4、15.2）', () => {
-    const entries = [...specs.matchAll(/\[id: env\.(LM_[A-Z_]+_CREDENTIALS), kind: '(password|secret|file|ssh)', trusted: (true|false), stages: \[([^\]]*)\]\]/g)];
-    // 14 個固定項目 + 收據 AI 啟用時才列入的 OpenAI 金鑰（Components 第 25.3 節）。
-    expect(entries.length).toBe(15);
-    // OpenAI 金鑰：file、只在 Production Deploy，且只在 LM_PROD_RECEIPT_AI == 'enabled' 時加入清單。
-    expect(entries.filter((m) => m[1] === 'LM_PROD_OPENAI_CREDENTIALS').map((m) => [m[2], m[3], m[4]])).toEqual([['file', 'true', "'Production Deploy'"]]);
-    expect(specs).toMatch(/if \(env\.LM_PROD_RECEIPT_AI == 'enabled'\) \{\s*all << \[id: env\.LM_PROD_OPENAI_CREDENTIALS, kind: 'file', trusted: true, stages: \['Production Deploy'\]\]\s*\}/);
-    expect(specs.slice(0, specs.indexOf('List out = []')).match(/LM_PROD_OPENAI_CREDENTIALS/g)?.length).toBe(1);
+    const entries = [...specs.matchAll(/\[id: env\.(LM_[A-Z_]+_CREDENTIALS), kind: '(password|secret|file|ssh|envfile)', trusted: (true|false), stages: \[([^\]]*)\]\]/g)];
+    expect(entries.length).toBe(11);
+    // Supabase 金鑰檔（KEY=VALUE）以 envfile 遮罩：每行的 VALUE 各為一個秘密（plan.md D13）。
+    expect(entries.filter((m) => m[2] === 'envfile').map((m) => [m[1], m[4]])).toEqual([
+      ['LM_STAGING_STACK_ENV_CREDENTIALS', "'Staging Deploy'"], ['LM_PROD_STACK_ENV_CREDENTIALS', "'Production Deploy'"],
+    ]);
+    expect(specs).not.toMatch(/OPENAI|_DB_CREDENTIALS|SETUP_TOKEN|LM_JENKINS_API_CREDENTIALS/);
     expect(entries.filter((m) => m[3] === 'false').map((m) => m[1])).toEqual(['LM_REGISTRY_PULL_CREDENTIALS', 'LM_GIT_CREDENTIALS']);
     // 每個 trusted 憑證都以其使用階段限制；階段名稱屬於 ci/stages.mjs。
     const known = new Set(Object.values(STAGE));
@@ -1807,6 +1467,10 @@ describe('收尾 post { always } 與 post { cleanup }（13.8；Req 2.6、15.4、
     expect(functionBody('void enterStage(String name)')).toContain('env.LM_STAGES_ENTERED');
     // 每種憑證各一個 withCredentials；變數只有 LM_SCRUB_VALUE／LM_SCRUB_FILE（與 LM_SCRUB_USER），ID 先驗證格式。
     expect(stageSecret.match(/withCredentials\(\[/g)?.length).toBe(4);
+    expect(stageSecret).toContain("String name = s.kind == 'envfile' ? \"cred-${id}.env\".toString() : \"cred-${id}\".toString()");
+    expect(stageSecret).toContain("s.kind == 'file' || s.kind == 'envfile'");
+    // ci/scrub.mjs 依 .env 副檔名逐行遮罩。
+    expect(readFileSync(resolve(root, 'ci/scrub.mjs'), 'utf8')).toContain("ent.name.endsWith('.env')");
     for (const s of ["string(credentialsId: id, variable: 'LM_SCRUB_VALUE')", "passwordVariable: 'LM_SCRUB_VALUE'", "file(credentialsId: id, variable: 'LM_SCRUB_FILE')", "keyFileVariable: 'LM_SCRUB_FILE'"]) {
       expect(stageSecret).toContain(s);
     }
@@ -1825,14 +1489,7 @@ describe('收尾 post { always } 與 post { cleanup }（13.8；Req 2.6、15.4、
     expect(functionBody('List stageScrubSecrets()')).toMatch(/catch \(Exception e\) \{[\s\S]*missing << \(s\.id/);
   });
 
-  test('各階段 Ephemeral_Database 的秘密在刪除前以 0600 保存到建置層級目錄；保存失敗時收尾不封存（fail closed）', () => {
-    const remove = functionBody('void removeEphemeralDbSecrets()');
-    inOrder(remove, [
-      'set +x', 'umask 077', '"$WORKSPACE_TMP"/lm-edb-*)', 'mkdir -p -m 0700 "$WORKSPACE_TMP/lm-scrub-secrets"',
-      'cp "$LM_EDB_DIR/scrub-secrets.json" "$WORKSPACE_TMP/lm-scrub-secrets/${LM_EDB_DIR##*/}.json"', 'rm -rf -- "$LM_EDB_DIR"',
-    ]);
-    expect(remove).toMatch(/if \(rc != 0\) \{\s*[^\n]*\n\s*env\.LM_SCRUB_INCOMPLETE = 'true'\s*error\(/);
-    // 秘密目錄在遮罩後與 cleanup 刪除。
+  test('秘密目錄在遮罩後與 cleanup 刪除', () => {
     expect(functionBody('void removeScrubSecrets()')).toContain('rm -rf -- "$WORKSPACE_TMP/lm-scrub-secrets"');
     expect(functionBody('void removePostWork()')).toContain('rm -rf -- "$WORKSPACE_TMP/lm-post" "$WORKSPACE_TMP/lm-scrub-secrets" "$WORKSPACE_TMP/lm-keep-log"');
   });
@@ -1853,20 +1510,25 @@ describe('收尾 post { always } 與 post { cleanup }（13.8；Req 2.6、15.4、
     ]) expect(resources).toContain(s);
     expect(code).not.toMatch(/docker (system|container|network|volume|image) prune/);
     expect(resources).toContain("timeout(time: 5, unit: 'MINUTES')");
+    // Rust 工具鏈映像只移除本建置的標籤；cargo 快取卷沒有建置 label，不會被移除（plan.md D3）。
+    expect(resources).toContain('if [ -n "${LM_RUST_TOOLCHAIN_IMAGE:-}" ]; then');
+    expect(resources).toContain('docker image rm "$LM_RUST_TOOLCHAIN_IMAGE" > /dev/null 2>&1 || true');
+    expect(functionBody('void buildRustToolchain()')).not.toMatch(/docker volume create[^\n]*--label/);
     // 映像層級 Smoke_Test 的容器與網路也以完整建置標籤標記（不使用截斷後的名稱）。
     const smoke = readFileSync(resolve(root, 'ci/scripts/image-smoke.sh'), 'utf8');
     expect(smoke).toContain('--label "lm.ci.build=${label}"');
   });
 
-  test('keepLog：只在 Release_Tag 建置通過觀察期後，以專用帳號經 0600 token 檔呼叫 ci/keep-log.mjs（Req 21.6）', () => {
+  test('keepLog：只在 main 建置通過觀察期後，以專用帳號經 0600 token 檔呼叫 ci/keep-log.mjs（Req 21.6）', () => {
     expect(/LM_JENKINS_RETENTION_CREDENTIALS = '([^']+)'/.exec(source)?.[1]).toBe('lm-jenkins-api-retention');
-    expect(keep).toContain("env.LM_TRUSTED != 'true' || env.LM_TRIGGER_KIND != 'release_tag' || env.LM_PRD_OBSERVED != 'true'");
+    expect(keep).toContain("env.LM_TRUSTED != 'true' || env.LM_TRIGGER_KIND != 'main_push' || env.LM_PRD_OBSERVED != 'true'");
     inOrder(keep, [
       'credentialsId: env.LM_JENKINS_RETENTION_CREDENTIALS', 'set +x', 'umask 077', 'mkdir -m 0700 "$LM_KEEP_DIR"',
       `printf '%s' "$LM_KEEP_TOKEN_SRC" > "$LM_KEEP_DIR/token"`, 'inBuildImage {', 'LM_JENKINS_API_TOKEN_FILE="$LM_KEEP_DIR/token"',
       'bun ci/keep-log.mjs "$@"', 'finally {', 'rm -rf -- "$LM_KEEP_DIR"',
     ]);
-    expect(keep).toContain('--main-record reports/release/main-build-record.json');
+    expect(keep).not.toContain('--main-record');
+    expect(keep).toContain('set -- --job "$JOB_NAME" --number "$BUILD_NUMBER" --trigger "$LM_TRIGGER_KIND" --observed "$LM_PRD_OBSERVED"');
     expect(code.match(/credentialsId: env\.LM_JENKINS_RETENTION_CREDENTIALS/g)?.length).toBe(1);
     // keepLog 失敗只寫入摘要，不改變建置結果（Production 已切換）。
     expect(keep).not.toMatch(/currentBuild\.result|error\(/);
@@ -1903,11 +1565,11 @@ describe('同主機部署值（design.md 第 18.6 節）', () => {
     }
   });
 
-  test('Smoke_Test 的 LAN origin 與 Database 名稱', () => {
+  test('Smoke_Test 的 LAN origin；Bun 版的 Database 名稱已移除（plan.md D13）', () => {
     expect(envValue(source, 'LM_STAGING_URL')).toBe('http://192.168.1.121:8081');
     expect(envValue(source, 'LM_PROD_URL')).toBe('http://192.168.1.121:8082');
-    expect(envValue(source, 'LM_STAGING_DB_NAME')).toBe('little_moments_staging');
-    expect(envValue(source, 'LM_PROD_DB_NAME')).toBe('little_moments');
+    expect(envValue(source, 'LM_STAGING_DB_NAME')).toBeUndefined();
+    expect(envValue(source, 'LM_PROD_DB_NAME')).toBeUndefined();
     // 兩個 URL 都通過 assertStagingConfig／assertProductionConfig 的格式檢查。
     const urlRe = /^https?:\/\/[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[1-9][0-9]{0,4})?$/;
     for (const name of ['LM_STAGING_URL', 'LM_PROD_URL']) expect(urlRe.test(envValue(source, name))).toBe(true);

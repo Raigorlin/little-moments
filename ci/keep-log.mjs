@@ -1,9 +1,10 @@
 // 正在 Production 執行之 Image_Digest 的建置保留（Requirement 21.6；Design「Jenkins 資料夾與 Job」）。
 //
-// Release_Tag 建置通過「上線後」觀察期後，該 Image_Digest 即在 Production 執行。本工具以 Jenkins API 對
-//   1. 本次 Release_Tag 建置（部署該 Image_Digest），以及
-//   2. 產生該 Image_Digest 的 main 建置（Resolve Digest 以 fingerprint 找回的 reports/release/main-build-record.json）
-// 設定 keepLog=true（「Keep this build forever」），使其 Build_Record 不受第 3 至 5 條保留期限刪除。
+// Rust 版（plan.md D1）：main 建置自己建置、部署並觀察該 Image_Digest；通過「上線後」觀察期後，以 Jenkins API 對
+// 本次 main 建置（release/little-moments/main，trigger main_push）設定 keepLog=true（「Keep this build forever」），
+// 使其 Build_Record 不受第 3 至 5 條保留期限刪除。
+// Bun 版的 Release_Tag 建置（trigger release_tag）另保留產生該 digest 的 main 建置（--main-record）；Jenkinsfile 已不再
+// 產生 Release_Tag 建置，該路徑保留給既有紀錄的相容性。
 // 被保留的建置之後仍屬 Deploy_Host 保留的最近 3 個可回滾 Image_Digest；移出保留集合時解除 keepLog
 // 需要 Run/Delete 權限（Jenkins 的 Run#keepLog(false) 檢查 DELETE），與 Req 21.12 的「非管理員不可刪除」衝突，
 // 因此不由 Pipeline 自動解除（由 Jenkins 管理員處理；程序記載於 ci/jenkins/README.md，Task 13.9）。
@@ -41,15 +42,20 @@ function validRef(job, number) {
 }
 
 /**
- * 依本次建置結果決定要保留的建置。只有 Release_Tag 建置且觀察期已通過（Image_Digest 已在 Production 執行）才保留。
- * main 建置只在 Build_Record 結構相符（release/little-moments/main、main_push、image.digest 與本次相同）時列入。
+ * 依本次建置結果決定要保留的建置。只有部署至 Production 的建置（main_push，或舊的 release_tag）且觀察期已通過
+ * （Image_Digest 已在 Production 執行）才保留。main_push 建置只保留本建置（必須是 release/little-moments/main）。
+ * release_tag 的 main 建置只在 Build_Record 結構相符（release/little-moments/main、main_push、image.digest 與本次相同）時列入。
  * @returns {{targets: {job:string, number:number, role:'release'|'main'}[], reason?: string}}
  */
 export function keepLogTargets({ job, number, trigger, observed, digest, mainRecord } = {}) {
-  if (trigger !== 'release_tag') return { targets: [], reason: '不是 Release_Tag 建置' };
+  if (trigger !== 'main_push' && trigger !== 'release_tag') return { targets: [], reason: '不是部署至 Production 的建置' };
   if (observed !== true) return { targets: [], reason: 'Image_Digest 未通過觀察期（不在 Production 執行）' };
   const n = Number(number);
   if (!validRef(job, n)) throw new TypeError('job 或建置編號無效');
+  if (trigger === 'main_push') {
+    if (job !== MAIN_JOB) throw new TypeError('main_push 建置必須是 release/little-moments/main');
+    return { targets: [{ job, number: n, role: 'main' }] };
+  }
   const targets = [{ job, number: n, role: 'release' }];
   const b = mainRecord?.build;
   const mainNumber = Number(b?.number);

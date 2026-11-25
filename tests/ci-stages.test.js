@@ -1,34 +1,23 @@
 // Feature: jenkins-cicd-deploy, Property 1: 階段規劃只對 Trusted_Ref 包含推送與部署
-// **Validates: Requirements 1.2, 1.3, 1.4, 1.8, 2.8, 3.6, 7.1**
+// **Validates: Requirements 1.2, 1.3, 1.8, 2.8, 3.6；plan.md D1**
 import { describe, expect, test } from 'bun:test';
 import fc from 'fast-check';
 
 import {
-  STAGE, TRUSTED_ONLY_STAGES, classifyTrigger, planStages, triggerFromJenkinsEnv,
+  STAGE, TAG_REJECT, TRIGGER_KINDS, TRUSTED_ONLY_STAGES, classifyTrigger, planStages, triggerFromJenkinsEnv,
 } from '../ci/stages.mjs';
 
 const RUNS = { numRuns: 200 };
 
-// 獨立 oracle：Release_Tag 是否有效（v<major>.<minor>.<patch>，0..999999、無前導零）。
-function validTag(s) {
-  const m = /^v(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$/.exec(s);
-  return m !== null;
-}
+const TRICKY_BRANCHES = ['main', 'main2', 'Main', 'MAIN', 'feature/main', 'main/x', 'mainline', 'release/main', 'dev', 'rust', 'v1.2.3'];
+const TRICKY_TAGS = ['v1.2.3', 'v2.0.0', 'v0.0.0', 'v1.2.3-rc.1', 'V1.2.3', 'main', ''];
 
-const TRICKY_BRANCHES = ['main', 'main2', 'Main', 'MAIN', 'feature/main', 'main/x', 'mainline', 'release/main', 'dev', 'v1.2.3'];
-const TRICKY_TAGS = ['v1.2.3', 'v0.0.0', 'v999999.0.1', 'v1.2.3-rc.1', 'V1.2.3', 'v01.2.3', 'v1.2', 'v1.2.3.4', '1.2.3', 'v1.2.3 ', 'v1000000.0.0', 'main', ''];
-
-const segment = fc.oneof(fc.constant('0'), fc.integer({ min: 1, max: 999999 }).map(String), fc.constantFrom('01', '00', '1000000', 'x'));
-const tagArb = fc.oneof(
-  fc.constantFrom(...TRICKY_TAGS),
-  fc.tuple(segment, segment, segment, fc.constantFrom('', '-rc.1', '+b')).map(([a, b, c, s]) => `v${a}.${b}.${c}${s}`),
-  fc.string({ maxLength: 20 }),
-);
 const branchArb = fc.oneof(
   fc.constantFrom(...TRICKY_BRANCHES),
   fc.stringMatching(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,30}$/),
   fc.string({ maxLength: 20 }),
 );
+const tagArb = fc.oneof(fc.constantFrom(...TRICKY_TAGS), fc.string({ maxLength: 20 }));
 
 const triggerArb = fc.oneof(
   fc.record({ event: fc.constant('pull_request'), ref: branchArb, isPullRequest: fc.boolean(), fork: fc.boolean(), manual: fc.boolean() }),
@@ -37,10 +26,10 @@ const triggerArb = fc.oneof(
   fc.record({ event: fc.constantFrom('unknown', 'release', undefined), ref: branchArb, fork: fc.boolean(), manual: fc.boolean() }),
 );
 
-// 預期種類（獨立於實作計算）。
+// 預期種類（獨立於實作計算）：PR 優先；Tag 一律拒絕（plan.md D1）；main 推送為 main_push。
 function expectedKind(t) {
   if (t.event === 'pull_request' || t.isPullRequest === true) return 'pull_request';
-  if (t.event === 'tag') return validTag(t.ref) ? 'release_tag' : null;
+  if (t.event === 'tag') return null;
   if (t.event === 'push') {
     if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/.test(t.ref) || t.ref.includes('..')) return null;
     return t.ref === 'main' ? 'main_push' : 'branch_push';
@@ -48,9 +37,9 @@ function expectedKind(t) {
   return null;
 }
 
-const QUALITY_ORDER = [STAGE.INSTALL, STAGE.BUILD, STAGE.UNIT, STAGE.BROWSER, STAGE.SECURITY];
-const TEST_STAGES = [STAGE.UNIT, STAGE.BROWSER, STAGE.SECURITY, STAGE.MIGRATION_COMPAT, STAGE.DAST];
-const idx = (stages, s) => stages.indexOf(s);
+const QUALITY_ORDER = [STAGE.TOOLCHAIN, STAGE.INSTALL, STAGE.BUILD, STAGE.UNIT, STAGE.SECURITY];
+const IMAGE_ORDER = [STAGE.IMAGE_BUILD, STAGE.IMAGE_SCAN, STAGE.SBOM, STAGE.IMAGE_PUSH, STAGE.IMAGE_SIGN];
+const DEPLOY_STAGES = [...IMAGE_ORDER, STAGE.STAGING, STAGE.PRODUCTION, STAGE.VERSION_TAG];
 
 describe('Property 1: 階段規劃只對 Trusted_Ref 包含推送與部署', () => {
   test('信任分類與 Trusted_Ref 專屬階段（不受 manual／fork 影響）', () => {
@@ -59,62 +48,53 @@ describe('Property 1: 階段規劃只對 Trusted_Ref 包含推送與部署', () 
       const kind = expectedKind(t);
       expect(plan.kind).toBe(kind);
       expect(classifyTrigger(t).kind).toBe(kind);
-      const trusted = kind === 'main_push' || kind === 'release_tag';
+      const trusted = kind === 'main_push';
       expect(plan.trusted).toBe(trusted);
       const hasTrustedOnly = plan.stages.some((s) => TRUSTED_ONLY_STAGES.includes(s));
       expect(hasTrustedOnly).toBe(trusted);
-      // 手動重跑不改變結果（Req 2.8）
+      // 手動重跑或 fork 不改變結果（Req 2.8）
       expect(planStages({ ...t, manual: !t.manual }).stages).toEqual(plan.stages);
       expect(planStages({ ...t, fork: !t.fork }).stages).toEqual(plan.stages);
-      // 階段不重複
       expect(new Set(plan.stages).size).toBe(plan.stages.length);
     }), RUNS);
   });
 
-  test('各觸發種類的階段順序', () => {
+  test('各觸發種類的階段順序：分支與 PR 只有品質階段；main 為品質 → 映像 → Staging → Production → Version Tag', () => {
     fc.assert(fc.property(triggerArb, (t) => {
-      const { kind, stages, reject } = planStages(t);
+      const { kind, stages, reject, gates } = planStages(t);
       if (kind === null) {
         expect(typeof reject).toBe('string');
         expect(stages).toEqual([STAGE.INIT, STAGE.NOTIFY]);
+        expect(gates).toEqual([]);
         return;
       }
       expect(reject).toBeNull();
-      expect(stages[0]).toBe(STAGE.INIT);
-      expect(stages.at(-1)).toBe(STAGE.NOTIFY);
-      // Install → Build → Unit → Browser → Security 依序（Req 1.2、3.6）
-      const q = QUALITY_ORDER.map((s) => idx(stages, s));
-      expect(q.every((i) => i >= 0)).toBe(true);
-      for (let i = 1; i < q.length; i++) expect(q[i]).toBeGreaterThan(q[i - 1]);
-      // Build 先於任何測試階段（Req 3.6）
-      for (const s of TEST_STAGES) if (stages.includes(s)) expect(idx(stages, s)).toBeGreaterThan(idx(stages, STAGE.BUILD));
-
       if (kind === 'pull_request' || kind === 'branch_push') {
-        expect(stages).toEqual([STAGE.INIT, STAGE.TOOLCHAIN, ...QUALITY_ORDER, STAGE.NOTIFY]);
-        expect(stages).not.toContain(STAGE.DAST); // Req 7.1
-      }
-      if (kind === 'main_push') {
-        for (const s of [STAGE.DAST, STAGE.IMAGE_BUILD, STAGE.IMAGE_PUSH, STAGE.STAGING]) expect(stages).toContain(s);
-        expect(stages).not.toContain(STAGE.APPROVAL);
-        expect(stages).not.toContain(STAGE.PRODUCTION);
-        const order = [STAGE.SECURITY, STAGE.DAST, STAGE.IMAGE_BUILD, STAGE.IMAGE_PUSH, STAGE.IMAGE_SIGN, STAGE.STAGING].map((s) => idx(stages, s));
-        for (let i = 1; i < order.length; i++) expect(order[i]).toBeGreaterThan(order[i - 1]);
-      }
-      if (kind === 'release_tag') {
-        expect(stages).not.toContain(STAGE.IMAGE_BUILD); // 不重新建置（Req 1.4）
-        expect(stages).not.toContain(STAGE.IMAGE_PUSH);
-        expect(stages).toContain(STAGE.DAST);
-        const tv = idx(stages, STAGE.TAG_VERIFY);
-        expect(tv).toBeGreaterThan(0);
-        for (const s of TRUSTED_ONLY_STAGES) if (stages.includes(s)) expect(idx(stages, s)).toBeGreaterThan(tv);
-        expect(idx(stages, STAGE.PRODUCTION)).toBeGreaterThan(idx(stages, STAGE.APPROVAL));
-        expect(idx(stages, STAGE.APPROVAL)).toBeGreaterThan(idx(stages, STAGE.RESOLVE_DIGEST));
+        expect(stages).toEqual([STAGE.INIT, ...QUALITY_ORDER, STAGE.NOTIFY]);
+        expect(gates).toEqual(['QA', '安全']);
+        for (const s of DEPLOY_STAGES) expect(stages).not.toContain(s);
+      } else {
+        expect(kind).toBe('main_push');
+        expect(stages).toEqual([STAGE.INIT, ...QUALITY_ORDER, ...IMAGE_ORDER, STAGE.STAGING, STAGE.PRODUCTION, STAGE.VERSION_TAG, STAGE.NOTIFY]);
+        expect(gates).toEqual(['QA', '安全', '映像', 'Staging', '上線後']);
       }
     }), RUNS);
   });
 
+  test('Tag 事件一律以固定訊息拒絕（plan.md D1），且不在觸發種類內', () => {
+    fc.assert(fc.property(tagArb, fc.boolean(), (ref, manual) => {
+      const plan = planStages({ event: 'tag', ref, manual });
+      expect(plan).toMatchObject({ kind: null, trusted: false, reject: TAG_REJECT });
+    }), RUNS);
+    expect(TAG_REJECT).toBe('Release_Tag 不再觸發建置；發布由 main 的推送執行');
+    expect(TRIGGER_KINDS).toEqual(['pull_request', 'main_push', 'branch_push']);
+    expect(Object.values(STAGE)).not.toContain('Approval');
+    expect(Object.values(STAGE)).not.toContain('Tag Verify');
+    expect(Object.values(STAGE)).not.toContain('Resolve Digest');
+  });
+
   test('triggerFromJenkinsEnv 對應：CHANGE_ID 優先於 TAG_NAME 與 BRANCH_NAME', () => {
-    const opt = fc.option(fc.oneof(fc.constantFrom('', ' ', 'main', 'v1.2.3', '12'), fc.string({ maxLength: 10 })), { nil: undefined });
+    const opt = fc.option(fc.oneof(fc.constantFrom('', ' ', 'main', 'rust', 'v1.2.3', '12'), fc.string({ maxLength: 10 })), { nil: undefined });
     fc.assert(fc.property(
       fc.record({ CHANGE_ID: opt, CHANGE_FORK: opt, TAG_NAME: opt, BRANCH_NAME: opt }), fc.boolean(),
       (env, manual) => {
@@ -127,6 +107,7 @@ describe('Property 1: 階段規劃只對 Trusted_Ref 包含推送與部署', () 
           expect(planStages(t).trusted).toBe(false);
         } else if (ne(env.TAG_NAME)) {
           expect(t).toMatchObject({ event: 'tag', ref: env.TAG_NAME });
+          expect(planStages(t).reject).toBe(TAG_REJECT);
         } else if (ne(env.BRANCH_NAME)) {
           expect(t).toMatchObject({ event: 'push', ref: env.BRANCH_NAME });
         } else {
@@ -137,7 +118,10 @@ describe('Property 1: 階段規劃只對 Trusted_Ref 包含推送與部署', () 
     ), RUNS);
   });
 
-  test('範例：PR 指向 main（含 fork、手動重跑）仍為不可信', () => {
+  test('範例：rust 分支只跑 CI；PR 指向 main（含 fork、手動重跑）仍為不可信；main 推送才發布', () => {
+    const rust = planStages(triggerFromJenkinsEnv({ BRANCH_NAME: 'rust' }, { manual: true }));
+    expect(rust).toMatchObject({ kind: 'branch_push', trusted: false, reject: null });
+    expect(rust.stages).toEqual([STAGE.INIT, ...QUALITY_ORDER, STAGE.NOTIFY]);
     for (const manual of [false, true]) {
       const t = triggerFromJenkinsEnv({ CHANGE_ID: '42', BRANCH_NAME: 'main', CHANGE_FORK: 'someone' }, { manual });
       const plan = planStages(t);
@@ -146,9 +130,8 @@ describe('Property 1: 階段規劃只對 Trusted_Ref 包含推送與部署', () 
     }
     expect(planStages({ event: 'push', ref: 'main2' }).kind).toBe('branch_push');
     expect(planStages({ event: 'push', ref: 'feature/main' }).kind).toBe('branch_push');
-    expect(planStages({ event: 'tag', ref: 'v1.2.3-rc.1' }).kind).toBeNull();
-    expect(planStages({ event: 'tag', ref: 'V1.2.3' }).kind).toBeNull();
-    expect(planStages({ event: 'tag', ref: 'v01.2.3' }).kind).toBeNull();
-    expect(planStages({ event: 'tag', ref: 'v1.2.3' }).kind).toBe('release_tag');
+    const main = planStages({ event: 'push', ref: 'main' }).stages;
+    expect(main.indexOf(STAGE.PRODUCTION)).toBe(main.indexOf(STAGE.STAGING) + 1);
+    expect(main.indexOf(STAGE.VERSION_TAG)).toBe(main.indexOf(STAGE.PRODUCTION) + 1);
   });
 });
