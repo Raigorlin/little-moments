@@ -1,0 +1,28 @@
+/* 管理後台（Admin_Page，design 5.6；需求 34.9、32.8）在現行樣式之外新增的規則：公開註冊的開關、帳號的搜尋欄與
+   操作紀錄的換頁列。其他區塊沿用 accounts.css 的 .acct-admin、.acct-stats、.acct-user-row、.acct-audit。
+   顏色只引用 styles.css 既有的變數，深色主題因此自動適用；不定義新的變數。 */
+
+/* 開關、標籤與狀態文字：開關與標籤在同一行，狀態文字在下一行 */
+.admin-switch-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px}
+.admin-switch-row>label{display:inline-flex;align-items:center;min-height:44px;font-weight:700;cursor:pointer}
+
+/* <input type="checkbox" role="switch">：可點選的範圍 68×44px；透明的 6px 邊框之內是 56×32px 的軌道，
+   以 inset 陰影畫出 2px 的 --ink 邊線（與背景的對比至少 3:1），圓點在左（關）或右（開）。
+   開啟時軌道與圓點的顏色對調，不只以位置表示狀態。styles.css 的 input[type=checkbox] 設定 21×21px，
+   所以這裡以 input.admin-switch（同樣的權重、較晚載入）取代。 */
+input.admin-switch{appearance:none;-webkit-appearance:none;box-sizing:border-box;flex:none;width:68px;height:44px;margin:0;border:6px solid transparent;border-radius:999px;background:radial-gradient(circle at 16px 50%,var(--ink) 0 9px,transparent 10px) padding-box,var(--soft) padding-box;box-shadow:inset 0 0 0 2px var(--ink);cursor:pointer}
+input.admin-switch:checked{background:radial-gradient(circle at 40px 50%,var(--card) 0 9px,transparent 10px) padding-box,var(--ink) padding-box}
+input.admin-switch:focus-visible{outline:3px solid var(--focus);outline-offset:0}
+/* 送出期間以 aria-disabled 停用（不用 disabled，焦點留在開關上） */
+input.admin-switch[aria-disabled=true]{cursor:wait;opacity:.6}
+.admin-switch-state{flex-basis:100%;margin:0;color:var(--muted)}
+
+/* 帳號的搜尋欄：欄位本身沿用 .field input */
+.admin-search{max-width:420px;margin-bottom:6px}
+
+/* 操作紀錄的換頁列：「上一頁」、「第 N / M 頁」、「下一頁」 */
+.admin-pager{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px 16px;margin-top:14px}
+.admin-pager>.button{min-height:44px}
+/* 讀取期間（aria-disabled）與 styles.css 的 button:disabled 相同的淡化 */
+.admin-pager>.button[aria-disabled=true]{cursor:wait;opacity:.48}
+.admin-pager>span{font-variant-numeric:tabular-nums}

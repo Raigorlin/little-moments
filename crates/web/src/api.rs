@@ -13,12 +13,16 @@ use futures::future::{select, Either};
 use gloo_net::http::Request;
 use gloo_timers::future::TimeoutFuture;
 use leptos_router::location::Url;
+use lm_core::admin::{
+    AdminSettingsResponse, AdminUserDto, AdminUsersResponse, AuditPage, Policy,
+    ResetPasswordRequest, UpdateUserRequest,
+};
 use lm_core::api::{
     ApiError, ChangesResponse, CommandRequest, CommandResponse, CreateTripRequest, HeadResponse,
     InviteCreated, InviteListItem, InvitePreview, JoinRequest, JoinResponse, LoginRequest,
     ProfileDto, RefreshRequest, SessionDto, SignupRequest, SignupResponse, TripSummary,
 };
-use lm_core::ids::TripId;
+use lm_core::ids::{TripId, UserId};
 use lm_core::model::Seq;
 use lm_core::sync::Snapshot;
 use serde::de::{DeserializeOwned, IgnoredAny};
@@ -115,6 +119,7 @@ impl ApiFailure {
 enum Method {
     Get,
     Post,
+    Patch,
     Delete,
 }
 
@@ -130,6 +135,7 @@ async fn fetch(
     let mut builder = match method {
         Method::Get => Request::get(&url),
         Method::Post => Request::post(&url),
+        Method::Patch => Request::patch(&url),
         Method::Delete => Request::delete(&url),
     };
     if let Some(token) = token {
@@ -413,5 +419,92 @@ impl Api {
             Some(to_json(request)),
         )
         .await
+    }
+
+    // ── Admin_Endpoint（需求 34–41，design 5.3）。寫入的請求每次送出最多等待 REQUEST_TIMEOUT，逾時與網路錯誤
+    // 相同；重送同樣的內容得到同樣的結果（design 5.4）。
+
+    /// `GET /api/admin/users`
+    pub async fn admin_users(&self) -> Result<AdminUsersResponse, ApiFailure> {
+        self.authed(Method::Get, "/admin/users", None).await
+    }
+
+    /// `PATCH /api/admin/users/{id}`：只送出有變更的欄位（需求 39.2）。
+    pub async fn update_user(
+        &self,
+        user: UserId,
+        request: &UpdateUserRequest,
+    ) -> Result<AdminUserDto, ApiFailure> {
+        self.authed_within(
+            Method::Patch,
+            &format!("/admin/users/{user}"),
+            Some(to_json(request)),
+            Some(REQUEST_TIMEOUT),
+        )
+        .await
+    }
+
+    /// `POST /api/admin/users/{id}/password`。新密碼只在請求內容中（需求 36.7）。
+    pub async fn reset_password(
+        &self,
+        user: UserId,
+        request: &ResetPasswordRequest,
+    ) -> Result<(), ApiFailure> {
+        self.authed_within::<IgnoredAny>(
+            Method::Post,
+            &format!("/admin/users/{user}/password"),
+            Some(to_json(request)),
+            Some(REQUEST_TIMEOUT),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// `POST /api/admin/users/{id}/disable`
+    pub async fn disable_user(&self, user: UserId) -> Result<AdminUserDto, ApiFailure> {
+        self.authed_within(
+            Method::Post,
+            &format!("/admin/users/{user}/disable"),
+            None,
+            Some(REQUEST_TIMEOUT),
+        )
+        .await
+    }
+
+    /// `POST /api/admin/users/{id}/enable`
+    pub async fn enable_user(&self, user: UserId) -> Result<AdminUserDto, ApiFailure> {
+        self.authed_within(
+            Method::Post,
+            &format!("/admin/users/{user}/enable"),
+            None,
+            Some(REQUEST_TIMEOUT),
+        )
+        .await
+    }
+
+    /// `GET /api/admin/settings`
+    pub async fn admin_settings(&self) -> Result<AdminSettingsResponse, ApiFailure> {
+        self.authed(Method::Get, "/admin/settings", None).await
+    }
+
+    /// `PATCH /api/admin/settings`，內容為 `{"public_signup": "open"|"closed"}`（需求 37.4）。
+    pub async fn set_public_signup(
+        &self,
+        policy: Policy,
+    ) -> Result<AdminSettingsResponse, ApiFailure> {
+        let body = serde_json::json!({ "public_signup": policy.as_str() }).to_string();
+        self.authed_within(
+            Method::Patch,
+            "/admin/settings",
+            Some(body),
+            Some(REQUEST_TIMEOUT),
+        )
+        .await
+    }
+
+    /// `GET /api/admin/audit?page=N`
+    pub async fn admin_audit(&self, page: u32) -> Result<AuditPage, ApiFailure> {
+        self.authed(Method::Get, &format!("/admin/audit?page={page}"), None)
+            .await
     }
 }

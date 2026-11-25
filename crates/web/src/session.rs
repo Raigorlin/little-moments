@@ -196,6 +196,26 @@ impl Auth {
         self.adopt(session, true);
     }
 
+    /// 以 `GET /api/me` 的結果更新目前 Session 的帳號（Admin 修改自己的顯示名稱之後，需求 39.6）：是同一個 Account
+    /// 時取代 Session 的 `user`，token 不變，並寫入 `lm.session.v1`，使頁首的帳號選單與其他分頁都採用新的名稱
+    /// （design 5.6）。`lm.session.v1` 中是同一個 Account 時以它為基礎，不以這個分頁較舊的 token 覆寫其他分頁換發的結果。
+    pub fn update_profile(&self, profile: ProfileDto) {
+        let Some(mut session) = self.session.get_untracked() else {
+            return;
+        };
+        if session.user.id != profile.id || session.user == profile {
+            return;
+        }
+        if let Some(mut stored) = store::read().filter(|stored| stored.user.id == profile.id) {
+            stored.user = profile.clone();
+            store::write(&stored);
+        }
+        session.user = profile.clone();
+        self.state
+            .update_value(|state| state.last_user = Some(profile));
+        self.session.set(Some(session));
+    }
+
     /// 登記同步引擎的通知（`TripSyncs`，任務 20.2；Trip_Channel 由任務 20.4 接上）。
     pub fn add_hooks(&self, hooks: SessionHooks) -> HookId {
         let hooks = Rc::new(hooks);

@@ -17,10 +17,12 @@ use leptos_router::{path, NavigateOptions};
 use lm_core::account::check_username;
 use lm_core::api::ProfileDto;
 use lm_core::ids::TripId;
+use lm_core::model::Role;
 use uuid::Uuid;
 use wasm_bindgen::JsCast;
 
 use crate::art::{self, Illustration};
+use crate::pages::admin::AdminPage;
 use crate::pages::auth::{AuthMode, AuthPage};
 use crate::pages::departure::DeparturePage;
 use crate::pages::home::HomePage;
@@ -57,6 +59,8 @@ pub enum Screen {
     Trip { owner: String, trip: TripId },
     /// `/<帳號名稱>/trips/<id>/go`（Departure_Page）
     Departure { owner: String, trip: TripId },
+    /// `/admin`（Admin_Page，需求 34.3–34.5）
+    Admin,
     /// 不對應任何畫面（需求 32.11）
     NotFound,
 }
@@ -75,6 +79,7 @@ impl Screen {
         match segments.as_slice() {
             ["login"] => Self::Login,
             ["register"] => Self::Register,
+            ["admin"] => Self::Admin,
             ["invite", token] if !token.is_empty() => Self::Invite {
                 token: (*token).to_owned(),
             },
@@ -116,8 +121,8 @@ fn is_invite_token(token: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// 這個值是不是 In_App_Path：Invite_Page、Home_Page、Trip_Page（可以帶 `?tab=<分頁>`）或 Departure_Page 的路徑，
-/// 帳號名稱符合需求 3.2 的格式（也不是保留名稱）。每一段都只允許固定的字元，所以符合的值只以一個 `/` 開頭，
+/// 這個值是不是 In_App_Path：Invite_Page、Home_Page、Trip_Page（可以帶 `?tab=<分頁>`）、Departure_Page 或 Admin_Page
+/// （`/admin`，需求 34.4）的路徑，帳號名稱符合需求 3.2 的格式（也不是保留名稱）。每一段都只允許固定的字元，所以符合的值只以一個 `/` 開頭，
 /// 不含 scheme、主機、`//`、`\`、`#` 或百分比編碼。
 pub fn is_in_app_path(value: &str) -> bool {
     let (path, query) = match value.split_once('?') {
@@ -129,6 +134,7 @@ pub fn is_in_app_path(value: &str) -> bool {
     };
     let segments: Vec<&str> = rest.split('/').collect();
     match (segments.as_slice(), query) {
+        (["admin"], None) => true,
         (["invite", token], None) => is_invite_token(token),
         ([owner, "home"], None) => check_username(owner).is_ok(),
         ([owner, "trips", id], query) => {
@@ -160,10 +166,11 @@ pub fn login_destination(next: Option<&str>, username: &str) -> String {
     }
 }
 
-/// In_App_Path 中的帳號名稱；Invite_Page 沒有帳號名稱（`invite` 是保留名稱，不會是帳號名稱）。
+/// In_App_Path 中的帳號名稱；Invite_Page 與 Admin_Page 沒有帳號名稱（`invite` 與 `admin` 是保留名稱，不會是帳號名稱），
+/// 所以登入後可以回到 `/admin`（需求 34.4、4.10）。
 fn path_owner(path: &str) -> Option<&str> {
     let owner = path.strip_prefix('/')?.split(['/', '?']).next()?;
-    (owner != "invite").then_some(owner)
+    (owner != "invite" && owner != "admin").then_some(owner)
 }
 
 /// 帳號的 Home_Page。帳號名稱只有小寫英文字母、數字與連字號（需求 3.2），不需要編碼。
@@ -194,11 +201,13 @@ fn current_path(url: &Url) -> String {
     }
 }
 
-/// 訊息頁「沒有權限查看這個頁面」是哪一種頁面的網址（需求 32.10）。
+/// 訊息頁「沒有權限查看這個頁面」是哪一種頁面的網址（需求 32.10、34.5）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OthersPage {
     Home,
     Trip,
+    /// Session 的角色不是 admin 時的 Admin_Page
+    Admin,
 }
 
 impl OthersPage {
@@ -206,9 +215,15 @@ impl OthersPage {
         match self {
             Self::Home => "這是別人的旅行首頁。每個帳號只能看到自己的首頁，請回到你自己的首頁。",
             Self::Trip => "旅行網址必須使用你自己的帳號名稱。請從你的首頁打開旅行。",
+            Self::Admin => ADMIN_ONLY,
         }
     }
 }
+
+/// Admin_Page 的訊息頁說明（需求 34.5）；Admin_Endpoint 回應 403 `admin_required` 時 Admin_Page 也顯示它。
+pub const ADMIN_ONLY: &str = "管理後台只開放給管理員。";
+/// 訊息頁「沒有權限查看這個頁面」的標題（需求 32.10、34.5）。
+pub const FORBIDDEN_TITLE: &str = "沒有權限查看這個頁面";
 
 /// 依畫面與登入狀態決定要顯示的內容。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -220,6 +235,7 @@ enum Outcome {
     Home,
     Trip(TripId),
     Departure(TripId),
+    Admin,
     Forbidden(OthersPage),
     NotFound,
 }
@@ -249,6 +265,12 @@ fn decide(screen: Screen, user: Option<&ProfileDto>, next: Option<&str>, current
         (Screen::Home { .. }, Some(_)) => Outcome::Home,
         (Screen::Trip { trip, .. }, Some(_)) => Outcome::Trip(trip),
         (Screen::Departure { trip, .. }, Some(_)) => Outcome::Departure(trip),
+        // 沒有 Session：不送出任何 Admin_Endpoint 的請求，登入後回到 /admin（需求 34.4）
+        (Screen::Admin, None) => Outcome::Redirect(login_path("/admin")),
+        (Screen::Admin, Some(user)) if user.role != Role::Admin => {
+            Outcome::Forbidden(OthersPage::Admin)
+        }
+        (Screen::Admin, Some(_)) => Outcome::Admin,
         (Screen::NotFound, _) => Outcome::NotFound,
     }
 }
@@ -356,8 +378,9 @@ fn screen_view(outcome: Outcome) -> AnyView {
         Outcome::Home => view! { <HomePage /> }.into_any(),
         Outcome::Trip(trip) => view! { <TripPage trip /> }.into_any(),
         Outcome::Departure(trip) => view! { <DeparturePage trip /> }.into_any(),
+        Outcome::Admin => view! { <AdminPage /> }.into_any(),
         Outcome::Forbidden(page) => view! {
-            <MessagePage title="沒有權限查看這個頁面" body=page.body()>
+            <MessagePage title=FORBIDDEN_TITLE body=page.body()>
                 <HomeLink />
             </MessagePage>
         }
@@ -382,7 +405,7 @@ pub enum HeaderKind {
 }
 
 /// 帳號頁的外框（`shell()`）：頁首、`<main id="main" class="acct-page">` 與頁尾。`current` 為 `"home"` 時，
-/// 帳號選單中的「我的旅行」標示為目前的頁面。`class` 取代 `<main>` 的 `acct-page`（Trip_Page 沿用 `trip()` 的
+/// 帳號選單中的「我的旅行」標示為目前的頁面，為 `"admin"` 時是「管理後台」（需求 34.3）。`class` 取代 `<main>` 的 `acct-page`（Trip_Page 沿用 `trip()` 的
 /// `page`）；`header` 選擇頁首（預設為帳號頁的頁首）；`top` 放在頁首與 `<main>` 之間（現行 `.save-warning` 的位置），
 /// 例如 Trip_Page 頂端的連線與儲存提示。
 #[component]
@@ -406,8 +429,7 @@ pub fn Shell(
     }
 }
 
-/// 頁首（`header()`）：品牌標誌、主題按鈕與帳號選單。第一版沒有管理後台（需求 32.7、design「第一版的範圍」）。
-/// 主題按鈕在未登入時也顯示，同 Bun。
+/// 頁首（`header()`）：品牌標誌、主題按鈕與帳號選單。主題按鈕在未登入時也顯示，同 Bun。
 #[component]
 fn Header(current: &'static str) -> impl IntoView {
     let user = use_auth().user();
@@ -441,8 +463,8 @@ fn Header(current: &'static str) -> impl IntoView {
     }
 }
 
-/// Trip_Page 的頁首（現行 `accountHeader()`）：品牌標誌、主題按鈕與帳號選單。LM_Web 沒有 `/admin`，
-/// 所以沒有 `.header-admin`。
+/// Trip_Page 的頁首（現行 `accountHeader()`）：品牌標誌、主題按鈕與帳號選單。管理後台的連結只放在帳號頁的
+/// 帳號選單（需求 34.3），這裡維持與 schedule 分頁相同的結構，所以沒有 `.header-admin`。
 #[component]
 fn TripHeader() -> impl IntoView {
     let user = use_auth().user();
@@ -534,7 +556,7 @@ fn initial_of(name: &str) -> String {
     name.trim().chars().next().unwrap_or('?').to_string()
 }
 
-/// 已登入時的帳號選單：窄畫面的開合按鈕、「我的旅行」、帳號名稱與登出。
+/// 已登入時的帳號選單：窄畫面的開合按鈕、「我的旅行」、角色是 admin 時的「管理後台」（需求 34.3）、帳號名稱與登出。
 #[component]
 fn AccountMenu(user: ProfileDto, current: &'static str) -> impl IntoView {
     let auth = use_auth();
@@ -561,6 +583,18 @@ fn AccountMenu(user: ProfileDto, current: &'static str) -> impl IntoView {
     on_cleanup(move || listener.remove());
     let initial = initial_of(&user.display_name);
     let home = home_path(&user.username);
+    // 只是介面：Admin_Endpoint 每個請求都由 LM_Server 以當下的角色判斷（需求 34.1）
+    let admin_link = (user.role == Role::Admin).then(|| {
+        view! {
+            <a
+                class="acct-admin-link"
+                href="/admin"
+                aria-current=(current == "admin").then_some("page")
+            >
+                "管理後台"
+            </a>
+        }
+    });
     // 登出的請求完成或 5 秒後，登入狀態清除 Session 並前往 /login（需求 4.12）
     let logout = move |_| auth.logout();
     view! {
@@ -579,6 +613,7 @@ fn AccountMenu(user: ProfileDto, current: &'static str) -> impl IntoView {
             <a class="acct-home-link" href=home aria-current=(current == "home").then_some("page")>
                 "我的旅行"
             </a>
+            {admin_link}
             <span class="acct-user">
                 <span class="avatar small yellow" aria-hidden="true">
                     {initial}
@@ -701,4 +736,29 @@ impl Toasts {
 /// 取得 App 提供的 Toast。
 pub fn use_toasts() -> Toasts {
     expect_context::<Toasts>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_in_app_path, login_destination, Screen};
+
+    // login_path() 以 leptos_router 的 Url::escape() 編碼，那在原生目標上呼叫 js_sys 而無法執行；
+    // `/login?next=%2Fadmin` 由 run_8086 的瀏覽器檢查確認。
+
+    #[test]
+    fn admin_paths_parse_to_the_admin_page() {
+        assert_eq!(Screen::parse("/admin"), Screen::Admin);
+        assert_eq!(Screen::parse("/admin/"), Screen::Admin);
+        assert_eq!(Screen::parse("/admin/users"), Screen::NotFound);
+    }
+
+    #[test]
+    fn admin_is_an_in_app_path_without_an_owner() {
+        assert!(is_in_app_path("/admin"));
+        assert!(!is_in_app_path("/admin?tab=users"));
+        assert!(!is_in_app_path("/admin/home"));
+        // 登入後回到 /admin，不當成另一個帳號名稱的頁面（需求 34.4、4.10）
+        assert_eq!(login_destination(Some("/admin"), "amy"), "/admin");
+        assert_eq!(login_destination(Some("/bob/home"), "amy"), "/amy/home");
+    }
 }
