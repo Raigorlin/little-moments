@@ -122,22 +122,30 @@ describe('CLI --secrets-dir', () => {
 
 describe('*.env 秘密檔（lm-*-supabase-env；plan.md D13）', () => {
   // 假值：與 deploy/bin/lm-supabase-keys 的輸出同形（鍵名固定、值為隨機字串），不是真實金鑰。
+  // 值在執行時組合（同 design.md §27.2），原始碼中沒有任何字面值符合 Gitleaks 預設規則；
+  // 測試看到的文字與組合前逐位元組相同。JWT 三段解碼為 {"alg":"HS256"}、{"role":"anon"}、signature-fake。
+  const hex = '0123456789abcdef';
+  const rev = 'fedcba9876543210';
+  const dbValue = hex.repeat(2);
+  const jwtValue = rev.repeat(2) + rev.slice(0, 8);
+  const anonValue = ['eyJhbGciOiJIUzI1NiJ9', 'eyJyb2xlIjoiYW5vbiJ9', 'c2lnbmF0dXJlLWZha2U'].join('.');
+  const encValue = ['a1b2', 'c3d4', 'e5f6', 'a7b8'].join('');
   const env = [
     '# 由 lm-supabase-keys env staging 產生',
-    'LM_DB_PASSWORD=0123456789abcdef0123456789abcdef',
-    'LM_JWT_SECRET=fedcba9876543210fedcba9876543210fedcba98',
+    `LM_DB_PASSWORD=${dbValue}`,
+    `LM_JWT_SECRET=${jwtValue}`,
     '',
-    'LM_ANON_KEY=eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.c2lnbmF0dXJlLWZha2U',
-    'LM_REALTIME_DB_ENC_KEY=a1b2c3d4e5f6a7b8\r',
+    `LM_ANON_KEY=${anonValue}`,
+    `LM_REALTIME_DB_ENC_KEY=${encValue}\r`,
     'not a key line with secret-ish content',
   ].join('\n') + '\n';
 
   test('每個 KEY=VALUE 行的 VALUE 各為一個秘密；註解與空行略過；格式不符的行整行列為秘密', () => {
     expect(envFileSecretEntries('cred-lm-staging-supabase-env.env', env)).toEqual([
-      { id: 'cred-lm-staging-supabase-env.env#LM_DB_PASSWORD', value: '0123456789abcdef0123456789abcdef' },
-      { id: 'cred-lm-staging-supabase-env.env#LM_JWT_SECRET', value: 'fedcba9876543210fedcba9876543210fedcba98' },
-      { id: 'cred-lm-staging-supabase-env.env#LM_ANON_KEY', value: 'eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.c2lnbmF0dXJlLWZha2U' },
-      { id: 'cred-lm-staging-supabase-env.env#LM_REALTIME_DB_ENC_KEY', value: 'a1b2c3d4e5f6a7b8' },
+      { id: 'cred-lm-staging-supabase-env.env#LM_DB_PASSWORD', value: dbValue },
+      { id: 'cred-lm-staging-supabase-env.env#LM_JWT_SECRET', value: jwtValue },
+      { id: 'cred-lm-staging-supabase-env.env#LM_ANON_KEY', value: anonValue },
+      { id: 'cred-lm-staging-supabase-env.env#LM_REALTIME_DB_ENC_KEY', value: encValue },
       { id: 'cred-lm-staging-supabase-env.env#7', value: 'not a key line with secret-ish content' },
     ]);
     // 值可含 `=`；空值不列入。
@@ -152,7 +160,7 @@ describe('*.env 秘密檔（lm-*-supabase-env；plan.md D13）', () => {
     const inDir = join(root, 'in');
     const outDir = join(root, 'out');
     mkdirSync(inDir);
-    writeFileSync(join(inDir, 'deploy.log'), 'password=0123456789abcdef0123456789abcdef key=LM_JWT_SECRET\n');
+    writeFileSync(join(inDir, 'deploy.log'), `password=${dbValue} key=LM_JWT_SECRET\n`);
     const quiet = { log: () => {}, error: () => {} };
     expect(main(['--secrets-dir', dir, '--in', inDir, '--out', outDir], quiet)).toBe(0);
     const text = readFileSync(join(outDir, 'deploy.log'), 'utf8');
