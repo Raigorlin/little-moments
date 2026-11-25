@@ -328,17 +328,16 @@ describe('安裝與打包', () => {
     expect(read('scripts/build-server.mjs')).toContain("{ entry: 'scripts/drill.mjs', dir: 'tools', name: 'drill.js' }");
   });
 
-  test('build-server 打包 /app/tools/create-smoke-account.js，映像內容檢查規則仍通過（Req 27.1、15.5、16.9）', () => {
-    expect(read('scripts/build-server.mjs')).toContain("{ entry: 'scripts/create-smoke-account.mjs', dir: 'tools', name: 'create-smoke-account.js' }");
-    const pkg = JSON.parse(read('package.json'));
-    expect(pkg.scripts['create-smoke-account']).toBe('bun scripts/create-smoke-account.mjs');
-    // Dockerfile 複製整個 /out/（含 tools/），不需要為新工具新增指令。
+  test('App_Image 帶 /app/migrations（演練由映像取出遷移），映像內容檢查規則通過（plan.md D4、D8）', () => {
+    // Dockerfile 複製整個 /out/（bin/、dist/、migrations/）。
     expect(read('Dockerfile')).toMatch(/COPY --from=build[^\n]* \/out\/ \/app\//);
+    expect(read('Dockerfile')).toContain('cp supabase/migrations/*.sql /out/migrations/');
+    const line = (mode, path) => `${mode} 0/0 100 2026-11-25 10:00 ${path}`;
     const files = [
-      './', 'app/', 'app/server/serve.js', 'app/server/migrate.js', 'app/migrations/0001_initial.sql',
-      'app/tools/', 'app/tools/import-sqlite.js', 'app/tools/drill.js', 'app/tools/create-admin.js',
-      'app/tools/reset-password.js', 'app/tools/create-smoke-account.js', 'app/dist/index.html',
+      line('drwxr-xr-x', './'), line('drwxr-xr-x', 'app/'), line('-r-xr-xr-x', 'app/bin/little-moments-server'),
+      line('-r--r--r--', 'app/dist/index.html'), line('-r--r--r--', 'app/dist/lm-web-1a2b_bg.wasm'),
+      line('dr-xr-xr-x', 'app/migrations/'), line('-r--r--r--', 'app/migrations/20260101000000_app_schema.sql'),
     ];
-    expect(imageContentCheck(files, '10001:10001', Object.keys(pkg.devDependencies ?? {}))).toEqual({ ok: true, violations: [] });
+    expect(imageContentCheck(files, '65532:65532')).toEqual({ ok: true, violations: [] });
   });
 });

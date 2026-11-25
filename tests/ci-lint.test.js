@@ -2,7 +2,7 @@
 //
 //   * Dockerfile 與 ci/build-image/Dockerfile 每個 FROM 以 `@sha256:` 固定（Req 3.1、16.3）
 //   * Jenkinsfile 與 ci/jenkins/pipelines/*.Jenkinsfile 的 BUILD_IMAGE 以 digest 引用（Req 3.1）
-//   * .dockerignore 含設計列出的全部排除項目（Req 16.7、15.5）
+//   * .dockerignore 是允許清單，允許的路徑之下仍排除建置產物與秘密（Req 16.7、15.5；plan.md D4）
 //   * Jenkinsfile 無可略過 Release_Gate 的參數、環境變數或選項（Req 23.4）
 //   * deploy/compose 的 db 不發布連接埠（Req 11.10）
 //   * CAMPING_OPENAI_* 預設為空字串；Jenkins 只在 release/ 定義 Production 的 OpenAI 憑證，只在 Production Deploy 綁定（Req 15.6–15.8）
@@ -252,14 +252,16 @@ describe('LAN Registry 與映像的實際值（tasks 19.4）', () => {
     }
   });
 
-  test('Bun 版本：ci/toolchain.json、Build_Image 的 ARG BUN_VERSION 與 App_Image 的 oven/bun 標籤一致', () => {
+  test('Bun 版本：ci/toolchain.json 與 Build_Image 的 ARG BUN_VERSION 一致；App_Image 不含 Bun（plan.md D3、D4）', () => {
     const bun = JSON.parse(read('ci/toolchain.json')).bun;
     expect(bun).toMatch(/^1\.4\.\d+$/);
     const bi = read('ci/build-image/Dockerfile');
     expect([...bi.matchAll(/^ARG BUN_VERSION=(\S*)\s*$/gm)].map((m) => m[1])).toEqual([bun]);
     const app = read('Dockerfile');
-    const tags = fromLines(app).map((f) => /^oven\/bun:([^@]+)@/.exec(f.from.image)?.[1]).filter(Boolean);
-    expect(tags).toEqual([bun, bun, `${bun}-distroless`]);
+    // App_Image：rust（toolchain）→ toolchain（build）→ distroless cc（runtime）。
+    expect(fromLines(app).map((f) => f.from.image.replace(/@sha256:.*$/, ''))).toEqual([
+      'rust:1.100.0-trixie', 'toolchain', 'gcr.io/distroless/cc-debian13:nonroot',
+    ]);
     // 兩個 Dockerfile 的 syntax 前端也以 digest 固定。
     for (const text of [bi, app]) expect(text.split('\n')[0]).toMatch(/^# syntax=docker\/dockerfile:1\.10@sha256:[0-9a-f]{64}$/);
   });
@@ -334,17 +336,31 @@ describe('Jenkinsfile 無可略過 Release_Gate 的參數、環境變數或選�
 // .dockerignore
 // ---------------------------------------------------------------------------
 
-describe('.dockerignore（Req 16.7、15.5）', () => {
-  // design.md Components §11 列出的全部項目（含 Req 16.7 的必要項目）。
-  const REQUIRED = [
-    'data/', '.env*', 'tests/', 'node_modules/', '.git/', '*.log', '*.sqlite*', 'test-results/', 'playwright-report/',
-    'previews/', 'reports/', '.kiro/', '*.pem', '*.key', '*.p12', '*.pfx', '*.crt',
+describe('.dockerignore（Req 16.7、15.5；plan.md D4 的允許清單）', () => {
+  const entries = read('.dockerignore').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  // 只納入 Rust 建置需要的路徑：Cargo 檔案、.cargo/config.toml、crates/、index.html 引用的字型與 supabase/migrations/。
+  const ALLOWED = [
+    '!Cargo.toml', '!Cargo.lock', '!rust-toolchain.toml', '!.cargo/config.toml', '!crates/**',
+    '!assets/fonts/**', '!assets/storybook/fonts/**', '!supabase/migrations/**',
   ];
+  // 允許的路徑之下仍排除的建置產物與秘密（Req 16.7、15.5）。
+  const RE_EXCLUDED = ['**/target', 'crates/web/dist', '**/.env*', '**/*.pem', '**/*.key', '**/*.p12', '**/*.pfx', '**/*.crt', '**/*.sqlite*'];
 
-  test('含設計列出的全部排除項目，且沒有以 `!` 重新納入', () => {
-    const entries = read('.dockerignore').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
-    for (const e of REQUIRED) expect(entries).toContain(e);
-    expect(entries.filter((e) => e.startsWith('!'))).toEqual([]);
+  test('第一個項目排除全部，之後只以 `!` 納入允許清單', () => {
+    expect(entries[0]).toBe('*');
+    expect(entries.filter((e) => e.startsWith('!'))).toEqual(ALLOWED);
+  });
+
+  test('允許清單之後再排除建置產物、.env 與憑證', () => {
+    const lastAllow = Math.max(...ALLOWED.map((a) => entries.indexOf(a)));
+    for (const e of RE_EXCLUDED) expect(entries.indexOf(e)).toBeGreaterThan(lastAllow);
+  });
+
+  test('crates/web/index.html 以 ../../ 引用的目錄都在允許清單中', () => {
+    const html = read('crates/web/index.html');
+    const refs = [...html.matchAll(/href="\.\.\/\.\.\/([^"]+)"/g)].map((m) => `!${m[1]}/**`);
+    expect(refs.length).toBeGreaterThan(0);
+    for (const r of refs) expect(ALLOWED).toContain(r);
   });
 });
 

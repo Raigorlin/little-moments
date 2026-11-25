@@ -1,0 +1,8 @@
+{
+  "_comment": "Rust 工具鏈映像（根目錄 Dockerfile 的 toolchain 階段；plan.md D3）的精確版本。ci/verify-rust-toolchain.sh 在工具鏈映像內比對實際版本；tests/ci-rust-toolchain.test.js 比對 Dockerfile 的映像標籤、RUSTUP_TOOLCHAIN 與 ARG，以及 Cargo.lock 的 wasm-bindgen。更新任一版本時須同步更新 Dockerfile 的 ARG 與 SHA-256。ci/toolchain.json 是 Bun Build_Image 的版本，與本檔無關。",
+  "rust": "1.100.0",
+  "trunk": "0.22.2",
+  "wasm-bindgen": "0.2.130",
+  "wasm-opt": "131",
+  "bats": "1.14.0"
+}

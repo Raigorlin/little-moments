@@ -9,7 +9,7 @@
 #   1. `bun ci/image-labels.mjs` 產生 OCI 標籤（REVISION／VERSION／CREATED build args，Req 16.5）。
 #   2. `docker build`，本機標籤為 `<repo>:<完整 40 字元 SHA>`（Req 16.6）；建置日誌一律寫入
 #      `<reports>/image-build.log`，失敗時保留（Req 16.8）。
-#   3. `docker image inspect` → `<reports>/image-inspect.json`；`docker create` + `docker export | tar -t`
+#   3. `docker image inspect` → `<reports>/image-inspect.json`；`docker create` + `docker export | tar -tv --numeric-owner`
 #      → `<reports>/image-files.txt`；交給 `ci/image-content-check.mjs`，結果寫入
 #      `<reports>/image-content.json`（Req 16.9）。
 #
@@ -169,7 +169,8 @@ printf '%s\n' "$image_ref" > "$ref_file"
   || die 4 "docker create 失敗"
 container_created=1
 
-if ! "$DOCKER_BIN" export "$container_name" | tar -t > "$files_list"; then
+# -v --numeric-owner：清單含權限與數字擁有者，ci/image-content-check.mjs 據此檢查 /app 不可寫入且屬於 root。
+if ! "$DOCKER_BIN" export "$container_name" | tar -tv --numeric-owner > "$files_list"; then
   die 4 "無法匯出映像檔案清單"
 fi
 [ -s "$files_list" ] || die 4 "映像檔案清單為空"

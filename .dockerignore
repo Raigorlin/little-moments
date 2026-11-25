@@ -1,47 +1,27 @@
-# App_Image 建置內容排除清單（Requirement 15.5、16.7；design.md Components §11）。
-# 必要項目（Req 16.7）
-data/
-.env*
-tests/
-node_modules/
-.git/
-*.log
-*.sqlite*
-test-results/
-playwright-report/
-# 本機產物與工作檔
-previews/
-reports/
-dist/
-build-server/
-.kiro/
-.agents/
-.worktrees/
-# 憑證與金鑰（Req 15.5）
-*.pem
-*.key
-*.p12
-*.pfx
-*.crt
-*.db
-# 映像不需要的 CI／部署設定與文件
-ci/
-deploy/
-qa/
-security/
-Jenkinsfile
-Dockerfile
-.dockerignore
-.gitignore
-README.md
-# security-harden 新增的排除項目
-dist-*/
-backups/
-uploads/
-coverage/
-.secrets/
-*.db-*
-*.zip
-*.tar
-*.tar.gz
-Thumbs.db
+# App_Image 的建置內容（plan.md D4）：允許清單。先排除全部，再只納入 Dockerfile build 階段需要的路徑。
+*
+# Cargo workspace 與工具鏈設定
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+# wasm32 建置的 getrandom 後端設定（.cargo/config.toml）
+!.cargo/config.toml
+# lm-core、lm-supabase、lm-server、lm-web（含 crates/web/index.html、Trunk.toml、styles/、public/）
+!crates/**
+# crates/web/index.html 以 ../../assets/fonts 與 ../../assets/storybook/fonts 複製字型
+!assets/fonts/**
+!assets/storybook/fonts/**
+# 映像內 /app/migrations 的來源
+!supabase/migrations/**
+# 允許的路徑之下仍排除建置產物、本機設定與憑證
+**/target
+crates/web/dist
+**/.env*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.crt
+**/*.log
+**/*.sqlite*
+**/*.db

@@ -174,11 +174,12 @@ describe('Dockerfile', () => {
     }
   });
 
-  test('ENTRYPOINT and CMD start Bun without inspector, hot reload, or watch flags (Req 19.5)', () => {
+  test('ENTRYPOINT and CMD start the release lm-server binary without inspector, hot reload, or watch flags (Req 19.5)', () => {
     const cmds = stages.flatMap(s => s.instrs).filter(i => i.op === 'CMD' || i.op === 'ENTRYPOINT');
     expect(cmds.length).toBeGreaterThan(0);
     for (const cmd of cmds) expect(cmd.args).not.toMatch(/--(inspect(-brk|-wait)?|hot|watch)\b/);
-    expect(runtime.instrs.find(i => i.op === 'ENTRYPOINT').args).toMatch(/^\[\s*"bun"\s*,\s*"\/app\/server\/serve\.js"\s*\]$/);
+    // The Rust App_Image (plan.md D4) runs the lm-server release binary directly.
+    expect(runtime.instrs.find(i => i.op === 'ENTRYPOINT').args).toMatch(/^\[\s*"\/app\/bin\/little-moments-server"\s*\]$/);
   });
 
   test('ENV, ARG, and LABEL set no secret value (Req 14.5)', () => {

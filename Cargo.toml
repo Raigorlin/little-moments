@@ -8,7 +8,7 @@ exclude = [".worktrees"]
 
 [workspace.package]
 edition = "2021"
-version = "0.1.0"
+version = "2.0.0"
 publish = false
 
 [profile.release]
