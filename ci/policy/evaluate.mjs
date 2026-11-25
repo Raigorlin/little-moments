@@ -13,6 +13,8 @@
 //   (b) critical／high／unknown（unknown 及任何無法辨識的嚴重度視為 high，fail closed）的結果，
 //       僅在存在欄位完整（id、location、reason、approver、expires 皆為非空字串且 expires 為有效日期）、
 //       id 與 location 完全相同、且 today <= expires 的例外時視為已處理（Req 6.5、6.9）。
+//       例外另有選填的 version：有這個欄位時必須是非空字串，且只套用於版本完全相同的結果
+//       （例如只豁免 Cargo.lock 中 paste 1.0.15，升級或降級後的版本重新阻擋）。
 //   (c) medium／low 結果只記錄，不使結果失敗（Req 6.5）。
 //   (d) pass === (unresolved.length === 0)。
 //   過期例外（today > expires）不套用，對應結果的原因為 'exception-expired'，例外列於 expired（Req 6.6）。
@@ -72,6 +74,7 @@ export function validateException(entry) {
     if (!nonEmpty(entry[field])) problems.push(`${field}:缺少或為空`);
   }
   if (nonEmpty(entry.expires) && !isValidDate(entry.expires)) problems.push('expires:不是有效的 YYYY-MM-DD 日期');
+  if (Object.hasOwn(entry, 'version') && !nonEmpty(entry.version)) problems.push('version:為空或不是字串');
   return problems;
 }
 
@@ -136,7 +139,8 @@ export function evaluateFindings(findings, exceptions, today) {
       reason = 'security-suite';
       exception = { status: 'not-applicable' };
     } else if (BLOCKING_SEVERITIES.includes(severity)) {
-      const matches = valid.filter(({ e }) => e.id === fin.id && e.location === fin.location);
+      const matches = valid.filter(({ e }) => e.id === fin.id && e.location === fin.location
+        && (!Object.hasOwn(e, 'version') || e.version === fin.version));
       const active = matches.find(({ e }) => today <= e.expires);
       if (active) {
         blocking = false;

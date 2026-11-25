@@ -1052,6 +1052,17 @@
   - [ ] 32.5 實機驗證（維運者）
     - 依 `deploy/README.md` 的「只能在實際主機或 Jenkins 執行的檢查」逐項確認：工具鏈與 App_Image 建置、image smoke、Trivy／Syft／cosign、Supabase stack 啟動、遷移、還原演練、NPM Websockets、CasC 載入、`rust` 與 `main` 的 Pipeline、首次切換與 `v2.0.0` 標籤
     - _Requirements: 28.2, 28.9, 28.11, 28.13, 28.14_
+
+- [x] 33. `Cargo.lock` 的相依套件掃描（Requirement 6.2、6.5、6.9；design.md Components 第 30.10 節）
+  - [x] 33.1 升級有阻擋 advisory 的 Rust 相依套件
+    - `chrono` 換成 `time` 0.3（`lm-core` 的 `model::Date` 與 `time` 模組的日期函式、`lm-server` 的邀請連結時間、sqlx 的 `time` feature、lm-web 的日期輸入與顯示）；JSON 與 Database 的日期格式不變；`serde_with` 不啟用預設 feature；`url` 2.5.8 → 2.5.9
+    - _Requirements: 6.2, 6.5_
+  - [x] 33.2 Security Scan 掃描 `Cargo.lock`
+    - `Jenkinsfile` 的 osv-scanner（`Cargo.lock`）→ `osv-cargo.json` → normalize → evaluate；Build_Record 的 `osvCargo`；`ci/policy/evaluate.mjs` 的 Approved_Exception 選填 `version`；`security/exceptions.json` 的 `paste` 1.0.15 例外；`tests/ci-jenkinsfile.test.js`、`tests/ci-evaluate.test.js`、`tests/security-exceptions.test.js`；README 與本規格
+    - _Requirements: 6.2, 6.5, 6.7, 6.8, 6.9_
+  - [ ] 33.3 Jenkins 上的確認（維運者）
+    - `rust` 分支下一次建置的 Security Scan：osv-scanner（Cargo.lock）完成、`reports/security/osv-cargo.json` 封存、「安全」關卡通過且 `paste` 顯示例外已套用
+    - _Requirements: 6.7_
 ## Notes
 
 - 標記 `*` 的子任務為選用（property test、整合測試與額外檢查），可為加快 MVP 而略過。
@@ -1071,6 +1082,7 @@
 - 任務 29 來自 192.168.1.121 上建置 #11（commit `c084474`）：第一次通過 Toolchain 到 Browser Tests，在 Security Scan 以 9 筆阻擋結果失敗，全部是測試假值或已審查的例外。29.1 改寫兩個符合 Gitleaks 規則的測試假值（秘密仍不可豁免）；29.2 依使用者的決定以 `LM_GITLEAKS_HISTORY_BASE`（Secret_History_Baseline，Req 6.1、6.10 與 Glossary）作為非 PR 建置 Git 歷史掃描的固定起點，起點無效時歷史掃描未完成（fail closed），不再有完整歷史的分支；29.3 讓 Semgrep 1.185.0 套用三個已審查的排除路徑，沒有規則層級的寫法可行時停止詢問使用者。沒有新的 Correctness Property。29.1 與 29.2 修改不同的檔案，放在同一波次；29.3 也可能修改 `Jenkinsfile` 與 `tests/ci-jenkinsfile.test.js`（Semgrep 版本步驟），所以排在 29.2 之後；29.4 需要 29.1–29.3 的結果。
 - 任務 30 來自 192.168.1.121 上建置 #14（commit `8da0868`）：第一次通過 Image Scan，在 SBOM 以 `Syft 無法產生 SBOM（結束碼 1）` 失敗。Trusted Agent 上的手動重現顯示 Syft 無法在 `/tmp` 建立目錄（`--tmpfs` 複製了 Syft 映像 `/tmp` 的權限模式），`oci-archive:` 也相同；加上 `mode=1777` 後產生 348 KB 的 SBOM。依 design.md Components 第 28 節，只修改 Syft 的 tmpfs，並移除 `--quiet`、把 stderr 寫入 `$LM_IMG_DIR` 下的檔案，失敗時印出最後 20 行（Requirement 17.9）。沒有新的 Correctness Property。30.2 測試 30.1 的結果，排在 30.1 之後。
 - 任務 31 來自 192.168.1.121 上建置 #16（commit `cc406a4`）：Init 到 Build 通過，Unit Tests 只有 Property 17 失敗，之後的階段被略過，所以任務 30 的 Syft 修正尚未在 Jenkins 上確認。fast-check 產生了保留帳號名稱 `api` 作為第一次設定的管理員名稱，`validateUsername` 正確地回應 400。依 design.md Components 第 29 節只修正測試的產生器並加上範例與 seed 回歸案例，`server/` 不變；沒有新的需求或 Correctness Property。同一次建置的完整 `bun test` 為 282 秒，任務 28.4 的 600 秒目標已在 Jenkins 上確認。31.2 需要 31.1 的結果。
+- 任務 33 來自使用者的決定：先升級 `Cargo.lock` 中有阻擋 advisory 的相依套件，再把 `Cargo.lock` 加入「安全」關卡，不保留 README 中 `Cargo.lock` 的例外。`chrono`（不再維護）換成 `time`，`url` 升到 2.5.9；`paste` 1.0.15（不再維護、沒有修正版本，只經 Leptos 0.8.23 引入）由使用者核准限定版本的例外（核准人 Raigorlin，到期日 2027-02-28）；medium 的 `libsqlite3-sys` 與 `rsa` 0.9.10 依既有的嚴重度規則只記錄。Rust 程式碼的 SAST 仍是 README 的例外。沒有新的 Correctness Property；Property 8 的參考實作不產生 `version`，`version` 的行為以範例測試涵蓋。
 - 任務 18 合併 security-harden：兩分支沒有共同歷史，以 main 的 `cd06606` 作為合成共同基底進行三方合併；應用程式功能採用 security-harden，部署、設定模型、Setup_Token 與 PostgreSQL 資料層採用 main；收據 AI 改為 OpenAI（`CAMPING_OPENAI_*`）。
 
 ## Task Dependency Graph

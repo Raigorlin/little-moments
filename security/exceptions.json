@@ -1,5 +1,5 @@
 {
-  "$comment": "Approved_Exception 清單（Requirement 6.5、6.6、6.9、7.8、17.2；design.md Data Models「Finding 與 Approved_Exception」）。每個項目：{ \"id\": 漏洞或規則識別碼, \"location\": 套件名稱或檔案路徑（須與正規化後的 Finding 完全相同）, \"reason\": 理由, \"approver\": 核准人, \"expires\": \"YYYY-MM-DD\"（當日仍有效） }。缺少任一欄位或日期無效的例外不會套用。秘密（kind=secret）與安全測試套件（scanner=security-suite）的結果永遠不可豁免。由 ci/policy/evaluate.mjs 讀取。",
+  "$comment": "Approved_Exception 清單（Requirement 6.5、6.6、6.9、7.8、17.2；design.md Data Models「Finding 與 Approved_Exception」）。每個項目：{ \"id\": 漏洞或規則識別碼, \"location\": 套件名稱或檔案路徑（須與正規化後的 Finding 完全相同）, \"reason\": 理由, \"approver\": 核准人, \"expires\": \"YYYY-MM-DD\"（當日仍有效）, 選填的 \"version\": 套件版本（有這個欄位時只套用於版本完全相同的結果） }。缺少任一欄位或日期無效的例外不會套用。秘密（kind=secret）與安全測試套件（scanner=security-suite）的結果永遠不可豁免。由 ci/policy/evaluate.mjs 讀取。",
   "version": 1,
   "exceptions": [
     {
@@ -85,6 +85,14 @@
       "reason": "oven/bun:1.4.4-distroless（Debian 13 trixie）的 libc6 2.41-12+deb13u4；Debian security tracker 2026-11-19 顯示 bookworm、trixie、forky、sid 皆尚無修正版本（vulnerable），重建映像或更換 Debian 版本都無法消除。iconv 的 UCS-4 轉 IBM1390／IBM1399 時越界讀取（Debian bug #1154286）。須攻擊者同時控制輸入內容與編碼。由 Release_Approver 核准至到期日；到期後 Image Scan 重新阻擋，須重新檢查 Debian 修正或更換基底映像。",
       "approver": "jacklin",
       "expires": "2027-11-14"
+    },
+    {
+      "id": "RUSTSEC-2024-0436",
+      "location": "paste",
+      "version": "1.0.15",
+      "reason": "Cargo.lock 的 paste 1.0.15 不再維護（unmaintained，沒有修正版本）。它是編譯期的 proc-macro，不在 App_Image 執行的程式內；只經 Leptos 0.8.23（目前最新的穩定版）的 either_of、reactive_graph、reactive_stores、tachys 與 leptos 引入 lm-web，App 無法移除。由核准人接受風險至到期日；Leptos 0.9 穩定版發布後重新檢查，到期後或 paste 版本改變時 Security Scan 重新阻擋。",
+      "approver": "Raigorlin",
+      "expires": "2027-02-28"
     }
   ]
 }

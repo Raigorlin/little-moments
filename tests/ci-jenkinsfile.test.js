@@ -2,7 +2,7 @@
 // 本機沒有 Jenkins／Groovy，這裡只檢查結構與關鍵字，不能取代 Jenkins 的實際語法驗證。
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -384,11 +384,11 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
   const at = (text, s) => { const i = text.indexOf(s); expect(i).toBeGreaterThan(-1); return i; };
   const scanRuns = [...dockerRunsIn(sec), ...dockerRunsIn(functionBody('void scannerVersions()'))];
 
-  test('位於 Unit Tests 之後；依序 Gitleaks（dir、git）→ osv-scanner → Trivy → Semgrep → normalize → evaluate → 關卡', () => {
+  test('位於 Unit Tests 之後；依序 Gitleaks（dir、git）→ osv-scanner（bun.lock、Cargo.lock）→ Trivy → Semgrep → normalize → evaluate → 關卡', () => {
     expect(code.indexOf("stage('Security Scan')")).toBeGreaterThan(code.indexOf("stage('Unit Tests')"));
     const order = [
       'pullImages(scannerImages())', 'prepareScanSources()', 'scannerVersions()',
-      "'gitleaks-dir.json'", "'gitleaks-git.json'", "'osv.json'", "'trivy-node-modules.json'", "'semgrep.json'",
+      "'gitleaks-dir.json'", "'gitleaks-git.json'", "'osv.json'", "'osv-cargo.json'", "'trivy-node-modules.json'", "'semgrep.json'",
       'bun ci/policy/normalize.mjs', 'bun ci/policy/evaluate.mjs', "recordSecurityGate('')",
     ].map((s) => at(sec, s));
     expect(order).toEqual([...order].sort((a, b) => a - b));
@@ -535,8 +535,16 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
     }
   });
 
-  test('osv-scanner v2（bun.lock、--all-packages）、Trivy node_modules 交叉掃描、Semgrep（ci/semgrep/run.sh）（Req 6.2、6.3）', () => {
+  test('osv-scanner v2（bun.lock 與 Cargo.lock 各一份報告、--all-packages）、Trivy node_modules 交叉掃描、Semgrep（ci/semgrep/run.sh）（Req 6.2、6.3）', () => {
     expect(sec).toContain('scan source --lockfile=/src/bun.lock --all-packages --format json --output-file "/out/$LM_SCAN_REPORT"');
+    expect(sec).toContain('scan source --lockfile=/src/Cargo.lock --all-packages --format json --output-file "/out/$LM_SCAN_REPORT"');
+    expect(sec).toContain("runScan('osv-scanner（Cargo.lock）', 'osv-cargo.json', '''");
+    // 兩次掃描使用同一個以 digest 固定的映像，容器名稱不同；缺少 Cargo.lock 時掃描未完成（結束碼 3）。
+    const osvRuns = scanRuns.filter((c) => c.includes('"$LM_OSV_SCANNER_IMAGE"') && !c.includes('-version-'));
+    expect(osvRuns.map((c) => /--name "([^"]+)"/.exec(c)?.[1])).toEqual(['$LM_SCAN_RUN-osv-scanner', '$LM_SCAN_RUN-osv-scanner-cargo']);
+    expect(sec).toMatch(/if \[ ! -f "\$LM_SCAN_DIR\/tree\/Cargo\.lock" \]; then\s*\n\s*echo "找不到 Cargo\.lock" >&2\s*\n\s*exit 3/);
+    // Cargo.lock 是受版本控制檔案（掃描輸入 tree/ 由 git checkout-index 取出）。
+    expect(existsSync(resolve(root, 'Cargo.lock'))).toBe(true);
     expect(sec).toContain('rootfs --scanners vuln --list-all-pkgs --format json --output "/out/$LM_SCAN_REPORT"');
     expect(sec).toContain('--mount "type=bind,src=$WORKSPACE/node_modules,dst=/scan/node_modules,readonly"');
     expect(sec).toContain('--db-repository "$LM_TRIVY_DB_REPOSITORY"');
@@ -547,14 +555,14 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
 
   test('每項掃描 15 分鐘逾時；錯誤、逾時或缺少輸入時刪除報告並記錄未完成（Req 6.8）', () => {
     const scans = scanRuns.filter((c) => !c.includes('-version-'));
-    expect(scans.length).toBe(5);
-    expect([...sec.matchAll(/timeout --kill-after=30 900 docker run /g)].length).toBe(5);
+    expect(scans.length).toBe(6);
+    expect([...sec.matchAll(/timeout --kill-after=30 900 docker run /g)].length).toBe(6);
     expect(runScan).toContain("timeout(time: 17, unit: 'MINUTES')");
     expect(runScan).toMatch(/rc != 0\)\s*\{\s*discardScan\(\)/);
     expect(runScan).toMatch(/catch \(Exception e\)\s*\{[\s\S]*discardScan\(\)\s*\n\s*throw e/);
     expect(functionBody('void discardScan()')).toContain('rm -f "$LM_SCAN_DIR/out/$LM_SCAN_REPORT"');
-    // 只有 osv-scanner（1 = 有漏洞）與 Semgrep（1 = 有結果）把結束碼 1 視為完成；其他非零皆為未完成。
-    expect([...sec.matchAll(/if \[ "\$rc" -eq 1 \]; then rc=0; fi/g)].length).toBe(2);
+    // 只有兩次 osv-scanner（1 = 有漏洞）與 Semgrep（1 = 有結果）把結束碼 1 視為完成；其他非零皆為未完成。
+    expect([...sec.matchAll(/if \[ "\$rc" -eq 1 \]; then rc=0; fi/g)].length).toBe(3);
     // 評估無法執行（結束碼 2）也記錄為未完成。
     expect(sec).toMatch(/evalRc != 0 && evalRc != 1\)\s*\{\s*lmScanErrors << /);
   });
@@ -578,7 +586,7 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
   });
 
   test('掃描器容器：非 root、唯讀根檔案系統、--cap-drop ALL、no-new-privileges、建置標籤；寫入只限掃描暫存目錄', () => {
-    expect(scanRuns.length).toBe(6);
+    expect(scanRuns.length).toBe(7);
     for (const cmd of scanRuns) {
       for (const flag of ['--rm', '--user "$(id -u):$(id -g)"', '--read-only', '--cap-drop ALL', '--security-opt no-new-privileges:true', '--label "lm.ci.build=$BUILD_TAG"', '--label "lm.ci.scan=$LM_SCAN_RUN"']) {
         expect(cmd).toContain(flag);
@@ -592,7 +600,7 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
     }
     // 只有需要漏洞資料庫的 osv-scanner 與 Trivy 可連網。
     const networked = scanRuns.filter((c) => c.includes('--network bridge'));
-    expect(networked.map((c) => /"\$(LM_\w+_IMAGE)"/.exec(c)?.[1]).sort()).toEqual(['LM_OSV_SCANNER_IMAGE', 'LM_TRIVY_IMAGE']);
+    expect(networked.map((c) => /"\$(LM_\w+_IMAGE)"/.exec(c)?.[1]).sort()).toEqual(['LM_OSV_SCANNER_IMAGE', 'LM_OSV_SCANNER_IMAGE', 'LM_TRIVY_IMAGE']);
   });
 
   test('拉取帳號只在 withCredentials 內、經 set +x 腳本與 docker -e NAME 傳遞（Req 15.1、15.2）', () => {
@@ -608,7 +616,10 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
 
   test('normalize／evaluate 參數與 CLI 一致；「安全」關卡寫入 Build_Record，階段失敗時 post 記錄未通過（Req 6.7、23.1、23.3、23.5）', () => {
     const specs = /for spec in ([^;]+);/.exec(sec)?.[1].trim().split(/\s+/) ?? [];
-    expect(specs.map((s) => s.split(':')[0])).toEqual(['gitleaks', 'gitleaks', 'osv-scanner', 'trivy', 'semgrep']);
+    expect(specs.map((s) => s.split(':')[0])).toEqual(['gitleaks', 'gitleaks', 'osv-scanner', 'osv-scanner', 'trivy', 'semgrep']);
+    expect(specs[3]).toBe('osv-scanner:osv-cargo');
+    // 原始報告（不含秘密）也保留 Cargo.lock 的 osv-scanner 結果。
+    expect(sec).toContain('for name in osv osv-cargo trivy-node-modules semgrep; do');
     const evalReports = /--reports ([^\\\n]+)/.exec(sec)?.[1].trim().split(/\s+/) ?? [];
     expect(evalReports).toEqual(specs.map((s) => `reports/security/${s.split(':')[1]}.json`));
     expect(sec).toContain('--exceptions security/exceptions.json --commit "$GIT_COMMIT_FULL" --today "$LM_SCAN_TODAY"');
@@ -626,7 +637,8 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
     expect(sec).toMatch(/cleanup\s*\{\s*script\s*\{\s*cleanupSecurityScan\(\)/);
     // Build_Record 報告鍵通過白名單。
     const keys = Object.fromEntries([...recordGate.matchAll(/(\w+): '(reports\/security\/[^']+)'/g)].map((m) => [m[1], m[2]]));
-    expect(Object.keys(keys).sort()).toEqual(['gitleaks', 'gitleaksHistory', 'osv', 'securityEvaluation', 'semgrep', 'trivyNodeModules']);
+    expect(Object.keys(keys).sort()).toEqual(['gitleaks', 'gitleaksHistory', 'osv', 'osvCargo', 'securityEvaluation', 'semgrep', 'trivyNodeModules']);
+    expect(keys.osvCargo).toBe('reports/security/osv-cargo.json');
     const rec = createRecord({
       job: 'ci/little-moments/PR-1', number: 1, url: 'https://jenkins.invalid/job/1/',
       commit: 'a'.repeat(40), trigger: 'pull_request', ref: 'PR-1', buildImageDigest: `sha256:${'b'.repeat(64)}`,
@@ -1058,12 +1070,19 @@ describe('Security Scan 報告鏈：normalize → evaluate（以 Jenkinsfile 的
     'gitleaks-dir': [{ RuleID: 'aws-access-token', File: 'server/config.js', StartLine: 3, Match: secret, Secret: secret, Line: `const k = '${secret}'` }],
     'gitleaks-git': [{ RuleID: 'aws-access-token', File: 'server/config.js', StartLine: 3, Commit: 'd'.repeat(40), Match: secret, Secret: secret }],
     osv: { results: [{ source: { path: '/src/bun.lock', type: 'lockfile' }, packages: [{ package: { name: 'left-pad', version: '1.3.0', ecosystem: 'npm' }, groups: [], vulnerabilities: [] }] }] },
+    'osv-cargo': { results: [{ source: { path: '/src/Cargo.lock', type: 'lockfile' }, packages: [{ package: { name: 'serde', version: '1.0.228', ecosystem: 'crates.io' }, groups: [], vulnerabilities: [] }] }] },
     'trivy-node-modules': { Trivy: { Version: '0.0.0' }, Results: [{ Target: 'node_modules', Packages: [{ Name: 'left-pad', Version: '1.3.0' }] }] },
     semgrep: { version: '1.0.0', errors: [], paths: { scanned: ['server/http.js'] }, results: [] },
   };
-  const tools = { 'gitleaks-dir': 'gitleaks', 'gitleaks-git': 'gitleaks', osv: 'osv-scanner', 'trivy-node-modules': 'trivy', semgrep: 'semgrep' };
+  const tools = { 'gitleaks-dir': 'gitleaks', 'gitleaks-git': 'gitleaks', osv: 'osv-scanner', 'osv-cargo': 'osv-scanner', 'trivy-node-modules': 'trivy', semgrep: 'semgrep' };
 
-  async function runChain(names) {
+  // 與 Jenkinsfile 的 normalize 迴圈及 evaluate --reports 同一順序。
+  test('報告名稱與 Jenkinsfile 一致', () => {
+    const specs = /for spec in ([^;]+);/.exec(stageCode('Security Scan'))?.[1].trim().split(/\s+/) ?? [];
+    expect(specs.map((s) => s.split(':').reverse())).toEqual(Object.entries(tools));
+  });
+
+  async function runChain(names, today = '2025-01-01') {
     const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
@@ -1079,7 +1098,7 @@ describe('Security Scan 報告鏈：normalize → evaluate（以 Jenkinsfile 的
       const out = join(dir, 'evaluation.json');
       const rc = evaluate([
         '--reports', ...Object.keys(tools).map((n) => join(dir, `${n}.json`)),
-        '--exceptions', resolve(root, 'security/exceptions.json'), '--commit', commit, '--today', '2025-01-01', '--out', out,
+        '--exceptions', resolve(root, 'security/exceptions.json'), '--commit', commit, '--today', today, '--out', out,
       ], quiet);
       const files = Object.keys(tools).map((n) => join(dir, `${n}.json`)).concat(out);
       const text = files.map((f) => readFileSync(f, 'utf8')).join('\n');
@@ -1106,7 +1125,7 @@ describe('Security Scan 報告鏈：normalize → evaluate（以 Jenkinsfile 的
   test('任一掃描報告缺失（例如 Git 歷史範圍無法決定）時視為未完成而不通過（Req 6.8）', async () => {
     raw['gitleaks-dir'] = [];
     try {
-      const { rc, evaluation } = await runChain(['gitleaks-dir', 'osv', 'trivy-node-modules', 'semgrep']);
+      const { rc, evaluation } = await runChain(['gitleaks-dir', 'osv', 'osv-cargo', 'trivy-node-modules', 'semgrep']);
       expect(rc).toBe(1);
       expect(evaluation.pass).toBe(false);
       expect(evaluation.unresolved).toEqual([]);
@@ -1125,7 +1144,54 @@ describe('Security Scan 報告鏈：normalize → evaluate（以 Jenkinsfile 的
       const { rc, evaluation } = await runChain(Object.keys(tools));
       expect(rc).toBe(0);
       expect(evaluation.pass).toBe(true);
-      expect(evaluation.scans.map((s) => s.complete)).toEqual([true, true, true, true, true]);
+      expect(evaluation.scans.map((s) => s.complete)).toEqual([true, true, true, true, true, true]);
+    } finally {
+      Object.assign(raw, clean);
+    }
+  });
+
+  // osv-scanner 2.7.1 對 Cargo.lock 的報告形狀（沒有嚴重度分數的 RUSTSEC advisory 視為 high）。
+  const cargoReport = (packages) => ({
+    results: [{ source: { path: '/src/Cargo.lock', type: 'lockfile' }, packages: packages.map(([name, version, ids]) => ({
+      package: { name, version, ecosystem: 'crates.io' },
+      groups: ids.map((id) => ({ ids: [id], aliases: [id], max_severity: '' })),
+      vulnerabilities: ids.map((id) => ({ id, summary: `${name} advisory`, affected: [] })),
+    })) }],
+  });
+
+  test('Cargo.lock：只有 paste 1.0.15 的 RUSTSEC-2024-0436 以 security/exceptions.json 的例外處理；其他沒有分數的 advisory 阻擋', async () => {
+    const clean = { ...raw };
+    raw['gitleaks-dir'] = [];
+    raw['gitleaks-git'] = [];
+    try {
+      raw['osv-cargo'] = cargoReport([['paste', '1.0.15', ['RUSTSEC-2024-0436']], ['rsa', '0.9.10', []]]);
+      const ok = await runChain(Object.keys(tools), '2026-11-25');
+      expect(ok.rc).toBe(0);
+      expect(ok.evaluation.pass).toBe(true);
+      const applied = ok.evaluation.findings.filter((f) => f.exception?.status === 'applied');
+      expect(applied.map((f) => [f.scanner, f.id, f.location, f.version, f.exception.approver])).toEqual([
+        ['osv-scanner', 'RUSTSEC-2024-0436', 'paste', '1.0.15', 'Raigorlin'],
+      ]);
+
+      raw['osv-cargo'] = cargoReport([['paste', '1.0.15', ['RUSTSEC-2024-0436']], ['url', '2.5.8', ['RUSTSEC-2026-0592']], ['chrono', '0.4.45', ['RUSTSEC-2026-0543']]]);
+      const blocked = await runChain(Object.keys(tools), '2026-11-25');
+      expect(blocked.rc).toBe(1);
+      expect(blocked.evaluation.unresolved.map((f) => [f.id, f.location, f.reason])).toEqual([
+        ['RUSTSEC-2026-0592', 'url', 'no-exception'],
+        ['RUSTSEC-2026-0543', 'chrono', 'no-exception'],
+      ]);
+
+      // 例外到期後（2027-03-01）paste 重新阻擋
+      raw['osv-cargo'] = cargoReport([['paste', '1.0.15', ['RUSTSEC-2024-0436']]]);
+      const expired = await runChain(Object.keys(tools), '2027-03-01');
+      expect(expired.rc).toBe(1);
+      expect(expired.evaluation.unresolved.map((f) => [f.id, f.reason])).toEqual([['RUSTSEC-2024-0436', 'exception-expired']]);
+
+      // Cargo.lock 解析出 0 個套件 → 掃描未完成
+      raw['osv-cargo'] = { results: [] };
+      const empty = await runChain(Object.keys(tools), '2026-11-25');
+      expect(empty.rc).toBe(1);
+      expect(empty.evaluation.incomplete.map((i) => i.file)).toEqual([expect.stringMatching(/osv-cargo\.json$/)]);
     } finally {
       Object.assign(raw, clean);
     }

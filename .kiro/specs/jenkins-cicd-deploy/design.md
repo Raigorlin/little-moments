@@ -40,7 +40,7 @@
 | 反向代理 | Caddy（digest 固定），upstream 以 include 檔切換並 `caddy reload`，`grace_period 30s` | 原生優雅重載與連線排空，設定簡潔（Req 20.2、20.3）。 |
 | Registry | CNCF Distribution（`registry:3`，digest 固定）前置 Caddy：TLS（內部 CA）+ 每帳號 basic auth + 依 HTTP 方法限制（拉取帳號僅 GET/HEAD），關閉刪除 | 符合「拉取不可推送或刪除」（Req 15.9）；Harbor 為較重的替代方案（見 Open Risks）。 |
 | 簽章 | cosign 金鑰模式，`--tlog-upload=false`（LAN 無 Rekor） | Requirement 17 的簽章與驗證；Staging 驗證以 cosign attestation 附在 digest 上。 |
-| 掃描工具 | Gitleaks（秘密）、osv-scanner v2（`bun.lock`）、Semgrep CE + repo 內規則（SAST）、Trivy（映像）、Syft（SBOM）、OWASP ZAP + 自訂安全測試套件（DAST） | 皆可離線或固定版本執行並輸出 JSON／SARIF；細節見「工具選型」。 |
+| 掃描工具 | Gitleaks（秘密）、osv-scanner v2（`bun.lock` 與 Rust 版本的 `Cargo.lock`）、Semgrep CE + repo 內規則（SAST）、Trivy（映像）、Syft（SBOM）、OWASP ZAP + 自訂安全測試套件（DAST） | 皆可離線或固定版本執行並輸出 JSON／SARIF；細節見「工具選型」。 |
 | PBT 函式庫 | `fast-check@4.3.0`（devDependency，精確版本） | 在 `bun test` 下可直接使用，具 shrinking。 |
 | Edge 轉送標頭信任 | 在 LM_Proxy（Caddy）以 `servers { trusted_proxies static …; trusted_proxies_strict; client_ip_headers X-Forwarded-For }` 決定用戶端 IP，再以 `header_up X-Forwarded-For {client_ip}` 轉送單一值；App_Server 不變，仍只採信 `PROXY_IP/32` | 信任判斷集中在 Edge_Proxy 之後的第一跳；App 的 Trusted_Proxies 不必擴大到 Cloudflare 範圍或 Edge_Proxy 網段（Req 9.12、25.10）。 |
 | 公開連接埠例外 | DOCKER-USER 以 `--ctorigdstport` 對宣告的 Public_Port 放行，位於 DNAT DROP 之前；未宣告時規則與原本相同 | 只放行 Edge_Proxy 的 80／443，LM_Proxy 連接埠維持 LAN 限制（Req 8.6、8.8–8.10）。 |
@@ -436,7 +436,7 @@ qa/inventory.json             # QA_Inventory
 | 用途 | 工具（版本與 digest 固定） | 理由與注意事項 |
 |---|---|---|
 | 秘密掃描 | Gitleaks 8.x：`gitleaks dir`（工作樹）+ `gitleaks git --log-opts="<base>..<sha>"`；`--redact`（等同 `--redact=100`）、`--report-format json` | `--redact` 將秘密值完全以遮罩取代，報告只保留 `RuleID`、`File`、`StartLine` 與 `Commit`（Req 6.4）；`normalize` 另丟棄 `Match`／`Secret` 欄位，報告與日誌再經 `ci/scrub.mjs` 處理。Untrusted_PR 的 `<base>` 為 `git merge-base origin/<target> HEAD`；Trusted_Ref 的 `<base>` 取上次成功建置的 `GIT_PREVIOUS_SUCCESSFUL_COMMIT`，無則完整歷史（Req 6.1）。偵測到任何秘密即失敗，Approved_Exception 不適用。 |
-| 相依套件漏洞 | **osv-scanner v2**（`--lockfile=bun.lock`、`--format json`） | osv-scanner v2 透過 OSV-Scalibr 支援文字格式 `bun.lock`（參見 [Supported Artifacts and Manifests](https://google.github.io/osv-scanner/supported-languages-and-lockfiles) 與 [release notes](https://github.com/google/osv-scanner/releases)）。Trivy 的文件列出 Bun 支援（[Trivy Node.js coverage](https://trivy.dev/docs/latest/guide/coverage/language/nodejs/)），但 `bun.lock` analyzer 曾是開放 issue（[#8840](https://github.com/aquasecurity/trivy/issues/8840)）。**注意**：兩者的 `bun.lock` 支援都較新，固定版本前必須以 `toolchain` 驗證工作確認能解析本 repo 的 `bun.lock` 且產生非零套件數；Pipeline 在解析出的套件數為 0 時視為掃描無法完成（Req 6.8）。另以 Trivy 掃描安裝後的 `node_modules`（讀取各套件 `package.json`）作交叉驗證。 |
+| 相依套件漏洞 | **osv-scanner v2**（`--lockfile=bun.lock` 與 `--lockfile=Cargo.lock` 各一次、`--format json`） | Rust 版本的 `Cargo.lock` 另外掃描一次並另存 `osv-cargo.json`，所以它解析出 0 個套件時只有這份報告未完成，不會被 `bun.lock` 的套件數掩蓋（Components 第 30.10 節）。osv-scanner v2 透過 OSV-Scalibr 支援文字格式 `bun.lock`（參見 [Supported Artifacts and Manifests](https://google.github.io/osv-scanner/supported-languages-and-lockfiles) 與 [release notes](https://github.com/google/osv-scanner/releases)）。Trivy 的文件列出 Bun 支援（[Trivy Node.js coverage](https://trivy.dev/docs/latest/guide/coverage/language/nodejs/)），但 `bun.lock` analyzer 曾是開放 issue（[#8840](https://github.com/aquasecurity/trivy/issues/8840)）。**注意**：兩者的 `bun.lock` 支援都較新，固定版本前必須以 `toolchain` 驗證工作確認能解析本 repo 的 `bun.lock` 且產生非零套件數；Pipeline 在解析出的套件數為 0 時視為掃描無法完成（Req 6.8）。另以 Trivy 掃描安裝後的 `node_modules`（讀取各套件 `package.json`）作交叉驗證。 |
 | SAST | Semgrep CE（固定版本），規則 vendored 在 `ci/semgrep/`（JavaScript 安全規則 + 自訂：禁止 `sql.unsafe`、`eval`、`new Function`、`child_process` 動態參數） | 離線執行、不依賴雲端 registry；`ERROR`→High、`WARNING`→Medium、`INFO`→Low。 |
 | 映像掃描 | Trivy（`image --scanners vuln,secret --format json`），DB 以 `trivy-db` mirror 在 LAN | OS 與 app 相依漏洞 + 秘密（Req 17.1）。 |
 | SBOM | Syft（`-o cyclonedx-json`） | 列出 OS 與 npm 套件（Req 17.4）。 |
@@ -2013,7 +2013,7 @@ v1.1.5 到 v2.0.0 是全新開始：以 Bun 的 `lm-deploy` 備份並封存到 `
 #### 30.10 已知限制
 
 - DAST 已移除，之後另行規劃（需要完整的隔離 stack）。
-- Security Scan 的 osv-scanner、Trivy（fs）與 Semgrep 仍只掃描 `bun.lock`、`node_modules` 與 JavaScript 原始碼，`Cargo.lock` 的相依套件尚未掃描。
+- Semgrep 沒有 Rust 規則，Rust 程式碼沒有 SAST（README 記錄的例外，最晚 2027-02-28 檢討）。`Cargo.lock` 的相依套件自 2026-11-25 起由 osv-scanner 掃描並加入「安全」關卡：`chrono` 換成 `time`（sqlx 的 `time` feature；`lm-core` 的 `serde_with` 不啟用預設 feature，否則它以 `chrono_0_4?/…` 讓 chrono 留在 `Cargo.lock`），`url` 升到 2.5.9；`paste` 1.0.15（RUSTSEC-2024-0436）以限定版本的 Approved_Exception 處理到 2027-02-28。
 - Realtime 只在第一次啟動時建立 tenant；更換 `LM_JWT_SECRET`／`LM_JWKS` 後是否需要更新 tenant 設定尚未在實機確認。
 - 以上元件的 Docker、Jenkins 與 Deploy_Host 行為只以靜態測試、fake docker 的 bats 與 `docker-compose config` 驗證，實機檢查清單見 `deploy/README.md` 的「只能在實際主機或 Jenkins 執行的檢查」。
 
@@ -2102,6 +2102,7 @@ type Finding = {
 type ApprovedException = {
   id: string; location: string; reason: string; approver: string;
   expires: string;         // YYYY-MM-DD，當日仍有效
+  version?: string;        // 選填；有這個欄位時只套用於 version 完全相同的結果，空字串或非字串使例外無效
 };
 type GateResult = { gate: string; pass: boolean; evaluatedAt: string; commit: string; unmet: string[]; reports: string[] };
 ```

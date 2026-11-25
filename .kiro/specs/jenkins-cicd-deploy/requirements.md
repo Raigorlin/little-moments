@@ -165,7 +165,7 @@
 #### Acceptance Criteria
 
 1. WHEN Pipeline 執行，THE Security_Scanner SHALL 掃描建置 commit 的 repository 所有受版本控制檔案；Untrusted_PR 建置另須掃描自目標分支 merge base 至 PR head 的所有 commit 差異，Trusted_Ref 建置另須掃描自起點至建置 commit 的所有 commit 差異中的秘密；起點為前一次成功建置 commit，但該 commit 不存在、無效、不是建置 commit 的祖先或不是 Secret_History_Baseline 的後代（含相同）時，起點為 Secret_History_Baseline。
-2. WHEN Pipeline 執行，THE Security_Scanner SHALL 依 `bun.lock` 掃描所有直接與間接相依套件的已知漏洞，並於報告中列出每筆結果的套件名稱、版本、漏洞識別碼與嚴重度。
+2. WHEN Pipeline 執行，THE Security_Scanner SHALL 依 `bun.lock` 與 Rust 版本的 `Cargo.lock` 掃描所有直接與間接相依套件的已知漏洞，並於報告中列出每筆結果的套件名稱、版本、漏洞識別碼與嚴重度。
 3. WHEN Pipeline 執行，THE Security_Scanner SHALL 對 `src/`、`server/` 與 `scripts/` 下所有 JavaScript 原始檔（`.js`、`.mjs`）執行 SAST，並於報告中列出每筆結果的規則識別碼、檔案路徑、行號與嚴重度。
 4. IF Security_Scanner 偵測到秘密，THEN THE Pipeline SHALL 不論嚴重度或是否有 Approved_Exception，將建置標記為失敗並停止後續發布階段，且報告與建置日誌中每個偵測到的秘密值皆完全以遮罩字元取代（不顯示任何原文字元），僅保留規則識別碼、檔案路徑、行號與 commit SHA 以供定位。
 5. IF Security_Scanner 回報不屬於 Approved_Exception 的 Critical_High_Finding，THEN THE Pipeline SHALL 將建置標記為失敗並停止後續發布階段；嚴重度為 Medium 或 Low 的結果 SHALL 僅記錄於報告而不使建置失敗。

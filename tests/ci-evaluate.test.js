@@ -130,6 +130,28 @@ describe('Property 8: 安全政策評估', () => {
     expect(next.expired).toEqual([{ index: 0, id: 'CVE-2024-0001', location: 'lodash', expires: '2026-03-10', matchedFindings: 1 }]);
   });
 
+  test('有 version 的例外只套用於版本完全相同的結果；version 為空時例外無效', () => {
+    const f = { scanner: 'osv-scanner', kind: 'vulnerability', id: 'RUSTSEC-2024-0436', location: 'paste', version: '1.0.15', severity: 'unknown' };
+    const ex = { id: 'RUSTSEC-2024-0436', location: 'paste', version: '1.0.15', reason: 'r', approver: 'a', expires: '2027-02-28' };
+    const applied = evaluateFindings([f], [ex], '2026-11-25');
+    expect(applied.pass).toBe(true);
+    expect(applied.findings[0].exception).toEqual({ status: 'applied', index: 0, approver: 'a', expires: '2027-02-28' });
+    // 其他版本（升級或降級）不套用
+    for (const version of ['1.0.16', '1.0.14', undefined]) {
+      const other = evaluateFindings([{ ...f, version }], [ex], '2026-11-25');
+      expect(other.pass).toBe(false);
+      expect(other.unresolved[0].reason).toBe('no-exception');
+    }
+    // 到期後同樣以 exception-expired 阻擋
+    expect(evaluateFindings([f], [ex], '2027-03-01').unresolved[0].reason).toBe('exception-expired');
+    // version 欄位存在但為空或不是字串：例外無效、不套用
+    for (const version of ['', '  ', 1, null]) {
+      const r = evaluateFindings([f], [{ ...ex, version }], '2026-11-25');
+      expect(r.pass).toBe(false);
+      expect(r.invalidExceptions[0].problems).toContain('version:為空或不是字串');
+    }
+  });
+
   test('秘密結果即使有相符的有效例外仍失敗', () => {
     const f = { scanner: 'gitleaks', kind: 'secret', id: 'aws-key', location: '.env', severity: 'low' };
     const ex = { id: 'aws-key', location: '.env', reason: 'r', approver: 'a', expires: '2099-01-01' };

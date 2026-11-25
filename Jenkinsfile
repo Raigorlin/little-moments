@@ -642,10 +642,9 @@ void unitTestsPostAlways() {
 }
 
 // 靜態安全掃描（Req 6.1–6.9）：Gitleaks（受版本控制檔案 + Git 歷史範圍，--redact）→ osv-scanner v2（bun.lock）
-// → Trivy（安裝後的 node_modules 交叉掃描）→ Semgrep（src/、server/、scripts/）。每項掃描 15 分鐘逾時。
-// 結果經 ci/policy/normalize.mjs → ci/policy/evaluate.mjs 判定「安全」關卡（plan.md D14 已移除 DAST）。
-// Cargo.lock 與 Rust 程式碼尚未納入掃描：這是有日期的例外，原因與 2026-11-25 的手動掃描結果見 README.md
-// 「CI/CD 與部署（Rust 版本）」的「安全掃描範圍的例外」。
+// → osv-scanner v2（Rust 版本的 Cargo.lock）→ Trivy（安裝後的 node_modules 交叉掃描）→ Semgrep（src/、server/、scripts/）。
+// 每項掃描 15 分鐘逾時。結果經 ci/policy/normalize.mjs → ci/policy/evaluate.mjs 判定「安全」關卡（plan.md D14 已移除 DAST）。
+// Semgrep 沒有 Rust 規則，Rust 程式碼的 SAST 仍是 README.md「CI/CD 與部署（Rust 版本）」的「安全掃描範圍的例外」。
 // 任一掃描執行錯誤、逾時、報告缺失或漏洞資料庫無法取得 → 該掃描未完成 → 關卡未通過（fail closed，Req 6.8）。
 // 掃描器容器：digest 固定、非 root、唯讀根檔案系統、--cap-drop ALL、只以唯讀方式掛載掃描輸入，
 // 寫入只限本次掃描的暫存目錄；Gitleaks 與 Semgrep 無網路，osv-scanner／Trivy 只為取得漏洞資料庫而連線。
@@ -720,6 +719,27 @@ void runSecurityScanStage() {
     exit "$rc"
   ''')
 
+  // osv-scanner v2：依 Rust 版本的 Cargo.lock 掃描 workspace 的直接與間接相依（Req 6.2）。另存一份報告，
+  // 所以 Cargo.lock 無法解析（套件數為 0）時只有這份報告未完成，不會被 bun.lock 的套件數掩蓋。
+  runScan('osv-scanner（Cargo.lock）', 'osv-cargo.json', '''
+    set -u
+    if [ ! -f "$LM_SCAN_DIR/tree/Cargo.lock" ]; then
+      echo "找不到 Cargo.lock" >&2
+      exit 3
+    fi
+    rc=0
+    timeout --kill-after=30 900 docker run --rm --name "$LM_SCAN_RUN-osv-scanner-cargo" \
+      --label "lm.ci.build=$BUILD_TAG" --label "lm.ci.scan=$LM_SCAN_RUN" \
+      --user "$(id -u):$(id -g)" --read-only --tmpfs /tmp:rw,nosuid,nodev,size=512m -e HOME=/tmp \
+      --security-opt no-new-privileges:true --cap-drop ALL --network bridge \
+      --mount "type=bind,src=$LM_SCAN_DIR/tree,dst=/src,readonly" \
+      --mount "type=bind,src=$LM_SCAN_DIR/out,dst=/out" \
+      "$LM_OSV_SCANNER_IMAGE" \
+      scan source --lockfile=/src/Cargo.lock --all-packages --format json --output-file "/out/$LM_SCAN_REPORT" || rc=$?
+    if [ "$rc" -eq 1 ]; then rc=0; fi
+    exit "$rc"
+  ''')
+
   // Trivy：以 rootfs 模式讀取安裝後 node_modules 內各套件的 package.json，與 osv-scanner 交叉驗證（Design 工具選型）。
   // 資料庫自 LAN 鏡像下載；拉取帳號只經 docker 的 -e NAME 繼承環境變數，不出現在命令列。
   withCredentials([usernamePassword(
@@ -783,7 +803,7 @@ void runSecurityScanStage() {
     sh(label: 'ci/policy/normalize.mjs', script: '''
       set -u
       mkdir -p reports/security/raw
-      for spec in gitleaks:gitleaks-dir gitleaks:gitleaks-git osv-scanner:osv trivy:trivy-node-modules semgrep:semgrep; do
+      for spec in gitleaks:gitleaks-dir gitleaks:gitleaks-git osv-scanner:osv osv-scanner:osv-cargo trivy:trivy-node-modules semgrep:semgrep; do
         tool="${spec%%:*}"
         name="${spec#*:}"
         ver=""
@@ -795,7 +815,7 @@ void runSecurityScanStage() {
         fi
       done
       rm -f "$LM_SCAN_DIR/out/gitleaks-dir.json" "$LM_SCAN_DIR/out/gitleaks-git.json"
-      for name in osv trivy-node-modules semgrep; do
+      for name in osv osv-cargo trivy-node-modules semgrep; do
         if [ -f "$LM_SCAN_DIR/out/$name.json" ]; then cp "$LM_SCAN_DIR/out/$name.json" "reports/security/raw/$name.json"; fi
       done
       exit 0
@@ -804,7 +824,7 @@ void runSecurityScanStage() {
       set -u
       rm -f reports/security/evaluation.json
       bun ci/policy/evaluate.mjs \
-        --reports reports/security/gitleaks-dir.json reports/security/gitleaks-git.json reports/security/osv.json reports/security/trivy-node-modules.json reports/security/semgrep.json \
+        --reports reports/security/gitleaks-dir.json reports/security/gitleaks-git.json reports/security/osv.json reports/security/osv-cargo.json reports/security/trivy-node-modules.json reports/security/semgrep.json \
         --exceptions security/exceptions.json --commit "$GIT_COMMIT_FULL" --today "$LM_SCAN_TODAY" \
         --out reports/security/evaluation.json
     ''')
@@ -1795,6 +1815,7 @@ int recordSecurityGate(String stageError) {
     gitleaks: 'reports/security/gitleaks-dir.json',
     gitleaksHistory: 'reports/security/gitleaks-git.json',
     osv: 'reports/security/osv.json',
+    osvCargo: 'reports/security/osv-cargo.json',
     trivyNodeModules: 'reports/security/trivy-node-modules.json',
     semgrep: 'reports/security/semgrep.json',
     securityEvaluation: 'reports/security/evaluation.json',
