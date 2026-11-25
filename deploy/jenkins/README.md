@@ -244,6 +244,15 @@ docker compose logs --since 10m jenkins 2>&1 | grep WebSocketAgents
 
 Handshake error 的處理與 Trusted Agent 相同；更換 secret 後以 `ru sh -c "cd '$A' && docker compose -f untrusted.compose.yaml up -d --force-recreate"` 重新建立容器。
 
+## Rust 建置的需求（兩個 agent）
+
+Rust 版本（v2.0.0 起）的 Toolchain、Install、Build 與 Unit Tests 階段在 agent 所用的 Docker daemon 上建置並執行 Rust 工具鏈映像（[`ci/jenkins/README.md`](../../ci/jenkins/README.md) 的「已填入的實際值」；plan.md D3）。`lm-trusted-1` 使用主機的 rootful daemon，`lm-untrusted-1` 使用 `lm-untrusted` 的 rootless daemon，兩者的映像、建置快取與具名卷互不共用：
+
+- **Docker build cache**：`docker build --target toolchain` 的層快取留在各自的 daemon。第一次建置要下載 `rust:1.100.0-trixie` 與 trunk、wasm-bindgen、binaryen、bats 的 release 檔，之後只在根目錄 `Dockerfile` 的 toolchain 階段改變時重建。不要在建置之間執行 `docker builder prune -a`。
+- **cargo 快取卷**：`lm-cargo-cache-release`（`lm-trusted-1`，`release/` 與 `infra/`）與 `lm-cargo-cache-ci`（`lm-untrusted-1`，`ci/`），掛載為工具鏈容器的 `CARGO_HOME`，第一次使用時由 Pipeline 建立並設定擁有者。需要清空時在沒有建置執行時 `docker volume rm` 該卷（rootless 時以 `ru docker volume rm lm-cargo-cache-ci`），下一次建置會重新下載 crates。
+- **磁碟**：每個 daemon 預留至少 20 GB 可用空間（工具鏈映像約 2–3 GB、cargo 快取約 1 GB、工作目錄中的 `target/` 數 GB；`release/` 另有 App_Image 建置）。rootless daemon 的資料在 `lm-untrusted` 家目錄的 `~/.local/share/docker`。以 `docker system df`（rootless 時 `ru docker system df`）確認。
+- **對外連線**：`lm-untrusted-fw` 放行公開網際網路，所以 `docker.io`、`gcr.io`、`github.com` 與 `crates.io` 可以連線；第 10 步的隔離測試不變。
+- 建置結束後 Pipeline 移除 `lm-rust-toolchain:<SHA>` 標籤；層快取保留。
 ## 重新開機後的確認
 
 ```sh

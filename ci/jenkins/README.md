@@ -1,6 +1,6 @@
 # Jenkins 設定即程式碼（`ci/jenkins/`）
 
-本目錄定義「日子拾光 · LITTLE MOMENTS」的 Jenkins controller 設定、Job 拓撲、憑證範圍與授權（Requirement 1.1、1.9、2.1–2.8、15.1、15.7、15.8、19.3、21.3–21.5、21.12）。controller 與兩個 agent 的容器與安裝步驟見 [`deploy/jenkins/README.md`](../../deploy/jenkins/README.md)，LAN Registry 見 [`deploy/registry/README.md`](../../deploy/registry/README.md)。
+本目錄定義「日子拾光 · LITTLE MOMENTS」的 Jenkins controller 設定、Job 拓撲、憑證範圍與授權（Requirement 1.1、1.9、2.1–2.8、15.1、19.3、21.3–21.5、21.12、28）。controller 與兩個 agent 的容器與安裝步驟見 [`deploy/jenkins/README.md`](../../deploy/jenkins/README.md)，LAN Registry 見 [`deploy/registry/README.md`](../../deploy/registry/README.md)。
 
 | 檔案 | 內容 |
 |---|---|
@@ -16,13 +16,26 @@
 | Job | 類型 | 來源 | 憑證 | 保留 |
 |---|---|---|---|---|
 | `ci/little-moments` | Multibranch | PR（merge 與 head）與未關聯 PR 的非 `main` 分支；fork PR 信任策略「From users with Admin or Write permission」 | `ci/`：`lm-github-app`、`lm-registry-pull` | 14 天；orphaned item 14 天 |
-| `release/little-moments` | Multibranch | 只有 `main` 與 `v<major>.<minor>.<patch>` Tag（Tag build strategy，7 天內建立的 Tag） | `release/`（見下表） | `main` 90 天、Tag 365 天 |
+| `release/little-moments` | Multibranch | 只有 `main`（推送或合併即發布：Staging → Production → 版本標籤；不探索 Tag） | `release/`（見下表） | `main` 90 天 |
 | `release/rollback` | Pipeline（`main` 的固定腳本） | `ci/jenkins/pipelines/rollback.Jenkinsfile` | `release/` | 365 天 |
 | `release/restore-drill` | Pipeline，cron `H 3 1,15 * *` | `ci/jenkins/pipelines/restore-drill.Jenkinsfile` | `release/` | 365 天 |
 | `release/digest-lookup` | Pipeline（參數 `DIGEST`） | `ci/jenkins/pipelines/digest-lookup.Jenkinsfile` | `release/` | 30 天 |
 | `infra/build-image` | Pipeline | `ci/jenkins/pipelines/build-image.Jenkinsfile` | `infra/`：`lm-github-app`、`lm-registry-push` | 90 天 |
 
-`ci/` 與 `release/` 的 Multibranch 共用根目錄的 `Jenkinsfile`（Req 1.1）。`release/little-moments` 不探索任何 PR；分支只自動建置 `main`，名稱看起來像 Tag 的分支雖會被索引但不會自動建置（且非管理員沒有該 Job 的 Job/Build）。`ci/little-moments` 會索引 `main` 但不自動建置它；即使手動建置，`ci/` 也沒有任何部署憑證。
+`ci/` 與 `release/` 的 Multibranch 共用根目錄的 `Jenkinsfile`（Req 1.1）。`release/little-moments` 不探索任何 PR 或 Tag，只索引並自動建置 `main`（非管理員沒有該 Job 的 Job/Build）。`ci/little-moments` 會索引 `main` 但不自動建置它；即使手動建置，`ci/` 也沒有任何部署憑證。
+
+Rust 版本的分支流程（Requirement 28；plan.md D1、D2）：
+
+| 觸發 | Job | 階段 | 關卡 |
+|---|---|---|---|
+| `rust`（或任何非 `main` 分支）的推送、PR | `ci/little-moments`（`branch_push`／`pull_request`） | Init → Toolchain → Install → Build → Unit Tests → Security Scan → Notify | QA、安全；不建置映像、不部署 |
+| `main` 的推送或合併 | `release/little-moments`（`main_push`） | 同上 → Image Build → Image Scan → SBOM → Image Push → Image Sign → Staging Deploy → Production Deploy → Version Tag → Notify | QA、安全、映像、Staging、上線後 |
+| `v*` Tag | 不建置 | `ci/stages.mjs` 以「Release_Tag 不再觸發建置；發布由 main 的推送執行」拒絕 | — |
+
+- 沒有人工核准：合併到 `main` 就是發布的決定。
+- 版本來自 `Cargo.toml` 的 `[workspace.package] version`（`bun ci/release-version.mjs` 輸出 `v<version>`）。Image Push 在 `<LM_IMAGE_REPO>:v<version>` 已存在時於推送前失敗（「請先提高 Cargo.toml 的 [workspace.package] version」）；Version Tag 只在「上線後」關卡通過後把 `v<version>` 指向上線的 digest，且從不覆寫，所以失敗的發布可以用同一個版本重試。
+- Production Deploy 先讀 `lm-deploy prod status`；沒有作用中的 digest 時記錄「上線後」失敗（「Production 尚未完成首次部署…」）並停止，不呼叫 `deploy`。第一次部署由維運者完成，見 [`deploy/README.md` 的「首次切換」](../../deploy/README.md#首次切換)。
+- Bun 版本的 Browser Tests、Migration Compatibility、DAST、Tag Verify、Resolve Digest 與 Approval 階段已移除（plan.md D14）。
 
 ## 必要 plugins
 
@@ -36,10 +49,10 @@
 | `credentials`、`plain-credentials`、`ssh-credentials`、`credentials-binding` | 憑證類型與 `withCredentials`（`usernamePassword`、`string`、`file`、`sshUserPrivateKey`、`gitUsernamePassword`） |
 | `github-branch-source` | Multibranch GitHub 來源、GitHub App 憑證、PR 信任策略 |
 | `github` | `/github-webhook/` 與 webhook secret（HMAC-SHA256） |
-| `basic-branch-build-strategies` | Tag build strategy、分支／PR 建置策略 |
+| `basic-branch-build-strategies` | 分支／PR 建置策略 |
 | `skip-notifications-trait` | 停用 branch source 預設的 commit status（由 `githubNotify` 送出） |
 | `pipeline-githubnotify-step` | `githubNotify`（`ci/notify.groovy`） |
-| `workflow-aggregator`（Pipeline）、`pipeline-input-step`、`pipeline-model-definition` | Declarative Pipeline、核准 `input` |
+| `workflow-aggregator`（Pipeline）、`pipeline-input-step`、`pipeline-model-definition` | Declarative Pipeline、`release/rollback` 的 `input` |
 | `git` | `checkout scm`、`cpsScm` |
 | `matrix-auth` | Project-based Matrix Authorization |
 | `lockable-resources` | `lock('lm-staging')`、`lock(resource: 'lm-prod', skipIfLocked: true)` |
@@ -70,7 +83,7 @@ controller 的 `CASC_JENKINS_CONFIG` 指向容器內的 `/var/jenkins_home/casc`
    docker compose logs --since 5m jenkins 2>&1 | grep -E 'Processing provided DSL|SEVERE'
    ```
 
-Job DSL 的輸出會出現 `buildRetention is deprecated` 警告。這是預期的：`jobs.groovy` 以 branch-api 的 `buildRetention`（BuildRetentionBranchProperty）設定 Multibranch 各分支的保留天數，這個屬性已標示 deprecated，但 branch-api 仍會套用保留天數（PR 14 天、`main` 90 天、Tag 365 天）。branch-api 提供替代屬性之前不要移除它。
+Job DSL 的輸出會出現 `buildRetention is deprecated` 警告。這是預期的：`jobs.groovy` 以 branch-api 的 `buildRetention`（BuildRetentionBranchProperty）設定 Multibranch 各分支的保留天數，這個屬性已標示 deprecated，但 branch-api 仍會套用保留天數（PR 14 天、`main` 90 天）。branch-api 提供替代屬性之前不要移除它。
 
 ## 秘密來源與憑證 ID
 
@@ -126,7 +139,7 @@ secrets/
 |---|---|---|---|---|
 | `ci/` | `lm-github-app` | GitHub App | `.app-id`、`.key`（PKCS#8） | checkout、commit status |
 | `ci/` | `lm-registry-pull` | Username with password | `.username`、`.password` | Build_Image 與掃描器拉取（`lm-pull-ci`，Registry 只允許 GET/HEAD） |
-| `release/` | `lm-github-app` | GitHub App | 同上 | checkout、Tag Verify 的 `git fetch`、commit status |
+| `release/` | `lm-github-app` | GitHub App | 同上 | checkout、commit status |
 | `release/` | `lm-registry-pull` | Username with password | `.username`、`.password` | `lm-pull-release`：拉取、簽章與 attestation 驗證 |
 | `release/` | `lm-registry-push` | Username with password | `.username`、`.password` | `lm-push`：推送、cosign 簽章、attestation、版本標籤 |
 | `release/` | `lm-cosign-key` | Secret file（`cosign.key`） | `lm-cosign-key` | 簽章私鑰 |
@@ -135,25 +148,26 @@ secrets/
 | `release/` | `lm-deploy-known-hosts` | Secret file（`known_hosts`） | `lm-deploy-known-hosts` | Deploy_Host 主機金鑰 |
 | `release/` | `lm-ssh-staging` | SSH Username with private key | `.username`（`lm-deploy-staging`）、`.key` | Staging forced command `lm-deploy staging` |
 | `release/` | `lm-staging-supabase-env` | Secret file（`supabase.env`） | `lm-staging-supabase-env` | Staging 的 Supabase 金鑰（`deploy/bin/lm-supabase-keys env staging` 的輸出），經 SSH stdin 交給 `lm-deploy staging deploy` |
-| `release/` | `lm-staging-smoke` | Secret file | `lm-staging-smoke` | Staging smoke-bot 密碼；帳號由 `lm-deploy staging smoke-account` 建立，見 [`deploy/README.md`](../../deploy/README.md#首次部署與-smoke-bot) |
+| `release/` | `lm-staging-smoke` | Secret file | `lm-staging-smoke` | Staging `smoke-bot` 的密碼；帳號由 Staging 的 Smoke_Test（`bun ci/smoke.mjs --provision`）在第一次部署時註冊，見 [`deploy/README.md`](../../deploy/README.md#首次切換) |
 | `release/` | `lm-ssh-prod` | SSH Username with private key | `.username`（`lm-deploy-prod`）、`.key` | Production 部署、回滾、還原演練 |
 | `release/` | `lm-prod-supabase-env` | Secret file（`supabase.env`） | `lm-prod-supabase-env` | Production 的 Supabase 金鑰（`deploy/bin/lm-supabase-keys env prod` 的輸出，與 Staging 不同） |
-| `release/` | `lm-prod-smoke` | Secret file | `lm-prod-smoke` | Production smoke-bot 密碼；帳號由 `lm-deploy prod smoke-account` 建立，見 [`deploy/README.md`](../../deploy/README.md#首次部署與-smoke-bot) |
+| `release/` | `lm-prod-smoke` | Secret file | `lm-prod-smoke` | Production `smoke-bot` 的密碼；帳號由維運者在首次切換時註冊（Production 的 Smoke_Test 從不註冊），見 [`deploy/README.md`](../../deploy/README.md#首次切換) |
 | `release/` | `lm-jenkins-api-readonly` | Username with password | `.username`（`lm-api-readonly`）、`.password`（API token） | `release/digest-lookup` |
 | `release/` | `lm-jenkins-api-retention` | Username with password | `.username`（`lm-retention-bot`）、`.password`（API token） | `ci/keep-log.mjs` 設定 keepLog（Req 21.6） |
 | `infra/` | `lm-github-app` | GitHub App | 同上 | checkout |
 | `infra/` | `lm-registry-push` | Username with password | `.username`、`.password` | 推送 Build_Image（與 `release/` 同一個 `lm-push` 帳號與密碼） |
 
-`lm-prod-openai-api-key` 的秘密檔是 `secrets/little-moments/release/lm-prod-openai-api-key`，內容為一行 OpenAI API 金鑰（`sk-` 開頭，不得含空白或 CR）：
+`lm-staging-supabase-env` 與 `lm-prod-supabase-env` 的秘密檔是 `secrets/little-moments/release/lm-<env>-supabase-env`，內容為 `deploy/bin/lm-supabase-keys env <staging|prod>` 輸出的 8 行 `KEY=VALUE`（plan.md D13、D16）：
 
-- 放置：在 `<controller-dir>` 以上方的 `put little-moments/release/lm-prod-openai-api-key` 隱藏輸入寫入，不要以 `echo`、`cat` 或編輯器處理金鑰。第一次放入必須在複製新的 `jobs.groovy` 並重新載入之前完成，缺少時 seed 失敗。
-- 輪替：在 OpenAI 後台建立新金鑰，以同一個 `put` 覆寫後執行「Reload existing configuration」（不要在 Release_Tag 建置進行中更換）。新金鑰在下一次 Production 部署建立的新槽位生效；finalize 移除舊槽位後，才在 OpenAI 撤銷舊金鑰。
-- 第一次啟用的完整順序（含 Deploy_Host 的 `install.sh` 與 `/admin` 政策）、金鑰外洩時的處理與停用方式見 [`deploy/README.md` 的「Production 收據 AI（OpenAI）」](../../deploy/README.md#production-收據-aiopenai)。
+- 放置：在 Deploy_Host 的 repository checkout 產生到 0600 暫存檔，再以 `sudo install -o 1000 -g 1000 -m 600 <暫存檔> secrets/little-moments/release/lm-<env>-supabase-env` 放入並 `shred -u` 暫存檔；完整指令與每個鍵的用途見 [`deploy/README.md` 的「Supabase 金鑰」](../../deploy/README.md#4-supabase-金鑰)。不要以 `cat`、`echo` 或編輯器顯示內容。缺少或為空時 seed 失敗。
+- 使用：只在 Staging Deploy、Production Deploy 的 `lm-deploy <env> deploy` 那一次 SSH 呼叫綁定；Pipeline 以 `[ -s ]` 確認非空後把檔案原樣導入 SSH 的 stdin，Groovy 從不讀取內容。`ci/scrub.mjs` 的 `envfile` 規則遮罩每一行的值。
+- 輪替：產生整組新金鑰、覆寫秘密檔後執行「Reload existing configuration」（不要在 `main` 的建置進行中更換）。下一次部署寫入新的 `app.env`。
 
+Bun 版本的 `lm-staging-db`、`lm-staging-setup-token`、`lm-prod-db`、`lm-prod-setup-token` 與 `lm-prod-openai-api-key` 已自 `jobs.groovy` 移除。重新載入後確認它們不在 `release/` 的 Credentials 頁，再刪除其秘密檔（見 [`deploy/README.md` 的「Jenkins 憑證」](../../deploy/README.md#3-jenkins-憑證)）。
 規則（Req 2.4、2.5、15.1）：
 
 - 沒有任何 GLOBAL 範圍的系統憑證。PR 建置位於 `ci/`，請求表中任何 `release/` 專屬憑證時 `withCredentials` 直接失敗。
-- 收據 AI（`CAMPING_OPENAI_*`，Req 15.6–15.8）：Release_Approver 決定只在 Production 啟用，唯一的 OpenAI 憑證是 `release/` 的 Secret file `lm-prod-openai-api-key`，只在 Production Deploy 的 `lm-deploy prod deploy` 綁定，金鑰經 SSH stdin 交給 `lm-deploy`，由它寫成 Deploy_Host 上的金鑰檔並設定 `CAMPING_OPENAI_API_KEY_FILE`。Staging、Test_Environment、還原演練與 `ci/` 的建置不使用任何 OpenAI 憑證；`ci/` 永遠不得定義。新增或移除此憑證時，同時修改 `jobs.groovy`、Pipeline 與本表。
+- Supabase 金鑰（`lm-<env>-supabase-env`）只存在 `release/`；`ci/` 的建置與還原演練不使用它們（演練以 `lm-supabase-keys env drill` 產生拋棄式金鑰）。新增或移除憑證時，同時修改 `jobs.groovy`、Pipeline、本表與 [`deploy/README.md`](../../deploy/README.md#3-jenkins-憑證) 的憑證表。
 - `lm-jenkins-api-readonly` 的帳號只有 Overall/Read 與 Job/Read（全域 `authenticated`）。
 - `release/` 與 `infra/` 的 `lm-registry-push.password` 必須相同（Registry 只有一個 `lm-push`）：`sudo cmp secrets/little-moments/release/lm-registry-push.password secrets/little-moments/infra/lm-registry-push.password` 沒有輸出即相同。
 
@@ -237,19 +251,18 @@ security realm 是本機使用者資料庫（`local-security.yaml`，`allowsSign
 
 Jenkins 解除 keepLog 需要 Run/Delete，與 Req 21.12「非管理員不可刪除」衝突，因此 Pipeline 不會自動解除。當一個 Image_Digest 離開 Production 且不再屬於 Deploy_Host 保留的最近 3 個可回滾 Image_Digest（`lm-deploy prod status` 的 `history`）時，Jenkins 管理員：
 
-1. 執行 `release/digest-lookup`（`DIGEST=<離開保留集合的 digest>`），記下對應的 main 建置與 Release_Tag 建置。
+1. 執行 `release/digest-lookup`（`DIGEST=<離開保留集合的 digest>`），記下對應的 main 建置（Bun 版本 v1.x 的 digest 另有一個 Release_Tag 建置）。
 2. 確認該 digest 不在 `lm-deploy prod status` 的目前版本與 `history` 中。
-3. 對兩個建置在 UI 按「Don't keep this build forever」（或 `POST <build>/toggleLogKeep`，管理員 API token）。
+3. 對這些建置在 UI 按「Don't keep this build forever」（或 `POST <build>/toggleLogKeep`，管理員 API token）。
 4. 之後由 Build Discarder 依 90／365 天規則處理。在 Build_Record 之外另以變更紀錄保存操作人與時間。
 
 ## Release_Approver
 
-- 核准清單的權威來源是 `ci/release-approvers.json`（`jenkinsId` 與 git email 對照）。正式核准與破壞性遷移核准的 `input` 以清單中的 `jenkinsId` 限定 submitter，送出後再以 `ci/approval.mjs` 驗證；不在清單的帳號送出時不生效並記錄帳號與時間（Req 19.3）。清單中的每個 `jenkinsId` 都必須是本機使用者資料庫的帳號。
-- 目前只有一位 Release_Approver：`jacklin`。他同時是主要作者，而破壞性遷移的核准人不得是該遷移的作者（Req 12.6、Property 32），所以 `jacklin` 撰寫的破壞性遷移無法被核准，Release_Tag 建置會停在該關卡。需要發布這類遷移之前，先在 `local-security.yaml` 新增第二位使用者，並把他加入 `ci/release-approvers.json`（以 PR 審查）。
+- Rust 版本的發布沒有核准 `input`：合併到 `main` 就是發布（plan.md D1），也沒有破壞性遷移的核准關卡。
+- Release_Approver 只用於 `release/rollback`：觸發者與 `input` 的送出者都必須在 `ci/release-approvers.json`（`jenkinsId` 與 git email 對照）之中且為同一帳號，送出後以 `ci/approval.mjs` 驗證；不在清單的帳號送出時不生效並記錄帳號與時間（Req 19.3）。清單中的每個 `jenkinsId` 都必須是本機使用者資料庫的帳號。
+- 目前只有一位 Release_Approver：`jacklin`。
 - `lm-release-approvers` 群組只決定 `release/rollback`、`release/restore-drill`、`release/digest-lookup` 的 Job/Build，在本機使用者資料庫下不生效；`jacklin` 以管理員身分執行這些 Job。日後改用外部 security realm 時，群組成員必須與 `ci/release-approvers.json` 一致；任一邊變更時兩邊一起更新（json 以 PR 審查，群組由 security realm 管理）。
-- Jenkins 管理員可以送出任何 `input`；Pipeline 仍以 `ci/approval.mjs` 拒絕不在清單的管理員。
-- 等待核准時 `release/little-moments` 的 Tag 建置會佔用一個 Trusted Agent executor 最長 24 小時。`lm-trusted` 的 executor 數至少為 2（一個留給 `main`／回滾），同時進行多個 Release_Tag 時需再增加。
-
+- Jenkins 管理員可以送出任何 `input`；`release/rollback` 仍以 `ci/approval.mjs` 拒絕不在清單的管理員。
 ## 已填入的實際值
 
 以下值來自已驗證的部署，已寫入 repository（都不是秘密）：
@@ -259,22 +272,21 @@ Jenkins 解除 keepLog 需要 Run/Delete，與 Req 21.12「非管理員不可刪
 - `ci/jenkins/local-security.yaml`：`jacklin`、`lm-retention-bot`、`lm-api-readonly`（密碼只引用 `${VAR}`）。
 - `ci/release-approvers.json`：唯一的 Release_Approver `jacklin` 與其 git email。
 - LAN Registry 一律為 `registry.our-littlemoments.com:8443`：`Jenkinsfile`、`ci/jenkins/pipelines/*.Jenkinsfile` 與 `deploy/compose/*.env.example` 的 `LM_IMAGE_REPO`。
-- 映像 digest：`Jenkinsfile` 與 `build-image.Jenkinsfile` 的鏡像工具映像（gitleaks、osv-scanner、Trivy、Semgrep、Syft、crane、cosign）、`LM_POSTGRES_IMAGE`、`deploy/compose/` 的 db 與 proxy、`deploy/registry/compose.yaml` 的 Caddy 與 registry、`Dockerfile` 與 `ci/build-image/Dockerfile` 的 `FROM`、`BUN_SHA256`、`NODE_SHA256`（Bun 1.4.4，見 `ci/toolchain.json`）。
+- 映像 digest：`Jenkinsfile` 與 `build-image.Jenkinsfile` 的鏡像工具映像（gitleaks、osv-scanner、Trivy、Semgrep、Syft、crane、cosign）、`LM_POSTGRES_IMAGE`（image smoke 的臨時 Database）、`deploy/compose/` 的 Supabase 映像（postgres、auth、realtime）與 Caddy、`deploy/registry/compose.yaml` 的 Caddy 與 registry、根目錄 `Dockerfile` 的 `FROM`（`rust:1.100.0-trixie` 與 `gcr.io/distroless/cc-debian13:nonroot`）與下載檔的 SHA-256（trunk、wasm-bindgen、binaryen、bats），以及 `ci/build-image/Dockerfile` 的 `FROM`、`BUN_SHA256`、`NODE_SHA256`（Bun 1.4.4，見 `ci/toolchain.json`）。
 - `BUILD_IMAGE`（`Jenkinsfile`、`rollback.Jenkinsfile`、`restore-drill.Jenkinsfile`、`digest-lookup.Jenkinsfile`）：四個檔案使用同一個 `registry.our-littlemoments.com:8443/little-moments/build-image@sha256:` digest，為 `infra/build-image` 建置 commit `a302149` 的輸出。`ci/build-image/Dockerfile` 或 `ci/toolchain.json` 變更後，重新執行 `infra/build-image`，以建置描述與 `reports/build-image-digest.txt` 的新 digest 在同一個 commit 內取代這四個檔案的 `BUILD_IMAGE`，並同步更新斷言此值的測試（`tests/ci-lint.test.js` 的 `BUILD_IMAGE_REF`、`ci-rollback-pipeline`、`ci-restore-drill`、`ci-digest-lookup`）。
+- Rust 工具鏈不在 `BUILD_IMAGE` 內（plan.md D3）。`BUILD_IMAGE` 仍是 Bun 1.4.4 的 Build_Image，執行所有 `ci/*.mjs` 與 bun 測試，所以四個 Pipeline 的 digest 不變。Rust 的 Toolchain、Install、Build 與 Unit Tests 階段在每個 agent 上以 `docker build --target toolchain`（根目錄 `Dockerfile`，空的 build context）建置本機映像 `lm-rust-toolchain:<完整 SHA>`（`LM_RUST_TOOLCHAIN_IMAGE_REPO`，不推送，建置結束時移除），再以 `docker.image(...).inside` 執行；`ci/rust-toolchain.json` 列出預期的版本，Toolchain 階段以 `ci/verify-rust-toolchain.sh` 確認。理由：`infra/build-image` 只從 `main` 建置，新的 Build_Image digest 無法在 `rust` 分支的 CI 之前存在；工具鏈的每個輸入仍以 digest 或 checksum 釘選。cargo 快取在具名卷 `lm-cargo-cache-ci`（`ci/`）與 `lm-cargo-cache-release`（`release/`）：不受信任的建置不會寫入受信任建置讀取的快取。只有 Install 的 `cargo fetch --locked` 有網路；Build 與 Unit Tests 以 `--network none` 與 `CARGO_NET_OFFLINE=true` 執行。
 - `deploy/registry/htpasswd.example` 刻意只含佔位符；實際的 `secrets/htpasswd` 只存在 Registry 主機上（見 [`deploy/registry/README.md`](../../deploy/registry/README.md)）。
 - 同主機部署值（Deploy_Host、Jenkins controller、兩個 agent 與 LAN Registry 都在 `192.168.1.121`；design.md 第 18.6 節）：
   - `Jenkinsfile`、`ci/jenkins/pipelines/rollback.Jenkinsfile`、`restore-drill.Jenkinsfile`：`LM_DEPLOY_HOST` 為 `192.168.1.121`、`LM_DEPLOY_PORT` 為 `22`。
-  - `Jenkinsfile`：`LM_STAGING_URL` 為 `http://192.168.1.121:8081`、`LM_PROD_URL` 為 `http://192.168.1.121:8082`。Smoke_Test 由 Trusted Agent 經這兩個 LAN origin 執行，不經 Edge_Proxy；`192.168.1.121` 必須在兩個環境 `<env>.env` 的 `ALLOWED_HOSTS` 內。
-  - `Jenkinsfile`：`LM_STAGING_DB_NAME` 為 `little_moments_staging`、`LM_PROD_DB_NAME` 為 `little_moments`（須與 Deploy_Host 上同環境 `db.env` 的 `POSTGRES_DB` 相同）。
-  - `Jenkinsfile`：`LM_DAST_PROBE_TARGETS` 為主機上所有已發布的連接埠：`22`（sshd）、`80`／`443`（NPM）、`81`（NPM 管理介面）、`8080`（Jenkins controller）、`8081`／`8082`（Staging／Production LM_Proxy）、`8090`（維運者的暫時預覽 App）、`8443`（LAN Registry），全部以 `192.168.1.121:<port>` 表示。主機新增或移除發布連接埠時（`sudo ss -ltnp`）同步更新此清單與 `tests/ci-jenkinsfile.test.js`。
+  - `Jenkinsfile`：`LM_STAGING_URL` 為 `http://192.168.1.121:8081`、`LM_PROD_URL` 為 `http://192.168.1.121:8082`。Smoke_Test 由 Trusted Agent 經這兩個 LAN origin 執行，不經 Edge_Proxy；`192.168.1.121` 必須在兩個環境 `<env>.env` 的 `LM_ALLOWED_HOSTS` 內。
 - Production 經同主機 Edge_Proxy 對外公開的設定步驟見 [`deploy/README.md`](../../deploy/README.md)。
 
 ### Gitleaks 歷史起點（Secret_History_Baseline）
 
-`Jenkinsfile` 的 `LM_GITLEAKS_HISTORY_BASE` 是非 PR 建置（`main`、Release_Tag）Gitleaks Git 歷史掃描的固定起點，目前為 commit `c084474`（完整的 40 字元 SHA 見 `Jenkinsfile`；2026-11-13 審查，design.md Components 第 27.3 節）。這個 commit 與它所有祖先已以 Gitleaks 8.30.1 的預設規則掃描，結果只有已確認的測試假值，沒有真實秘密。
+`Jenkinsfile` 的 `LM_GITLEAKS_HISTORY_BASE` 是非 PR 建置（`main` 與 `rust` 等分支的推送）Gitleaks Git 歷史掃描的固定起點，目前為 commit `c084474`（完整的 40 字元 SHA 見 `Jenkinsfile`；2026-11-13 審查，design.md Components 第 27.3 節）。這個 commit 與它所有祖先已以 Gitleaks 8.30.1 的預設規則掃描，結果只有已確認的測試假值，沒有真實秘密。
 
 - 掃描範圍：上次成功建置的 commit（`GIT_PREVIOUS_SUCCESSFUL_COMMIT`）有效、是建置 commit 的祖先且不比起點舊時為 `<上次成功建置>..<sha>`，否則為 `<起點>..<sha>`。不再掃描完整歷史。PR 仍使用 `<merge base>..<sha>`，不受起點影響。
-- 起點無效、不存在或不是建置 commit 的祖先時（例如 Release_Tag 指向 `c084474` 之前的 commit），歷史掃描未完成，「安全」關卡不通過（fail closed）。以包含起點的 commit 重新建置。
+- 起點無效、不存在或不是建置 commit 的祖先時（例如建置 commit 在 `c084474` 之前），歷史掃描未完成，「安全」關卡不通過（fail closed）。以包含起點的 commit 重新建置。
 - 建置 commit 的所有受版本控制檔案仍每次以 `gitleaks dir` 完整掃描；起點只限制 Git 歷史的範圍。
 - 它是 `environment` 的常數，不是建置參數，Build Now 時不能覆寫（Req 23.4）。
 - 移動起點：先以 Gitleaks 掃描新起點的完整歷史，確認每筆結果都不是真實秘密並記錄於 design.md，之後才以經審查的 commit 修改 `LM_GITLEAKS_HISTORY_BASE` 與 `tests/ci-jenkinsfile.test.js` 的對應斷言。
@@ -314,7 +326,7 @@ Pipeline 在 Groovy sandbox 中執行。首次執行時以下呼叫可能出現�
 
 - `new groovy.json.JsonSlurperClassic` 與 `parseText`（Build_Record、報告 JSON）
 - `RunWrapper.getBuildCauses(String)`（判斷手動觸發與 Replay）
-- `FlowInterruptedException.getCauses()`、`Rejection.getUser()`（核准被拒絕時的帳號）
+- `FlowInterruptedException.getCauses()`、`Rejection.getUser()`（`release/rollback` 的 `input` 被拒絕時的帳號）
 - `staticMethod java.lang.System currentTimeMillis`（逾時與觀察期計時）
 - `@NonCPS` 輔助函式內的集合與字串操作（依實際提示核准）
 
@@ -350,9 +362,8 @@ Multibranch 掃描或 checkout 出現 `Couldn't authenticate with GitHub app ID 
 ### Repository 設定
 
 1. Repository webhook：Payload URL `https://jenkins.our-littlemoments.com/github-webhook/`、Content type `application/json`、Secret 與 `GITHUB_WEBHOOK_SECRET` 相同、事件只勾選 Pushes 與 Pull requests（Req 2.3；其他事件不會觸發建置）。
-2. Ruleset：禁止非管理員建立名稱符合 `v*` 的分支；`v*` Tag 只允許 Release_Approver 建立且不可移動或刪除（Release_Tag 的最終驗證在 `ci/policy/tag.mjs`）。
-3. Release_Tag 使用 annotated tag（`git tag -a vX.Y.Z`）：Tag build strategy 以 Tag 時間判斷「7 天內」，lightweight tag 以 commit 時間計算，指向較舊 commit 時不會自動建置（需管理員手動觸發該 Tag）。
-4. Branch protection：`main` 需要 PR 與審查；`ci/little-moments` 的 commit status context 為 `little-moments/ci`。
+2. Ruleset：禁止非管理員建立名稱符合 `v*` 的分支；既有的 `v*` Tag（Bun 版本 v1.x）不可移動或刪除。Rust 版本的版本標籤 `v<version>` 由 Version Tag 階段打在 LAN Registry 的映像上，不建立 git tag；推送 git tag 不會觸發任何建置。
+3. Branch protection：`main` 需要 PR 與審查，且 `ci/little-moments` 的 commit status（context `little-moments/ci`）通過；`rust` 分支的推送由 `ci/little-moments` 建置。
 
 ## 驗證步驟（需在實際環境執行）
 
@@ -361,7 +372,7 @@ Multibranch 掃描或 checkout 出現 `Couldn't authenticate with GitHub app ID 
 ### 設定載入
 
 1. 「Manage Jenkins → Configuration as Code」顯示無錯誤；`ci/`、`release/`、`infra/` 與 6 個 Job 皆已建立（Job DSL 的 `buildRetention is deprecated` 警告是預期的）。
-2. `ci/` 資料夾的 Credentials 只顯示 `lm-github-app` 與 `lm-registry-pull`；`release/` 顯示上表 18 個；`infra/` 顯示 2 個；「System」只有 `lm-github-webhook-secret`（SYSTEM 範圍）。
+2. `ci/` 資料夾的 Credentials 只顯示 `lm-github-app` 與 `lm-registry-pull`；`release/` 顯示上表 15 個（沒有 Bun 版本的 5 個退役憑證）；`infra/` 顯示 2 個；「System」只有 `lm-github-webhook-secret`（SYSTEM 範圍）。
 3. 非管理員沒有建置權限：以 `lm-api-readonly` 的 API token（放在 0600 的 curl 設定檔，內容 `user = "lm-api-readonly:<api-token>"`）執行 `curl -s -o /dev/null -w '%{http_code}\n' -K <curl-config> -X POST https://jenkins.our-littlemoments.com/job/release/job/rollback/build` → 403。日後改用外部 security realm 時，再以 `lm-developers` 成員登入確認：`ci/little-moments` 的建置頁沒有 Replay、Delete build、Edit Build Information、Configure；`release/little-moments` 沒有 Build Now。
 4. Lockable Resources 頁面顯示 `lm-staging` 與 `lm-prod`。
 5. 「Manage Jenkins → Nodes」中 `lm-trusted-1` 與 `lm-untrusted-1` 皆為上線狀態。

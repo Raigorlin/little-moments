@@ -2,8 +2,8 @@
 // 1. 環境變數表（<!-- env-table:start --> … <!-- env-table:end -->）列出 parseConfig 讀取的每個變數，
 //    且預設值、必填與未設定時行為與 server/config.js 實作一致。
 // 2. README 不含任何符合秘密模式的字串；範例值只用佔位符。
-// 3. deploy/README.md 的「首次部署與 smoke-bot」與 README 帳號維運章節（Requirement 27.25、27.26）。
-// 4. Production 收據 AI（OpenAI）的憑證表、啟用、輪替與停用步驟（Requirement 15.7、24.9；design.md Components §25.8）。
+// 3. deploy/README.md 的 Rust 版本 runbook：憑證表、Supabase 金鑰、NPM Websockets 與「首次切換」（Requirement 28；plan.md D11、D13、D16）。
+// 4. Bun 版本的收據 AI 與 smoke-account 文件只以 v1.1.5 的連結保留（Requirement 28；plan.md D14）。
 import { describe, test, expect } from 'bun:test';
 import fc from 'fast-check';
 import { readFileSync } from 'node:fs';
@@ -290,7 +290,7 @@ describe('公開範圍與 Edge_Proxy runbook（Req 24.3、25.12、25.13）', () 
     expect([...runbookBytes.subarray(0, 3)]).not.toEqual([0xef, 0xbb, 0xbf]);
     expect(runbook).not.toContain('\r');
     for (const s of [
-      'Forward Hostname／IP `192.168.1.121`；Forward Port `8082`', '**不要**開啟 Websockets Support', 'Force SSL', 'HSTS Enabled',
+      'Forward Hostname／IP `192.168.1.121`；Forward Port `8082`', '**開啟** Websockets Support', 'Force SSL', 'HSTS Enabled',
       'Forward Domain `www.our-littlemoments.com`；HTTP Code `301`；開啟 Preserve Path', '**Proxied**', '**Full (strict)**',
       '不要為 Staging 建立任何 DNS 記錄或 NPM 主機', '`/github-webhook/`',
       'LAN=192.168.1.0/24,172.17.0.0/16,172.20.0.0/16,172.21.0.0/16,172.22.0.0/16', '--public-port 80,443',
@@ -339,213 +339,196 @@ const positions = (text, parts) => {
   });
 };
 
-describe('首次部署與 smoke-bot（Req 27.25、27.26、24.9、24.10）', () => {
+describe('deploy/README.md：Rust 版本的憑證、金鑰與 NPM（Req 28；plan.md D12、D13、D16）', () => {
   const runbook = read('../deploy/README.md');
-  const jenkinsReadme = read('../ci/jenkins/README.md');
-  const first = sectionOf(runbook, '首次部署與 smoke-bot');
-  const staging = first.slice(first.indexOf('### Staging'), first.indexOf('### Production'));
-  const production = first.slice(first.indexOf('### Production'));
-  const accounts = sectionOf(readme, '帳號維運指令：create-admin 與 reset-password');
-  const lanSection = sectionOf(readme, 'LAN 部署');
-  const LINK = 'deploy/README.md#首次部署與-smoke-bot';
+  const jobs = read('../ci/jenkins/jobs.groovy');
+  const creds = sectionOf(runbook, '3. Jenkins 憑證');
+  const keys = sectionOf(runbook, '4. Supabase 金鑰');
+  const rows = creds.split('\n').filter(l => /^\| (`(ci|release|infra)\/`|SYSTEM) \|/.test(l));
+  const RETIRED = ['lm-staging-db', 'lm-staging-setup-token', 'lm-prod-db', 'lm-prod-setup-token', 'lm-prod-openai-api-key'];
 
-  test('deploy/README.md 有「首次部署與 smoke-bot」一節，錨點與連結一致', () => {
-    expect(first).not.toBe('');
-    expect(slug('首次部署與 smoke-bot')).toBe(LINK.split('#')[1]);
-    // README 既有的帳號維運章節錨點不變（其他章節的連結仍有效）。
-    expect(slug('帳號維運指令：create-admin 與 reset-password')).toBe('帳號維運指令create-admin-與-reset-password');
-    expect(readme).toContain('(#帳號維運指令create-admin-與-reset-password)');
+  test('憑證表列出 jobs.groovy 的每個資料夾憑證，release/ 恰好 15 個；退役的 5 個只出現在刪除說明', () => {
+    const ids = [...jobs.matchAll(/\[id: '(lm-[a-z0-9-]+)'/g)].map(m => m[1]);
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) expect({ id, listed: rows.some(r => r.includes(`| \`${id}\` |`)) }).toEqual({ id, listed: true });
+    expect(rows.filter(r => r.startsWith('| `release/` |')).length).toBe(15);
+    expect(rows.some(r => r.includes('`lm-github-webhook-secret`'))).toBe(true);
+    for (const id of RETIRED) {
+      expect({ id, inTable: rows.some(r => r.includes(`\`${id}\``)) }).toEqual({ id, inTable: false });
+      expect(creds).toContain(`\`${id}\``);
+      expect(jobs).not.toContain(`'${id}'`);
+    }
+    expect(creds).toContain('shred -u');
   });
 
-  test('前置條件：install.sh、db.env／app.env 與 lm-<env>-db 一致、映像包含 Smoke_Provisioner；app.env 經 lm-deploy app-env 寫入', () => {
-    const pre = first.slice(first.indexOf('### 前置條件'), first.indexOf('### Staging'));
-    for (const s of ['`install.sh`', '`db.env`', '`lm-<env>-db`', '`little_moments_staging`', '`little_moments`',
-      '/app/tools/create-smoke-account.js', '`config_missing`', '--app-env-stdin', '| sudo /opt/lm/bin/lm-deploy "$E" app-env']) {
-      expect(pre).toContain(s);
+  test('Supabase 金鑰：8 個鍵的用途、以 lm-supabase-keys 產生到 0600 檔案並以 install 放入 Jenkins 秘密目錄、輪替', () => {
+    const appEnv = read('../deploy/compose/app.env.example');
+    const names = [...appEnv.matchAll(/^(LM_[A-Z_]+)=/gm)].map(m => m[1]);
+    expect(names.length).toBe(8);
+    for (const name of names) expect(keys).toContain(`| \`${name}\` |`);
+    for (const s of ['umask 077; deploy/bin/lm-supabase-keys env prod >', 'sudo install -o 1000 -g 1000 -m 600 "$f" "$S/lm-prod-supabase-env"',
+      'shred -u "$f"', 'Reload existing configuration', '--app-env-stdin', '`app_env_invalid`', '輪替', 'session 失效', 'realtime-dev']) {
+      expect(keys).toContain(s);
     }
-    // 備份失敗時不寫入 app.env：文件所述的順序與 lm-deploy 的 do_deploy 相同。
+  });
+
+  test('NPM：www 開啟 Websockets Support；apex Redirection Host 維持 301 到 www（HTTPS）', () => {
+    expect(sectionOf(runbook, '7. NPM：Production Proxy Host')).toContain('**開啟** Websockets Support');
+    expect(runbook).toContain('/realtime/v1/websocket');
+    const apex = sectionOf(runbook, '8. NPM：apex Redirection Host');
+    for (const s of ['Scheme `https`', 'HTTP Code `301`', 'Force SSL']) expect(apex).toContain(s);
+  });
+
+  test('每個環境的設定說明 LM_ALLOWED_HOSTS、LM_SITE_URL、LM_PUBLIC_SIGNUP、LM_HEALTH_HOST 與連接埠', () => {
+    const envs = sectionOf(runbook, '5. 每個環境的 `<env>.env`');
+    for (const s of ['`LM_ALLOWED_HOSTS`', '`LM_SITE_URL`', '`LM_PUBLIC_SIGNUP`', '`LM_HEALTH_HOST`', '`LM_PUBLIC_PORT`', '`8081`', '`8082`',
+      '`APP_SUBNET`', '`APP_MEMORY`']) {
+      expect(envs).toContain(s);
+    }
+  });
+
+  test('結束碼表涵蓋 lm-deploy 的每個失敗 reason', () => {
     const lmDeploy = read('../deploy/bin/lm-deploy');
-    const deployBody = lmDeploy.slice(lmDeploy.indexOf('do_deploy() {'), lmDeploy.indexOf('\n}\n', lmDeploy.indexOf('do_deploy() {')));
-    expect(positions(deployBody, ['stage_app_env', 'do_backup', 'install_app_env', 'do_migrate']).every(i => i >= 0)).toBe(true);
-    expect(positions(pre, ['驗證 stdin 的 app.env 內容', '備份', '寫入 `app.env`', 'Migration_Runner']).every(i => i >= 0)).toBe(true);
+    const reasons = new Set([...lmDeploy.matchAll(/die "\$EX_[A-Z]+" ([a-z_]+) /g)].map(m => m[1]));
+    for (const r of ['stack_db_failed', 'stack_setup_failed', 'stack_auth_failed', 'stack_realtime_failed', 'stack_gateway_failed',
+      'migration_changed', 'migrate_failed', 'drill_keys_failed', 'verify_failed']) reasons.add(r);
+    const table = sectionOf(runbook, '一般部署與 `lm-deploy` 的結束碼');
+    for (const r of reasons) expect({ r, listed: table.includes(`\`${r}\``) }).toEqual({ r, listed: true });
   });
 
-  test('Staging 依序為：第一次建置失敗並取得 digest → smoke-account（no_admin）→ create-admin → smoke-account → 新的 main 建置 → staging-verified', () => {
-    const cmd = 'sudo cat "$S/lm-staging-smoke" | sudo /opt/lm/bin/lm-deploy staging smoke-account <digest>';
-    const order = positions(staging, [
-      '`backup_create_failed`', 'reports/image-digest.txt', cmd, 'Smoke_Provisioner 未完成（no_admin）', '/app/tools/create-admin.js', cmd,
-      '"account":"created"', '新的 `main` 建置', 'staging-verified',
-    ]);
-    expect(order.every(i => i >= 0)).toBe(true);
-    // create-admin 使用 README 的 compose 指令（-T、密碼經 stdin、無終端機時必須指定兩個選項）。
-    expect(staging).toContain('--profile ops run --rm --no-deps -T --entrypoint bun migrate /app/tools/create-admin.js');
-    expect(staging).toContain('--username <admin-name> --display-name <display-name>');
-    expect(readme).toContain('--profile ops run --rm --no-deps --entrypoint bun migrate /app/tools/create-admin.js');
-    // 同一個 commit 重建會在 Image Push 拒絕覆寫標籤，文件不得要求對同一 commit 按 Build Now。
-    expect(read('../Jenkinsfile')).toContain('拒絕覆寫');
-    expect(staging).toContain('**不要**對同一個 commit 在 `release/little-moments » main` 按 Build Now');
-  });
-
-  test('Production 在推送第一個 Release_Tag 之前，以 prod、lm-prod-smoke 與已通過 Staging 驗證的 digest 依相同順序執行', () => {
-    expect(first.indexOf('### Production')).toBeGreaterThan(first.indexOf('### Staging'));
-    expect(production).toContain('在推送第一個 Release_Tag **之前**');
-    const cmd = 'sudo cat "$S/lm-prod-smoke" | sudo /opt/lm/bin/lm-deploy prod smoke-account <verified-digest>';
-    const order = positions(production, ['E=prod DB=little_moments', '`no_admin`', cmd, 'LM_ENV=prod', '/app/tools/create-admin.js', cmd, '推送 Release_Tag']);
-    expect(order.every(i => i >= 0)).toBe(true);
-  });
-
-  test('Setup_Token 只是後備；Production 的 smoke-bot 是真實 member、密碼只在 Credential_Store、以 reset-password 更換並同步更新；Smoke_Fixture 只有 smoke-bot 與管理員可見', () => {
-    const ops = first.slice(first.indexOf('### Setup_Token'));
-    for (const s of ['`/setup` 不再使用', '真實的 member 帳號', '`lm-prod-smoke`', '/app/tools/reset-password.js smoke-bot',
-      '"$S/lm-<env>-smoke"', 'Reload existing configuration', '只有 smoke-bot 與管理員看得到', '下一次 Smoke_Test 會失敗']) {
-      expect(ops).toContain(s);
+  test('Bun 版本的 runbook 章節已移除：沒有 smoke-account、create-admin、Setup_Token 或收據 AI', () => {
+    for (const s of ['smoke-account', 'create-admin', 'Setup_Token', 'OpenAI', '收據 AI', '## 首次部署與 smoke-bot']) {
+      expect({ s, present: runbook.includes(s) }).toEqual({ s, present: false });
     }
+    expect(runbook).toContain('tag `v1.1.5`');
   });
 
-  test('結束碼表涵蓋 lm-deploy smoke-account 與 Smoke_Provisioner 的 reason', () => {
-    const lmDeploy = read('../deploy/bin/lm-deploy');
-    for (const reason of ['operator_only', 'password_stdin_required', 'password_invalid', 'config_missing', 'db_start_failed',
-      'proxy_start_failed', 'migrate_failed', 'smoke_account_failed', 'invalid_phase', 'deploy_in_progress',
-      'no_admin', 'account_is_admin', 'account_disabled']) {
-      expect(first).toContain(`\`${reason}\``);
+  test('列出只能在實際主機或 Jenkins 執行的檢查', () => {
+    const checks = sectionOf(runbook, '只能在實際主機或 Jenkins 執行的檢查');
+    for (const s of ['Rust 工具鏈映像', 'image smoke', 'Trivy', 'cosign', 'Supabase 服務', '還原演練', 'NPM Websockets', 'CasC', 'D10', 'v2.0.0']) {
+      expect(checks).toContain(s);
     }
-    for (const reason of ['operator_only', 'password_stdin_required', 'db_start_failed', 'proxy_start_failed', 'smoke_account_failed']) {
-      expect(lmDeploy).toContain(` ${reason} `);
-    }
-  });
-
-  test('README 帳號維運章節說明 create-smoke-account 並連結該節；LAN 部署以 create-admin 為主、/setup 為後備', () => {
-    expect(accounts).toContain('三個指令');
-    expect(accounts).toContain('bun run create-smoke-account [--username <name>] [--fixture <title>] [--password-file <path>]');
-    for (const s of ['`smoke-bot`', '`Smoke Bot`', '`smoke-fixture`', '**冪等**', '**拒絕執行**', '**密碼來源只有三種**',
-      '`no_admin`', '`account_is_admin`', '`account_disabled`', '結束碼為 2', '結束碼為 1',
-      'lm-deploy <env> smoke-account', `(${LINK})`]) {
-      expect(accounts).toContain(s);
-    }
-    expect(lanSection).toContain(`(${LINK})`);
-    expect(lanSection.indexOf('`create-admin`')).toBeLessThan(lanSection.indexOf('`/setup` 只是後備'));
-  });
-
-  test('ci/jenkins/README.md 的 lm-staging-smoke、lm-prod-smoke 指出帳號由 lm-deploy <env> smoke-account 建立', () => {
-    for (const [id, env] of [['lm-staging-smoke', 'staging'], ['lm-prod-smoke', 'prod']]) {
-      const row = jenkinsReadme.split('\n').find(l => l.startsWith(`| \`release/\` | \`${id}\` |`));
-      expect(row).toContain(`\`lm-deploy ${env} smoke-account\``);
-      expect(row).toContain('(../../deploy/README.md#首次部署與-smoke-bot)');
-    }
-  });
-
-  test('新章節不含秘密：密碼／Token 類賦值只用佔位符，digest 只以 <digest> 表示', () => {
-    const assign = /\b([A-Z0-9_]*(?:PASSWORD|SECRET|TOKEN|API_KEY|PASSPHRASE))\s*[=:]\s*([^\s`|,;)]+)/gi;
-    const placeholder = /^(<[^>]*>?|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\$\(.*|\*+|…|\.\.\.)?$/;
-    for (const m of first.matchAll(assign)) {
-      const value = m[2].replace(/^['"]|['"]$/g, '');
-      expect({ name: m[1], placeholder: placeholder.test(value) }).toEqual({ name: m[1], placeholder: true });
-    }
-    expect(first).not.toMatch(/sha256:[0-9a-f]{8,}/);
-    expect(first).not.toMatch(/-----BEGIN [A-Z ]*PRIVATE KEY-----/);
   });
 });
 
-describe('Production 收據 AI（OpenAI）文件（Req 15.7、24.9；design.md Components §25.8）', () => {
+describe('首次切換：v1.1.5 → v2.0.0（Req 28；plan.md D10、D11）', () => {
   const runbook = read('../deploy/README.md');
   const jenkinsReadme = read('../ci/jenkins/README.md');
-  const TITLE = 'Production 收據 AI（OpenAI）';
-  const ANCHOR = 'production-收據-aiopenai';
-  const section = sectionOf(runbook, TITLE);
-  const sub = name => {
-    const start = section.indexOf(`\n### ${name}\n`);
-    if (start < 0) return '';
-    const rest = section.slice(start + name.length + 6);
-    const next = rest.search(/^### /m);
-    return next < 0 ? rest : rest.slice(0, next);
-  };
-  const enable = sub('第一次啟用');
+  const cutover = sectionOf(runbook, '首次切換');
+  const back = sectionOf(runbook, '回滾到 v1.1.5');
+  const code = text => [...text.matchAll(/^ *```sh\n([\s\S]*?)^ *```$/gm)].map(m => m[1]).join('\n');
 
-  test('ci/jenkins/README.md：憑證表不再有 OpenAI 憑證（Rust 版移除收據 AI，D13）', () => {
-    const rows = jenkinsReadme.split('\n').filter(l => /^\| `(ci|release|infra)\/` \|/.test(l));
-    expect(rows.length).toBeGreaterThan(0);
-    for (const row of rows) expect(row.toLowerCase()).not.toContain('openai');
+  test('章節與錨點存在，Jenkinsfile 的 bootstrap 訊息、ci/jenkins/README.md 與 README 都指向它', () => {
+    expect(cutover).not.toBe('');
+    expect(slug('首次切換')).toBe('首次切換');
+    expect(slug('回滾到 v1.1.5')).toBe('回滾到-v115');
+    expect(back).not.toBe('');
+    expect(read('../Jenkinsfile')).toContain('deploy/README.md 的首次切換');
+    expect(cutover).toContain('Production 尚未完成首次部署，請依 deploy/README.md 的首次切換步驟完成 bootstrap');
+    expect(jenkinsReadme).toContain('(../../deploy/README.md#首次切換)');
+    expect(readme).toContain('(deploy/README.md#首次切換)');
   });
 
-  test('ci/jenkins/README.md：規則改寫為目前狀態，憑證表之後有放置與輪替說明並連結 deploy/README.md 的新章節', () => {
-    expect(jenkinsReadme).not.toContain('預設不定義任何憑證');
-    const rule = jenkinsReadme.split('\n').find(l => l.startsWith('- 收據 AI（`CAMPING_OPENAI_*`'));
-    expect(rule).toBeDefined();
-    for (const s of ['只在 Production 啟用', '`lm-prod-openai-api-key`', '`ci/` 永遠不得定義']) expect(rule).toContain(s);
-    const tableEnd = jenkinsReadme.indexOf('| `infra/` | `lm-registry-push` |');
-    const rules = jenkinsReadme.indexOf('規則（Req 2.4、2.5、15.1）');
-    const notes = jenkinsReadme.slice(tableEnd, rules);
-    for (const s of ['put little-moments/release/lm-prod-openai-api-key', '輪替', 'Reload existing configuration',
-      `(../../deploy/README.md#${ANCHOR})`]) expect(notes).toContain(s);
-    expect(jenkinsReadme).toContain('`release/` 顯示上表 18 個');
-  });
-
-  test('deploy/README.md 有該章節，錨點與各處連結一致', () => {
-    expect(section).not.toBe('');
-    expect(slug(TITLE)).toBe(ANCHOR);
-    expect(runbook).toContain(`(#${ANCHOR})`);
-    expect(readme).toContain(`(deploy/README.md#${ANCHOR})`);
-  });
-
-  test('第一次啟用依序為：put 秘密檔 → install.sh → jobs.groovy 假秘密測試與 Reload → 合併 main（Staging 停用）→ /admin 設為 admins → Release_Tag 與 receiptAi', () => {
-    const order = positions(enable, [
-      'install -o 1000 -g 1000 -m 600', 'put little-moments/release/lm-prod-openai-api-key',
-      'deploy/host/install.sh', 'jobs.groovy', '以假秘密測試設定變更', 'Reload existing configuration', '`lm-prod-openai-api-key`',
-      '合併到 `main`', 'LM_RECEIPT_AI=disabled', '"receiptAi":"disabled"',
-      '/admin', '`admins`', 'Release_Tag', '收據 AI（Production）：enabled', '"receiptAi":"enabled"',
+  test('步驟順序與 D11 相同：Bun 備份 → NPM 只限 LAN 與 Websockets → 停止 Bun 並封存 → install.sh → 金鑰與 CasC → 合併 main → bootstrap → 開放 → 空 commit 發布 v2.0.0', () => {
+    const order = positions(cutover, [
+      'sudo /opt/lm/bin/lm-deploy prod backup', '/var/backups/little-moments/bun-v1.1.5', 'sha256sum -c', 'lm-prod_pgdata',
+      '**Websockets Support**',
+      'sudo docker compose -p "lm-$E" down\n', 'state.bun-v1.1.5',
+      'sudo deploy/host/install.sh --lan-cidr "$LAN" --public-port 80,443',
+      '`lm-prod-supabase-env`', 'Reload existing configuration',
+      '**合併到 `main`**', '`--provision`', 'reports/image-digest.txt',
+      'LM_PUBLIC_SIGNUP=true', 'sudo cat "$S/lm-prod-supabase-env" | sudo /opt/lm/bin/lm-deploy prod deploy <digest> --app-env-stdin',
+      'http://192.168.1.121:8082/register', '\\"username\\":\\"smoke-bot\\"', 'LM_PUBLIC_SIGNUP=false', 'up -d --no-deps app-<color>',
+      'sudo /opt/lm/bin/lm-deploy prod finalize', 'Publicly Accessible', '--allow-empty', '`v2.0.0`',
     ]);
-    expect(order.every(i => i >= 0)).toBe(true);
-    // 秘密檔的路徑與既有檔案的搬移：同樣的擁有者與權限，不顯示內容。
-    expect(enable).toContain('~/docker/jenkins');
-    expect(enable).toContain('sudo install -o 1000 -g 1000 -m 600 secrets/<現有檔名> secrets/little-moments/release/lm-prod-openai-api-key');
-    // install.sh 必須在合併之前：舊版 lm-deploy 拒絕 LM_RECEIPT_AI。
-    expect(enable).toContain('不允許的鍵：LM_RECEIPT_AI');
+    expect(order.map((i, n) => ({ n, found: i >= 0 }))).toEqual(order.map((_, n) => ({ n, found: true })));
   });
 
-  test('輪替、金鑰外洩與兩種停用方式', () => {
-    const rotate = sub('輪替');
-    expect(positions(rotate, ['建立新金鑰', 'put little-moments/release/lm-prod-openai-api-key', 'Reload existing configuration',
-      'Release_Tag', '撤銷舊金鑰']).every(i => i >= 0)).toBe(true);
-    const leak = sub('金鑰外洩');
-    expect(positions(leak, ['撤銷', '`off`', '輪替']).every(i => i >= 0)).toBe(true);
-    const disable = sub('停用');
-    expect(disable).toContain('`off`');
-    expect(disable).toContain('立即');
-    expect(disable).toContain("`LM_PROD_RECEIPT_AI` 改為 `'disabled'`");
-    expect(disable).toContain('刪除 `/srv/lm/prod/secrets/openai-api-key`');
+  test('全新開始：Bun 的資料備份但不匯入，任何指令都不刪除資料卷', () => {
+    expect(cutover).toContain('不匯入');
+    for (const line of code(cutover + back).split('\n')) {
+      expect({ line, destructive: /down\s+-v|volume\s+rm|rm\s+-rf/.test(line) }).toEqual({ line, destructive: false });
+    }
   });
 
-  test('主機上的確認：Production 金鑰檔為 10001:10001 400、Staging 沒有金鑰檔', () => {
-    const host = sub('主機上的確認');
-    expect(host).toContain("sudo stat -c '%n %u:%g %a' /srv/lm/prod/secrets /srv/lm/prod/secrets/openai-api-key");
-    expect(host).toContain('/srv/lm/prod/secrets/openai-api-key 10001:10001 400');
-    expect(host).toContain('sudo test -e /srv/lm/staging/secrets/openai-api-key');
-    expect(host).toContain('staging-key-absent');
-  });
-
-  test('章節的指令不輸出金鑰：沒有 cat，echo 不帶任何變數', () => {
-    const code = [...section.matchAll(/^ *```sh\n([\s\S]*?)^ *```$/gm)].map(m => m[1]).join('\n');
-    expect(code).toContain('put little-moments/release/lm-prod-openai-api-key');
-    for (const line of code.split('\n')) {
-      expect({ line, cat: /\bcat\b/.test(line) }).toEqual({ line, cat: false });
+  test('smoke-bot 的密碼只經 root shell 的 printf 與管線傳遞；章節不含秘密', () => {
+    const assign = /\b([A-Z0-9_]*(?:PASSWORD|SECRET|TOKEN|API_KEY|PASSPHRASE))\s*[=:]\s*([^\s`|,;)]+)/gi;
+    const placeholder = /^(<[^>]*>?|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\$\(.*|\*+|…|\.\.\.)?$/;
+    for (const m of cutover.matchAll(assign)) {
+      const value = m[2].replace(/^['"]|['"]$/g, '');
+      expect({ name: m[1], placeholder: placeholder.test(value) }).toEqual({ name: m[1], placeholder: true });
+    }
+    expect(cutover).not.toMatch(/sha256:[0-9a-f]{8,}/);
+    for (const line of code(cutover).split('\n')) {
       expect({ line, echo: /\becho\s+[^;|&\n]*\$/.test(line) }).toEqual({ line, echo: false });
     }
   });
 
-  test('README.md：不再寫「沒有掛載金鑰檔」，寫明 Staging 停用、Production 啟用與 lm-deploy 決定的 CAMPING_OPENAI_API_KEY_FILE', () => {
-    expect(readme).not.toContain('沒有掛載金鑰檔');
-    expect(readme).not.toContain('預設停用，只有 `release/` 可啟用');
+  test('回滾到 v1.1.5：停用 release/little-moments、保留 sbdata、以 tag v1.1.5 重新安裝並以 pgdata 的資料啟動 Bun', () => {
+    const order = positions(back, ['Disable Multibranch Pipeline', 'down', '.rust-v2', '.bun-v1.1.5', 'checkout --detach v1.1.5',
+      'install.sh', 'APP_IMAGE_NEW', 'lm-prod_pgdata', 'Websockets Support']);
+    expect(order.every(i => i >= 0)).toBe(true);
+  });
+});
+
+describe('Bun 版本文件的歷史連結（Req 28；plan.md D14）', () => {
+  const jenkinsReadme = read('../ci/jenkins/README.md');
+  const V = 'https://github.com/Raigorlin/little-moments/blob/v1.1.5/deploy/README.md';
+  const accounts = sectionOf(readme, '帳號維運指令：create-admin 與 reset-password');
+  const lanSection = sectionOf(readme, 'LAN 部署');
+
+  test('README 新增 CI/CD 章節：分支流程、版本來源、Pipeline 與 deploy/README.md 的位置', () => {
+    const cicd = sectionOf(readme, 'CI/CD 與部署（Rust 版本）');
+    for (const s of ['`rust`', '`ci/little-moments`', '`release/little-moments`', '`main`', '[workspace.package] version', '`Jenkinsfile`',
+      '[`ci/jenkins/README.md`](ci/jenkins/README.md)', '[`deploy/README.md`](deploy/README.md)', 'Websockets Support',
+      'https://www.our-littlemoments.com', 'https://our-littlemoments.com']) {
+      expect(cicd).toContain(s);
+    }
+    expect(slug('CI/CD 與部署（Rust 版本）')).toBe('cicd-與部署rust-版本');
+    expect(readme).toContain('(#cicd-與部署rust-版本)');
+    // 既有的 Rust 本機執行章節保留。
+    expect(readme).toContain('trunk build --release --config crates/web/Trunk.toml');
+  });
+
+  test('README 的 Bun 部署章節標示為 v1.x，smoke-account 與收據 AI 的連結指向 tag v1.1.5', () => {
+    expect(lanSection).toContain('Bun 版本（v1.x');
+    expect(lanSection).toContain(`(${V}#首次部署與-smoke-bot)`);
+    expect(lanSection.indexOf('`create-admin`')).toBeLessThan(lanSection.indexOf('`/setup` 只是後備'));
+    expect(accounts).toContain('三個指令');
+    expect(accounts).toContain('Rust 版本沒有 `create-admin`');
+    expect(accounts).toContain(`(${V}#首次部署與-smoke-bot)`);
+    const ai = sectionOf(readme, '收據 AI（OpenAI）');
+    expect(ai).toContain('Rust 版本沒有收據 AI');
+    expect(ai).toContain(`(${V}#production-收據-aiopenai)`);
+    expect(readme).not.toContain('(deploy/README.md#首次部署與-smoke-bot)');
+    expect(readme).not.toContain('(deploy/README.md#production-收據-aiopenai)');
+  });
+
+  test('ci/jenkins/README.md：憑證表不再有 OpenAI 憑證；smoke 與 Supabase 金鑰的說明指向 deploy/README.md', () => {
+    const rows = jenkinsReadme.split('\n').filter(l => /^\| `(ci|release|infra)\/` \|/.test(l));
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row.toLowerCase()).not.toContain('openai');
+    for (const id of ['lm-staging-smoke', 'lm-prod-smoke']) {
+      const row = rows.find(l => l.startsWith(`| \`release/\` | \`${id}\` |`));
+      expect(row).toContain('`smoke-bot`');
+      expect(row).toContain('(../../deploy/README.md#首次切換)');
+    }
+    expect(jenkinsReadme).toContain('(../../deploy/README.md#4-supabase-金鑰)');
+    expect(jenkinsReadme).toContain('`release/` 顯示上表 15 個');
+    expect(jenkinsReadme).not.toContain('- 收據 AI（`CAMPING_OPENAI_*`');
+    expect(jenkinsReadme).not.toContain('production-收據-aiopenai');
+  });
+
+  test('README.md 的收據 AI 說明（Bun 版本）仍與 v1.x 的行為一致', () => {
     const ai = sectionOf(readme, '收據 AI（OpenAI）');
     const host = ai.split('\n').find(l => l.startsWith('- **Deploy_Host。**'));
-    for (const s of ['只有 Production 啟用', 'Staging 停用', '`ci/` 不定義', '`/admin`', '`off`', `(deploy/README.md#${ANCHOR})`]) {
-      expect(host).toContain(s);
-    }
-    expect(readme).toContain('**只有 Production 啟用，Staging 停用**');
+    for (const s of ['只有 Production 啟用', 'Staging 停用', '`ci/` 不定義', '`/admin`', '`off`']) expect(host).toContain(s);
     const fileRow = rowOf('CAMPING_OPENAI_API_KEY_FILE');
     for (const s of ['`lm-deploy`', 'Staging 為空字串', '`/run/secrets/openai-api-key`']) expect(fileRow.behavior).toContain(s);
   });
 
   test('三份文件不含符合 OpenAI 金鑰格式的字串（Req 24.9）', () => {
+    const runbook = read('../deploy/README.md');
     for (const [path, text] of [['README.md', readme], ['deploy/README.md', runbook], ['ci/jenkins/README.md', jenkinsReadme]]) {
       expect({ path, findings: scanText(text, { path }).filter(f => f.rule === 'openai-key') }).toEqual({ path, findings: [] });
       expect({ path, match: /sk-(?:proj-)?[A-Za-z0-9_-]{20,}/.test(text) }).toEqual({ path, match: false });

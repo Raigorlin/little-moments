@@ -1036,6 +1036,22 @@
     - 在回報寫明維運者的下一步：合併到 `main` 後對 `release/little-moments » main` 按 Build Now，預期 Unit Tests 通過，之後 SBOM 階段通過並封存 `reports/sbom.cdx.json`；之後的階段失敗時提供失敗的階段與主控台訊息
     - _Requirements: 9.5, 9.6, 17.4_
 
+- [x] 32. Rust 版本與自架 Supabase 的 CI/CD（Requirement 28；design.md Components 第 30 節）
+  - [x] 32.1 Rust App_Image、工具鏈階段與映像檢查（commit `0dbf4af`）
+    - 根目錄 `Dockerfile` 的 `toolchain`／`build`／`runtime`（distroless `cc-debian13:nonroot`）、allowlist 的 `.dockerignore`、`ci/rust-toolchain.json`、`ci/verify-rust-toolchain.sh`、`ci/cargo-junit.mjs`、`ci/release-version.mjs`、workspace 版本 2.0.0 與 `Cargo.lock`、`ci/image-content-check.mjs`／`ci/image-labels.mjs` 的 Rust 規則、改寫的 `ci/scripts/image-smoke.sh` 與 `ci/smoke.mjs`
+    - _Requirements: 28.4, 28.6, 28.8_
+  - [x] 32.2 自架 Supabase 的 Compose 部署與 `lm-deploy`（commit `b0a0ad5`）
+    - `deploy/compose/compose.yaml`、`drill.yaml` 與 env 範本、`deploy/supabase/{gateway.Caddyfile,db-setup.sql}`、`deploy/caddy/*`（`LM_ALLOWED_HOSTS`、8080、`/robots.txt`）、`lm-deploy` 的 stack／app.env／migrate／data-only 備份／drill、`deploy/bin/lm-supabase-keys`、`install.sh`、`verify-host.sh`、bats 測試
+    - _Requirements: 28.9, 28.12, 28.14, 28.15_
+  - [x] 32.3 `rust` 的 CI 與 `main` 的發布 Pipeline（commit `1fe8062`）
+    - `ci/stages.mjs`（拒絕 Tag、`main_push` 計畫）、根目錄 `Jenkinsfile`（移除 Tag Verify、Browser Tests、Migration Compatibility、DAST、Resolve Digest、Approval；Rust 工具鏈容器；版本檢查；bootstrap guard；Version Tag）、`ci/staging.mjs`、`ci/production.mjs`、`ci/scrub.mjs` 的 `envfile`、`ci/restore-drill.mjs` 與其 Pipeline、`ci/jenkins/jobs.groovy` 的憑證與只探索 `main`、刪除 `ci/dast/`
+    - _Requirements: 28.1, 28.2, 28.3, 28.4, 28.5, 28.7, 28.10, 28.11, 28.12_
+  - [x] 32.4 維運文件、規格與 runbook
+    - `deploy/README.md`（主機前置條件、憑證、Supabase 金鑰、`<env>.env`、NPM Websockets、首次切換、回滾到 v1.1.5、備份與演練、實機檢查清單）、`ci/jenkins/README.md`、`deploy/jenkins/README.md`、根目錄 `README.md` 的 CI/CD 章節、本規格的 Requirement 28 與 design.md 第 30 節、`.kiro/specs/rust-supabase-rewrite/design.md` 的部署章節、`tests/readme.test.js` 的文件檢查
+    - _Requirements: 28.13_
+  - [ ] 32.5 實機驗證（維運者）
+    - 依 `deploy/README.md` 的「只能在實際主機或 Jenkins 執行的檢查」逐項確認：工具鏈與 App_Image 建置、image smoke、Trivy／Syft／cosign、Supabase stack 啟動、遷移、還原演練、NPM Websockets、CasC 載入、`rust` 與 `main` 的 Pipeline、首次切換與 `v2.0.0` 標籤
+    - _Requirements: 28.2, 28.9, 28.11, 28.13, 28.14_
 ## Notes
 
 - 標記 `*` 的子任務為選用（property test、整合測試與額外檢查），可為加快 MVP 而略過。

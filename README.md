@@ -190,6 +190,9 @@ App_Server（`scripts/serve.mjs`，映像中為 `/app/server/serve.js`）啟動�
 
 ## 帳號維運指令：create-admin 與 reset-password
 
+> 這些指令屬於 Bun 版本（v1.x）。Rust 版本沒有 `create-admin`、`create-smoke-account` 或 `lm-deploy smoke-account`：全新 Database 的第一個註冊帳號成為管理員，Production 的 `smoke-bot` 在[首次切換](deploy/README.md#首次切換)時註冊。
+
+
 三個指令都連線 `CAMPING_DATABASE_*` 指定的 PostgreSQL Database（只讀這組變數，驗證規則與 App_Server 相同），需要遷移已套用。錯誤訊息只含變數名稱、主機與連接埠或錯誤代碼，不含密碼或設定值。結束碼：0 成功、1 失敗或拒絕執行、2 參數或設定錯誤（在連線 Database 之前）。
 
 ```sh
@@ -204,7 +207,7 @@ bun run create-smoke-account [--username <name>] [--fixture <title>] [--password
   - **冪等**：帳號已存在且是未停用的 member 時保留不變（不改密碼、顯示名稱或 session；換密碼用 `reset-password`）；該帳號看得到的行程中已有同標題者時保留不變。以相同參數再次執行不寫入任何資料。
   - **拒絕執行**（結束碼 1，不寫入任何資料）：Database 沒有未停用的管理員時（先以 `create-admin` 建立第一個管理員；若先建立 Smoke_Account，Database 已有帳號，`create-admin` 與 `/setup` 都無法再建立管理員），以及該帳號名稱屬於管理員或已停用的帳號時。
   - **輸出**：stdout 恰好一行 JSON，例如 `{"ok":true,"username":"smoke-bot","account":"created","fixture":"smoke-fixture","fixtureStatus":"created"}`（既有者為 `kept`）。失敗時為 `{"ok":false,"reason":"<reason>"}`：`usage`、`config_invalid` 的結束碼為 2；`password_invalid`、`input_ended`、`database`、`no_admin`、`account_is_admin`、`account_disabled` 的結束碼為 1。
-  - 在 Deploy_Host 上**只**由 Host_Operator 以 `sudo cat <secret-file> | sudo /opt/lm/bin/lm-deploy <env> smoke-account <digest>` 執行：該子命令讀入 stdin 的密碼，必要時啟動 `db` 與 `proxy`，備份並套用遷移後，才在 Compose 專案內執行映像中的 `/app/tools/create-smoke-account.js`。部署帳號的 SSH forced command 無法執行此子命令。不要以下方的 compose 指令直接執行它。第一次部署的完整順序見 [`deploy/README.md` 的「首次部署與 smoke-bot」](deploy/README.md#首次部署與-smoke-bot)。
+  - 在 Deploy_Host 上**只**由 Host_Operator 以 `sudo cat <secret-file> | sudo /opt/lm/bin/lm-deploy <env> smoke-account <digest>` 執行：該子命令讀入 stdin 的密碼，必要時啟動 `db` 與 `proxy`，備份並套用遷移後，才在 Compose 專案內執行映像中的 `/app/tools/create-smoke-account.js`。部署帳號的 SSH forced command 無法執行此子命令。不要以下方的 compose 指令直接執行它。第一次部署的完整順序見 [`deploy/README.md` 的「首次部署與 smoke-bot」](https://github.com/Raigorlin/little-moments/blob/v1.1.5/deploy/README.md#首次部署與-smoke-bot)。
 - **密碼來源只有三種**，依序為：`--password-file <path>`（檔案內只有一行密碼，最多 4096 bytes）、終端機隱藏輸入（不回顯，輸入兩次確認）、沒有終端機時從 stdin 管線讀取一行。密碼**從不**由指令列參數或環境變數讀取（`--password` 之類的參數會被拒絕），也從不輸出。不要用 `echo` 等方式把密碼寫進指令列，否則會留在 shell 歷史與程序列表中。
 
 在 Deploy_Host 上，Database 只在 Compose 的 internal 網路中，因此改以 App_Image 內的 `/app/tools/create-admin.js`、`/app/tools/reset-password.js` 在同一 Compose 專案內執行。**主機上的指令沿用上方 [SQLite_Importer](#sqlite_importer從舊版-sqlite-匯入) 的 `--profile ops run … migrate` 模式**：`migrate` 服務已帶有 `app.env` 的 Database 憑證與 `CAMPING_DATABASE_HOST=db`，只把 entrypoint 換成 `bun` 與指令檔（`<image>` 為 `<LM_IMAGE_REPO>@sha256:<digest>`，通常是目前作用中的 digest）：
@@ -230,7 +233,7 @@ sudo env LM_ENV=<env> APP_IMAGE_BLUE=<image> APP_IMAGE_GREEN=<image> APP_IMAGE_N
 - 每個回應都帶有安全標頭（Content-Security-Policy、禁止被嵌入框架等）。未預期的錯誤只回應固定的通用訊息，日誌只記錄時間、方法、不含查詢字串的路徑與錯誤名稱，不含請求內容、cookie、密碼、邀請碼或金鑰。
 - 帳號 API 回應不會被快取供離線使用。`/demo/` 的本機規劃使用獨立的瀏覽器本機儲存，不上傳也不同步。
 - App 不保存收據影像或辨識原始文字。選擇收據照片並使用收據 AI 時，照片會送到 OpenAI；使用前請先確認 OpenAI 的 API 資料政策。瀏覽器端 OCR 已移除。
-- 雲端 AI 收據辨識（OpenAI）在 Deploy_Host **只有 Production 啟用，Staging 停用**（Release_Approver 的決定；`Jenkinsfile` 的 `LM_PROD_RECEIPT_AI` 與 `LM_STAGING_RECEIPT_AI`）。金鑰只來自 `release/` 資料夾的 Credential_Store `lm-prod-openai-api-key`，`ci/` 不定義任何 OpenAI 憑證；Test_Environment、還原演練與 PR 建置也停用。Compose 把 `CAMPING_OPENAI_API_KEY` 固定為空字串，模型、圖片細節與回覆上限的 `CAMPING_OPENAI_*` 維持空白（App 使用預設值）。管理員可隨時在 `/admin` 把收據 AI 政策設為 `off`。啟用、輪替與停用步驟見 [`deploy/README.md`](deploy/README.md#production-收據-aiopenai)。
+- 雲端 AI 收據辨識（OpenAI）在 Deploy_Host **只有 Production 啟用，Staging 停用**（Release_Approver 的決定；`Jenkinsfile` 的 `LM_PROD_RECEIPT_AI` 與 `LM_STAGING_RECEIPT_AI`）。金鑰只來自 `release/` 資料夾的 Credential_Store `lm-prod-openai-api-key`，`ci/` 不定義任何 OpenAI 憑證；Test_Environment、還原演練與 PR 建置也停用。Compose 把 `CAMPING_OPENAI_API_KEY` 固定為空字串，模型、圖片細節與回覆上限的 `CAMPING_OPENAI_*` 維持空白（App 使用預設值）。管理員可隨時在 `/admin` 把收據 AI 政策設為 `off`。啟用、輪替與停用步驟見 [`deploy/README.md`](https://github.com/Raigorlin/little-moments/blob/v1.1.5/deploy/README.md#production-收據-aiopenai)。
 - 首頁 JSON 匯入控制項仍隱藏；本機規劃的匯入只接受 1 MiB 以下的檔案。行程匯出與費用匯出各自獨立，都不能取代完整的 Database 備份。
 
 ### 憑證來源
@@ -241,9 +244,12 @@ sudo env LM_ENV=<env> APP_IMAGE_BLUE=<image> APP_IMAGE_GREEN=<image> APP_IMAGE_N
 
 ## 收據 AI（OpenAI）
 
+> 收據 AI 只存在 Bun 版本；Rust 版本沒有收據 AI，也沒有 OpenAI 憑證（plan.md D14）。下方的 Deploy_Host 說明只適用於 v1.x。
+
+
 - **金鑰。** `server/receipt-ai.js` 先讀 `CAMPING_OPENAI_API_KEY`，沒有值時讀 `CAMPING_OPENAI_API_KEY_FILE`（預設專案根目錄的 `.secrets/openai_api_key`），並去除前後空白。金鑰格式必須是 `sk-` 開頭；沒有有效金鑰時收據 AI 停用，App 照常啟動。更換金鑰檔內容後重新啟動 App 即生效。金鑰只在伺服器端使用，從不送到瀏覽器。
 - **成本設定。** 模型、圖片細節、回覆 token 上限與三個用量上限見[環境變數](#環境變數)表；用量上限須符合「每位使用者上限 ≤ 每日上限 ≤ 每月上限」。建議另在 OpenAI 後台為專案設定每月預算與用量上限。
-- **Deploy_Host。** 只有 Production 啟用，Staging 停用，`ci/` 不定義任何 OpenAI 憑證。Production Deploy 把 `release/` 的 `lm-prod-openai-api-key` 經 stdin 交給 `lm-deploy`，由它寫成 `/srv/lm/prod/secrets/openai-api-key`（`10001:10001`、`0400`），並以唯讀方式掛載到 `app-blue`／`app-green` 的 `/run/secrets/openai-api-key`；Staging 一律掛載 `/dev/null`，`CAMPING_OPENAI_API_KEY_FILE` 為空字串。管理員可隨時在 `/admin` 把政策設為 `off`，立即生效。第一次啟用的順序、輪替、金鑰外洩時的處理與停用見 [`deploy/README.md` 的「Production 收據 AI（OpenAI）」](deploy/README.md#production-收據-aiopenai)。
+- **Deploy_Host。** 只有 Production 啟用，Staging 停用，`ci/` 不定義任何 OpenAI 憑證。Production Deploy 把 `release/` 的 `lm-prod-openai-api-key` 經 stdin 交給 `lm-deploy`，由它寫成 `/srv/lm/prod/secrets/openai-api-key`（`10001:10001`、`0400`），並以唯讀方式掛載到 `app-blue`／`app-green` 的 `/run/secrets/openai-api-key`；Staging 一律掛載 `/dev/null`，`CAMPING_OPENAI_API_KEY_FILE` 為空字串。管理員可隨時在 `/admin` 把政策設為 `off`，立即生效。第一次啟用的順序、輪替、金鑰外洩時的處理與停用見 [`deploy/README.md` 的「Production 收據 AI（OpenAI）」](https://github.com/Raigorlin/little-moments/blob/v1.1.5/deploy/README.md#production-收據-aiopenai)。
 
 ## 秘密掃描
 
@@ -258,7 +264,18 @@ bun scripts/scan-secrets.mjs [--root <dir>] [--allowlist <file>]
 - 結束碼：0 沒有發現（輸出掃描的檔案數、commit 數與 allowlist 命中數）、1 有不在 allowlist 的發現、2 掃描未完成或 allowlist 項目缺少理由。allowlist 預設為 `scripts/secret-allowlist.json`，每個項目都必須附理由。
 - 掃描完整 git 歷史：`git clone --mirror <your-repository-url> repo.git`，再從專案目錄執行 `bun scripts/scan-secrets.mjs --root repo.git`；或在一般 clone 內直接執行 `bun scripts/scan-secrets.mjs`。發現真正的金鑰時，先到提供者撤銷並更換金鑰；改寫歷史不能取代撤銷。
 
+## CI/CD 與部署（Rust 版本）
+
+v2.0.0 起，Deploy_Host 上執行的是 Rust 版本（`lm-server` 與 `crates/web` 的 Leptos 前端，見下方「第一版（Rust 與 Supabase）」），每個環境各有一套自架的 Supabase（Postgres、Auth、Realtime 與 API gateway）。Jenkins（`https://jenkins.our-littlemoments.com`）負責 CI 與發布：
+
+- **分支流程。** 推送到 `rust`（或任何非 `main` 分支）與 PR 由 `ci/little-moments` 建置：Toolchain → Install → Build → Unit Tests（`cargo fmt --check`、`cargo clippy -D warnings`、`cargo test`、`bats deploy/tests` 與 CI 的 bun 測試）→ Security Scan，不建置映像、不部署。合併或推送到 `main` 就是發布：`release/little-moments` 執行相同的品質檢查後建置、掃描、簽章並推送 App_Image，部署到 Staging（`http://192.168.1.121:8081`，只限 LAN）並執行 Smoke_Test，再部署到 Production（`https://www.our-littlemoments.com`；`https://our-littlemoments.com` 301 轉址到 `www`）並觀察 10 分鐘。沒有人工核准，`v*` Tag 不觸發建置。
+- **版本。** 版本來自 `Cargo.toml` 的 `[workspace.package] version`（目前 `2.0.0`）。Production 通過觀察後，Pipeline 把映像標籤 `v<version>` 指向上線的 digest；同一個版本已發布時「Image Push」失敗，所以每次發布前先提高版本。
+- **檔案。** Pipeline 是根目錄的 `Jenkinsfile`（階段規劃在 `ci/stages.mjs`）；Jenkins 的設定、Job 與憑證在 [`ci/jenkins/README.md`](ci/jenkins/README.md)；App_Image 與 Rust 工具鏈在根目錄的 `Dockerfile`；Deploy_Host 的 Compose 專案、`lm-deploy` 與 Supabase 設定在 `deploy/`。
+- **維運。** 主機前置條件、Jenkins 憑證、Supabase 金鑰的產生與輪替、`<env>.env`、NPM（`www` 的 Proxy Host 要開啟 Websockets Support）與 Cloudflare、從 v1.1.5 第一次切換的步驟、回滾、備份與還原演練，都在 [`deploy/README.md`](deploy/README.md)。Production 的第一次部署由維運者在主機上完成（[首次切換](deploy/README.md#首次切換)）；在那之前 Pipeline 的 Production Deploy 會停在「尚未完成首次部署」。
 ## LAN 部署
+
+> 本節描述 Bun 版本（v1.x，最後一版 v1.1.5）在 Deploy_Host 上的部署，保留作為[回滾到 v1.1.5](deploy/README.md#回滾到-v115) 的參考。v2.0.0 起的 Rust 版本見 [CI/CD 與部署（Rust 版本）](#cicd-與部署rust-版本)。
+
 
 部署架構：Jenkins（`Jenkinsfile`、[`ci/jenkins/`](ci/jenkins/README.md)）建置並簽章 App_Image，推送至 LAN Registry（`registry.our-littlemoments.com:8443`，[`deploy/registry/`](deploy/registry/README.md)），再經 SSH forced command 呼叫 Deploy_Host 上的 `/opt/lm/bin/lm-deploy`，以 Docker Compose（`deploy/compose/compose.yaml`）做 blue/green 切換。Jenkins 的設定、資料夾憑證與驗證步驟見 [`ci/jenkins/README.md`](ci/jenkins/README.md)。安裝步驟：
 
@@ -276,7 +293,7 @@ Build_Image 與本機開發使用相同的工具鏈（Bun 1.4.4，見 `ci/toolch
 - **Jenkins 只公開 `/github-webhook/`**：GitHub 需要從網際網路送出 webhook，所以 Nginx Proxy Manager 只公開這個路徑且只接受 POST，Jenkins 的其他路徑只允許 LAN（見 [`ci/jenkins/README.md`](ci/jenkins/README.md)）。
 - 其他公開網際網路曝露方式**不在支援範圍內**，包含其他路由器連接埠轉發、其他對外公開的反向代理、以及任何通道服務（tunnel）。不要為了對外公開而移除 Allowed_Hosts、Setup_Token 或 LAN 網段限制。
 
-首次管理員設定：在 Deploy_Host 上以 `create-admin` 建立每個環境的第一個管理員（見[帳號維運指令](#帳號維運指令create-admin-與-reset-password)），再以 `lm-deploy <env> smoke-account` 建立 Smoke_Test 的 smoke-bot 帳號；Staging 與 Production 的完整順序見 [`deploy/README.md` 的「首次部署與 smoke-bot」](deploy/README.md#首次部署與-smoke-bot)。`/setup` 只是後備，只在 Database 沒有任何帳號時可用，並需要 Setup_Token：Pipeline 由 Credential_Store 提供 `CAMPING_SETUP_TOKEN`（`lm-<env>-setup-token`）；若 `app.env` 未設定，App 每次啟動自動產生設定碼並只寫入容器日誌，只能在 Deploy_Host 本機以 `sudo docker logs lm-<env>-app-<color>-1 2>&1 | grep Setup_Token` 讀取；建立管理員後即失效。
+首次管理員設定：在 Deploy_Host 上以 `create-admin` 建立每個環境的第一個管理員（見[帳號維運指令](#帳號維運指令create-admin-與-reset-password)），再以 `lm-deploy <env> smoke-account` 建立 Smoke_Test 的 smoke-bot 帳號；Staging 與 Production 的完整順序見 [`deploy/README.md` 的「首次部署與 smoke-bot」](https://github.com/Raigorlin/little-moments/blob/v1.1.5/deploy/README.md#首次部署與-smoke-bot)。`/setup` 只是後備，只在 Database 沒有任何帳號時可用，並需要 Setup_Token：Pipeline 由 Credential_Store 提供 `CAMPING_SETUP_TOKEN`（`lm-<env>-setup-token`）；若 `app.env` 未設定，App 每次啟動自動產生設定碼並只寫入容器日誌，只能在 Deploy_Host 本機以 `sudo docker logs lm-<env>-app-<color>-1 2>&1 | grep Setup_Token` 讀取；建立管理員後即失效。
 
 Staging 與 Production 是兩個獨立的 Compose 專案（`lm-staging`、`lm-prod`），不共用 Database、資料卷、網路或部署憑證。
 
@@ -328,6 +345,9 @@ Staging 與 Production 是兩個獨立的 Compose 專案（`lm-staging`、`lm-pr
 
 ## 手動回滾（Production）
 
+> Rust 版本的 `release/rollback` 流程相同（在 Deploy_Host 保留的 3 個 Rust digest 之間切換，不執行遷移）。回到 Bun 版本 v1.1.5 不是 Pipeline 動作，見 [`deploy/README.md` 的「回滾到 v1.1.5」](deploy/README.md#回滾到-v115)。
+
+
 回滾只會切換至 Deploy_Host 保留的最近 3 個 Image_Digest 之一，**不執行 Migration_Runner，Database Schema 保持不變**（遷移遵循 expand/contract，舊映像必須能在目前 Schema 上執行）。
 
 1. 以 Release_Approver 帳號（`lm-release-approvers` 群組且列於 `ci/release-approvers.json`）在 Jenkins 開啟 `release/rollback`，按 Build。其他帳號觸發會被拒絕。
@@ -338,6 +358,9 @@ Staging 與 Production 是兩個獨立的 Compose 專案（`lm-staging`、`lm-pr
 6. 確認建置成功，並在 Build_Record 檢查觸發者、來源與目標 digest、理由與完成時間。若切換後健康檢查失敗，Pipeline 標記失敗且不再自動切換，需人工檢查（`sudo /opt/lm/bin/lm-deploy prod status`）。
 
 ## 備份與還原
+
+> 本節描述 Bun 版本（v1.x，最後一版 v1.1.5）在 Deploy_Host 上的部署，保留作為[回滾到 v1.1.5](deploy/README.md#回滾到-v115) 的參考。v2.0.0 起的 Rust 版本見 [CI/CD 與部署（Rust 版本）](#cicd-與部署rust-版本)。 Rust 版本的備份、還原演練與手動還原見 [`deploy/README.md`](deploy/README.md#備份還原演練與手動還原)。
+
 
 `lm-deploy <env> backup` 以 `pg_dump -Fc` 建立備份，驗證大小、`pg_restore --list` 與 sha256 後存放於 `/var/backups/little-moments/<env>/`（lm-ops 擁有、0700，不在 Docker 卷或 repository 內）。備份識別碼格式為 `<env>-<YYYYMMDD>T<HHMMSS>Z-<sha7>`；同名 `.dump.sha256` 存在即代表已驗證。Production 保留最近 14 份。`release/restore-drill` 每月 1 日與 15 日把最新備份還原至隔離的 drill 專案並執行 Smoke_Test，不影響 Production。
 
@@ -426,7 +449,7 @@ Self-hosted Huninn fonts retain their SIL Open Font License files in `assets/fon
 No project-wide open-source license has been selected. Existing third-party license notices remain applicable.
 ## 第一版（Rust 與 Supabase）：在 WSL 2 中本機開發
 
-第一版以 Rust 改寫（`crates/core`、`crates/supabase`、`crates/server`、`crates/web`），使用 Supabase CLI 的本機堆疊；上面各章節的 Bun_App 維持不變。第一版只在開發機上執行：本機堆疊使用 Supabase CLI 的範例金鑰，沒有加固，不可對外開放。
+第一版以 Rust 改寫（`crates/core`、`crates/supabase`、`crates/server`、`crates/web`），使用 Supabase CLI 的本機堆疊；上面各章節的 Bun_App 維持不變。本節是開發機上的本機執行方式：本機堆疊使用 Supabase CLI 的範例金鑰，沒有加固，不可對外開放。Deploy_Host 上的部署使用各自產生的金鑰，見 [CI/CD 與部署（Rust 版本）](#cicd-與部署rust-版本)。
 
 開發在 Windows 的 WSL 2（Ubuntu）中進行：
 

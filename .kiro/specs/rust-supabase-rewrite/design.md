@@ -4059,6 +4059,17 @@ proptest! {
 - **旅行列表即時更新**：新增每位使用者一個 `user:<uuid>` 私有頻道，推送旅行卡片與成員變化。
 - **收據 AI、管理後台、註冊政策畫面**：都是 `lm-server` 的新端點，不影響同步模型。
 
+
+## 部署（Deploy_Host 與 Jenkins）
+
+本文件描述的是 App 本身與本機的 Supabase CLI 堆疊。Deploy_Host 上的部署（v2.0.0 起取代 Bun 版本 v1.1.5）另有規格與 runbook：
+
+- 需求：`.kiro/specs/jenkins-cicd-deploy/requirements.md` 的 Requirement 28（Rust 版本與自架 Supabase 的 CI/CD）。
+- 設計：同目錄 `design.md` 的 Components 第 30 節：根目錄 `Dockerfile` 的工具鏈與 App_Image（`lm-server` 在 8080、`LM_STATIC_DIR=/app/dist`、`/app/migrations`）、每個環境一套的自架 Supabase（Postgres、Auth、Realtime 與 Caddy gateway；`SUPABASE_URL=http://gateway:8000`）、`lm-deploy` 套用 `supabase/migrations` 的方式、data-only 備份與還原演練。
+- 維運：[`deploy/README.md`](../../../deploy/README.md)（主機前置條件、Jenkins 憑證、以 `deploy/bin/lm-supabase-keys` 產生金鑰、`<env>.env`、NPM 與 Cloudflare、首次切換與回滾）。
+
+部署不需要修改 App 的程式碼：`lm-server` 沿用本文件的環境變數（`LM_BIND`、`LM_STATIC_DIR`、`SUPABASE_URL`、金鑰與 `LM_PUBLIC_SIGNUP` 等），健康檢查使用靜態檔 `/robots.txt`。
+
 ## 參考資料
 
 設計中關於 Supabase 與工具的事實，查證自下列來源（引用內容皆已改寫摘要；Content was rephrased for compliance with licensing restrictions）：

@@ -1947,6 +1947,76 @@ fast-check 的反例（seed `1236998821`）中，管理員帳號名稱 `adminNam
 - **`tests/setup-single-use.test.js`**：第 29.2 節的修正與範例。修正前以 seed `1236998821` 重現失敗（暫時加入，不提交）。
 - **盤點**：其他會建立使用者的測試（設定、註冊、邀請註冊、`create-admin`、`reset-password`、Smoke_Account）中，以產生器產生帳號名稱者都排除保留名稱；任務 31.1 確認並在回報列出。
 - **維運者檢查**：合併後對 `release/little-moments » main` 按 Build Now，Unit Tests 通過，之後 SBOM 階段通過並封存 `reports/sbom.cdx.json`。
+
+### 30. Rust 版本與自架 Supabase 的 CI/CD（新增；Req 28）
+
+v2.0.0 起 Deploy_Host 執行 Rust 版本（`crates/server` 的 `lm-server` 與 `crates/web` 的 Leptos 前端；`.kiro/specs/rust-supabase-rewrite/`）。本節記錄取代 Bun 版本的元件；決策編號 D1–D16 為 `.agents/tasks/jenkins-rust-supabase/plan.md` 的編號。前面各節的 Job 拓撲、Build_Agent、LAN Registry、cosign、Build_Record／Release_Gate、`lm-deploy` 的 blue/green 協定、LM_Proxy、Edge_Proxy 與主機防火牆仍然適用；其中只描述 Bun 版本的部分（第 21、25 節，以及 Browser Tests、Migration Compatibility、DAST、Release_Tag 與 Approval 的流程）只作為 v1.x 的紀錄。
+
+#### 30.1 階段規劃（D1、D2、D10）
+
+`ci/stages.mjs` 的 `STAGE` 為 Init、Toolchain、Install、Build、Unit Tests、Security Scan、Image Build、Image Scan、SBOM、Image Push、Image Sign、Staging Deploy、Production Deploy、Version Tag、Notify；觸發類型只有 `pull_request`、`branch_push`、`main_push`。Tag 事件以「Release_Tag 不再觸發建置；發布由 main 的推送執行」拒絕。
+
+| 計畫 | 階段 | Release_Gate |
+|---|---|---|
+| `pull_request`、`branch_push`（`ci/little-moments`） | Init → Toolchain → Install → Build → Unit Tests → Security Scan → Notify | QA、安全 |
+| `main_push`（`release/little-moments`） | 同上 → Image Build → Image Scan → SBOM → Image Push → Image Sign → Staging Deploy → Production Deploy → Version Tag → Notify | QA、安全、映像、Staging、上線後 |
+
+- Init 以 `bun ci/release-version.mjs` 讀取 `Cargo.toml` 的 `[workspace.package] version`，得到 `LM_RELEASE_VERSION=v<version>`，並以 `isReleaseTag` 驗證格式。
+- Image Push 先以 crane 查詢 `$LM_IMAGE_REPO:$LM_RELEASE_VERSION`；存在時失敗，要求提高版本。
+- Production Deploy 只在 `main_push` 執行，先要求「Staging」通過，再讀 `lm-deploy prod status`。沒有作用中的 digest 時以 `recordProductionGate` 記錄「Production 尚未完成首次部署，請依 deploy/README.md 的首次切換步驟完成 bootstrap」並 `error()`，不呼叫 `deploy`（bootstrap guard）。理由：觀察期的 Smoke_Test 需要 `smoke-bot` 與真正的管理員，兩者只能在執行中的 stack 上建立。
+- Version Tag 在 Production Deploy 之後、要求「上線後」通過，呼叫既有的 `applyVersionTag(LM_RELEASE_VERSION)`（不覆寫）。發布失敗時可以用同一個版本重試。
+- 沒有 `input`；`ci/approval.mjs` 只剩 `release/rollback` 使用。
+
+#### 30.2 Rust 工具鏈（D3、D15）
+
+根目錄 `Dockerfile` 的 `toolchain` 階段：`rust:1.100.0-trixie`（index digest 釘選）、`ENV RUSTUP_TOOLCHAIN=1.100.0`（離線覆寫 `rust-toolchain.toml` 的 `stable`）、`rustfmt`、`clippy`、`wasm32-unknown-unknown`，以及以 SHA-256 驗證的 trunk 0.22.2、wasm-bindgen-cli 0.2.130（與 `Cargo.lock` 相同）、binaryen `version_131`（`wasm-opt`）與 bats-core v1.14.0；`TRUNK_SKIP_VERSION_CHECK=true`。此階段不 COPY 任何 repository 檔案，所以 Pipeline 以空的 context 執行 `docker build --target toolchain`，標記為本機的 `lm-rust-toolchain:<完整 SHA>`（不推送，`cleanupBuildResources` 移除），再以 `docker.image(...).inside` 執行 Rust 階段。`ci/rust-toolchain.json` 列出預期版本，`ci/verify-rust-toolchain.sh` 在 Toolchain 階段確認。
+
+- 理由：`infra/build-image` 只從 `main` 建置，新的 Build_Image digest 無法在 `rust` 分支的 CI 之前存在（bootstrap deadlock）；Bun 的 `BUILD_IMAGE` 因此不變，繼續執行 `ci/*.mjs` 與 bun 測試，`rollback`、`restore-drill`、`digest-lookup` 與 `build-image` 的 Pipeline 不受影響。
+- `CARGO_HOME` 為具名卷 `${LM_CARGO_CACHE_VOLUME}-ci`（`ci/`）或 `-release`（`release/`、`infra/`），第一次使用時以工具鏈映像 `chown` 為 agent 的 uid。與 plan.md D3 的單一卷不同：不受信任的建置不得寫入受信任建置讀取的快取。
+- 網路：Install 執行 `bun install --frozen-lockfile` 與 `cargo fetch --locked`（有網路）；Build（`cargo build --workspace --locked`、`trunk build --release`）與 Unit Tests 以 `--network none`、`CARGO_NET_OFFLINE=true`、`TRUNK_OFFLINE=true` 執行。
+- Unit Tests：`cargo fmt --all --check`、`cargo clippy --workspace --locked -- -D warnings`、`cargo test --workspace --locked`（輸出經 `bun ci/cargo-junit.mjs` 轉為 `reports/cargo-junit.xml`）、`bats --report-formatter junit --output reports/bats deploy/tests`，以及 BUILD_IMAGE 內的 `bun test --reporter=junit`（`tests/ci-*.test.js`、`tests/deploy-*.test.js` 與四個文件／樣式測試）。「QA」Release_Gate 由三份 JUnit 合併判定，沒有 QA_Inventory。fmt 或 clippy 失敗時以指出該檢查的訊息失敗。
+
+#### 30.3 App_Image（D4）
+
+`toolchain` → `build`（BuildKit cache mount `lm-cargo-registry`、`lm-cargo-target`；`cargo build --release --locked -p lm-server`、`trunk build --release --config crates/web/Trunk.toml`）→ `runtime`。runtime 基底為 `gcr.io/distroless/cc-debian13:nonroot`（digest 釘選）：`lm-server` 需要 `libgcc_s.so.1`，`base-debian13` 沒有，所以不同於 plan.md D4 的 `base-debian13`。內容 `/app/bin/little-moments-server`（0555）、`/app/dist`、`/app/migrations/*.sql`（0444，root 擁有）；`USER 65532:65532`、`LM_BIND=0.0.0.0:8080`、`LM_STATIC_DIR=/app/dist`、`EXPOSE 8080`；OCI 標籤同前。`.dockerignore` 是 allowlist（Cargo 檔、`rust-toolchain.toml`、`crates/`、`assets/`、`supabase/migrations/`）。`lm-server` 沒有 `/healthz`，健康檢查為 `GET /robots.txt`。`ci/image-content-check.mjs`、`ci/image-labels.mjs` 與 `ci/scripts/image-smoke.sh` 依此版面檢查；image smoke 比對 `/app/migrations` 與 `supabase/migrations`，不套用遷移。
+
+#### 30.4 Compose stack（D5、D6、D12）
+
+每個環境一個專案 `lm-<env>`：`proxy`（Caddy，`edge` + `app`，唯一發布 `LAN_IP:LM_PUBLIC_PORT` 的服務）、`app-blue`／`app-green`（`app` + `data`，唯讀、`cap_drop: ALL`）、`db`（`ghcr.io/supabase/cli/postgres` 17，卷 `sbdata`；`cap_add` CHOWN、FOWNER、SETUID、SETGID，因為 entrypoint 以 root 建立 `/run/postgresql` 後切換使用者）、`auth`（GoTrue；root command 先 migrate 再 serve）、`realtime`（`SEED_SELF_HOST=true`，tenant `realtime-dev`）、`gateway`（與 proxy 相同的 Caddy 映像，`deploy/supabase/gateway.Caddyfile` 的路由與 apikey 檢查）。Supabase 服務只接 internal 的 `data` 網路。映像版本與本機 Supabase CLI 3.2.0 堆疊相同，以 multi-arch index digest 釘選；沒有 Kong、PostgREST、Storage、Studio、Meta 或 Analytics。
+
+- 秘密在 `/srv/lm/<env>/app.env`（0600 root），只接受 8 個鍵（`LM_DB_PASSWORD`、`LM_JWT_SECRET`、`LM_ANON_KEY`、`LM_SERVICE_KEY`、`LM_JWT_KEYS`、`LM_JWKS`、`LM_REALTIME_SECRET_KEY_BASE`、`LM_REALTIME_DB_ENC_KEY`），由 `lm-deploy deploy --app-env-stdin` 在任何 docker 指令前驗證並寫入，作為 Compose 的第二個 `--env-file`。`db.env` 不再使用。
+- 非秘密設定在 `<env>.env`：`LM_ALLOWED_HOSTS`（空白分隔，LM_Proxy 對其他 Host 回應 421，取代 Bun App 的 `CAMPING_ALLOWED_HOSTS`）、`LM_HEALTH_HOST`、`LM_SITE_URL`、`LM_PUBLIC_SIGNUP`、`LM_AUTH_EMAIL_DOMAIN` 與資源上限。
+- `lm-deploy deploy` 的順序：app.env → stack（`up -d --wait db` → `db-setup.sql`：以 `\getenv` 讀 `POSTGRES_PASSWORD` 設定角色密碼（含 `supabase_admin`）、`app.settings.jwt_*` 與 `_realtime` schema，可重複執行 → `up -d auth realtime gateway` → 經 gateway 容器輪詢 Auth、Realtime 與 gateway 的健康檢查 → `{"command":"stack",...}`）→ backup → migrate → start → health → switch。stack 失敗的 reason 為 `stack_db_failed`、`stack_setup_failed`、`stack_auth_failed`、`stack_realtime_failed`、`stack_gateway_failed`。
+- LM_Proxy 的 upstream 為 `app-<color>:8080`、`health_uri /robots.txt`；TLS 仍由 NPM 與 Cloudflare 終止，NPM 的 `www` Proxy Host 必須開啟 Websockets Support（`/realtime/v1/websocket`）。
+- 金鑰由 `deploy/bin/lm-supabase-keys env <staging|prod|drill>`（bash + openssl）產生（D16）；`install.sh` 把它安裝到 `/opt/lm/bin/`，還原演練用它產生拋棄式金鑰。
+
+#### 30.5 遷移（D7）
+
+`lm-deploy migrate <digest>`（仍需 `LM_BACKUP_MAX_AGE` 內的已驗證備份）以 `docker create`／`cp`／`rm` 取出新映像的 `/app/migrations`，檔名必須符合 `^[0-9]{14}_[a-z0-9_]+\.sql$`。先經 gateway 容器以 service key 呼叫 Realtime 的 tenant health，輪詢到 `realtime.messages` 存在（`supabase/migrations` 的 Realtime 授權遷移需要它），建立 `lm_ops.schema_migrations(version, sha256, applied_at)`，再對每個未套用的檔案以 `docker compose exec -T db psql`（`postgres` 角色、`--single-transaction -v ON_ERROR_STOP=1`）套用並在同一交易內記錄。已套用檔案的 sha256 改變時為 `migration_changed`。輸出 `applied[]` 與 `skipped[]`。回滾不執行遷移。
+
+#### 30.6 備份與還原演練（D8）
+
+備份：`db` 容器內以 `supabase_admin` 執行 `pg_dump -Fc --data-only --schema=app --schema=auth --exclude-table=auth.schema_migrations`，驗證、命名與保留同第 13 節。`emptyDatabase` 為沒有任何 `app.*` 的 TABLE DATA。演練：`lm-deploy prod drill` 以 `drill.yaml` 建立 `lm-drill-prod-<8 hex>`（db、auth、realtime、gateway；internal 網路、匿名卷、拋棄式金鑰）→ db-setup → 作用中映像的遷移 → `pg_restore --data-only --disable-triggers` → 驗證 `auth.users` 與 `app.profiles` 的筆數（profiles ≤ users）→ `down -v`。步驟為 `backup_select`、`backup_verify`、`setup`、`db_start`、`stack_start`、`migrate`、`restore`、`verify`、`cleanup`；輸出 `restoreSeconds`、`migrations`、`verify`、`cleanedUp`。`ci/restore-drill.mjs` 與 `restore-drill.Jenkinsfile` 依此記錄，摘要報告筆數驗證。
+
+#### 30.7 部署驗證與 Smoke_Test（D9）
+
+`bun ci/smoke.mjs` 的步驟為 `index`、`robots`、`login`、`me`、`trips`、`realtime`、`logout`。Staging 以 `--provision` 執行：登入回應 401 時以 `POST /api/auth/signup` 註冊 `smoke-bot`（全新 Staging Database 的第一個帳號因此是 Staging 的管理員）。Production 不加 `--provision`。`ci/staging.mjs` 與 `ci/production.mjs` 要求 `stack` 行並記錄 `migrations {applied, skipped}`。
+
+#### 30.8 憑證（D13）
+
+`release/` 15 個憑證（新增 Secret file `lm-staging-supabase-env`、`lm-prod-supabase-env`，`fileName` 為 `supabase.env`），Bun 的 `lm-staging-db`、`lm-staging-setup-token`、`lm-prod-db`、`lm-prod-setup-token`、`lm-prod-openai-api-key` 移除。Pipeline 只在 `lm-deploy <env> deploy` 那一次 SSH 呼叫綁定 Supabase 金鑰檔，以 `[ -s ]` 確認後原樣導入 stdin；`ci/scrub.mjs` 的 `envfile` 規則遮罩每一行的值。
+
+#### 30.9 首次切換（D11）
+
+v1.1.5 到 v2.0.0 是全新開始：以 Bun 的 `lm-deploy` 備份並封存到 `/var/backups/little-moments/bun-v1.1.5/`、保留 `lm-<env>_pgdata`、不匯入。維運步驟（NPM 只限 LAN 與 Websockets、停止 Bun、封存 `/srv/lm/<env>`、`install.sh`、金鑰與 CasC、合併 `main`、bootstrap guard 之後在主機上以 staging 驗證過的 digest 部署 Production、註冊管理員與 `smoke-bot`、關閉公開註冊、重新建立 App 槽位、finalize、開放、以空 commit 發布 v2.0.0）與回滾到 v1.1.5 見 `deploy/README.md` 的「首次切換」與「回滾到 v1.1.5」。
+
+#### 30.10 已知限制
+
+- DAST 已移除，之後另行規劃（需要完整的隔離 stack）。
+- Security Scan 的 osv-scanner、Trivy（fs）與 Semgrep 仍只掃描 `bun.lock`、`node_modules` 與 JavaScript 原始碼，`Cargo.lock` 的相依套件尚未掃描。
+- Realtime 只在第一次啟動時建立 tenant；更換 `LM_JWT_SECRET`／`LM_JWKS` 後是否需要更新 tenant 設定尚未在實機確認。
+- 以上元件的 Docker、Jenkins 與 Deploy_Host 行為只以靜態測試、fake docker 的 bats 與 `docker-compose config` 驗證，實機檢查清單見 `deploy/README.md` 的「只能在實際主機或 Jenkins 執行的檢查」。
+
 ## Data Models
 
 ### PostgreSQL Schema（`migrations/0001_initial.sql`）

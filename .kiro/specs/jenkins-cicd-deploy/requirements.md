@@ -77,6 +77,8 @@
 
 ### Requirement 1: Pipeline 觸發與分支行為
 
+> 部分已由 Requirement 28 取代：Rust 版本不再以 Release_Tag 發布（第 4、10 條及所有 Release_Tag 建置的條文不再適用），`main` 的推送即發布（Requirement 28.1–28.3）。
+
 **User Story:** 身為開發者，我希望 GitHub 事件自動觸發對應的 Pipeline 流程，以便 PR、主線與正式發布各自執行適當的檢查與部署。
 
 #### Acceptance Criteria
@@ -140,6 +142,8 @@
 
 ### Requirement 5: 瀏覽器 E2E 測試與 QA_Inventory
 
+> 已由 Requirement 28 取代：Rust 版本的 Pipeline 不執行 Bun 的瀏覽器 E2E 與 QA_Inventory（Requirement 28.5）；Rust 的 Playwright 對照測試只在本機執行。本需求保留作為 Bun 版本（v1.x）的紀錄。
+
 **User Story:** 身為 QA 負責人，我希望使用一份有限且受維護的功能清單驅動瀏覽器測試，以便可驗證每個列出的控制項與功能都有對應測試且通過。
 
 #### Acceptance Criteria
@@ -172,6 +176,8 @@
 10. IF Secret_History_Baseline 不是 40 個小寫十六進位字元的 commit SHA、不存在於 repository，或不是 Trusted_Ref 建置 commit 的祖先（含相同），THEN THE Pipeline SHALL 將該建置的 Git 歷史秘密掃描視為未完成，依第 8 條將建置標記為失敗並停止後續發布階段，且不以完整 Git 歷史或略過歷史掃描取代。
 
 ### Requirement 7: 動態安全測試與安全邊界
+
+> 已由 Requirement 28 取代：DAST（ZAP）已自 Pipeline 移除（Requirement 28.5），之後另行規劃。安全邊界改由 Requirement 28.8、28.11 描述。
 
 **User Story:** 身為安全負責人，我希望在受控、隔離的環境中執行主動式安全測試，以便發現執行期漏洞而不影響真實服務或資料。
 
@@ -262,6 +268,8 @@
 
 ### Requirement 12: 版本化 Schema 遷移
 
+> 部分已由 Requirement 28 取代：Bun 的 Migration_Runner 與「相對於最近 Release_Tag 的遷移相容性測試」（第 5、8 條）不再適用；Rust 版本的遷移見 Requirement 28.9。
+
 **User Story:** 身為開發者，我希望 Schema 變更以版本化遷移管理，以便部署與回滾時新舊版本都能正確運作。
 
 #### Acceptance Criteria
@@ -309,6 +317,8 @@
 8. WHEN 一份備份通過驗證，THE Pipeline SHALL 在該次部署的 Build_Record 記錄以下資訊：備份識別碼、目標環境名稱、含時區的 ISO 8601 建立時間、檔案大小（位元組）與校驗碼。
 
 ### Requirement 15: 秘密與憑證管理
+
+> 部分已由 Requirement 28 取代：收據 AI（第 6–8 條）、Database 憑證與 Setup_Token 只屬於 Bun 版本；Rust 版本的憑證見 Requirement 28.12。
 
 **User Story:** 身為安全負責人，我希望所有秘密僅由 Jenkins 憑證管理提供，以便秘密不會出現在 repository、映像或日誌中。
 
@@ -374,6 +384,8 @@
 9. WHILE 一次 Staging_Environment 部署與驗證正在進行，THE Pipeline SHALL 使其他來源為 `main` 的建置於 Staging 部署階段前等待，確保同一時間最多僅有 1 個建置部署至 Staging_Environment。
 
 ### Requirement 19: 正式發布人工核准
+
+> 已由 Requirement 28 取代：Rust 版本沒有 Release_Tag 與正式發布的核准（Requirement 28.2）。Release_Approver 只用於 `release/rollback`（Requirement 20.10）。本需求保留作為 Bun 版本（v1.x）的紀錄。
 
 **User Story:** 身為發布負責人，我希望正式發布需經授權人員核准，以便只有經確認的版本上線。
 
@@ -531,6 +543,8 @@
 
 ### Requirement 27: Smoke_Test 合成帳號與合成行程的佈建
 
+> 已由 Requirement 28 取代：Rust 版本沒有 `lm-deploy smoke-account` 與 Smoke_Fixture；Staging 的 `smoke-bot` 由 Smoke_Test 註冊，Production 的由維運者在首次切換時註冊（Requirement 28.10、28.13）。本需求保留作為 Bun 版本（v1.x）的紀錄。
+
 **User Story:** 身為維運者，我希望以 Host_Operator 執行、可重複執行的維運指令，在 Staging_Environment 與 Production_Environment 各建立一次 Smoke_Account 與 Smoke_Fixture，以便第一次部署後 Requirement 18.3 與 20.5 的 Smoke_Test 能通過，且 Deploy_Host 部署憑證的權限維持 Requirement 15.9 的範圍。
 
 背景：`scripts/smoke.mjs` 以 Smoke_Account 登入並要求 `GET /api/trips` 含 Smoke_Fixture，但 repository 中沒有任何流程在 Staging_Environment 或 Production_Environment 建立這兩項資料（只有還原演練在 drill Database 內建立自己的臨時資料）。Deploy_Host 的公開註冊預設關閉（Requirement 26），`create-admin` 在已有任何帳號時拒絕執行；而 `GET /api/session` 的 `needsSetup` 只在使用者數量為 0 時為 `true`，所以 Smoke_Account 一旦先於第一個管理員建立，該環境就無法再經首次管理員設定或 `create-admin` 建立管理員（Requirement 9.1、9.6）。本需求因此要求先建立管理員、再建立 Smoke_Account。
@@ -564,3 +578,27 @@
 25. THE `deploy/README.md` SHALL 包含「首次部署與 smoke-bot」一節，以編號步驟依序說明：(a) 前置條件：`install.sh` 已完成、`app.env` 與 `db.env` 已建立且與 Credential_Store 的 `lm-<env>-db` 一致、使用的 Image_Digest 由包含 Smoke_Provisioner 的 commit 建置；(b) Staging_Environment：第一次 `main` 建置的 Staging 部署預期失敗（全新主機在備份步驟以 `backup_create_failed` 失敗且不寫入 `app.env`；Database 已在執行且 `app.env` 已存在時在 Smoke_Test 失敗），兩種情況結束後部署狀態皆為 `idle`；自該建置封存的 `reports/image-digest.txt` 或 Console Output 中「App_Image 已推送：」那一行取得 Image_Digest；若 `/srv/lm/staging/app.env` 不存在，Host_Operator 以 Credential_Store 的值經 stdin 執行 `lm-deploy staging app-env` 寫入；Host_Operator 以 `sudo cat <controller-dir>/secrets/little-moments/release/lm-staging-smoke | sudo /opt/lm/bin/lm-deploy staging smoke-account <digest>` 執行（第一次執行啟動 Database 與 LM_Proxy、套用遷移後因沒有管理員而以結束碼 1 結束）；以 `create-admin` 建立 Staging_Environment 的第一個管理員；再次執行同一個 `smoke-account` 指令；以新的 commit 觸發一次新的 `main` 建置（合併 Pull Request 至 `main`，沒有待合併的變更時可為只含一個空 commit 的 Pull Request），且不對同一個 commit 在 `release/little-moments » main` 執行「Build Now」（Pipeline 拒絕覆寫既有的 `<LM_IMAGE_REPO>:<完整 Commit SHA>` 標籤，該建置在推送 App_Image 時失敗、不會部署至 Staging_Environment）；新建置的 Staging 部署應通過並取得 staging-verified 紀錄，且該建置的 Image_Digest 即為 Production_Environment 使用的已通過 Staging 驗證的 Image_Digest；(c) Production_Environment：在推送第一個 Release_Tag 前，以 `prod`、`lm-prod-smoke` 與已通過 Staging 驗證的 Image_Digest 依相同順序執行 `smoke-account`、`create-admin` 與再次 `smoke-account`，之後推送 Release_Tag 並核准；(d) Setup_Token 只在 Database 沒有任何帳號時用於 `/setup`，依本流程建立管理員後不再使用；(e) Smoke_Account 在 Production_Environment 是真實的 member 帳號，密碼只保存在 Credential_Store，變更時以 `reset-password` 設定新密碼並同步更新 Credential_Store；Smoke_Fixture 只有 Smoke_Account 與管理員可見。
 26. THE README 的帳號維運指令章節 SHALL 說明 `create-smoke-account` 的用途、選項與預設值、三種密碼來源、冪等行為（既有帳號與行程保留不變）、沒有管理員或帳號為管理員或已停用時拒絕執行、結束碼，以及在 Deploy_Host 上只由 Host_Operator 經 `lm-deploy <env> smoke-account` 執行，並連結第 25 條的章節；README 與 `deploy/README.md` SHALL 不含實際密碼或 Setup_Token（Requirement 24.9）。
 27. THE `tests/*.test.js` SHALL 在 Ephemeral_Database 上涵蓋第 2 至 16 條（新建、以相同參數再次執行無寫入、既有 member 帳號保留、管理員或已刪除帳號拒絕、沒有管理員時拒絕、三種密碼來源與拒絕 `--password`、交易失敗回復、Smoke_Fixture 可被 `runSmoke` 找到），並以靜態測試確認 `scripts/build-server.mjs` 打包 `/app/tools/create-smoke-account.js` 且映像內容檢查規則仍通過；THE `deploy/tests/*.bats` SHALL 以 fake docker 涵蓋第 17 至 24 條（digest 與參數驗證、`SSH_ORIGINAL_COMMAND` 已設定或非 root 時拒絕、SSH forced command 無法執行 `smoke-account`、鎖與狀態、密碼不出現在 fake docker 的參數紀錄而只經 Smoke_Provisioner 的 stdin 傳遞、Database 未執行時先啟動、備份與 Migration_Runner 皆在 Smoke_Provisioner 之前執行）。
+
+### Requirement 28: Rust 版本與自架 Supabase 的 CI/CD
+
+**User Story:** 身為維運者，我希望 Rust 版本（`lm-server` 與 Leptos 前端）以 Jenkins 在推送 `rust` 時執行 CI、在合併或推送到 `main` 時自動發布到同一台主機上的 Staging 與 Production，並各自使用一套自架的 Supabase，以便取代 Bun 版本 v1.1.5，且不需要第二個發布動作。
+
+背景：Bun 版本（v1.x）以 Release_Tag 與人工核准發布到 Production。Rust 版本改寫了 App 與資料層（Supabase 的 Postgres、Auth、Realtime），需要新的工具鏈、App_Image、Compose stack、遷移與備份方式；Job 拓撲、Build_Agent、LAN Registry、cosign 簽章、Build_Record／Release_Gate、`lm-deploy` 的 blue/green 協定、LM_Proxy、NPM 與 Cloudflare 沿用。設計決策見 design.md Components 第 30 節（plan.md D1–D16）。
+
+#### Acceptance Criteria
+
+1. WHEN 推送到 `main` 以外的分支（包含 `rust`）或建立、更新 Pull Request，THE Pipeline SHALL 只在 `ci/little-moments` 執行 Init、Toolchain、Install、Build、Unit Tests、Security Scan 與 Notify，以「QA」與「安全」Release_Gate 判定結果，且不建置 App_Image、不使用任何 `release/` 憑證、不部署（plan.md D1）。
+2. WHEN 推送或合併到 `main`，THE Pipeline SHALL 在 `release/little-moments` 依序執行第 1 條的品質階段、Image Build、Image Scan、SBOM、Image Push、Image Sign、Staging Deploy、Production Deploy、Version Tag 與 Notify，以「QA」、「安全」、「映像」、「Staging」與「上線後」Release_Gate 判定，且不包含任何人工核准 `input`。
+3. IF 收到 `v*` Tag 的事件，THEN THE Pipeline SHALL 以固定訊息拒絕且不建置；`release/little-moments` SHALL 只探索 `main`。
+4. THE 發布版本 SHALL 取自 `Cargo.toml` 的 `[workspace.package] version`（第一個 Rust 版本為 2.0.0）；IF `<LM_IMAGE_REPO>:v<version>` 已存在，THEN THE Image Push 階段 SHALL 在推送前失敗；WHEN「上線後」Release_Gate 通過，THE Version Tag 階段 SHALL 把 `v<version>` 指向上線的 Image_Digest 且從不覆寫既有標籤（plan.md D2）。
+5. THE Pipeline SHALL 不再執行 Bun 的 Browser Tests、Migration Compatibility、DAST、Tag Verify、Resolve Digest、Approval、收據 AI 與 Setup_Token 相關步驟（plan.md D14）。
+6. THE Rust 工具鏈 SHALL 由根目錄 `Dockerfile` 的 `toolchain` 階段在每個 Build_Agent 上建置（基底映像以 digest 釘選；trunk、wasm-bindgen、binaryen 與 bats 以 SHA-256 驗證），版本 SHALL 與 `ci/rust-toolchain.json` 一致；Build 與 Unit Tests SHALL 在 `--network none` 下執行，只有 Install 的 `cargo fetch --locked` 使用網路；Bun 的 `BUILD_IMAGE` digest SHALL 不變（plan.md D3、D15）。
+7. THE Unit Tests 階段 SHALL 執行 `cargo fmt --all --check`、`cargo clippy --workspace --locked -- -D warnings`、`cargo test --workspace --locked`、`bats deploy/tests` 與 CI／部署檔案的 bun 測試，且「QA」Release_Gate SHALL 以三者合併的 JUnit 判定（plan.md D15）。
+8. THE App_Image SHALL 由 `lm-server` 的 release 執行檔、trunk 的 release 輸出與 `supabase/migrations` 組成，以非 root（65532）執行、在 8080 監聽，基底為以 digest 釘選的 distroless 映像，並以 `GET /robots.txt` 作為健康檢查（plan.md D4）。
+9. WHEN 部署或演練需要 Database，THE Deploy_Script SHALL 以每個環境各自的 Compose 專案啟動 Supabase 的 `db`、`auth`、`realtime` 與 `gateway`（映像以 digest 釘選、只接 internal 網路、不發布連接埠），執行可重複的 `db-setup.sql`，並以新映像的 `/app/migrations` 依檔名順序在交易內套用尚未套用的遷移、以 `lm_ops.schema_migrations` 記錄 sha256；IF 已套用的遷移內容改變，THEN THE Deploy_Script SHALL 以 `migration_changed` 拒絕且不套用任何遷移（plan.md D5–D7）。
+10. THE Staging_Environment SHALL 擁有自己的 Supabase stack 與金鑰，`LM_PUBLIC_SIGNUP=true`，且 Staging 的 Smoke_Test SHALL 在登入回應 401 時註冊 `smoke-bot`；THE Production_Environment 的 Smoke_Test SHALL 從不註冊帳號（plan.md D9）。
+11. IF Production_Environment 沒有作用中的 Image_Digest，THEN THE Production Deploy 階段 SHALL 記錄「上線後」Release_Gate 失敗並指向 `deploy/README.md` 的首次切換，且不呼叫 `lm-deploy prod deploy`（plan.md D10）。
+12. THE 憑證 SHALL 為 plan.md D13 所列：`release/` 15 個（含 Secret file `lm-staging-supabase-env`、`lm-prod-supabase-env`），`lm-staging-db`、`lm-staging-setup-token`、`lm-prod-db`、`lm-prod-setup-token`、`lm-prod-openai-api-key` 退役；Supabase 金鑰 SHALL 由 `deploy/bin/lm-supabase-keys` 產生、只經 SSH stdin 交給 `lm-deploy` 並以 0600 root 寫入 `app.env`，且 `ci/scrub.mjs` SHALL 遮罩每一行的值（plan.md D6、D13、D16）。
+13. THE `deploy/README.md` SHALL 包含主機前置條件、要建立與刪除的 Jenkins 憑證、Supabase 金鑰的產生與輪替、每個環境的 `<env>.env`、NPM `www` Proxy Host 開啟 Websockets Support、自 v1.1.5 的首次切換（先以 Bun 版本的 `lm-deploy` 備份、封存但不匯入、保留 `lm-prod_pgdata`、只限 LAN 的切換期間、先註冊管理員再註冊 `smoke-bot`、關閉公開註冊、finalize，以及以空 commit 發布 v2.0.0）、回滾到 v1.1.5、備份與還原演練，以及只能在實際主機或 Jenkins 執行的檢查（plan.md D11）。
+14. THE 備份 SHALL 為 `app` 與 `auth` schema 的 data-only `pg_dump -Fc`（不含 `auth.schema_migrations`），沿用 Requirement 14 的驗證與保留規則；THE 還原演練 SHALL 在拋棄式的 Supabase stack 以作用中映像的遷移建立 schema、`pg_restore --data-only` 後驗證 `auth.users` 與 `app.profiles` 的筆數，且從不刪除備份（plan.md D8）。
+15. THE TLS SHALL 由 Cloudflare 與 NPM 終止，`https://www.our-littlemoments.com` 為 Production 的網址、`https://our-littlemoments.com` 以 301 轉址到 `www`；THE LM_Proxy SHALL 以 `LM_ALLOWED_HOSTS` 拒絕其他 Host（421）（plan.md D12）。
