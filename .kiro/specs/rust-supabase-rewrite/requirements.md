@@ -27,7 +27,23 @@
 | U6 | 「誰正在編輯」採提示性的鎖定，可以選「仍要編輯」。以圓形頭像顯示，頭像內是帳號顯示名稱的第一個字素叢集（例如「陳小明」顯示「陳」）；最多 3 個頭像加「+N」；無障礙名稱例如「陳小明 正在編輯」；開啟表單時另以文字提示誰正在編輯。 | design.md「已確認的問題」3 |
 | U7 | 文字版相對於行程繪本文字版的兩處格式改變：活動備註另起一行；抵達行由「預計幾點抵達」產生。 | design.md「已確認的問題」4 |
 | U8 | 文字版維持現在的格式：與現行行程繪本「複製文字」複製的文字相同（`src/storybook/app.js` 的 `renderItinerary()` 與 `copyItinerary()`），包括依每日設定的路線位置把路線放在活動之前或之後；與現行的差異只有 U7 的兩處。 | 使用者看過 design.md A10 與現行格式的差異後的決定「維持現在的格式」 |
+| U9 | 加入管理後台：Admin 要能查詢帳號，並協助使用者變更密碼「等功能」；「等功能」為修改帳號的顯示名稱與角色、操作紀錄（分頁，最多 10 頁）、停用與啟用帳號，以及統計列（決定 D1）。 | 管理後台增補：使用者「要能夠查詢使用者然後協助她變更密碼等功能」 |
+| U10 | 管理後台的畫面可以與 Bun_App 的 `/admin` 不同，但要簡潔、好管理、直覺。 | 管理後台增補：使用者「可以不同，但簡潔好管理要直覺」 |
+| U11 | 公開註冊先開放；Admin 要能在管理後台開啟與關閉公開註冊，所以設定由只有環境變數 `LM_PUBLIC_SIGNUP` 改為由管理後台控制。 | 管理後台增補：使用者「先開放，得到一些使用者後再來考慮但開啟跟關閉功能還是要保留」 |
+| U12 | 第一位 Admin 沿用現在的做法：部署時在只有 LAN 連得到網站的期間暫時開放註冊，由使用者自己註冊第一個帳號（成為 Admin），再到管理後台關閉公開註冊；不新增指令或頁面（決定 D3）。 | 管理後台增補：使用者選擇「部署時先關閉公開註冊、自己先註冊」 |
+| U13 | 要有重設密碼，只在管理後台以按鈕操作，沒有伺服器指令；不寄 email，以 Auth_Service 的 admin API 直接設定新密碼；唯一的 Admin 忘記密碼時，依 `deploy/README.md` 的步驟直接在 Database 中處理（決定 D2）。 | 管理後台增補：使用者「要，同時後台按鈕？」 |
+| U14 | 收據 AI 與登入安全警示之後再做，不在這次的增補。 | 管理後台增補：使用者「之後再做」 |
+| U15 | 管理後台以修改本 spec（`rust-supabase-rewrite`）的方式加入，不另建 spec。 | 管理後台增補：使用者「修改現有的 rust-supabase-rewrite 規格」 |
 
+### 管理後台增補的決定
+
+管理後台是第一版完成後的增補（U9–U15）：需求 34 至 41，並修改需求 1.1、1.10、2.3、3.7、3.12、4.2、5.2、30.12、32.1、32.7、32.8 與 32.11。使用者對草稿中列出的三個問題做了下列決定；沒有選擇的候選留在「範圍外」。
+
+| 編號 | 事項 | 決定 |
+| --- | --- | --- |
+| D1 | 「等功能」包括哪些 | 修改帳號的顯示名稱與角色，不能變更自己的角色，也不能降級最後一位 Admin（需求 39）；操作紀錄，分頁、最多 10 頁，記錄的操作列在需求 41.2（需求 41）；停用與啟用帳號，資料不動，不能停用自己與最後一位 Admin（需求 40）；統計列（需求 35.6）。管理後台列出所有旅行與刪除帳號不做。 |
+| D2 | 重設密碼是否另有伺服器指令 | 只有管理後台的按鈕（需求 36）；唯一的 Admin 忘記密碼時，依 `deploy/README.md` 的救援步驟在 Database 中直接設定密碼，或把另一個 Account 改為 Admin（需求 38.3）。 |
+| D3 | 公開註冊關閉時怎麼建立第一位 Admin | 維持現在的做法：全新 Database 的第一個帳號成為 Admin（需求 3.8、3.9）；首次部署時在只有 LAN 連得到網站的期間暫時開放註冊、註冊第一個帳號，再在 Admin_Page 關閉公開註冊（需求 38）。 |
 ### 必要行為與需求的對應
 
 design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需求。
@@ -51,18 +67,25 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 
 第一版包含：註冊、登入與登出；旅行列表、建立、編輯與刪除；旅伴與車輛；地點清單；邀請連結；行程表的規劃行程與文字版；料理菜單；採買清單；裝備分工；出發清單；分帳記帳（支出、還款、餘額與建議轉帳）；誰正在編輯（Presence 與編輯者頭像）。
 
+管理後台增補另外包含：管理後台頁面 `/admin` 與帳號選單中的連結（需求 34）、查詢帳號與統計列（需求 35）、由 Admin 重設密碼（需求 36）、在管理後台開啟與關閉公開註冊（需求 37）、第一位 Admin 的部署步驟與管理員的救援文件（需求 38）、修改帳號的顯示名稱與角色（需求 39）、停用與啟用帳號（需求 40），以及操作紀錄（需求 41）。
+
 ### 範圍外
 
-- 收據 AI（OpenAI）。
-- 管理後台與稽核紀錄；第一版的 Admin 只有「可以管理任何旅行」的權限。
-- 註冊政策的設定畫面（第一版以環境變數 `LM_PUBLIC_SIGNUP` 代替）、重設密碼與寄送 email。
+- 收據 AI（OpenAI），以及管理後台中的收據 AI 政策與用量。
+- 登入安全：失敗登入紀錄、登入異常警示與確認（延後到資安工作流）。
+- 管理後台中需求 34 至 41 以外的功能：所有旅行的列表（Admin 仍可以用網址開啟任何旅行，需求 17.8 不變）、刪除帳號，以及操作紀錄的搜尋、篩選與匯出（只顯示最新的 200 筆）。
+- 建立管理員或重設密碼的伺服器指令、`/setup` 頁面與 Setup_Token。
+- Command（旅行內容的修改）、登入、換發與登出的操作紀錄。
+- 寄送 email，包括使用者自己以 email 重設忘記的密碼；密碼只能由 Admin 在管理後台重設（需求 36）。
+- 使用者在自己的帳號中修改密碼或顯示名稱。
+- 帳號列表的分頁與伺服器端搜尋；`GET /api/admin/users` 一次回傳全部帳號，搜尋在瀏覽器中進行（需求 35）。
 - `/demo/` 離線本機版與 Service Worker；關閉分頁之後保留尚未送出的變更（第一版的 Pending_Command 只存在記憶體中）。
 - 匯出、匯入與列印。
 - 行程圖（動畫海報）、行程繪本、場景動畫與每日小語。
 - 小隊最近的動態。
 - 淺色／深色主題的切換按鈕與手機的滑動手勢。
 - 旅行列表的即時更新；第一版只有 Trip_Page 與 Departure_Page 即時同步。
-- 移除旅行成員（解除 Account 與 Person 的綁定）與帳號管理。
+- 移除旅行成員（解除 Account 與 Person 的綁定）。
 - 從現行 PostgreSQL 搬移資料。
 - 自架 Docker Compose 的部署，以及讓其他機器（區網或網際網路）連到 LM_Server；第一版只在開發機上執行，因為 Local_Stack 使用 Sample_Secrets（需求 2.6）。
 - CI/CD；資安強化工作流（例如 Auth_Service 內建之外的速率限制、CSP 與安全標頭、HTTPS 與反向代理、最低權限的資料庫角色、縮短 access token 的有效時間）；QA 測試套件（e2e、Lighthouse、資安測試、資料庫整合測試），以及 LM_Server 與 LM_Web 的自動化測試。
@@ -75,7 +98,12 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 | 其他成員的變更 | 行程表分頁每 3 秒輪詢，有新版本就整份重抓、整頁重繪 | 每個分頁即時推送，斷線後補齊；只重繪變更的項目 | 10、12、14 |
 | 密碼長度 | 12–128 字 | 12–72 個字元，而且 UTF-8 不超過 72 位元組（Auth_Service 以 bcrypt 儲存密碼） | 3 |
 | 登入狀態 | HttpOnly cookie `ggc_session` | access token 與 refresh token 存在 localStorage | 4、5 |
-| 第一位管理員 | `/setup` 頁面 | 空資料庫上註冊的第一個帳號 | 3 |
+| 第一位管理員 | `/setup` 頁面（加上 Setup_Token）或 `create-admin` 指令 | 空資料庫上註冊的第一個帳號；部署時在只有 LAN 連得到網站時暫時開放註冊 | 3、38 |
+| 管理後台 | `/admin` 有統計、網站設定、收據 AI 用量、登入安全、帳號列表、所有旅行與操作紀錄七個區塊 | `/admin` 有統計、公開註冊、帳號（搜尋、編輯、重設密碼、停用與啟用）與操作紀錄四個區塊；畫面可以不同，但沿用現行的 class 名稱 | 34–41 |
+| 帳號的刪除與停用 | 管理員可以刪除帳號（軟刪除，旅行移轉給管理員） | 沒有刪除；管理員可以停用與重新啟用帳號，資料都不動 | 40 |
+| 操作紀錄 | 列出最新 200 筆 | 每頁 20 筆、最多 10 頁（最新 200 筆）；記錄的操作見需求 41.2，不記錄旅行內容的修改 | 41 |
+| 公開註冊的設定 | 環境變數 `CAMPING_REGISTRATION` 為初始值，管理員在 `/admin` 儲存後以 Database 的設定為準 | 環境變數 `LM_PUBLIC_SIGNUP` 為初始值，Admin 在 `/admin` 切換後以 Database 的設定為準 | 3、37 |
+| 重設密碼 | `reset-password` 指令 | 只有管理後台的「重設密碼」按鈕；重設後這個帳號的每個裝置都要重新登入；唯一的管理員忘記密碼時依 `deploy/README.md` 在 Database 中處理 | 36、38 |
 | 誰正在編輯 | 只在行程繪本、欄位層級、每 3 秒輪詢；欄位下方顯示「{顯示名稱} 正在編輯」 | 所有分頁的卡片或列層級，最多每 6.5 秒更新一次；圓形頭像，可以選「仍要編輯」 | 15、16 |
 | 打包勾選 | 伺服器允許管理者以整份 PUT 修改別人的打包狀態（介面沒有這個操作） | 每個人只能勾自己的 | 6、27 |
 | 移除旅伴 | 介面沒有這個操作 | Trip_Manager 可以移除沒有綁定帳號、沒有帳目的旅伴 | 19 |
@@ -114,6 +142,17 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 | 列出邀請連結 | 全部 | 只有自己建立的 | |
 | 撤銷邀請連結 | 可以 | 只能撤銷自己建立的；撤銷別人建立的 403「只有建立連結的人、主辦人或管理員可以撤銷邀請。」 | |
 
+管理後台的每個操作（Admin_Endpoint 與 Admin_Page）只有 Admin 可以使用，與旅行的權限無關：角色不是 admin 的 Account 一律得到 403「需要管理員權限。」（需求 34）。
+
+| 管理操作 | Admin | 其他 Account | 其他規則 |
+| --- | --- | --- | --- |
+| 開啟 Admin_Page、列出全部帳號 | 可以 | 403 | 需求 34、35 |
+| 重設任何帳號的密碼（包括自己與其他 Admin） | 可以 | 403 | 需求 36 |
+| 讀取與變更 Registration_Policy | 可以 | 403 | 需求 37 |
+| 修改帳號的顯示名稱與角色 | 可以 | 403 | 不能變更自己的角色 403；不能降級最後一位沒有停用的 Admin 409（需求 39） |
+| 停用與啟用帳號 | 可以 | 403 | 不能停用自己 403；不能停用最後一位沒有停用的 Admin 409（需求 40） |
+| 讀取操作紀錄 | 可以 | 403 | 需求 41 |
+
 ### 列舉值
 
 | 名稱 | 值 |
@@ -121,7 +160,8 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 | 封面 | camp、mountain、lake、night、forest、beach、sunrise |
 | 旅行狀態 | planning（規劃中）、completed（已完成） |
 | 旅伴顏色 | coral、blue、green、yellow、lavender、peach |
-| 帳號角色 | admin、member |
+| 帳號角色 | admin（管理員）、member（成員） |
+| 公開註冊（Registration_Policy） | open（開放）、closed（關閉） |
 | 活動類別 | meet 集合、market 採買、camp 營地時光、meal 用餐、night 夜晚、travel 移動、wake 起床、pitch 搭帳、free 自由活動、tea 下午茶／遊戲、strike 拆帳、clean 清潔、return 返程 |
 | 停靠點種類與任務 | 採買（shop）：採買（shopping，預設）。接送（pickup）：接人（passenger-pickup，預設）、送人下車（passenger-dropoff）。取還裝備（gear）：領取租借裝備（gear-pickup，預設）、歸還裝備（gear-return）。其他（other）：取租車（car-rental）、還車（car-return）、一般停靠（waypoint，預設） |
 | 路線位置 | 路線在活動之前（before，預設）、路線在活動之後（after） |
@@ -174,7 +214,13 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 - **Loopback_Address**：`127.0.0.0/8` 與 `::1` 的位址。
 - **Sample_Secrets**：Supabase CLI 公開的範例 JWT 密鑰、anon key 與 service_role key。
 - **Account**：一個帳號，由 Auth_Service 的一位使用者，加上 Database `app.profiles` 的一列（帳號名稱、Display_Name 與角色 admin 或 member）組成。
-- **Admin**：角色為 admin 的 Account。第一版的 Admin 只多一項權限：可以管理任何旅行。
+- **Admin**：角色為 admin 的 Account。Admin 可以管理任何旅行，並可以使用 Admin_Page 與 Admin_Endpoint（需求 34 至 41）。
+- **Disabled_Account**：`app.profiles.disabled_at` 不是空值的 Account；不能登入、換發 Session 或使用任何需要登入的端點（需求 40）。
+- **Audit_Log**：Database 的 `app.audit`，記錄需求 41.2 列出的帳號與管理操作。
+- **Admin_Page**：`/admin`，管理後台。
+- **Admin_Endpoint**：路徑在 `/api/admin/` 之下的 API 端點，只有 Admin 可以使用（需求 34）。
+- **Registration_Policy**：是否開放不經邀請的公開註冊，值為 open 或 closed（需求 37）。
+- **Registration_Seed**：環境變數 `LM_PUBLIC_SIGNUP` 決定的 Registration_Policy 初始值：`true` 為 open、`false` 為 closed、沒有設定時為 open；Admin 在 Admin_Page 儲存過 Registration_Policy 之後就不再使用（需求 37.2）。
 - **Display_Name**：Account 的顯示名稱（`app.profiles.display_name`），Char_Count 為 1–30。
 - **Synthetic_Email**：Account 在 Auth_Service 的 email，格式為 `<帳號名稱>@<LM_AUTH_EMAIL_DOMAIN>`；App 不寄出任何郵件。
 - **Session**：登入狀態：access token、refresh token、到期時間，以及 Account 的 id、帳號名稱、Display_Name 與角色。
@@ -262,7 +308,7 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 - **Trip_Page**：`/<帳號名稱>/trips/<id>`，旅行頁。
 - **Departure_Page**：`/<帳號名稱>/trips/<id>/go`，出發清單。
 - **Invite_Page**：`/invite/<token>`，邀請預覽、以連結註冊與加入旅行。
-- **In_App_Path**：可以作為 `/login` 的 `next` 的 App 內路徑：Invite_Page、Home_Page、Trip_Page（可以帶 `?tab=<分頁>`）或 Departure_Page 的路徑（需求 32.1），其中的帳號名稱符合需求 3.2 的格式；只以一個 `/` 開頭，不含 scheme、主機、`//` 或 `\`。
+- **In_App_Path**：可以作為 `/login` 的 `next` 的 App 內路徑：Invite_Page、Home_Page、Trip_Page（可以帶 `?tab=<分頁>`）、Departure_Page 或 Admin_Page 的路徑（需求 32.1），其中的帳號名稱符合需求 3.2 的格式；只以一個 `/` 開頭，不含 scheme、主機、`//` 或 `\`。
 - **Schedule_Tab**：Trip_Page 的「行程表」分頁。
 - **Menu_Tab**：Trip_Page 的「料理菜單」分頁。
 - **Shopping_Tab**：Trip_Page 的「採買清單」分頁。
@@ -281,7 +327,7 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 
 #### Acceptance Criteria
 
-1. THE LM_Server SHALL 以 Rust（axum 0.8、sqlx 0.8 與 tokio）實作成執行檔 `little-moments-server`，作為唯一寫入 Trip_State 與 Change_Log 的元件，並負責：驗證 access token；代理註冊、登入、換發 Session 與登出；回傳目前的 Account 與旅行列表；建立與刪除旅行；以 Command_Executor 執行 Command；提供 Snapshot、增量的 Change_Set 與 Head；建立、列出與撤銷 Invite_Link，提供邀請預覽與以 Invite_Link 加入旅行；把 `/realtime/v1/websocket` 的 WebSocket 連線轉送到 Realtime_Service；以及從 `LM_STATIC_DIR` 提供 LM_Web 的靜態檔。
+1. THE LM_Server SHALL 以 Rust（axum 0.8、sqlx 0.8 與 tokio）實作成執行檔 `little-moments-server`，作為唯一寫入 Trip_State 與 Change_Log 的元件，並負責：驗證 access token；代理註冊、登入、換發 Session 與登出；回傳目前的 Account 與旅行列表；建立與刪除旅行；以 Command_Executor 執行 Command；提供 Snapshot、增量的 Change_Set 與 Head；建立、列出與撤銷 Invite_Link，提供邀請預覽與以 Invite_Link 加入旅行；提供 Admin_Endpoint（需求 34 至 41）；把 `/realtime/v1/websocket` 的 WebSocket 連線轉送到 Realtime_Service；以及從 `LM_STATIC_DIR` 提供 LM_Web 的靜態檔。
 2. THE LM_Web SHALL 以 Rust 撰寫（除了 trunk 與 wasm-bindgen 產生的載入程式，不含手寫的 JavaScript），以 Leptos 0.8 的 CSR 模式編譯成 `wasm32-unknown-unknown` 的 WebAssembly，並以 trunk 依 `crates/web/Trunk.toml` 建置（例如在 Repository 根目錄執行 `trunk build --release --config crates/web/Trunk.toml`），輸出到 `crates/web/dist`；建置過程不需要 Node.js、npm 或 Bun。
 3. THE LM_Core SHALL 包含資料型別、Limits_Table 的上限與 Command；依 Permission_Table 的權限判斷與輸入驗證，包括 Trim_White、Char_Count、Hidden_Control_Char、Participant_Name、Participant_Key、Place_Key 與 Time_Value 的文字規則；Command 的 Primary_Effect 計算與 Shopping_Sync，包括 Ingredient_Parser、Ingredient_Key 與 Ingredient_Classifier；Activity_Preset、料理範本、常用食材、料理插圖種類的推斷、Shopping_Plan、My_Gear、Can_Depart、Itinerary_Text 與 Retime；分帳計算；Change_Set 與 Snapshot 的型別、Replica 的合併與 Optimistic_View 的計算；Presence_Throttle 與編輯者頭像的計算（Avatar_Initial、Avatar_Palette、Editor_Stack 與 Editing_Notice）；以及 API 的請求與回應型別、Command 被拒絕時的錯誤代碼與訊息，並使 `cargo build -p lm-core` 與 `cargo build -p lm-core --target wasm32-unknown-unknown` 都能完成。
 4. THE LM_Core SHALL 只做純計算：不使用網路、檔案、系統時間與執行緒，也不依賴 LM_Supabase、LM_Server 與 LM_Web；需要目前時間的計算（Presence_Throttle）由呼叫端傳入時間，Shopping_Sync 新增的 Meal_Item 的 id 由呼叫端提供，使需求 1.3 列出的每一種計算，對相同的輸入在原生目標與 `wasm32-unknown-unknown` 上都得到相同的結果。
@@ -290,7 +336,7 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 7. THE Cargo_Workspace SHALL 只以 `crates/core`、`crates/supabase`、`crates/server` 與 `crates/web` 四個 crate 為成員並排除 `.worktrees`，而且預設成員不含 LM_Web，使在 Repository 根目錄執行的 `cargo build` 與 `cargo test` 只以原生目標建置 LM_Core、LM_Supabase 與 LM_Server，不建置 LM_Web，也不需要 Database 或 Supabase_Stack 正在執行。
 8. THE Cargo_Workspace SHALL 以 Repository 根目錄的 `rust-toolchain.toml` 指定 stable 頻道、`wasm32-unknown-unknown` 目標，以及 rustfmt 與 clippy 兩個元件，並把涵蓋四個成員的 `Cargo.lock` 提交到 Repository，使 `cargo build --locked` 與 `cargo build -p lm-web --target wasm32-unknown-unknown --locked` 都不需要修改 `Cargo.lock` 就能完成。
 9. THE Repository SHALL 保留 Bun_App 的檔案不變，而且不修改 `rust-rewrite` 分支與 `.worktrees/rust-rewrite`：在 Branch_Point 已存在的檔案中，只有 `.gitignore`（加入需求 2.8 的項目）與根目錄的 `README.md`（加入第一版的章節）可以變更，而且只能新增內容、原有的每一行保持不變；其他已存在的檔案都不修改、不刪除、不改名；`rust-rewrite` 分支指向的 commit 與 `.worktrees/rust-rewrite` 中的檔案都維持這項工作開始時的狀態。
-10. THE LM_Supabase SHALL 只實作第一版用到的介面，並以 feature 依執行環境分開：不需要啟用任何 feature 的 Realtime 部分送出加入與離開頻道、heartbeat、更新頻道的 access token 與回報 presence 的訊息，並解讀加入頻道與 heartbeat 的回覆、broadcast、presence 的完整狀態與增減、頻道的錯誤與關閉，以及系統訊息；feature `server` 只由 LM_Server 啟用，提供 Auth_Service 的建立使用者、刪除使用者、密碼登入、換發與登出五種呼叫，以及 HS256 與 ES256（公鑰取自 Auth_Service 的 JWKS）的 access token 驗證；feature `web` 只由 LM_Web 啟用、只在 `wasm32-unknown-unknown` 編譯，以瀏覽器的 WebSocket 實作 `RealtimeTransport`。
+10. THE LM_Supabase SHALL 只實作第一版用到的介面，並以 feature 依執行環境分開：不需要啟用任何 feature 的 Realtime 部分送出加入與離開頻道、heartbeat、更新頻道的 access token 與回報 presence 的訊息，並解讀加入頻道與 heartbeat 的回覆、broadcast、presence 的完整狀態與增減、頻道的錯誤與關閉，以及系統訊息；feature `server` 只由 LM_Server 啟用，提供 Auth_Service 的建立使用者、更新使用者的密碼（需求 36）、刪除使用者、密碼登入、換發與登出六種呼叫，以及 HS256 與 ES256（公鑰取自 Auth_Service 的 JWKS）的 access token 驗證；feature `web` 只由 LM_Web 啟用、只在 `wasm32-unknown-unknown` 編譯，以瀏覽器的 WebSocket 實作 `RealtimeTransport`。
 11. WHEN LM_Server 重新啟動，THE LM_Server SHALL 照常接受重新啟動之前簽發、尚未過期的 access token，並在這段期間沒有新的提交時，回應與重新啟動之前相同的 Snapshot、Head 與 Change_Feed，使已登入的使用者不必重新登入，已提交的變更也不遺失。
 12. THE Repository SHALL 讓 Bun_App 的單元測試（`bun run test`）在第一版的 commit 上，每個測試的通過或失敗都與在 Branch_Point 上相同；比較時兩者在同一台開發機、相同的環境變數下執行，而且工作目錄中沒有需求 2.8 在 `.gitignore` 排除的檔案與目錄。
 
@@ -302,7 +348,7 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 
 1. THE Local_Stack SHALL 以 `127.0.0.1:54322` 提供 Database、以 `127.0.0.1:54321` 提供 API gateway，並經 API gateway 提供 Auth_Service 與 Realtime_Service（WSL 2 轉送的埠也綁在 Windows 上，所以 Windows 保留這兩個埠時，依需求 2.10 改用其他埠）；Local_Stack 不啟動 Storage、Edge Runtime、Analytics 與本機郵件服務，`docker ps` 中沒有這些服務的容器；LM_Server 與 LM_Web 不依賴 Studio、postgres-meta 與 PostgREST，停止這三個服務的容器之後，LM_Server 的每個 API 與 LM_Web 的每個畫面仍照常運作。
 2. THE Local_Stack SHALL 在以 `com.docker.network.bridge.host_binding_ipv4=127.0.0.1` 建立的 Docker 網路 `lm-local` 中啟動（`supabase start --network-id lm-local`），使 `docker ps` 的 PORTS 欄中，Local_Stack 每個容器發布的埠都以 `127.0.0.1:` 開頭，沒有任何以 `0.0.0.0:`、`[::]:` 或 `:::` 開頭的綁定。
-3. WHEN 開發者執行 `supabase db reset`，THE Local_Stack SHALL 清除本機 Database 的全部資料（包括 Auth_Service 的使用者），依檔名順序套用 Migrations 的應用資料表（`20260101000000_app_schema.sql`）、Realtime 授權（`20260101000100_realtime_authorization.sql`）與推送（`20260101000200_publish_changes.sql`）三個檔案，而且不載入任何種子資料，使重設完成後的 Database 沒有任何 Account 與旅行。
+3. WHEN 開發者執行 `supabase db reset`，THE Local_Stack SHALL 清除本機 Database 的全部資料（包括 Auth_Service 的使用者），依檔名順序套用 Migrations 的每個檔案，包括應用資料表（`20260101000000_app_schema.sql`）、Realtime 授權（`20260101000100_realtime_authorization.sql`）、推送（`20260101000200_publish_changes.sql`）與管理後台（`20260301000000_admin.sql`，需求 37、40、41），而且不載入任何種子資料，使重設完成後的 Database 沒有任何 Account 與旅行。
 4. THE LM_Server SHALL 只在 `LM_BIND` 指定的一個位址與埠監聽：`LM_BIND` 的格式為 `<IPv4 位址>:<埠>` 或 `[<IPv6 位址>]:<埠>`，埠為 1–65535，主機名稱（例如 `localhost:8080`）不符合格式；範例設定為 `127.0.0.1:8080`，`LM_BIND` 未設定時監聽 `127.0.0.1:8080`。
 5. THE Cargo_Workspace SHALL 把 LM_Web 的開發伺服器（`trunk serve`）設定為只在 `127.0.0.1:8081` 監聽（不在 `0.0.0.0`、`::` 或其他位址監聽），把 `/api/` 之下的 HTTP 請求以相同的路徑與查詢字串轉送到 `http://127.0.0.1:8080/api/` 之下，並把 `/realtime/v1/websocket` 的 WebSocket 連線轉送到 `ws://127.0.0.1:8080/realtime/v1/websocket` 的 LM_Server。
 6. IF `LM_BIND` 的位址不是 Loopback_Address（`0.0.0.0` 與 `::` 也不是），而且 `SUPABASE_JWT_SECRET`、`SUPABASE_ANON_KEY` 或 `SUPABASE_SERVICE_KEY` 的值與 Sample_Secrets 中任何一個值完全相同，THEN THE LM_Server SHALL 在開始監聽之前於終端機印出原因，並以非 0 的結束代碼結束程序；訊息列出 `LM_BIND` 的值與每個等於 Sample_Secrets 的環境變數名稱，不含這些變數的值。
@@ -325,12 +371,12 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 4. IF 顯示名稱以 Participant_Name 正規化後，Char_Count 超過 30、含有 Hidden_Control_Char，或 Participant_Key 經 Trim_White 後是空字串（例如只有空白、全形空白或 U+3164 韓文填充字元的名稱），THEN THE LM_Server SHALL 回應 400「請填寫 1–30 個字的顯示名稱，不能只有空白或包含隱藏控制字元。」。
 5. IF 原樣的密碼（不去除前後空白、不做 Unicode 正規化）Char_Count 不在 12–72，或 UTF-8 編碼超過 72 位元組（例如 25 個中文字共 75 位元組），THEN THE LM_Server SHALL 回應 400「密碼需為 12–72 個字元，而且不超過 72 個位元組（一個中文字占 3 個位元組）。」。
 6. IF 帳號名稱已被使用，也就是 Auth_Service 已有 email 相同的使用者（包括同時進行、先建立使用者的另一個註冊），或 `app.profiles` 已有相同的帳號名稱，THEN THE LM_Server SHALL 回應 409「這個帳號名稱已被使用。」，不建立新的 Account，也不修改既有 Account 的密碼與資料。
-7. IF `LM_PUBLIC_SIGNUP` 為 `false`，而且註冊請求沒有附邀請，THEN THE LM_Server SHALL 回應 403「目前只接受以邀請連結註冊。」，不呼叫 Auth_Service 建立使用者；Database 還沒有任何 Account 時也一樣，所以第一個 Account 要在 `LM_PUBLIC_SIGNUP` 為 `true` 時註冊。
-8. WHILE `app.profiles` 沒有任何一列，WHEN 註冊的資料庫交易建立一筆 `app.profiles` 資料，THE LM_Server SHALL 把這個 Account 的角色設為 admin；`app.profiles` 已有資料時建立的 Account，角色都是 member。
+7. IF 處理這個註冊請求時的 Registration_Policy（需求 37.2）為 closed，而且註冊請求沒有附邀請，THEN THE LM_Server SHALL 回應 403「目前只接受以邀請連結註冊。」，不呼叫 Auth_Service 建立使用者；Database 還沒有任何 Account 時也一樣，所以第一個 Account 要在 Registration_Policy 為 open 時註冊（需求 38.2）。
+8. WHILE `app.profiles` 沒有任何一列，WHEN 註冊的資料庫交易建立一筆 `app.profiles` 資料，THE LM_Server SHALL 把這個 Account 的角色設為 admin；`app.profiles` 已有資料時建立的 Account，角色都是 member（之後可以由 Admin 依需求 39 修改）。
 9. WHEN 兩個都能通過需求 3.2 至 3.7 的檢查、帳號名稱不同的註冊，在 `app.profiles` 沒有任何一列時同時進行，THE LM_Server SHALL 讓兩個註冊都成功，而且恰好一個 Account 的角色是 admin、另一個是 member。
 10. IF Auth_Service 已建立使用者，但同一次註冊建立 `app.profiles` 資料或以邀請加入旅行的資料庫交易失敗，THEN THE LM_Server SHALL 回滾整個交易（不留下這個 Account 的 `app.profiles` 資料、旅伴、Change_Set 與邀請的使用紀錄，也不推送）、刪除剛建立的 Auth_Service 使用者使這個帳號名稱可以再註冊，並回應原本的錯誤：例如「邀請連結無效或已過期。」，帳號名稱重複時依需求 3.6，Database 連線或執行錯誤時為 500「註冊暫時無法使用，請聯絡管理員。」；刪除 Auth_Service 使用者也失敗時，在伺服器記錄中寫下該使用者的 id，回應不變。
 11. IF 建立使用者時，Auth_Service 以 email 無效拒收 Synthetic_Email、無法連線，或回報 email 已存在以外的其他錯誤，THEN THE LM_Server SHALL 回應 500「註冊暫時無法使用，請聯絡管理員。」，不建立 Account，並在伺服器記錄中寫下原因（email 被拒收時指出 `LM_AUTH_EMAIL_DOMAIN` 的設定有誤），記錄中不含密碼。
-12. THE LM_Server SHALL 在 `LM_AUTH_EMAIL_DOMAIN` 沒有設定時（依需求 2.7，包括空字串）使用 `users.little-moments.invalid`；`LM_PUBLIC_SIGNUP` 沒有設定時（包括空字串）視為 `true`，有設定時只接受 `true` 與 `false`，其他值（例如 `TRUE` 與 `0`）依需求 2.11 在開始監聽之前印出原因並結束程序。
+12. THE LM_Server SHALL 在 `LM_AUTH_EMAIL_DOMAIN` 沒有設定時（依需求 2.7，包括空字串）使用 `users.little-moments.invalid`；`LM_PUBLIC_SIGNUP` 是 Registration_Seed，沒有設定時（包括空字串）視為 `true`，有設定時只接受 `true` 與 `false`，其他值（例如 `TRUE` 與 `0`）依需求 2.11 在開始監聽之前印出原因並結束程序；Admin 在 Admin_Page 儲存過 Registration_Policy 之後，`LM_PUBLIC_SIGNUP` 不再影響註冊（需求 37.2）。
 13. THE Local_Stack SHALL 關閉 Auth_Service 的自行註冊（`[auth] enable_signup = false`）與 email 確認（`[auth.email] enable_confirmations = false`），使不經 LM_Server、直接向 Auth_Service 送出的自行註冊請求被拒絕且不建立使用者，Account 只能經 LM_Server 建立。
 14. WHEN 訪客在 `/register` 或 Invite_Page 送出註冊表單，THE LM_Web SHALL 先對帳號名稱做 Trim_White 並把 A–Z 轉成小寫（密碼不做任何修改），再以與 LM_Server 相同的 LM_Core 規則依需求 3.2 至 3.5 的順序檢查，最後確認兩次輸入的密碼完全相同；任一項不通過時不送出請求，只在表單顯示第一個不通過項目的訊息，兩次密碼不同時顯示「兩次輸入的密碼不一致。」。
 15. WHEN `/register` 收到 LM_Server 對註冊請求的回應，THE LM_Web SHALL 在註冊成功時依需求 4.3 保存 Session，並前往 `next` 指定的 App 內路徑（與需求 4.10 相同），`next` 不存在或不是 App 內路徑時前往這個 Account 的 Home_Page；在註冊被拒絕時於表單顯示回應的 `message`，並保留表單中已輸入的內容。
@@ -343,7 +389,7 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 #### Acceptance Criteria
 
 1. WHEN 使用者在 `/login` 送出帳號名稱與密碼（`POST /api/auth/login`），THE LM_Server SHALL 先把帳號名稱 Trim_White 並把 A–Z 轉成小寫，再以這個帳號名稱組成的 Synthetic_Email 與原樣（不修剪、不正規化）的密碼向 Auth_Service 進行密碼登入，成功時回傳 Session。
-2. IF 帳號名稱或密碼缺少，依需求 4.1 正規化後的帳號名稱是空的、不符合需求 3.2 的格式、是需求 3.3 的保留名稱或不存在，密碼是空的、UTF-8 編碼超過 72 位元組或不正確，或 Auth_Service 的使用者沒有對應的 `app.profiles` 資料，THEN THE LM_Server SHALL 一律以 401 回應「帳號或密碼不正確。」，而且每一種情況的狀態碼與訊息都相同。
+2. IF 帳號名稱或密碼缺少，依需求 4.1 正規化後的帳號名稱是空的、不符合需求 3.2 的格式、是需求 3.3 的保留名稱或不存在，密碼是空的、UTF-8 編碼超過 72 位元組或不正確，或 Auth_Service 的使用者沒有對應的 `app.profiles` 資料，或這個 Account 是 Disabled_Account（需求 40.4，即使密碼正確），THEN THE LM_Server SHALL 一律以 401 回應「帳號或密碼不正確。」，而且每一種情況的狀態碼與訊息都相同。
 3. WHEN LM_Web 從登入、註冊（包括在 Invite_Page 以連結註冊）或換發取得 Session，THE LM_Web SHALL 以它覆寫 localStorage 的 `lm.session.v1`，使重新載入頁面或在同一個瀏覽器開啟新分頁時仍是同一個登入狀態；`lm.session.v1` 不存在或無法解析成 Session 時視為未登入（並移除無法解析的內容），這時開啟 Home_Page、Trip_Page 或 Departure_Page 時依需求 32.9 前往 `/login`。
 4. THE Local_Stack SHALL 讓 access token 的有效時間為 3600 秒（`[auth] jwt_expiry = 3600`），並啟用 refresh token 輪替（`enable_refresh_token_rotation = true`）與 10 秒的重用間隔（`refresh_token_reuse_interval = 10`），使 10 秒內以同一個 refresh token 重複換發都得到有效的 Session。
 5. WHILE 使用者已登入，THE LM_Web SHALL 在 Session 的到期時間前 60 秒以 refresh token 經 `POST /api/auth/refresh` 換發 Session；載入頁面、分頁回到前景，或送出需要 access token 的 API 請求（登出除外）時，若距離到期已不到 60 秒（包括已經過期），先換發再繼續；每次換發成功後，把新的 access token 送給這個分頁每個已加入的 Trip_Channel，並依新的到期時間安排下一次換發。
@@ -365,7 +411,7 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 #### Acceptance Criteria
 
 1. IF Public_Endpoint 以外的 `/api/*` 端點（包括 `POST /api/auth/logout`）收到的請求沒有 `Authorization: Bearer <access token>` 標頭（缺少這個標頭、值不是 `Bearer` 加一個空格與 token，或 token 是空字串），或其中的 access token 不是 Valid_Access_Token，THEN THE LM_Server SHALL 回應 401（`code` 為 `unauthorized`、`message` 為「請先登入。」、`field` 為 `null`），而且不執行這個請求：Database 保持不變，也不推送 Change_Set。
-2. THE LM_Server SHALL 接受同時符合下列條件、而且簽章依需求 5.3 與 5.4 驗證通過的 access token，並拒絕其他 token：宣告（claim）`aud` 與 `role` 都是 `authenticated`；`sub` 是 UUID，而且是既有 Account 的 id（`app.profiles` 中有 id 等於 `sub` 的列）；有 `exp`，而且 LM_Server 的目前時間不晚於 `exp` 之後 30 秒（例如 `exp` 已過 29 秒時接受、已過 31 秒時拒絕）；所以缺少 `aud`、`role`、`sub` 或 `exp` 的 token，以及 `role` 為 `anon` 或 `service_role` 的 token（例如 Supabase 的 anon key 與 service_role key）都會被拒絕。
+2. THE LM_Server SHALL 接受同時符合下列條件、而且簽章依需求 5.3 與 5.4 驗證通過的 access token，並拒絕其他 token：宣告（claim）`aud` 與 `role` 都是 `authenticated`；`sub` 是 UUID，而且是既有、不是 Disabled_Account 的 Account 的 id（`app.profiles` 中有 id 等於 `sub`、`disabled_at` 為空值的列）；有 `exp`，而且 LM_Server 的目前時間不晚於 `exp` 之後 30 秒（例如 `exp` 已過 29 秒時接受、已過 31 秒時拒絕）；所以缺少 `aud`、`role`、`sub` 或 `exp` 的 token，以及 `role` 為 `anon` 或 `service_role` 的 token（例如 Supabase 的 anon key 與 service_role key）都會被拒絕。
 3. THE LM_Server SHALL 依 access token 的 JWT 標頭中的 `alg` 驗證簽章：`HS256` 以 `SUPABASE_JWT_SECRET` 驗證，`ES256` 以 JWKS 中 `kid` 與 token 相同的公鑰驗證；`SUPABASE_JWT_SECRET` 沒有設定或是空字串時拒絕所有 HS256 的 token；`alg` 為其他值（例如 `none`、`HS512`、`RS256`）或簽章不符的 token 一律拒絕。
 4. WHEN LM_Server 驗證 ES256 的 access token，THE LM_Server SHALL 使用讀取後未滿 10 分鐘的 JWKS 快取；沒有快取、快取已滿 10 分鐘，或 token 的 `kid` 不在快取中時，立即讀取一次 JWKS 並以讀到的內容取代快取（每個 token 的驗證最多讀取一次）；token 的 JWT 標頭沒有 `kid`，或讀取後的 JWKS 仍沒有這個 `kid` 時，拒絕這個 token。
 5. THE LM_Server SHALL 以 `Content-Type` 為 `application/json` 的 JSON 回應每個 `/api/*` 請求，包括錯誤與沒有資料要回傳的成功回應（例如登出）；錯誤回應的內容只有 `code`、`message` 與 `field` 三個欄位：`code` 是由小寫英文字母、數字與底線組成、以字母開頭的固定識別字，同一種錯誤每次都相同（例如 `username_taken`）；`message` 是可以直接顯示給使用者的繁體中文，不含 Database、Auth_Service 或程式內部的錯誤文字；`field` 是錯誤所指的輸入欄位名稱（例如註冊時帳號名稱不符合規則為 `username`），錯誤不屬於單一欄位時為 `null`。
@@ -638,7 +684,7 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 5. THE LM_Core SHALL 以 Trim_White 去除旅行名稱、目的地、介紹與小叮嚀的前後空白，以去除後的文字檢查並作為儲存的值，只接受 1–100 字的名稱、0–100 字的目的地、各 0–1000 字的介紹與小叮嚀、四段文字都不含 U+0000、開始日與結束日都是有效日期而且含頭尾共 1–31 天，以及列舉值中的七種封面之一；不符合時以 400 拒絕，訊息與檢查順序沿用現行 `validateTripCard()`（例如名稱是空的或超過 100 字時為「請填寫旅行名稱（最多 100 個字）。」，結束日早於開始日或含頭尾超過 31 天時為「結束日不能早於開始日，而且一趟旅行最多 31 天。」），含 U+0000 時為「旅行資料含有不允許的字元。」；建立旅行時另外只接受 Display_Name 經 Participant_Name 之後符合需求 19.2 至 19.4 的建立者，不符合時以 400 與該條的訊息拒絕。
 6. WHEN Trip_Manager（包括 Unbound_Admin）以 `DELETE /api/trips/{id}` 刪除一趟沒有被刪除的旅行，THE LM_Server SHALL 在一個資料庫交易中鎖住這趟旅行、依需求 8.8 記錄刪除時間（Invite_Link 的資料不變，但之後這趟旅行的每個 Invite_Link 都依需求 6.16 與 30.13 回應「邀請連結無效或已過期。」），並依需求 10.8 寫入及推送一個 Seq 為 Head 加 1、不含任何列變化、`trip_deleted` 為真的 Change_Set，作為這趟旅行的最後一個 Change_Set，提交後回應 200。
 7. IF 要刪除的旅行不存在或已被刪除，或請求者不是這趟旅行的 Trip_Manager，THEN THE LM_Server SHALL 不記錄刪除時間，也不寫入或推送 Change_Set，並在旅行沒有被刪除而且請求者是 Collaborator 時回應 403「受邀旅伴可以編輯旅行，但只有主辦人或管理員可以刪除。」，其他情況回應 404「找不到這趟旅行。」（包括 Collaborator 刪除已被刪除的旅行，以及兩個刪除請求同時送達時後執行的那一個）。
-8. WHEN 已登入的使用者請求 `GET /api/trips`，THE LM_Server SHALL 只回傳使用者是 Trip_Member、而且沒有被刪除的旅行（Admin 也只包括自己是 Trip_Member 的旅行），每趟包含旅行 id、名稱、目的地、起訖日期、封面、狀態、旅伴人數（包括沒有綁定 Account 的旅伴），以及使用者是不是這趟旅行的 Trip_Manager。
+8. WHEN 已登入的使用者請求 `GET /api/trips`，THE LM_Server SHALL 只回傳使用者是 Trip_Member、而且沒有被刪除的旅行（Admin 也只包括自己是 Trip_Member 的旅行；管理後台也不列出所有旅行），每趟包含旅行 id、名稱、目的地、起訖日期、封面、狀態、旅伴人數（包括沒有綁定 Account 的旅伴），以及使用者是不是這趟旅行的 Trip_Manager。
 9. WHEN 使用者送出建立旅行的表單，THE LM_Web SHALL 先以 LM_Core 依需求 17.5 檢查，不成立時不送出並在表單中顯示訊息；成立時以開啟表單時產生的 UUID 作為旅行 id 送出 `POST /api/trips`，同一個表單的每次送出（包括失敗後再次送出）都使用這個 id；LM_Server 回應成功時關閉表單並顯示「旅行已建立」，回應錯誤時保留已填寫的內容並顯示 LM_Server 回應的訊息，網路錯誤或逾時時保留已填寫的內容並顯示「尚未儲存，請檢查網路後再試一次。」。
 10. WHEN Trip_Manager 在 Trip_Menu 選擇「刪除旅行」（Collaborator 的 Trip_Menu 不顯示這個選項），THE LM_Web SHALL 開啟確認對話框，顯示這趟旅行的名稱、「輸入旅行名稱以確認」欄位與「確認刪除旅行」按鈕，並在輸入的文字與旅行名稱逐字相同之前停用這個按鈕；刪除成功時依需求 12.13 離開 Trip_Page、前往 Home_Page 並顯示「這趟旅行已被刪除。」，不論 HTTP 回應與 `trip_deleted` 的 Change_Set 哪一個先到都只顯示一次；刪除失敗時保留對話框並顯示 LM_Server 回應的訊息，網路錯誤或逾時時顯示「尚未刪除，請檢查網路後再試一次。」。
 
@@ -902,7 +948,7 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 9. WHEN 任何人開啟 Active_Invite 的 Invite_Page，或已登入的 Trip_Member 開啟這趟旅行已使用、但沒有撤銷也還沒到期的 Invite_Link，THE Invite_Page SHALL 顯示旅行名稱、目的地（空白時顯示「地點尚未填寫」）、起訖日期與「{建立者的 Display_Name} 邀請你加入」，未登入也能看到；使用者已是這趟旅行的 Trip_Member 時，另外顯示「你已經是這趟旅行的成員了，可以從旅行首頁打開手冊。」與前往 Home_Page 的連結，不顯示加入表單。
 10. WHEN 不是這趟旅行 Trip_Member 的已登入使用者以 Active_Invite 加入並填寫旅伴名字與角色，THE LM_Server SHALL 鎖住這趟旅行後再次驗證連結，並在同一個資料庫交易中新增一位綁定這個 Account 的旅伴（一律新增，不綁定既有的旅伴；顏色依需求 19.8，並依需求 19.9 刪除所有出發確認）、把連結標記為已使用、以需求 10.1 的方式寫入並推送 Change_Set，再回應旅行 id，使其他 Trip_Member 依需求 10.5 與 10.6 不需重新載入就看到新旅伴；任何一步失敗時這個交易全部不生效，連結仍未使用。
 11. WHEN 已是這趟旅行 Trip_Member 的使用者以沒有撤銷、還沒到期、旅行也沒有被刪除的 Invite_Link 加入（不論連結是否已使用），THE LM_Server SHALL 直接回傳旅行 id，不檢查填寫的旅伴名字與角色、不新增旅伴，也不把連結標記為已使用。
-12. WHEN 未登入的訪客在 Invite_Page 以 Active_Invite 送出帳號名稱、顯示名稱、密碼、旅伴名字與角色，THE LM_Server SHALL 在同一次請求中依需求 3.1 至 3.6 的規則建立 Account、以這個 Account 依需求 30.10 加入旅行，並回傳已登入的 Session；這個註冊不受 `LM_PUBLIC_SIGNUP` 影響，任何一步失敗時都依需求 3.10 不留下 Account，也不新增旅伴、不把連結標記為已使用。
+12. WHEN 未登入的訪客在 Invite_Page 以 Active_Invite 送出帳號名稱、顯示名稱、密碼、旅伴名字與角色，THE LM_Server SHALL 在同一次請求中依需求 3.1 至 3.6 的規則建立 Account、以這個 Account 依需求 30.10 加入旅行，並回傳已登入的 Session；這個註冊不受 Registration_Policy 影響，任何一步失敗時都依需求 3.10 不留下 Account，也不新增旅伴、不把連結標記為已使用。
 13. IF 預覽、加入或以連結註冊時 Invite_Link 不存在、已撤銷、已過期、它的旅行已被刪除，或已使用而且使用者不是這趟旅行的 Trip_Member，或撤銷時連結不是這趟旅行的 Active_Invite，THEN THE LM_Server SHALL 回應「邀請連結無效或已過期。」，不建立 Account、不新增旅伴，也不改變任何 Invite_Link；撤銷者沒有這趟旅行的權限或旅行已被刪除時，改依需求 6.2 或 6.3 回應。
 14. WHEN 兩個以上加入或以連結註冊的請求同時使用同一個 Active_Invite，THE LM_Server SHALL 只讓其中一個請求新增旅伴並把連結標記為已使用；其餘請求的使用者已是 Trip_Member 時（例如同一個 Account 在另一個分頁先加入）依需求 30.11 回傳旅行 id，否則回應「邀請連結無效或已過期。」，以連結註冊的請求也依需求 3.10 不留下 Account。
 15. THE LM_Core SHALL 以需求 19.1 至 19.7 的規則與訊息，檢查以邀請加入與以連結註冊時填寫的旅伴名字與角色。
@@ -941,17 +987,17 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 
 #### Acceptance Criteria
 
-1. THE LM_Web SHALL 提供下列畫面：`/login`（登入）、`/register`（註冊）、`/invite/<token>`（Invite_Page）、`/<帳號名稱>/home`（Home_Page）、`/<帳號名稱>/trips/<id>?tab=<分頁>`（Trip_Page）與 `/<帳號名稱>/trips/<id>/go`（Departure_Page），其中 `<id>` 是旅行的 UUID，`<分頁>` 的值見需求 32.3，路徑結尾多出的 `/` 不影響對應（例如 `/login/` 等同 `/login`）；`/` 在有 Session 時前往自己的 Home_Page，沒有 Session 時前往 `/login`；已有 Session 時開啟 `/login` 或 `/register`，依需求 4.10 選擇目的地的規則前往 `next` 或自己的 Home_Page。
+1. THE LM_Web SHALL 提供下列畫面：`/login`（登入）、`/register`（註冊）、`/invite/<token>`（Invite_Page）、`/<帳號名稱>/home`（Home_Page）、`/<帳號名稱>/trips/<id>?tab=<分頁>`（Trip_Page）、`/<帳號名稱>/trips/<id>/go`（Departure_Page）與 `/admin`（Admin_Page，需求 34），其中 `<id>` 是旅行的 UUID，`<分頁>` 的值見需求 32.3，路徑結尾多出的 `/` 不影響對應（例如 `/login/` 等同 `/login`）；`/` 在有 Session 時前往自己的 Home_Page，沒有 Session 時前往 `/login`；已有 Session 時開啟 `/login` 或 `/register`，依需求 4.10 選擇目的地的規則前往 `next` 或自己的 Home_Page。
 2. WHEN 請求的路徑不在 `/api/` 之下，也不是 `/realtime/v1/websocket`，THE LM_Server SHALL 回傳 `LM_STATIC_DIR` 中對應的檔案，找不到時回傳 `index.html`，使直接開啟或重新整理需求 32.1 的任何網址都會載入 LM_Web；不論路徑的內容為何（包括含有 `..` 區段或其百分比編碼 `%2e%2e` 的路徑），都不回傳 `LM_STATIC_DIR` 之外的檔案。
 3. THE Trip_Page SHALL 顯示旅行封面（`src/app.js` 現行 `hero()` 的頁首區塊，插畫與現行相同，是營地 `camp` 的靜態插畫）與倒數，並在封面之下依序提供行程表（`schedule`）、料理菜單（`meals`）、採買清單（`shopping`）、裝備分工（`gear`）與分帳記帳（`expenses`）五個分頁；顯示的分頁由網址的 `tab` 決定，`tab` 缺少或不是這五個值時為行程表；切換分頁時不重新載入頁面、不新增瀏覽紀錄，只把 `tab` 改成新分頁的值；倒數以開始日減去台灣時間（UTC+8）今天的日期得到天數 D：D 大於 0 時依序顯示「距離出發」「{D}」「天」，D 等於 0 時為「今天出發」「GO」「!」，D 小於 0 時為「旅行手冊」「{Trip_Day 的天數}」「天的好日子」。
 4. THE Trip_Menu SHALL 提供編輯旅行、旅伴、車輛與邀請，並只對 Trip_Manager 提供「刪除旅行」（Collaborator 的 Trip_Menu 沒有這一項）；「刪除旅行」先開啟沿用 `src/accounts-ui.js` 現行 `openDeleteTripDialog()` 文字的確認對話框，在輸入的文字與目前的旅行名稱完全相同之前（其他成員在對話框開啟期間改名時，以新的名稱為準），「確認刪除旅行」按鈕保持停用；刪除失敗時對話框保持開啟、旅行不變，並在對話框中顯示以「尚未刪除：」開頭的失敗原因。
 5. THE LM_Web SHALL 只使用由現行插畫程式（`src/art.js`、`src/dish-art.js`）一次性輸出、提交在 `crates/web/assets/art/` 的靜態 SVG：`illustration()` 的 camp、travel、lake、forest、beach、sunrise、meal、market、night，`logo()`，以及 `dishIllustration()` 的 hotpot、bbq、toast、curry、pasta、breakfast、salad 各一個檔案，通用餐盤（custom）的 7 種變化為 `custom-0.svg` 至 `custom-6.svg`，使執行期與建置流程（`trunk build`）都不需要執行 JavaScript 來產生插畫；插圖種類為 custom 的料理依料理 id 決定使用哪一種變化，使同一道料理在每次重繪、重新載入，以及在每個分頁與每台裝置上都顯示同一張插圖。
 6. THE LM_Web SHALL 只以 HTML 插入隨 App 提供的靜態 SVG（需求 32.5 的插畫，以及介面圖示）；使用者輸入的文字，以及從 LM_Server 與 Trip_Channel 收到的文字（包括其他成員在 Presence 回報的 Display_Name），一律以文字節點或屬性輸出，使含有 `<`、`>`、`&` 或引號的文字（例如名稱為 `<img src=x onerror=alert(1)>` 的料理）原樣顯示為文字，不產生任何元素，也不執行任何程式。
-7. THE LM_Web SHALL 沿用現行的字型與樣式：把 `assets/fonts` 的全部 woff2 子集與 `jf-openhuninn-LICENSE.txt`、`OFL.txt`、`SOURCE.txt` 原樣複製到建置輸出的 `assets/fonts/`，使 `src/styles.css` 的每個 `@font-face` 都能載入；`src/styles.css`、`src/accounts.css`、`src/expenses.css` 除了刪除行程繪本、場景動畫與滑動手勢的選擇器之外不修改任何內容；對現行版有對應模板的畫面與區塊（design.md 4.1），除了省略範圍外功能的元素與加入需求 32.8 的新增元素之外，輸出與該模板相同的元素結構與 class 名稱；畫面一律以淺色主題顯示，不隨作業系統的深色模式改變。
-8. THE LM_Web SHALL 只新增一個樣式檔 `presence.css`，其中只有 Editor_Stack 與 Editor_Avatar 的規則，顏色只引用既有的 `--card`、`--soft`、`--ink` 變數，也不定義新的 CSS 變數；Editor_Avatar 的底色與文字色以 inline style 套用 Avatar_Palette；第一版其他新增的元素（例如 Editing_Notice、「仍要編輯」按鈕，以及連線與儲存狀態的提示）只使用現行樣式檔中已有的 class。
+7. THE LM_Web SHALL 沿用現行的字型與樣式：把 `assets/fonts` 的全部 woff2 子集與 `jf-openhuninn-LICENSE.txt`、`OFL.txt`、`SOURCE.txt` 原樣複製到建置輸出的 `assets/fonts/`，使 `src/styles.css` 的每個 `@font-face` 都能載入；`src/styles.css`、`src/accounts.css`、`src/expenses.css` 除了刪除行程繪本、場景動畫與滑動手勢的選擇器之外不修改任何內容；對現行版有對應模板的畫面與區塊（design.md 4.1），除了省略範圍外功能的元素與加入需求 32.8 的新增元素之外，輸出與該模板相同的元素結構與 class 名稱；Admin_Page 例外，依需求 34.6 的結構輸出，只沿用現行 `renderAdmin()` 的 class 名稱；畫面一律以淺色主題顯示，不隨作業系統的深色模式改變。
+8. THE LM_Web SHALL 只新增一個樣式檔 `presence.css`，其中只有 Editor_Stack 與 Editor_Avatar 的規則，顏色只引用既有的 `--card`、`--soft`、`--ink` 變數，也不定義新的 CSS 變數；Editor_Avatar 的底色與文字色以 inline style 套用 Avatar_Palette；第一版其他新增的元素（例如 Editing_Notice、「仍要編輯」按鈕，以及連線與儲存狀態的提示）只使用現行樣式檔中已有的 class。管理後台增補另新增一個樣式檔 `admin.css`，只有 Admin_Page 中現行樣式沒有的規則（搜尋欄、公開註冊開關與操作紀錄的換頁列，需求 34.9），顏色只引用既有的 CSS 變數；`styles/styles.css` 仍與 Bun_App 的 `src/styles.css` 逐字相同。
 9. IF 沒有 Session 的使用者開啟 Home_Page、Trip_Page 或 Departure_Page，THEN THE LM_Web SHALL 不讀取任何旅行資料、不加入 Trip_Channel，並前往 `/login?next=<目前的路徑>`（含 `?tab=<分頁>`，經 URL 編碼）。
 10. IF Home_Page、Trip_Page 或 Departure_Page 網址中的 `<帳號名稱>` 不是 Session 的帳號名稱（Admin 也適用），THEN THE LM_Web SHALL 不讀取任何旅行資料、不加入 Trip_Channel，改為顯示沿用 `src/accounts-ui.js` 現行 `messagePage()` 的訊息頁：標題為「沒有權限查看這個頁面」，說明在 Home_Page 為「這是別人的旅行首頁。每個帳號只能看到自己的首頁，請回到你自己的首頁。」、在 Trip_Page 與 Departure_Page 為「旅行網址必須使用你自己的帳號名稱。請從你的首頁打開旅行。」，並提供前往自己 Home_Page 的「回到我的旅行首頁」按鈕。
-11. IF 路徑不是 `/`，也不對應需求 32.1 的任何畫面（例如 `/setup`、`/admin`、`/demo/`，或 `<id>` 不是 UUID 的旅行網址），THEN THE LM_Web SHALL 顯示沿用現行 `messagePage()` 的訊息頁：標題為「找不到這個頁面」，說明為「網址可能打錯了，或這個頁面已經不存在。」，有 Session 時提供前往自己 Home_Page 的「回到我的旅行首頁」按鈕，沒有 Session 時提供前往 `/login` 的「前往登入」按鈕。
+11. IF 路徑不是 `/`，也不對應需求 32.1 的任何畫面（例如 `/setup`、`/demo/`，或 `<id>` 不是 UUID 的旅行網址），THEN THE LM_Web SHALL 顯示沿用現行 `messagePage()` 的訊息頁：標題為「找不到這個頁面」，說明為「網址可能打錯了，或這個頁面已經不存在。」，有 Session 時提供前往自己 Home_Page 的「回到我的旅行首頁」按鈕，沒有 Session 時提供前往 `/login` 的「前往登入」按鈕。
 
 ### Requirement 33: 核心規則的自動化測試
 
@@ -971,3 +1017,132 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 10. THE LM_Core SHALL 包含 JavaScript 與 Rust 字元規則不同之處的範例測試，預期值是 Bun_App 對同一輸入的結果（現行的 Ingredient_Parser、Ingredient_Key 與 Participant_Name 使用 JS_Whitespace：U+FEFF 算空白、U+0085 不算；Ingredient_Classifier 規則中的數字只比對 0–9）：Ingredient_Parser 從 U+FEFF 加「雞蛋」切出「雞蛋」，從「雞」加 U+FEFF 加「蛋」切出「雞 蛋」且其 Ingredient_Key 為「雞蛋」，從 U+0085 加「雞蛋」切出仍以 U+0085 開頭的名稱；Participant_Name 把「小」加 U+FEFF 加「安」正規化為「小 安」；新增名字為「小」加 U+0085 加「安」的旅伴時，以「名字不能包含隱藏控制字元。」拒絕；Ingredient_Classifier 把「鹽」加 U+0663 分類為「其他」。
 11. THE LM_Core SHALL 另以範例測試涵蓋範例旅行沒有用到的 Itinerary_Text 規則，每個案例都比對完整輸出，預期文字依需求 31.2 至 31.14 與 31.18 撰寫：沒有車輛（「車輛：尚未安排」）；沒有當日標題（「未命名的一天」）、沒有 Day_Place（「地點：未指定」），以及以地點清單中的地點為 Day_Place 的一天；沒有路線、活動與料理的一天（「活動」之後只有「無安排」）；同一天有多條路線、建立順序與出發時間的順序不同，以及出發時間留空的路線（「出發時間未填」）；四種種類的停靠點，包括指定任務與沒有指定任務（預設任務）、時間留空（「・時間未填」），以及備註有填與留空；同時有採買品項與備註的 Shopping_Stop（以「；」連接）、同一台車的第二個 Shopping_Stop（沒有採買品項），以及恰好 8 項與 9 項採買品項（9 項時為前 7 項加「、等另外 2 項」）；有預計抵達時間但沒有路線的一天（路線區塊只有抵達行），以及沒有 Day_Place 時的抵達行（「預計 {HH:MM} 抵達」）；同一時間的活動與料理（活動在前，再各依建立順序）、已完成的活動，以及料理名稱是空的或與餐次相同；料理類別的每一種情況（插圖種類為 hotpot、bbq、breakfast 與 toast，以及其他插圖種類時餐次為早餐、午餐與其他餐次）；有備註的活動與料理（備註行），以及只有空白的備註（沒有備註行）；路線位置為「路線在活動之後」的一天（活動區塊在前，路線區塊與抵達行在後）；未分配採買清單列出已買與未買的待分配品項、不列出負責人不在任何車上或負責人的車沒有 Shopping_Stop 的品項，以及沒有待分配品項時沒有這個區塊；含換行與前後空白的使用者文字，以及不含換行的連續空白保留原樣。
 12. THE LM_Core SHALL 包含權限拒絕的範例測試，確認拒絕的種類與訊息與 Permission_Table 相同：不是 Trip_Member 也不是 Admin 的 Account 送出任一種 Command 時為 404「找不到這趟旅行。」；Collaborator 移除旅伴，或刪除車輛、料理、採買品項或裝備時為 403「受邀旅伴可以編輯，但不能刪除既有項目；請聯絡主辦人或管理員。」；Trip_Manager 或 Collaborator 變更其他旅伴的打包或出發確認時為 403「只能變更自己的行前準備。」；Collaborator 修改綁定其他 Account 的旅伴時為 403「只能修改自己的旅伴資料。」；Collaborator 刪除支出或還款時為 403「受邀旅伴可以新增或修改帳目，但不能刪除既有帳目；請聯絡主辦人或管理員。」；Unbound_Admin 新增、修改或刪除支出或還款時為 404「找不到這趟旅行。」。
+
+### Requirement 34: 管理後台頁面與存取
+
+**User Story:** 身為 Admin，我希望從帳號選單進入一個簡潔的管理後台，而且只有 Admin 能使用，以便協助使用者處理帳號，又不讓其他人看到帳號資料。
+
+#### Acceptance Criteria
+
+1. IF 角色不是 admin 的 Account 以 Valid_Access_Token 請求任何 Admin_Endpoint，THEN THE LM_Server SHALL 回應 403（`code` 為 `admin_required`、`message` 為「需要管理員權限。」、`field` 為 `null`），不讀取也不寫入任何帳號、設定、Audit_Log 或 Auth_Service 的資料；角色以處理這個請求當下 Database 中這個 Account 的資料判斷（需求 5.6、6.1），不依 access token 的內容，也不沿用先前請求的結果，使 Admin 被改為 member 之後的下一個請求就得到 403。
+2. THE LM_Server SHALL 依下列順序判斷 Admin_Endpoint 的請求，只回應第一個不通過的檢查：路徑不存在或方法不支援（需求 5.9 的 404 與 405）；沒有 Valid_Access_Token（需求 5.1 的 401，包括 Disabled_Account）；角色不是 admin（需求 34.1 的 403）；路徑參數、查詢參數或請求內容的格式不正確（需求 5.9 的 400）；之後才依各端點的需求處理。Admin_Endpoint 不是 Public_Endpoint。
+3. WHILE Session 的角色是 admin，THE LM_Web SHALL 在帳號選單「我的旅行」之後顯示連到 `/admin` 的「管理後台」連結（沿用現行 `header()` 的 `<a class="acct-admin-link" href="/admin">`，在 Admin_Page 上加 `aria-current="page"`）；Session 的角色是 member 時不顯示這個連結。
+4. IF 沒有 Session 的使用者開啟 Admin_Page，THEN THE LM_Web SHALL 不送出任何 Admin_Endpoint 的請求，並前往 `/login?next=%2Fadmin`；登入成功後依需求 4.10 回到 Admin_Page。
+5. IF Session 的角色不是 admin，或 Admin_Endpoint 回應 403 `admin_required`，THEN THE LM_Web SHALL 不顯示任何帳號資料，改為顯示沿用現行 `messagePage()` 的訊息頁：標題為「沒有權限查看這個頁面」，說明為「管理後台只開放給管理員。」，並提供前往自己 Home_Page 的「回到我的旅行首頁」按鈕。
+6. THE Admin_Page SHALL 以帳號頁的外框（頁首、帳號選單與頁尾）顯示，文件標題為「管理後台 · 日子拾光」，內容依序為：頁首（「ADMIN」、標題「管理後台」與說明「查詢與管理帳號、協助重設密碼，並設定是否開放公開註冊。」）、統計列（需求 35.6）、「公開註冊」區塊（需求 37）、「帳號」區塊（需求 35、36、39、40）與「操作紀錄」區塊（需求 41）；沿用現行 `renderAdmin()` 的 class 名稱（`acct-admin`、`acct-admin-head`、`acct-stats`、`acct-user-list`、`acct-user-row`、`is-deleted`、`acct-user-info`、`acct-actions`、`acct-pill`、`acct-row-note`、`acct-audit`、`acct-audit-target`），不顯示現行的收據 AI、收據 AI 用量、登入安全與所有旅行區塊。
+7. WHEN Admin_Page 載入，THE LM_Web SHALL 同時讀取公開註冊的設定、帳號列表與 Audit_Log 的第 1 頁，每個區塊在讀取期間顯示「載入中…」，讀取失敗時只在那個區塊顯示失敗原因與「重新載入」按鈕，其他區塊照常顯示；統計列依帳號列表的結果顯示，帳號列表讀取失敗時不顯示統計列；Admin_Endpoint 回應 401 時依需求 4.8 換發並重試一次，仍為 401 時依需求 4.9 處理。
+8. THE Admin_Page SHALL 不加入任何 Trip_Channel、不讀取任何旅行的 Snapshot，也不即時更新：其他 Admin 同時做的變更在重新載入或重新讀取區塊之後才出現；這個分頁自己完成的寫入操作（需求 36、37、39、40）成功之後，重新讀取帳號列表與 Audit_Log 的第 1 頁。
+9. THE LM_Web SHALL 只把 Admin_Page 中現行樣式沒有的規則（搜尋欄、公開註冊開關與 Audit_Log 的換頁列）放在 `admin.css`（需求 32.8），並在淺色與深色主題下都使文字與背景的對比至少 4.5:1、開關與欄位邊框的對比至少 3:1；每個按鈕、開關與欄位都有可見的焦點樣式，並可以只用鍵盤操作；每個對話框開啟時焦點移到第一個欄位或按鈕、按 Esc 關閉，關閉後焦點回到開啟它的按鈕。
+10. THE LM_Server SHALL 在伺服器記錄中為每個成功的寫入類 Admin_Endpoint（需求 36.3、37.4、39.3、40.3、40.6）寫一行 info 等級的紀錄，只包含操作名稱、執行的 Admin 的 Account id 與目標（Account id 或設定名稱），不包含密碼、access token 與 refresh token。
+
+### Requirement 35: 查詢帳號與統計
+
+**User Story:** 身為 Admin，我希望能找到某位使用者的帳號，並看到整體的帳號與旅行數量，以便確認他的帳號名稱並協助他。
+
+#### Acceptance Criteria
+
+1. WHEN Admin 請求 `GET /api/admin/users`，THE LM_Server SHALL 回應 200，內容為 Database 中每一個 Account 的 id、帳號名稱、Display_Name、角色、建立時間、是否為 Disabled_Account（與停用時間），以及他是 Trip_Member 的、沒有被刪除的旅行數量，依帳號名稱由小到大排列，另附 Database 中沒有被刪除的旅行總數；回應不含 Synthetic_Email、密碼雜湊或 Auth_Service 的其他資料。
+2. THE Admin_Page SHALL 在「帳號」區塊以列表顯示每個 Account：Display_Name（自己那一列另外顯示「你」）、「@帳號名稱 · 管理員」或「@帳號名稱 · 成員」、「使用中」或「已停用」、「{N} 趟旅行」，以及這一列的「編輯帳號」（需求 39）、「重設密碼」（需求 36）與「停用帳號」或「啟用帳號」（需求 40）按鈕；Disabled_Account 的列加上 class `is-deleted`（沿用現行的淡化樣式）；自己那一列的「停用帳號」按鈕停用，並以 `acct-row-note` 顯示「不能停用自己的帳號，也不能變更自己的角色。」；還沒有任何 Account 時顯示「還沒有任何帳號。」。
+3. THE Admin_Page SHALL 在帳號列表上方提供標籤為「搜尋帳號」、提示文字為「輸入帳號名稱或顯示名稱」的搜尋欄，並在每次輸入之後（不需要按下送出）只列出符合的 Account，同時在列表上方顯示「符合 {N} 個帳號，共 {M} 個」；搜尋文字經 Trim_White 後是空字串時列出全部 Account，沒有任何 Account 符合時顯示「找不到符合的帳號。」。
+4. THE LM_Core SHALL 以下列規則判斷 Account 是否符合搜尋文字：搜尋文字與 Display_Name 都先經 Trim_White、NFKC 與轉成小寫，帳號名稱原樣；帳號名稱或 Display_Name 包含搜尋文字（子字串）時符合；例如「Amy」符合帳號名稱 `amy-chen`，「小明」符合 Display_Name「陳小明」，全形的「ＡＭＹ」也符合 `amy-chen`。
+5. WHEN Admin 在 Admin_Page 完成寫入操作或按下「重新載入」，THE LM_Web SHALL 重新讀取帳號列表，並保留搜尋欄中的文字與篩選結果。
+6. THE Admin_Page SHALL 在頁首之後以現行 `acct-stats` 的結構（`<dl class="acct-stats">`，每項一個 `<div><dt>…</dt><dd>…</dd></div>`）依序顯示：帳號總數、使用中（不是 Disabled_Account 的 Account 數）、已停用、管理員（不是 Disabled_Account 的 Admin 數）與旅行總數（需求 35.1 的旅行總數），數值以 `GET /api/admin/users` 的結果在瀏覽器計算，不受搜尋欄影響。
+
+### Requirement 36: 重設密碼
+
+**User Story:** 身為 Admin，我希望能直接幫忘記密碼的使用者設定新密碼，以便他不需要 email 也能重新登入。
+
+#### Acceptance Criteria
+
+1. WHEN Admin 在帳號列表的一列按下「重設密碼」，THE Admin_Page SHALL 開啟對話框：標題為「重設密碼」，說明「為 {Display_Name}（@帳號名稱）設定新密碼。設定之後，這個帳號在每台裝置上都要以新密碼重新登入；請以安全的方式把新密碼告訴對方。」，欄位為「新密碼」與「再次輸入新密碼」（`type="password"`、`autocomplete="new-password"`，不截斷輸入），按鈕為「設定新密碼」與「取消」；目標是自己的帳號時另外顯示「這台裝置也需要重新登入。」；目標是 Disabled_Account 時另外顯示「這個帳號目前已停用，啟用之後才能以新密碼登入。」。
+2. WHEN Admin 在重設密碼的對話框按下「設定新密碼」，THE LM_Web SHALL 先以與 LM_Server 相同的 LM_Core 規則依需求 3.5 檢查原樣的新密碼，再確認兩次輸入完全相同；任一項不通過時不送出請求，在對話框中顯示第一個不通過項目的訊息（兩次不同時為「兩次輸入的密碼不一致。」）。
+3. WHEN Admin 送出 `POST /api/admin/users/{id}/password`（內容為 `{ "password": <新密碼> }`），THE LM_Server SHALL 在需求 34.2 的檢查之後依序：`{id}` 不是 UUID 或沒有這個 Account 時回應 404（`user_not_found`、「找不到這個帳號。」）；新密碼不符合需求 3.5 時回應 400（訊息與需求 3.5 相同，`field` 為 `password`）；以 Auth_Service 的 admin API 把這個 Account 的密碼原樣設為新密碼；刪除這個 Account 在 Auth_Service 的每一個登入工作階段（使之前取得的每個 refresh token 換發時都得到 401）；依需求 41.2 寫入 Audit_Log；最後回應 200 `{}`。
+4. WHEN 重設密碼成功，THE LM_Server SHALL 使這個帳號以新密碼登入成功（Disabled_Account 依需求 40.4 仍無法登入）、以舊密碼登入得到需求 4.2 的 401，並使這個帳號在每個瀏覽器與裝置上的 refresh token 換發時得到 401；已簽發的 access token 仍可使用到到期（design.md R10）。目標是執行重設的 Admin 自己時也一樣。
+5. IF Auth_Service 拒絕新密碼、無法連線、10 秒內沒有回應或回應錯誤，THEN THE LM_Server SHALL 回應 500（`password_reset_unavailable`、「暫時無法重設密碼，請稍後再試。」），不刪除登入工作階段、不寫入 Audit_Log，並在伺服器記錄中寫下原因與目標 Account id。
+6. IF Auth_Service 已設定新密碼，但刪除登入工作階段失敗，THEN THE LM_Server SHALL 回應 500（`password_reset_signout_failed`、「新密碼已設定，但其他裝置可能仍維持登入，請再按一次『設定新密碼』。」），不寫入 Audit_Log，並在伺服器記錄中寫下原因與目標 Account id；以相同的新密碼再送出一次時，依需求 36.3 重新設定密碼並刪除登入工作階段。
+7. THE LM_Server 與 LM_Web SHALL 不在任何記錄、錯誤回應、Audit_Log、URL、localStorage 或 sessionStorage 中保存或輸出新密碼；LM_Web 在對話框關閉時清空兩個密碼欄位。
+8. WHEN LM_Server 回應重設密碼的請求，THE Admin_Page SHALL 在成功時關閉對話框、顯示 Toast「已為 {Display_Name} 設定新密碼」並依需求 34.8 重新讀取；在 LM_Server 回應錯誤時保留對話框與輸入內容，並在對話框中顯示「尚未設定：{message}」；在網路錯誤或逾時時保留對話框，顯示「尚未設定，請檢查網路後再試一次。」；送出期間停用「設定新密碼」按鈕，避免重複送出。
+9. THE LM_Server SHALL 不提供重設密碼的伺服器指令；唯一的 Admin 忘記自己的密碼時，依需求 38.3 寫在 `deploy/README.md` 的步驟直接在 Database 中處理。
+
+### Requirement 37: 公開註冊的設定
+
+**User Story:** 身為 Admin，我希望在管理後台開啟或關閉公開註冊，以便先開放給大家註冊，之後隨時改成只能以邀請連結註冊，而且不必重新部署。
+
+#### Acceptance Criteria
+
+1. THE Database SHALL 以遷移檔 `20260301000000_admin.sql` 建立 `app.settings` 資料表（設定名稱為主鍵、值、最後修改時間與最後修改的 Account），啟用 RLS 且不建立政策，`anon` 與 `authenticated` 對它沒有任何權限（與需求 6.14 相同）；公開註冊的設定名稱為 `public_signup`，值只能是 `open` 或 `closed`。
+2. THE LM_Server SHALL 以下列順序決定 Registration_Policy：`app.settings` 有 `public_signup` 這一列時使用它的值；沒有時使用 Registration_Seed（`LM_PUBLIC_SIGNUP` 為 `true` 或沒有設定時為 open，`false` 時為 closed）；並在處理每一個不附邀請的註冊請求時，從 Database 讀取當下的值，使 Admin 變更之後的下一個註冊請求就依新的值處理，不需要重新啟動 LM_Server。
+3. WHEN Admin 請求 `GET /api/admin/settings`，THE LM_Server SHALL 回應 200，內容為 `public_signup` 的目前值（`open` 或 `closed`）、來源（`stored`：Admin 儲存過；`seed`：有設定 `LM_PUBLIC_SIGNUP`；`default`：沒有設定 `LM_PUBLIC_SIGNUP`），以及來源為 `stored` 時的最後修改時間與最後修改者的 Display_Name 與帳號名稱。
+4. WHEN Admin 送出 `PATCH /api/admin/settings`，內容為 `{ "public_signup": "open" }` 或 `{ "public_signup": "closed" }`，THE LM_Server SHALL 在一個資料庫交易中寫入（新增或取代）`app.settings` 的 `public_signup`，記錄修改時間與這位 Admin，並依需求 41.2 寫入 Audit_Log，提交後以需求 37.3 的格式回應 200；值與目前相同時也寫入（來源因此改為 `stored`）。
+5. IF `PATCH /api/admin/settings` 的內容沒有 `public_signup`、`public_signup` 不是 `open` 也不是 `closed`（例如 `"OPEN"`、`true`），或含有其他欄位，THEN THE LM_Server SHALL 回應 400（`invalid_setting`、「公開註冊只能設為開放或關閉。」、`field` 為 `public_signup`），不寫入任何資料。
+6. THE Admin_Page SHALL 在「公開註冊」區塊顯示一個標籤為「開放公開註冊」的開關（`<input type="checkbox" role="switch">`），開啟時表示 open；開關旁以文字顯示目前的狀態：開放時為「開放：任何人都能在註冊頁建立帳號。」，關閉時為「關閉：只能以旅行的邀請連結建立帳號。」；並依來源顯示說明：`default` 為「目前使用預設值（開放）。」，`seed` 為「目前使用伺服器環境變數 LM_PUBLIC_SIGNUP 的初始值。」，`stored` 為「由 {Display_Name} 於 {台灣時間 YYYY/MM/DD HH:MM} 設定；伺服器環境變數 LM_PUBLIC_SIGNUP 不再生效。」。
+7. WHEN Admin 切換「開放公開註冊」開關，THE LM_Web SHALL 立即送出 `PATCH /api/admin/settings`，送出期間停用開關；成功時以回應更新開關與說明，並顯示 Toast「已開放公開註冊」或「已關閉公開註冊」；失敗時把開關恢復成切換之前的狀態，並在區塊中顯示「尚未儲存：{message}」（網路錯誤或逾時時為「尚未儲存，請檢查網路後再試一次。」）。
+8. WHILE Registration_Policy 為 closed，THE LM_Server SHALL 照常接受以 Invite_Link 註冊（需求 30.12）與登入，只拒絕不附邀請的註冊（需求 3.7）。
+
+### Requirement 38: 第一位管理員與管理員的救援
+
+**User Story:** 身為部署這個 App 的維運者，我希望沿用「全新 Database 的第一個帳號成為 Admin」，在只有 LAN 連得到網站時註冊自己的帳號，再到管理後台關閉公開註冊；唯一的 Admin 忘記密碼時，也有文件寫好的救援步驟。
+
+#### Acceptance Criteria
+
+1. THE LM_Server SHALL 沿用需求 3.8 與 3.9：`app.profiles` 沒有任何一列時註冊的 Account 成為 Admin，同時進行的註冊恰好產生一位 Admin；不提供建立管理員的伺服器指令、`/setup` 頁面或 Setup_Token。
+2. THE Repository SHALL 在 `deploy/README.md` 的「首次切換」寫出下列順序：在 `www` 的 Proxy Host 只允許 LAN 時，暫時把 `LM_PUBLIC_SIGNUP` 設為 `true` 並部署；在 LAN 內的瀏覽器註冊第一個帳號（成為 Admin），再註冊 `smoke-bot`；以 Admin 登入 Admin_Page 關閉公開註冊，確認不附邀請的註冊回應 403 `signup_invite_only`；把 `<env>.env` 的 `LM_PUBLIC_SIGNUP` 改回 `false`（只是初始值，不需要重新建立容器）；之後才把 Access List 改回對外開放。
+3. THE Repository SHALL 在 `deploy/README.md` 新增「管理員的救援」一節，寫出在 Deploy_Host 以 `docker exec` 進入該環境的 Database 容器、以互動式 `psql` 執行的 SQL：把另一個 Account 改為 Admin（`update app.profiles set role = 'admin' where username = '<帳號名稱>'`）；直接設定一個 Account 的密碼（以 `extensions.crypt()` 與 `extensions.gen_salt('bf')` 更新 `auth.users.encrypted_password`，新密碼只在互動式 `psql` 中輸入，不放在指令列、環境變數或 shell 記錄中，並刪除這個使用者在 `auth.sessions` 的每一列）；啟用被停用的 Admin（`update app.profiles set disabled_at = null where username = '<帳號名稱>'`）；以及恢復由 `LM_PUBLIC_SIGNUP` 控制公開註冊（`delete from app.settings where key = 'public_signup'`）。這些步驟不含任何密碼、金鑰或其他秘密的值，並說明直接修改 Database 不會寫入 Audit_Log。
+4. THE Repository SHALL 更新 `deploy/README.md` 第 5 節表格中 `LM_PUBLIC_SIGNUP` 的說明、`deploy/compose/prod.env.example` 與 `staging.env.example` 中 `LM_PUBLIC_SIGNUP` 的註解、根目錄 `README.md` 中說明 Rust 版本首次管理員與 `LM_PUBLIC_SIGNUP` 的段落，以及 `.env.example` 的註解，使它們說明 `LM_PUBLIC_SIGNUP` 是初始值、Admin 在 Admin_Page 儲存之後不再生效；這些文件不含任何秘密的值，根目錄 `README.md` 在 Branch_Point 已存在的行不修改（需求 1.9）。
+
+### Requirement 39: 修改帳號的顯示名稱與角色
+
+**User Story:** 身為 Admin，我希望能修改帳號的顯示名稱，並把帳號設為管理員或成員，以便協助使用者更正名稱並分擔管理工作，又不會讓網站失去管理員。
+
+#### Acceptance Criteria
+
+1. WHEN Admin 在帳號列表的一列按下「編輯帳號」，THE Admin_Page SHALL 開啟標題為「編輯帳號」的對話框，顯示「@帳號名稱」（不能修改），欄位為「顯示名稱」（預填目前的 Display_Name）與「角色」（選項「成員」與「管理員」，預選目前的角色），按鈕為「儲存」與「取消」；目標是自己時停用「角色」欄位，並在欄位下方顯示「不能變更自己的角色。」。
+2. WHEN Admin 在編輯帳號的對話框按下「儲存」，THE LM_Web SHALL 先以 LM_Core 依需求 3.4 檢查顯示名稱，不通過時在對話框中顯示訊息且不送出；顯示名稱經 Participant_Name 後與角色都與目前相同時，不送出請求，顯示「沒有變更的內容。」；否則只送出有變更的欄位。
+3. WHEN Admin 送出 `PATCH /api/admin/users/{id}`，內容含 `display_name`、`role`（`admin` 或 `member`）或兩者，THE LM_Server SHALL 在需求 34.2 的檢查之後，在一個資料庫交易中取得 `app.first_admin` advisory lock 並鎖住目標的 `app.profiles` 列，依序檢查：`{id}` 不是 UUID 或沒有這個 Account 時 404 `user_not_found`；兩個欄位都沒有時 400 `invalid_request`；`display_name` 依需求 3.4 不通過時 400（訊息與需求 3.4 相同，`field` 為 `display_name`）；`role` 不是 `admin` 也不是 `member` 時 400 `invalid_request`；目標是自己而且 `role` 與目前不同時 403（`self_role_change`、「不能變更自己的角色。」）；把目前不是 Disabled_Account 的 Admin 改為 member、而且他是唯一一位不是 Disabled_Account 的 Admin 時 409（`last_admin`、「至少需要保留一位管理員。」）；全部通過後寫入以 Participant_Name 正規化的顯示名稱與角色、依需求 39.5 撤銷邀請、依需求 41.2 寫入 Audit_Log，提交後以需求 35.1 的單一帳號格式回應 200。
+4. WHEN Account 的 Display_Name 改變，THE LM_Server SHALL 只改變 `app.profiles` 的 Display_Name，不改變任何旅行中旅伴的名字（旅伴名字是 Trip_State），也不寫入或推送 Change_Set；新的 Display_Name 用在之後的 `GET /api/me`、Session、Presence、邀請預覽與新建立旅行的召集人名字。
+5. WHEN Admin 被改為 member，THE LM_Server SHALL 在同一個交易中撤銷他建立的、所屬旅行中他不是 Trip_Member 的每個 Active_Invite；他是 Trip_Member 的旅行中建立的 Invite_Link 不變（Collaborator 也可以建立 Invite_Link）。
+6. WHEN 目標是自己的 Display_Name 修改成功，THE LM_Web SHALL 以 `GET /api/me` 的結果更新這個分頁的 Session 與頁首的帳號選單。
+7. WHEN LM_Server 回應編輯帳號的請求，THE Admin_Page SHALL 在成功時關閉對話框、顯示 Toast「已更新 {Display_Name} 的帳號」並依需求 34.8 重新讀取；失敗時保留對話框與輸入內容並顯示「尚未儲存：{message}」；網路錯誤或逾時時顯示「尚未儲存，請檢查網路後再試一次。」；送出期間停用「儲存」按鈕。
+
+### Requirement 40: 停用與啟用帳號
+
+**User Story:** 身為 Admin，我希望能暫時停用一個帳號並在之後重新啟用，以便阻止它登入，又不改動它的旅行、旅伴與帳目。
+
+#### Acceptance Criteria
+
+1. THE Database SHALL 以遷移檔 `20260301000000_admin.sql` 在 `app.profiles` 新增可以為空的停用時間 `disabled_at`；`disabled_at` 不是空值的 Account 是 Disabled_Account；停用與啟用只改變 `disabled_at`，不改變這個 Account 的旅行、旅伴、Invite_Link、帳目或任何 Trip_State，也不寫入或推送 Change_Set。
+2. WHEN Admin 在帳號列表中不是自己的一列按下「停用帳號」，THE Admin_Page SHALL 開啟標題為「停用帳號」的確認對話框，說明「停用後 {Display_Name}（@帳號名稱）無法登入；已登入的裝置最晚在一小時內失效。旅行、旅伴與帳目都會保留，之後可以重新啟用。」，按鈕為「停用帳號」與「取消」；確認之後才送出請求。
+3. WHEN Admin 送出 `POST /api/admin/users/{id}/disable`，THE LM_Server SHALL 在需求 34.2 的檢查之後，在一個資料庫交易中取得 `app.first_admin` advisory lock 並鎖住目標的 `app.profiles` 列，依序檢查：`{id}` 不是 UUID 或沒有這個 Account 時 404 `user_not_found`；目標是自己時 403（`self_disable`、「不能停用自己的帳號。」）；目標是唯一一位不是 Disabled_Account 的 Admin 時 409 `last_admin`「至少需要保留一位管理員。」；目標已是 Disabled_Account 時不改變 `disabled_at`、不寫入 Audit_Log；否則把 `disabled_at` 設為現在的時間並依需求 41.2 寫入 Audit_Log；提交後刪除目標在 Auth_Service 的每一個登入工作階段，再以需求 35.1 的單一帳號格式回應 200。
+4. WHILE Account 是 Disabled_Account，THE LM_Server SHALL 拒絕這個 Account：以正確的密碼登入時回應需求 4.2 的 401「帳號或密碼不正確。」（並撤銷這次取得的 Auth_Service 工作階段，與沒有 `app.profiles` 的使用者相同）；換發 Session 時回應 401（需求 4.9）；帶著仍未過期的 access token 請求任何需要登入的 `/api/*` 端點時回應需求 5.1 的 401，因為它不是 Valid_Access_Token（需求 5.2）；`app.can_use_trip_topic()` 對它回傳 false，使它無法再加入或重新加入 Trip_Channel。已加入的 Trip_Channel 在它的 access token 到期（最多 1 小時，design.md R10）之前可能仍收到推送，第一版接受。
+5. IF 停用帳號的交易已提交，但刪除登入工作階段失敗，THEN THE LM_Server SHALL 回應 500（`account_disable_signout_failed`、「帳號已停用，但其他裝置可能仍維持登入，請再按一次『停用帳號』。」），並在伺服器記錄中寫下原因與目標 Account id；需求 40.4 的拒絕在交易提交後就生效，再送出一次時依需求 40.3 再刪除一次登入工作階段。
+6. WHEN Admin 對 Disabled_Account 按下「啟用帳號」並送出 `POST /api/admin/users/{id}/enable`，THE LM_Server SHALL 在需求 34.2 的檢查之後，於一個資料庫交易中把 `disabled_at` 設為空值、依需求 41.2 寫入 Audit_Log，提交後以需求 35.1 的單一帳號格式回應 200，使這個 Account 可以再以原本的密碼（或停用期間重設的密碼）登入；`{id}` 不是 UUID 或沒有這個 Account 時 404 `user_not_found`；目標不是 Disabled_Account 時回應 200，不寫入 Audit_Log。
+7. WHEN LM_Server 回應停用或啟用帳號的請求，THE Admin_Page SHALL 在成功時關閉對話框、顯示 Toast「已停用 {Display_Name}」或「已啟用 {Display_Name}」並依需求 34.8 重新讀取；失敗時保留對話框（啟用沒有對話框時在帳號區塊中）顯示「尚未完成：{message}」；網路錯誤或逾時時顯示「尚未完成，請檢查網路後再試一次。」；送出期間停用按鈕。
+
+### Requirement 41: 操作紀錄
+
+**User Story:** 身為 Admin，我希望看到最近的帳號與管理操作紀錄，以便知道誰在什麼時候做了什麼。
+
+#### Acceptance Criteria
+
+1. THE Database SHALL 以遷移檔 `20260301000000_admin.sql` 建立 `app.audit` 資料表（遞增的 id、時間、執行的 Account、操作代碼、目標的文字與補充說明），啟用 RLS 且不建立政策，`anon` 與 `authenticated` 對它沒有任何權限；操作代碼只能是需求 41.2 列出的值；執行的 Account 被刪除時保留紀錄（執行者改為空值）。
+2. THE LM_Server SHALL 在下列操作成功時各寫入一筆 Audit_Log，與操作本身在同一個資料庫交易中寫入（重設密碼在刪除登入工作階段成功之後寫入），操作失敗或沒有任何變化時不寫入；目標與補充說明只含下表的內容，不含密碼、token、Invite_Link 的 token 或其他秘密：
+
+   | 操作代碼 | 中文名稱 | 執行者 | 目標 | 補充說明 |
+   | --- | --- | --- | --- | --- |
+   | `account.register` | 註冊帳號 | 新的 Account | 「@帳號名稱」 | 「管理員」或「成員」；以 Invite_Link 註冊時另加「・經邀請連結」 |
+   | `admin.user.update` | 修改帳號 | Admin | 「@帳號名稱」 | 有改顯示名稱時「顯示名稱改為「{新的 Display_Name}」」；有改角色時「角色：{舊} → {新}」；兩者都有時以「；」連接；依需求 39.5 撤銷 N 個邀請時另加「；撤銷 {N} 個邀請連結」 |
+   | `admin.user.password_reset` | 重設密碼 | Admin | 「@帳號名稱」 | 無 |
+   | `admin.user.disable` | 停用帳號 | Admin | 「@帳號名稱」 | 無 |
+   | `admin.user.enable` | 啟用帳號 | Admin | 「@帳號名稱」 | 無 |
+   | `admin.settings.public_signup` | 變更公開註冊 | Admin | 「公開註冊」 | 「開放」或「關閉」 |
+   | `trip.create` | 建立旅行 | 建立者 | 旅行名稱 | 無（需求 17.4 回傳既有旅行時不寫入） |
+   | `trip.delete` | 刪除旅行 | 刪除者 | 旅行名稱 | 無 |
+   | `invite.create` | 建立邀請連結 | 建立者 | 旅行名稱 | 無 |
+   | `invite.revoke` | 撤銷邀請連結 | 撤銷者 | 旅行名稱 | 無 |
+   | `invite.join` | 以邀請連結加入旅行 | 加入的 Account | 旅行名稱 | 旅伴名字 |
+
+   Command（旅行內容的修改）、登入、換發與登出不寫入 Audit_Log（Command 已記錄在 Change_Log；登入紀錄屬於延後的資安工作流）。
+3. WHEN Admin 請求 `GET /api/admin/audit?page=N`，THE LM_Server SHALL 以每頁 20 筆、依時間由新到舊（時間相同時 id 較大的在前）回應第 N 頁，內容為每筆的時間、執行者的 Display_Name 與帳號名稱（執行者已不存在時為空值）、操作代碼、目標與補充說明，以及目前的頁碼與總頁數；`page` 沒有提供時為 1；只提供最新的 200 筆（最多 10 頁），總頁數為最新 200 筆以內的筆數除以 20 後無條件進位、最少為 1；更早的紀錄保留在 Database 中，但不由任何端點回傳。
+4. IF `page` 不是 1 至 10 的整數，或大於總頁數，THEN THE LM_Server SHALL 回應 400（`invalid_page`、「沒有這一頁的操作紀錄。」、`field` 為 `page`）。
+5. THE Admin_Page SHALL 在「操作紀錄」區塊以現行 `acct-audit` 的結構列出目前這一頁的紀錄：每筆為 `<li>`，含以台灣時間「YYYY/MM/DD HH:MM」顯示的 `<time>`，以及「{執行者的 Display_Name}（@帳號名稱） · {操作的中文名稱} · {目標}」（目標包在 `acct-audit-target` 中），有補充說明時接在後面；執行者為空值時顯示「已刪除的帳號」；操作的中文名稱由 LM_Core 依需求 41.2 的表提供，不認得的操作代碼原樣顯示；沒有任何紀錄時顯示「目前還沒有操作紀錄。」。
+6. THE Admin_Page SHALL 在操作紀錄之下顯示換頁列：「上一頁」按鈕、「第 {N} / {總頁數} 頁」與「下一頁」按鈕，在第 1 頁停用「上一頁」、在最後一頁停用「下一頁」，並在下方以說明文字顯示「只顯示最新的 200 筆。」；換頁時只重新讀取這個區塊，讀取期間停用兩個按鈕。

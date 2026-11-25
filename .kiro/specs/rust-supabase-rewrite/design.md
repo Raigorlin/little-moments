@@ -76,8 +76,9 @@
 | 分帳記帳（基本） | 範圍內（已確認 2） | 支出、還款、餘額與建議轉帳，與其他項目一樣即時同步。資料只有兩張表（`app.expenses`、`app.settlements`）加分攤旅伴（`app.expense_participants`），計算是現行 `summarizeLedger()` 的直接移植（`lm-core::ledger`）。收據 AI 不在第一版 |
 | 誰正在編輯（Presence） | 範圍內（已確認 3） | 卡片或列層級；提示性的鎖定，可以選擇「仍要編輯」；在被編輯的卡片或列上以圓形頭像呈現編輯者帳號顯示名稱的第一個字，最多 3 個加「+N」 |
 | 收據 AI（OpenAI） | 之後 | 需要金鑰、費用控管與用量畫面 |
-| 管理後台與稽核紀錄 | 之後 | 第一版的管理員只有「可管理任何旅行」的權限 |
-| 註冊政策設定畫面 | 之後 | 第一版以環境變數 `LM_PUBLIC_SIGNUP` 代替 |
+| 管理後台：統計、查詢帳號、修改顯示名稱與角色、重設密碼、停用與啟用帳號、公開註冊的開關、操作紀錄 | 增補（範圍內） | `/admin` 與 `/api/admin/*`（元件 5）；使用者確認 U9–U15 與決定 D1–D3 |
+| 管理後台列出所有旅行、刪除帳號、建立管理員或重設密碼的伺服器指令 | 不做 | 使用者的決定 D1–D3；唯一的管理員忘記密碼時依 `deploy/README.md` 在 Database 中處理 |
+| 收據 AI 政策與用量、登入安全警示 | 之後 | 收據 AI 與資安工作流之後再做（U14） |
 | `/demo/` 離線本機版與 Service Worker | 之後 | 第一版必須連線使用 |
 | 匯出、匯入、列印 | 之後 | |
 | 行程圖（動畫海報）與場景動畫 | 之後 | 第一版的插畫是靜態 SVG |
@@ -96,7 +97,8 @@
 | 「誰正在編輯」 | 只在行程繪本：欄位層級鎖定，3 秒輪詢；欄位下方以文字「{顯示名稱} 正在編輯」標示 | 所有分頁的卡片或列層級，最多每 6.5 秒更新一次，可以選「仍要編輯」；以圓形頭像呈現顯示名稱的第一個字，最多 3 個加「+N」 | [Realtime 限制](https://supabase.com/docs/guides/realtime/limits)每個用戶端每 30 秒 5 次 presence 呼叫；鎖定只是提示，同時編輯不會讓資料損壞；頭像是使用者確認的要求（已確認 3） |
 | 打包勾選 | 伺服器允許管理者以整份 PUT 改別人的打包狀態（介面沒有這個操作） | 每個人都只能勾自己的 | 與介面一致，命令層級的權限也較單純 |
 | 移除旅伴 | 介面沒有這個操作；伺服器規則禁止移除綁定帳號的旅伴 | 管理者可以移除未綁定帳號、沒有帳目的旅伴 | 新增的操作，沿用現有限制 |
-| 第一位管理員 | `/setup` 頁面 | 空資料庫上註冊的第一個帳號 | 少一個頁面與一組 API |
+| 第一位管理員 | `/setup` 頁面 | 空資料庫上註冊的第一個帳號；部署時在只有 LAN 連得到網站時暫時開放註冊（元件 5.9） | 少一個頁面與一組 API；使用者決定維持（D3） |
+| 管理後台 | 七個區塊 | 統計、公開註冊、帳號、操作紀錄四個區塊；以停用取代刪除帳號 | 使用者要求簡潔直覺，可以與現行不同（U10、D1） |
 | 文字版 | 行程繪本「複製文字」由畫面擷取（`src/storybook/app.js` 的 `copyItinerary()`）：活動與料理的備註接在同一行的最後；抵達行是繪本的自由文字；旅行名稱之後另有繪本的標語與說明，非採買停靠點可以有繪本的自訂品項 | 由 `lm-core` 直接從資料產生，格式維持現在的樣子，只有兩處改變：不是空白的備註在那筆活動或料理的下一行；抵達行由「預計幾點抵達」產生。繪本的標語、說明與停靠點自訂品項不輸出 | 行程繪本不在第一版；同一份資料永遠得到同一段文字；格式與兩處改變已確認（已確認 4、5） |
 | 管理員未加入旅行時的分帳 | 讀不到 | API 仍然讀不到；Realtime 推送的變更集可能含分帳列，前端丟棄 | 頻道層級無法依列過濾；管理員本來就能管理整趟旅行 |
 | 車輛的舊出發欄位 `meeting`，以及繪本專用欄位（標語、範本、停靠點自訂品項、抵達說明） | 有 | 無 | 第一版從空資料庫開始，行程繪本也不在範圍內 |
@@ -1431,6 +1433,9 @@ impl<T: RealtimeTransport> PhoenixSocket<T> {
 pub trait AuthBackend: Send + Sync {
     /// POST /auth/v1/admin/users（service key），email_confirm = true
     async fn create_user(&self, email: &str, password: &str, meta: &serde_json::Value) -> Result<UserId, AuthError>;
+    /// PUT /auth/v1/admin/users/{id}（service key），內容只有 { "password": … }：Admin 重設密碼（需求 36.3）。
+    /// 密碼原樣送出，不寫入任何記錄；GoTrue 以 422 拒絕時回 WeakPassword，其他錯誤與逾時回 Upstream。
+    async fn update_user_password(&self, id: UserId, password: &str) -> Result<(), AuthError>;
     /// DELETE /auth/v1/admin/users/{id}：註冊流程後半失敗時的補償
     async fn delete_user(&self, id: UserId) -> Result<(), AuthError>;
     /// POST /auth/v1/token?grant_type=password
@@ -1482,9 +1487,10 @@ pub struct AnyVerifier { hs256: Option<Hs256Verifier>, jwks: Option<JwksVerifier
 
 1. 路徑不存在 → 404 `api_not_found`；方法不支援 → 405 `method_not_allowed`（不論是否帶 access token）。
 2. Public_Endpoint 以外的端點：沒有 `Authorization: Bearer <token>`、token 是空字串，或不是 Valid_Access_Token → 401 `unauthorized`（需求 5.1）。Public_Endpoint 忽略這個標頭；邀請預覽在沒有有效 token 時當作未登入（需求 5.8）。
-3. 路徑中的旅行 id 不是 UUID → 404「找不到這趟旅行。」，與非成員的回應完全相同（需求 6.2）。
-4. 查詢參數或請求內容的格式不正確（不是 `application/json`、JSON 語法錯誤、缺少欄位或型別不符、`after` 不是非負整數）→ 400 `invalid_request`（需求 5.9、7.20）。axum 的 `Json`、`Query` 與 `Path` 包在自訂的擷取器中，把各自的拒絕轉成上面的 `ApiError`；`AuthUser` 擷取器排在它們之前。
-5. 交給處理函式。
+3. Admin_Endpoint（`/api/admin/*`）：`AdminUser` 擷取器在 `AuthUser` 之後檢查當下 Database 的角色，不是 admin → 403 `admin_required`「需要管理員權限。」（需求 34.1、34.2，元件 5.2）。
+4. 路徑中的旅行 id 不是 UUID → 404「找不到這趟旅行。」，與非成員的回應完全相同（需求 6.2）。
+5. 查詢參數或請求內容的格式不正確（不是 `application/json`、JSON 語法錯誤、缺少欄位或型別不符、`after` 不是非負整數）→ 400 `invalid_request`（需求 5.9、7.20）。axum 的 `Json`、`Query` 與 `Path` 包在自訂的擷取器中，把各自的拒絕轉成上面的 `ApiError`；`AuthUser` 擷取器排在它們之前。
+6. 交給處理函式。
 
 共用的錯誤（`field` 都是 `null`）：
 
@@ -1518,6 +1524,14 @@ pub struct AnyVerifier { hs256: Option<Hs256Verifier>, jwks: Option<JwksVerifier
 | POST | `/api/trips/{id}/invites/{invite_id}/revoke` | 撤銷 |
 | GET | `/api/invites/{token}` | 預覽（不需登入；有登入時另回 `already_member`） |
 | POST | `/api/invites/{token}/join` | 以目前帳號加入（`{ name, role }`）→ `JoinResponse`；已是成員時直接回傳旅行 id |
+| GET | `/api/admin/users` | Admin：全部帳號（需求 35.1，元件 5.3） |
+| PATCH | `/api/admin/users/{id}` | Admin：修改顯示名稱與角色（需求 39.3） |
+| POST | `/api/admin/users/{id}/password` | Admin：重設密碼並登出這個帳號的每個裝置（需求 36.3） |
+| POST | `/api/admin/users/{id}/disable` | Admin：停用帳號並登出它的每個裝置（需求 40.3） |
+| POST | `/api/admin/users/{id}/enable` | Admin：啟用帳號（需求 40.6） |
+| GET | `/api/admin/settings` | Admin：公開註冊的目前值與來源（需求 37.3） |
+| PATCH | `/api/admin/settings` | Admin：設定公開註冊（需求 37.4） |
+| GET | `/api/admin/audit?page=N` | Admin：操作紀錄，每頁 20 筆、最多 10 頁（需求 41.3） |
 | GET（WebSocket） | `/realtime/v1/websocket` | 轉送到 Supabase Realtime |
 | GET | 其他路徑（不在 `/api/` 之下，也不是 `/realtime/v1/websocket`） | `LM_STATIC_DIR` 的靜態檔；找不到時回 `index.html`（前端路由）；不回傳 `LM_STATIC_DIR` 之外的檔案（需求 32.2） |
 
@@ -1559,7 +1573,7 @@ pub async fn changes_after(pool: &PgPool, trip: TripId, after: Seq, viewer: &Vie
 
 | 端點 | 處理 |
 |---|---|
-| `signup` | 依序檢查，只回應第一個不通過的（需求 3.1）：帳號名稱原樣比對 `^[a-z][a-z0-9-]{2,31}$`，不轉換大小寫也不去除空白（400「帳號名稱需為 3–32 個字元：以小寫英文字母開頭，只能使用小寫英文字母、數字或連字號（-）。」，`field` 為 `username`）；保留字沿用現行的 api、admin、setup、login、register、logout、demo、assets，另加 invite，因為 `/invite/:token` 與 `/:user/home` 共用第一段路徑（400「這個帳號名稱是系統保留字，請換一個。」）；顯示名稱經 Participant_Name 後超過 30 字、含 Hidden_Control_Char，或 Participant_Key 經 Trim_White 後是空的（400「請填寫 1–30 個字的顯示名稱，不能只有空白或包含隱藏控制字元。」）；原樣的密碼 12–72 個字元而且 UTF-8 不超過 72 位元組（400「密碼需為 12–72 個字元，而且不超過 72 個位元組（一個中文字占 3 個位元組）。」）；沒有邀請而 `LM_PUBLIC_SIGNUP` 為 false（403「目前只接受以邀請連結註冊。」）；附邀請時連結可以使用（需求 30.13）→ GoTrue 以 admin API 建立 email 已確認的使用者（email 已存在：409「這個帳號名稱已被使用。」；拒收 email、無法連線或其他錯誤：500「註冊暫時無法使用，請聯絡管理員。」並記錄原因，需求 3.11）→ 同一個資料庫交易建立 `app.profiles`（空資料庫的第一個帳號為 admin）與（有邀請時）加入旅行 → 交易失敗時刪除剛建立的 GoTrue 使用者、回應原本的錯誤（需求 3.10）→ 以密碼登入取得 Session；這一步失敗時保留 Account，回應 503「帳號已建立，但暫時無法登入，請稍後到登入頁登入。」（需求 3.16） |
+| `signup` | 依序檢查，只回應第一個不通過的（需求 3.1）：帳號名稱原樣比對 `^[a-z][a-z0-9-]{2,31}$`，不轉換大小寫也不去除空白（400「帳號名稱需為 3–32 個字元：以小寫英文字母開頭，只能使用小寫英文字母、數字或連字號（-）。」，`field` 為 `username`）；保留字沿用現行的 api、admin、setup、login、register、logout、demo、assets，另加 invite，因為 `/invite/:token` 與 `/:user/home` 共用第一段路徑（400「這個帳號名稱是系統保留字，請換一個。」）；顯示名稱經 Participant_Name 後超過 30 字、含 Hidden_Control_Char，或 Participant_Key 經 Trim_White 後是空的（400「請填寫 1–30 個字的顯示名稱，不能只有空白或包含隱藏控制字元。」）；原樣的密碼 12–72 個字元而且 UTF-8 不超過 72 位元組（400「密碼需為 12–72 個字元，而且不超過 72 個位元組（一個中文字占 3 個位元組）。」）；沒有邀請而 Registration_Policy 為 closed（每次註冊都從 `app.settings` 讀取，沒有設定時以 `LM_PUBLIC_SIGNUP` 為初始值，元件 5.5；403「目前只接受以邀請連結註冊。」）；附邀請時連結可以使用（需求 30.13）→ GoTrue 以 admin API 建立 email 已確認的使用者（email 已存在：409「這個帳號名稱已被使用。」；拒收 email、無法連線或其他錯誤：500「註冊暫時無法使用，請聯絡管理員。」並記錄原因，需求 3.11）→ 同一個資料庫交易建立 `app.profiles`（空資料庫的第一個帳號為 admin）與（有邀請時）加入旅行 → 交易失敗時刪除剛建立的 GoTrue 使用者、回應原本的錯誤（需求 3.10）→ 以密碼登入取得 Session；這一步失敗時保留 Account，回應 503「帳號已建立，但暫時無法登入，請稍後到登入頁登入。」（需求 3.16） |
 | `login` | 帳號名稱先 Trim_White 並把 A–Z 轉成小寫（需求 4.1），轉成合成 email → `password_grant`（密碼原樣）→ 讀取 profile → `SessionDto`。帳號名稱或密碼缺少、正規化後是空的、格式不符、是保留字或不存在、密碼是空的或超過 72 位元組或不正確、使用者沒有 profile：一律 401「帳號或密碼不正確。」（需求 4.2）。Auth_Service 無法連線、10 秒內沒有回應或 5xx：503 `auth_unavailable`「暫時無法登入，請稍後再試。」；速率限制：429 `auth_rate_limited`「嘗試次數過多，暫時無法登入，請稍後再試。」（需求 4.15） |
 | `refresh` | `refresh` → `SessionDto`；refresh token 不存在、已撤銷、在重用間隔之後重複使用，或 Account 已不存在：401（需求 4.9）；Auth_Service 無法使用時與 `login` 相同的 503 與 429 |
 | `logout` | `logout`（`scope=local`，只撤銷這個裝置的 refresh token，需求 4.11）；Auth_Service 回應錯誤、無法連線或 10 秒內沒有回應時也回 200（前端仍會清除本機 token） |
@@ -1594,7 +1608,7 @@ pub async fn realtime_proxy(ws: WebSocketUpgrade, State(st): State<AppState>, Ra
 | `SUPABASE_SERVICE_KEY` | 是 | | | `supabase status -o env` 的 service_role key | GoTrue admin API；只存在伺服器 |
 | `SUPABASE_JWT_SECRET` | 否 | 只以 JWKS 驗證，HS256 的 token 一律無效 | | `supabase status -o env` 的 JWT secret | HS256 驗證 |
 | `LM_AUTH_EMAIL_DOMAIN` | 否 | `users.little-moments.invalid` | | `users.little-moments.invalid` | 合成 email 的網域 |
-| `LM_PUBLIC_SIGNUP` | 否 | `true` | 只接受 `true` 與 `false`（`TRUE`、`0` 等都不接受） | `true` | 是否開放不經邀請的註冊 |
+| `LM_PUBLIC_SIGNUP` | 否 | `true` | 只接受 `true` 與 `false`（`TRUE`、`0` 等都不接受） | `true` | Registration_Seed：公開註冊的初始值；Admin 在 Admin_Page 儲存過之後不再使用（需求 37.2） |
 | `LM_STATIC_DIR` | 是 | | | `crates/web/dist` | 前端檔案 |
 
 啟動時依序進行，任何一步失敗都在開始監聽之前於終端機印出原因，並以非 0 的結束代碼結束：
@@ -1616,6 +1630,7 @@ pub async fn realtime_proxy(ws: WebSocketUpgrade, State(st): State<AppState>, Ra
 | `/:user/home` | 旅行列表、建立旅行（封面選擇） | `tripCard()`、`coverPicker()` |
 | `/:user/trips/:id?tab=…` | 旅行頁：封面與倒數、五個分頁（行程表、料理菜單、採買清單、裝備分工、分帳記帳）、旅行選單（編輯旅行、旅伴、車輛、邀請、刪除） | `hero()`、`trip()`、`tripMenu()`、各分頁函式 |
 | `/:user/trips/:id/go` | 出發清單 | `departure()` |
+| `/admin` | 管理後台：統計、公開註冊、帳號（查詢、編輯、重設密碼、停用與啟用）、操作紀錄 | `renderAdmin()` 的 class 名稱；結構較簡單（元件 5.6） |
 
 **旅行頁的頁首**：沿用 `hero()`，插畫一律是營地 camp 的靜態插畫，不隨旅行的封面改變（封面只用在 Home_Page 的旅行卡片）；倒數以開始日減去台灣時間（UTC+8）今天的日期計算（需求 32.3）。旅行標題列的右側放 Trip_Card 的 Editor_Stack（需求 16.2）。
 
@@ -1792,6 +1807,345 @@ backend = "http://127.0.0.1:8080/api/"
 backend = "ws://127.0.0.1:8080/realtime/v1/websocket"
 ws = true
 ```
+
+### 5. 管理後台（增補）
+
+管理後台是第一版完成後依使用者確認 U9–U15 加入的增補（需求 34 至 41）。範圍是：`/admin` 頁面與帳號選單的連結、統計列、查詢帳號、修改顯示名稱與角色、重設密碼、停用與啟用帳號、公開註冊的開關，以及操作紀錄。第一位 Admin 沿用「全新 Database 的第一個帳號」（決定 D3），不新增指令或頁面；重設密碼只有按鈕（決定 D2）。管理後台不碰同步模型：不寫 Trip_State、不寫 Change_Log、不推送。
+
+技術棧沿用第一版，不新增相依套件：`lm-server` 以 axum 0.8 與 sqlx 0.8 新增 `crates/server/src/admin.rs`、`settings.rs` 與 `audit.rs`；`lm-supabase` 的 `AuthBackend` 加一個呼叫；`lm-core` 加 `crates/core/src/admin.rs`（不做 IO 的搜尋比對、帳號操作的限制、操作紀錄的中文名稱與 API 型別）；`lm-web` 加 `crates/web/src/pages/admin.rs` 與 `crates/web/styles/admin.css`；資料庫加一個遷移檔 `supabase/migrations/20260301000000_admin.sql`。
+
+#### 5.1 選擇與理由
+
+- **權限檢查放在擷取器**：新增 `AdminUser` 擷取器，內含 `AuthUser`。`AuthUser` 每個請求都從 `app.profiles` 讀取角色（`extract.rs`），`AdminUser` 只多檢查 `role == Role::Admin`。另一個做法是在每個處理函式開頭呼叫檢查函式；擷取器讓「忘記檢查」在型別上不可能（處理函式的參數就是 `AdminUser`），而且判斷順序自然落在 401 之後、`ApiJson`/`ApiPath` 的 400 之前（需求 34.2），所以選擇擷取器。這個不變式由 `lm-server` 負責，因為只有伺服器能讀到當下的角色；`lm-web` 依 Session 隱藏連結只是介面。
+- **帳號搜尋在瀏覽器進行**：`GET /api/admin/users` 一次回傳全部帳號，`lm-core::admin::account_matches()` 在瀏覽器中篩選，統計列也由同一份結果計算。帳號數以數十到數百計，每列約 200 位元組；每打一個字就送請求反而較慢，也多一組查詢參數要驗證。帳號超過數千時再改為伺服器端搜尋與分頁（範圍外）。
+- **公開註冊存在 Database，環境變數當初始值**：沿用 Bun_App `settings` 的做法，使 `LM_PUBLIC_SIGNUP` 與既有的部署設定照樣有效，Admin 切換之後不需要重新建立容器；每次註冊都讀 Database，不快取，所以 Blue/Green 兩個 `lm-server` 程序之間不必處理失效。
+- **停用由 `lm-server` 強制，不使用 GoTrue 的 ban**：`app.profiles.disabled_at` 是唯一的狀態。`AuthUser` 把 Disabled_Account 當成不存在的帳號（401），登入與換發沿用既有「沒有 `app.profiles` 的使用者」的處理（401 並撤銷這次取得的工作階段），`app.can_use_trip_topic()` 也拒絕它；停用時刪除它在 `auth.sessions` 的每一列。另一個做法是同時呼叫 GoTrue 的 `ban_duration`，但那是第二份狀態：兩者不一致時要補償，啟用時也要再呼叫一次。直接向 GoTrue 取得的 token 本來就無法使用 `lm-server`、`app` schema 與 Trip_Channel，所以不需要 ban。代價是被停用的帳號以正確密碼登入時，GoTrue 仍會簽發一次工作階段，`lm-server` 隨即撤銷它。
+- **停用帳號登入時回應「帳號或密碼不正確。」**：與需求 4.2 的其他情況相同，不讓人以登入測試某個帳號名稱是否存在或被停用；被停用的人要詢問 Admin。
+- **重設密碼與停用後登出所有裝置**：GoTrue 的 admin API 改密碼時不撤銷既有的 refresh token，REST API 也沒有「登出某個使用者的每個裝置」的 admin 端點（`/logout` 只接受使用者自己的 access token）。因此 `lm-server` 以 `DATABASE_URL` 的連線刪除 `auth.sessions` 中這個帳號的每一列；`auth.refresh_tokens.session_id` 以 `on delete cascade` 參照 `auth.sessions`，refresh token 隨之刪除。`lm-server` 在 Local_Stack 與 Deploy_Host 都以 `postgres` 角色連線；任務 28.1 先在 Local_Stack 實測權限與效果，不成立時停下來回報，不改用其他做法。已簽發的 access token 仍可用到到期，但停用的帳號在下一個請求就被 `AuthUser` 拒絕。
+- **最後一位 Admin 的保護**：「有效的 Admin」是角色為 admin 而且不是 Disabled_Account 的 Account。降級與停用都在交易中取得 `app.first_admin` advisory lock（與註冊第一個帳號相同），再計算有效的 Admin 數量，使兩位 Admin 同時互相降級或停用時，後執行的那一個看到正確的數量而得到 409。判斷邏輯放在 `lm-core::admin` 的純函式，方便以範例測試涵蓋；`lm-server` 在鎖內讀出數量後呼叫它。
+- **操作紀錄與操作在同一個交易**：寫入失敗時操作也回滾，所以紀錄不會遺漏也不會多出。重設密碼的主要效果在 GoTrue，不在交易中，因此在刪除工作階段成功後才寫入。目標以寫入當下的文字（「@帳號名稱」、旅行名稱）保存，帳號或旅行之後改名、刪除時，紀錄仍顯示當時的名稱，讀取時也不必 join。每頁 20 筆、最多 10 頁，等於 Bun_App 的 200 筆上限；舊的紀錄不刪除，只是不回傳。
+- **介面**：U10 要求簡潔直覺，因此只有四個區塊；帳號的操作以按鈕直接放在每一列（不採用 Bun 的滑動手勢），會造成影響的操作（停用）先確認，可以復原的操作（啟用）不確認。沿用 `renderAdmin()` 的 class 名稱，使既有的 `accounts.css` 規則（`.acct-admin>section`、`.acct-stats`、`.acct-user-row.is-deleted`、`.acct-audit`）直接適用。
+
+#### 5.2 `AdminUser` 擷取器與停用的帳號
+
+```rust
+// crates/server/src/extract.rs
+/// 角色為 admin 的 AuthUser。AuthUser 已依需求 5.1–5.6 驗證 token，並在這個請求中從 app.profiles 讀取角色與
+/// disabled_at，所以 Admin 被降為 member 之後的下一個請求就得到 403（需求 34.1）。
+pub struct AdminUser(pub AuthUser);
+
+impl<S> FromRequestParts<S> for AdminUser where AppState: FromRef<S>, S: Send + Sync {
+    type Rejection = ApiError;
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, ApiError> {
+        let user = AuthUser::from_request_parts(parts, state).await?;       // 401 在前（需求 34.2）
+        if user.role != Role::Admin {
+            return Err(ApiError::forbidden("admin_required", "需要管理員權限。"));
+        }
+        Ok(AdminUser(user))
+    }
+}
+```
+
+`load_profile()` 的查詢改為 `select username, display_name, role from app.profiles where user_id = $1 and disabled_at is null`，使 Disabled_Account 在 `AuthUser`、登入與換發三處都等同沒有 `app.profiles`（需求 5.2、4.2、4.9、40.4），不必在三處分別判斷。註冊的 `profile_count()` 仍計算全部的列（包括停用的），所以有停用的帳號時，新註冊的帳號不會成為 Admin。
+
+遷移檔以 `create or replace function app.can_use_trip_topic(topic text)` 重新定義 Realtime 的授權函式：原本的兩個條件（是這趟旅行的 Trip_Member，或是 Admin）各加上 `disabled_at is null`，其他內容不變（需求 40.4）。
+
+每個 Admin_Endpoint 的處理函式把 `AdminUser` 放在第一個參數，`ApiPath`、`ApiQuery`、`ApiJson` 在它之後，因此 404/405 → 401 → 403 → 400 的順序由 axum 擷取器的順序保證。
+
+#### 5.3 端點與型別
+
+`crates/server/src/admin.rs`，在 `main.rs` 的 `api_routes()` 加入：
+
+```rust
+.route("/admin/users", get(admin::list_users))
+.route("/admin/users/{id}", patch(admin::update_user))
+.route("/admin/users/{id}/password", post(admin::reset_password))
+.route("/admin/users/{id}/disable", post(admin::disable_user))
+.route("/admin/users/{id}/enable", post(admin::enable_user))
+.route("/admin/settings", get(admin::get_settings).patch(admin::patch_settings))
+.route("/admin/audit", get(admin::list_audit))
+```
+
+型別放在 `lm-core::admin`（前後端共用，serde 欄位為 snake_case，與其他 API 型別相同）：
+
+```rust
+// crates/core/src/admin.rs
+pub struct AdminUserDto { pub id: UserId, pub username: String, pub display_name: String, pub role: Role,
+                          pub created_at: OffsetDateTime, pub disabled_at: Option<OffsetDateTime>, pub trip_count: u32 }
+pub struct AdminUsersResponse { pub users: Vec<AdminUserDto>, pub trip_total: u32 }
+#[serde(deny_unknown_fields)] pub struct ResetPasswordRequest { pub password: String }
+#[serde(deny_unknown_fields)] pub struct UpdateUserRequest { pub display_name: Option<String>, pub role: Option<Role> }
+#[serde(rename_all = "lowercase")] pub enum Policy { Open, Closed }
+#[serde(rename_all = "lowercase")] pub enum SettingSource { Stored, Seed, Default }
+pub struct ActorDto { pub username: String, pub display_name: String }
+pub struct PublicSignupSetting { pub value: Policy, pub source: SettingSource,
+                                 pub updated_at: Option<OffsetDateTime>, pub updated_by: Option<ActorDto> }
+pub struct AdminSettingsResponse { pub public_signup: PublicSignupSetting }
+pub struct AuditEntryDto { pub at: OffsetDateTime, pub actor: Option<ActorDto>, pub action: String,
+                           pub target: String, pub detail: String }
+pub struct AuditPage { pub entries: Vec<AuditEntryDto>, pub page: u32, pub page_count: u32 }
+
+pub const AUDIT_PAGE_SIZE: u32 = 20;
+pub const AUDIT_MAX_PAGES: u32 = 10;
+
+/// 需求 37.2：stored → seed → default(open)。
+pub fn resolve_public_signup(stored: Option<Policy>, seed: Option<bool>) -> (Policy, SettingSource);
+/// 需求 35.4：query 與 display_name 經 Trim_White、NFKC、小寫；username 原樣；子字串比對；空的 query 一律符合。
+pub fn account_matches(query: &str, username: &str, display_name: &str) -> bool;
+/// 需求 35.6：帳號總數、使用中、已停用、有效的管理員與旅行總數。
+pub fn admin_stats(resp: &AdminUsersResponse) -> AdminStats;
+/// 需求 39.3：目標是自己而且角色改變 → SelfRoleChange；把有效的 Admin 改為 member、而 active_admins == 1 → LastAdmin。
+pub fn check_role_change(actor: UserId, target: &AdminUserDto, new_role: Role, active_admins: u32) -> Result<(), AdminRejection>;
+/// 需求 40.3：目標是自己 → SelfDisable；目標是有效的 Admin、而 active_admins == 1 → LastAdmin。
+pub fn check_disable(actor: UserId, target: &AdminUserDto, active_admins: u32) -> Result<(), AdminRejection>;
+/// 需求 41.2、41.5：操作代碼的中文名稱；不認得的代碼回 None，畫面原樣顯示。
+pub fn audit_action_label(action: &str) -> Option<&'static str>;
+/// 需求 41.3：最新 200 筆以內的筆數 → 總頁數（最少 1）。
+pub fn audit_page_count(total: u64) -> u32;
+```
+
+`AdminRejection` 轉成 `ApiError` 時：`SelfRoleChange` 為 403 `self_role_change`「不能變更自己的角色。」、`SelfDisable` 為 403 `self_disable`「不能停用自己的帳號。」、`LastAdmin` 為 409 `last_admin`「至少需要保留一位管理員。」。
+
+| 方法與路徑 | 輸入驗證（不通過時的回應） | 成功 |
+|---|---|---|
+| `GET /api/admin/users` | 無 | 200 `AdminUsersResponse`，依 `username` 遞增 |
+| `PATCH /api/admin/users/{id}` | `{id}` 必要、UUID，否則 404 `user_not_found`；內容必要、只能有 `display_name`（字串）與 `role`（`admin`／`member`），至少一個，否則 400 `invalid_request`；`display_name` 依 `lm_core::account::check_display_name()`（需求 3.4），否則 400、`field` 為 `display_name`；之後 `check_role_change()` | 200 `AdminUserDto` |
+| `POST /api/admin/users/{id}/password` | `{id}` 同上；`password` 必要、字串、原樣以 `lm_core::account::check_password()` 檢查（需求 3.5），否則 400 `invalid_password`、`field` 為 `password` | 200 `{}` |
+| `POST /api/admin/users/{id}/disable` | `{id}` 同上；不需要請求內容（有內容時忽略）；之後 `check_disable()` | 200 `AdminUserDto` |
+| `POST /api/admin/users/{id}/enable` | `{id}` 同上 | 200 `AdminUserDto` |
+| `GET /api/admin/settings` | 無 | 200 `AdminSettingsResponse` |
+| `PATCH /api/admin/settings` | `public_signup` 必要、字串 `open` 或 `closed`，不接受其他欄位，否則 400 `invalid_setting`、`field` 為 `public_signup` | 200 `AdminSettingsResponse` |
+| `GET /api/admin/audit?page=N` | `page` 可選、預設 1；必須是 1–10 的整數而且不大於總頁數，否則 400 `invalid_page`「沒有這一頁的操作紀錄。」、`field` 為 `page` | 200 `AuditPage` |
+
+`PATCH /api/admin/settings` 以 `ApiJson<serde_json::Value>` 接收再自行解析，使 `"OPEN"`、`true`、缺少欄位與多出欄位都得到 `invalid_setting`，JSON 語法錯誤仍是 400 `invalid_request`。`page` 也以 `Option<String>` 接收後自行解析，使 `0`、`11`、`abc` 都得到 `invalid_page`。每個端點在 Database 或 Auth_Service 發生未預期錯誤時回應 500 `internal_error` 並記錄錯誤（需求 5.10），另有指定的見 5.4 與 5.5。
+
+`list_users` 的查詢：
+
+```sql
+select p.user_id, p.username, p.display_name, p.role, p.created_at, p.disabled_at,
+       count(t.id)::int as trip_count               -- 只算沒有被刪除的旅行（需求 35.1）
+from app.profiles p
+left join app.people pe on pe.user_id = p.user_id
+left join app.trips t on t.id = pe.trip_id and t.deleted_at is null
+group by p.user_id
+order by p.username;
+-- trip_total：select count(*) from app.trips where deleted_at is null
+```
+
+一個 Account 在一趟旅行最多綁定一位旅伴，所以 `count(t.id)` 就是旅行數。
+
+#### 5.4 帳號的寫入操作
+
+**修改帳號**（需求 39）：
+
+```text
+BEGIN
+  select pg_advisory_xact_lock(hashtext('app.first_admin'))
+  target ← select … from app.profiles where user_id = $id for update          → 沒有：404
+  驗證 display_name（check_display_name，回傳 Participant_Name 的結果）
+  active_admins ← select count(*) from app.profiles where role = 'admin' and disabled_at is null
+  check_role_change(actor, target, new_role, active_admins)                    → 403／409
+  update app.profiles set display_name, role where user_id = $id
+  若 admin → member：update app.invites set revoked_at = now()
+           where created_by = $id and revoked_at is null and used_at is null and expires_at > now()
+             and not exists (select 1 from app.people where trip_id = invites.trip_id and user_id = $id)
+  audit::write(tx, actor, 'admin.user.update', '@'+username, detail)          （沒有任何變化時不寫）
+COMMIT
+```
+
+撤銷邀請只改 `app.invites`，那不是 Trip_State，不寫 Change_Log（邀請列表本來就以 API 讀取）。旅伴名字是 Trip_State，不跟著改（需求 39.4）。
+
+**重設密碼**（需求 36）：
+
+```rust
+// crates/server/src/admin.rs
+let target = repo::admin_user(&st.db, id).await?.ok_or_else(user_not_found)?;
+lm_core::account::check_password(&req.password)?;                           // 400，field = password
+st.auth.update_user_password(target.id, &req.password).await.map_err(|error| {
+    tracing::error!(%error, target = %target.id, "admin password reset: auth update failed");   // 不含密碼
+    ApiError::internal("password_reset_unavailable", "暫時無法重設密碼，請稍後再試。")
+})?;
+repo::delete_auth_sessions(&st.db, target.id).await.map_err(|error| {       // delete from auth.sessions where user_id = $1
+    tracing::error!(%error, target = %target.id, "admin password reset: sign-out failed");
+    ApiError::internal("password_reset_signout_failed",
+        "新密碼已設定，但其他裝置可能仍維持登入，請再按一次『設定新密碼』。")
+})?;
+audit::write_one(&st.db, actor.id, "admin.user.password_reset", &format!("@{}", target.username), "").await?;
+tracing::info!(actor = %actor.id, target = %target.id, "admin.password_reset");             // 需求 34.10
+```
+
+**停用與啟用**（需求 40）：停用在交易中取得 advisory lock、`for update` 鎖住目標、以 `check_disable()` 判斷，`disabled_at` 為空值時設為 `now()` 並寫入 `admin.user.disable`，已停用時不變；提交之後呼叫 `repo::delete_auth_sessions()`。啟用只把 `disabled_at` 設為空值並寫入 `admin.user.enable`，已啟用時不變；啟用不需要最後一位 Admin 的檢查。
+
+失敗的處理：
+
+| 操作 | 失敗 | 可恢復 | 呼叫端收到 | 記錄 |
+|---|---|---|---|---|
+| 全部 | `{id}` 不是 UUID 或沒有這個帳號 | 是 | 404 `user_not_found`「找不到這個帳號。」 | 不記錄 |
+| 修改帳號 | 顯示名稱不符合、自己的角色、最後一位 Admin | 是 | 400／403 `self_role_change`／409 `last_admin` | 不記錄 |
+| 停用 | 自己、最後一位 Admin | 是 | 403 `self_disable`／409 `last_admin` | 不記錄 |
+| 重設密碼 | 新密碼不符合規則 | 是 | 400 `invalid_password` | 不記錄 |
+| 重設密碼 | GoTrue 以 422 拒絕、5xx、無法連線、10 秒逾時 | 是；密碼沒有改變 | 500 `password_reset_unavailable` | error：原因與目標 id |
+| 重設密碼 | 刪除 `auth.sessions` 失敗 | 是；以同一個新密碼重送，兩步都是冪等的 | 500 `password_reset_signout_failed` | error：原因與目標 id |
+| 停用 | 交易提交後刪除 `auth.sessions` 失敗 | 是；停用已生效，重送時再刪一次（不再寫紀錄） | 500 `account_disable_signout_failed`「帳號已停用，但其他裝置可能仍維持登入，請再按一次『停用帳號』。」 | error：原因與目標 id |
+| 全部 | Database 錯誤（包括 Audit_Log 寫入失敗，整個交易回滾） | 是 | 500 `internal_error` | error |
+
+請求內容不經 `tower-http` 的 trace 記錄（第一版只記錄方法、路徑與狀態碼），`ApiError` 的訊息是固定文字，不含輸入；`AuthError` 的 `Display` 不含密碼（任務 28.2 確認）。
+
+#### 5.5 遷移檔、公開註冊與操作紀錄
+
+```sql
+-- supabase/migrations/20260301000000_admin.sql
+alter table app.profiles add column disabled_at timestamptz;                -- 需求 40.1
+
+create table app.settings (                                                  -- 需求 37.1
+  key        text primary key check (key in ('public_signup')),
+  value      text not null,
+  updated_at timestamptz not null default now(),
+  updated_by uuid references app.profiles(user_id) on delete set null,
+  constraint settings_public_signup_value check (key <> 'public_signup' or value in ('open', 'closed'))
+);
+
+create table app.audit (                                                     -- 需求 41.1
+  id       bigint generated always as identity primary key,
+  at       timestamptz not null default now(),
+  actor_id uuid references app.profiles(user_id) on delete set null,
+  action   text not null check (action in ('account.register', 'admin.user.update', 'admin.user.password_reset',
+             'admin.user.disable', 'admin.user.enable', 'admin.settings.public_signup', 'trip.create', 'trip.delete',
+             'invite.create', 'invite.revoke', 'invite.join')),
+  target   text not null check (char_length(target) <= 120),
+  detail   text not null default '' check (char_length(detail) <= 200)
+);
+create index audit_at_desc on app.audit (at desc, id desc);
+
+alter table app.settings enable row level security;                          -- 都不建立政策（需求 6.14）
+alter table app.audit enable row level security;
+revoke all on app.settings, app.audit from anon, authenticated;
+
+create or replace function app.can_use_trip_topic(topic text) …              -- 兩個條件各加 disabled_at is null（5.2）
+```
+
+`app.profiles` 的外鍵以 `on delete cascade` 跟著 `auth.users`；`audit.actor_id` 與 `settings.updated_by` 用 `on delete set null`，所以補償刪除（需求 3.10）或之後直接在 Database 刪除帳號時，紀錄仍在、執行者為空值。
+
+```rust
+// crates/server/src/settings.rs
+/// 需求 37.2：每次呼叫都讀 Database；沒有 public_signup 這一列時用 Registration_Seed。
+pub async fn public_signup(db: &PgPool, cfg: &Config) -> Result<Policy, ApiError>;
+pub async fn public_signup_setting(db: &PgPool, cfg: &Config) -> Result<PublicSignupSetting, ApiError>;
+/// insert … on conflict (key) do update set value, updated_at = now(), updated_by；同一個交易寫入 Audit_Log
+pub async fn set_public_signup(tx: &mut PgTx, actor: UserId, value: Policy) -> Result<(), ApiError>;
+
+// crates/server/src/audit.rs
+/// 在呼叫端的交易中寫入一筆（需求 41.2）；target 與 detail 以 Char_Count 截到 120 與 200 字。
+pub async fn write(tx: &mut PgTx, actor: Option<UserId>, action: &'static str, target: &str, detail: &str) -> sqlx::Result<()>;
+/// 最新 200 筆中的第 page 頁：子查詢 order by at desc, id desc limit 200，再 offset (page-1)*20 limit 20；
+/// left join app.profiles 取得執行者的名字。
+pub async fn page(db: &PgPool, page: u32) -> Result<AuditPage, ApiError>;
+```
+
+`Config` 把 `LM_PUBLIC_SIGNUP` 存成 `Option<bool>`（沒有設定為 `None`），讓 `resolve_public_signup()` 能分出 `seed` 與 `default`（需求 37.3）。`auth::signup` 在沒有邀請時呼叫 `settings::public_signup()`；讀取失敗時回應 500「註冊暫時無法使用，請聯絡管理員。」，不呼叫 Auth_Service（與需求 3.11 相同）。
+
+寫入 Audit_Log 的位置（每一處都在既有的交易中，操作代碼以 `&'static str` 常數傳入，與 SQL 的 check 清單相同）：
+
+| 操作代碼 | 位置 | 目標與補充說明 |
+|---|---|---|
+| `account.register` | `auth::signup` 的交易（建立 `app.profiles` 之後） | 「@帳號名稱」；「管理員」或「成員」，附邀請時加「・經邀請連結」 |
+| `invite.join` | `invites::join_in_tx`（以連結註冊與以目前帳號加入共用；已是成員而直接回傳時不寫） | 旅行名稱；旅伴名字 |
+| `trip.create` | `trips::create` 的交易（實際建立時） | 旅行名稱 |
+| `trip.delete` | `trips::delete` 的交易 | 旅行名稱 |
+| `invite.create`、`invite.revoke` | `invites` 的建立與撤銷交易 | 旅行名稱 |
+| `admin.user.*`、`admin.settings.public_signup` | `admin.rs`（5.4）與 `settings::set_public_signup` | 需求 41.2 |
+
+Command 不寫 Audit_Log：它們已在 `app.trip_changes`，數量也比帳號操作多兩個數量級。
+
+#### 5.6 `lm-web`：Admin_Page
+
+- 路由：`app.rs` 的 `Screen::parse()` 加 `Screen::Admin`（`/admin` 與 `/admin/`）；In_App_Path 的判斷加 `/admin`（需求 4.10、34.4）。
+- 帳號選單：`AccountMenu` 在「我的旅行」之後，於 `user.role == Role::Admin` 時輸出 `<a class="acct-admin-link" href="/admin">管理後台</a>`；`current == "admin"` 時加 `aria-current="page"`（需求 34.3）。`accounts.css` 已有 `.acct-admin-link{order:2}`。
+- `crates/web/src/pages/admin.rs` 的結構（需求 34.6）：
+
+```html
+<main id="main" class="acct-page">
+  <div class="acct-admin">
+    <header class="acct-admin-head"><span class="eyebrow">ADMIN</span><h1>管理後台</h1>
+      <p class="help">查詢與管理帳號、協助重設密碼，並設定是否開放公開註冊。</p></header>
+    <section id="admin-stats" aria-label="統計">
+      <dl class="acct-stats"><div><dt>帳號總數</dt><dd>12</dd></div><div><dt>使用中</dt><dd>11</dd></div>
+        <div><dt>已停用</dt><dd>1</dd></div><div><dt>管理員</dt><dd>2</dd></div><div><dt>旅行總數</dt><dd>8</dd></div></dl>
+    </section>
+    <section aria-labelledby="admin-signup-title"><h2 id="admin-signup-title">公開註冊</h2>
+      <div class="admin-switch-row">
+        <input type="checkbox" role="switch" id="admin-public-signup" class="admin-switch" />
+        <label for="admin-public-signup">開放公開註冊</label>
+        <p class="admin-switch-state" aria-live="polite">開放：任何人都能在註冊頁建立帳號。</p>
+      </div>
+      <p class="help">（來源說明，需求 37.6）</p>
+    </section>
+    <section aria-labelledby="admin-users-title"><h2 id="admin-users-title">帳號</h2>
+      <div class="field admin-search"><label for="admin-user-search">搜尋帳號</label>
+        <input id="admin-user-search" type="search" placeholder="輸入帳號名稱或顯示名稱" autocomplete="off" /></div>
+      <p class="help" role="status">符合 N 個帳號，共 M 個</p>
+      <ul class="acct-user-list">
+        <li class="acct-user-row"><div class="acct-user-info"><span class="avatar small yellow" aria-hidden="true">陳</span>
+          <div><b>陳小明</b> <span class="acct-pill">你</span><small>@amy-chen · 管理員 · 使用中 · 3 趟旅行</small></div></div>
+          <div class="acct-actions">
+            <button type="button" class="button small">編輯帳號</button>
+            <button type="button" class="button small">重設密碼</button>
+            <button type="button" class="button small danger" disabled>停用帳號</button></div>
+          <small class="help acct-row-note">不能停用自己的帳號，也不能變更自己的角色。</small></li>
+        <li class="acct-user-row is-deleted">… <button type="button" class="button small">啟用帳號</button> …</li>
+      </ul>
+    </section>
+    <section aria-labelledby="admin-audit-title"><h2 id="admin-audit-title">操作紀錄</h2>
+      <ol class="acct-audit"><li><time datetime="…">2026/03/01 14:05</time>
+        <span><b>陳小明</b>（@amy-chen） · 重設密碼 · <span class="acct-audit-target">@bob</span></span></li></ol>
+      <nav class="admin-pager" aria-label="操作紀錄的頁碼">
+        <button type="button" class="button small">上一頁</button><span>第 1 / 3 頁</span>
+        <button type="button" class="button small">下一頁</button></nav>
+      <p class="help">只顯示最新的 200 筆。</p>
+    </section>
+  </div>
+</main>
+```
+
+- 頭像字沿用 `lm-core::presence::avatar_initial()`；admin 用 `yellow`、member 用 `blue`（與 `renderAdmin()` 相同）。伺服器回傳的文字一律以文字節點輸出（需求 32.6）。時間以台灣時間（UTC+8）格式化成「YYYY/MM/DD HH:MM」，由 `time` 計算，不依瀏覽器的時區。
+- 資料流：三個獨立的 `LocalResource` 讀 `/api/admin/settings`、`/api/admin/users` 與 `/api/admin/audit?page=1`，各自的錯誤只影響自己的區塊（需求 34.7）；統計列以 `admin_stats()` 由帳號列表計算。請求經既有的 `api.rs`（401 時換發並重試一次）。任何回應 403 `admin_required`，或 Session 的角色不是 admin，整頁改為需求 34.5 的訊息頁。每次寫入成功之後重新讀取帳號列表與操作紀錄第 1 頁（需求 34.8）。
+- 搜尋：`RwSignal<String>`，列表以 `Memo` 經 `account_matches()` 篩選；重新讀取列表時不清除搜尋文字（需求 35.5）。
+- 對話框（編輯帳號、重設密碼、停用帳號）：沿用 `views/trip_menu.rs` 中刪除旅行確認對話框的結構與 class；開啟時焦點移到第一個欄位，Esc 關閉並把焦點還給開啟的按鈕；密碼只存在對話框元件的 `RwSignal`，關閉時清空（需求 36.7）；送出期間停用按鈕。編輯自己的顯示名稱成功後，以 `GET /api/me` 更新 Session 與頁首（需求 39.6）。
+- 開關：切換時先記住原值、樂觀更新，送出 `PATCH`；失敗時還原並顯示錯誤（需求 37.7）。
+- 操作紀錄：`RwSignal<u32>` 為目前頁碼，換頁時只重新讀取這個區塊；操作的中文名稱以 `audit_action_label()` 取得。
+- `crates/web/styles/admin.css`：只有 `.admin-switch-row`、`.admin-switch`、`.admin-switch-state`、`.admin-search` 與 `.admin-pager` 的規則，顏色只用 `styles.css` 既有的變數（例如 `--ink`、`--muted`、`--card`、`--soft`），因此深色主題自動適用；在 `index.html` 的 `presence.css` 之後以 `<link data-trunk rel="css" href="styles/admin.css" data-no-minify />` 連結。`styles/styles.css` 與其他既有樣式檔不修改（需求 32.7、32.8）。
+
+#### 5.7 錯誤代碼一覽（新增）
+
+| 狀態 | `code` | `message` | `field` | 情況 |
+|---|---|---|---|---|
+| 403 | `admin_required` | 需要管理員權限。 | `null` | 不是 Admin（需求 34.1） |
+| 404 | `user_not_found` | 找不到這個帳號。 | `null` | 目標帳號不存在（需求 36、39、40） |
+| 400 | `invalid_password`（沿用註冊的代碼） | 需求 3.5 的訊息 | `password` | 新密碼不符合規則 |
+| 400 | 沿用註冊的代碼 | 需求 3.4 的訊息 | `display_name` | 顯示名稱不符合規則 |
+| 403 | `self_role_change` | 不能變更自己的角色。 | `null` | 需求 39.3 |
+| 403 | `self_disable` | 不能停用自己的帳號。 | `null` | 需求 40.3 |
+| 409 | `last_admin` | 至少需要保留一位管理員。 | `null` | 需求 39.3、40.3 |
+| 500 | `password_reset_unavailable` | 暫時無法重設密碼，請稍後再試。 | `null` | 需求 36.5 |
+| 500 | `password_reset_signout_failed` | 新密碼已設定，但其他裝置可能仍維持登入，請再按一次『設定新密碼』。 | `null` | 需求 36.6 |
+| 500 | `account_disable_signout_failed` | 帳號已停用，但其他裝置可能仍維持登入，請再按一次『停用帳號』。 | `null` | 需求 40.5 |
+| 400 | `invalid_setting` | 公開註冊只能設為開放或關閉。 | `public_signup` | 需求 37.5 |
+| 400 | `invalid_page` | 沒有這一頁的操作紀錄。 | `page` | 需求 41.4 |
+
+#### 5.8 測試
+
+依第一版的測試策略（需求 33），自動化測試放在不做 IO 的部分：
+
+- `lm-core::admin` 的範例測試：`account_matches()`（需求 35.4 的三個例子、空白與全形空白的搜尋文字、大寫的搜尋文字、Display_Name 前後有空白、不符合的情況）；`resolve_public_signup()`（stored 優先、seed 的 true/false、沒有 seed 時為 default 的 open）；`check_role_change()`（自己改角色、自己不改角色只改名稱、降級最後一位有效 Admin、降級還有另一位有效 Admin、停用的 Admin 不算有效、升級成員）；`check_disable()`（自己、最後一位有效 Admin、一般成員、已停用的帳號）；`admin_stats()`；`audit_page_count()`（0、1、20、21、200、500 筆）；`audit_action_label()` 涵蓋需求 41.2 的每個代碼與一個不認得的代碼。
+- `lm-server`：`PATCH /api/admin/settings` 內容與 `page` 參數的解析以不連 Database 的單元測試涵蓋；`AdminUser` 的判斷順序與各端點的行為以 README 的手動確認涵蓋（第一版不寫 lm-server 的資料庫整合測試）。
+- README 增加手動確認：member 開啟 `/admin` 看到訊息頁、直接呼叫 `GET /api/admin/users` 得到 403；Admin 重設另一個帳號的密碼後，對方舊密碼 401、新密碼可登入、原本裝置的換發 401；停用一個帳號後，它的分頁在下一個請求回到登入頁、以正確密碼登入得到「帳號或密碼不正確。」，啟用後可以登入，它的旅行與旅伴都沒有改變；降級與停用最後一位 Admin 都得到 409；關閉公開註冊後 `/register` 得到 403、以邀請連結仍可註冊、重新開啟後可註冊，都不需要重新啟動 `lm-server`；以上每個操作都出現在操作紀錄，換頁可用。
+
+#### 5.9 文件
+
+- `deploy/README.md` 第 5 節：`LM_PUBLIC_SIGNUP` 的說明改為「公開註冊的初始值；Admin 在管理後台儲存之後不再生效」。
+- `deploy/README.md`「首次切換」步驟 7（決定 D3）：在 `www` 只允許 LAN 時，暫時把 `prod.env` 的 `LM_PUBLIC_SIGNUP` 設為 `true` 並部署；在 LAN 內註冊自己的帳號（全新 Database 的第一個帳號成為 Admin），再註冊 `smoke-bot`；以 Admin 開啟 `/admin` 關閉公開註冊，以 `curl` 確認不附邀請的註冊回應 403 `signup_invite_only`；把 `prod.env` 改回 `LM_PUBLIC_SIGNUP=false`（只是初始值，不必重新建立 App 容器，原本步驟 7.4 的 `up -d --no-deps` 與 `docker inspect` 刪除）；之後才進行步驟 8 對外開放。
+- `deploy/README.md` 新增「管理員的救援」（決定 D2）：以 `sudo docker exec -it lm-<env>-db-1 psql -U postgres -d postgres` 進入互動式 `psql`（容器名稱以 `docker ps` 確認），列出：把另一個帳號改為 Admin、啟用被停用的帳號、恢復由 `LM_PUBLIC_SIGNUP` 控制公開註冊的 SQL；直接設定密碼時以 `\prompt` 讀入新密碼到 psql 變數（不在指令列或 shell 記錄中），再執行 `update auth.users set encrypted_password = extensions.crypt(:'pw', extensions.gen_salt('bf')), updated_at = now() where email = '<帳號名稱>@<LM_AUTH_EMAIL_DOMAIN>'` 與 `delete from auth.sessions where user_id = (select id from auth.users where email = …)`；提醒新密碼要符合 12–72 個字元且不超過 72 位元組，直接修改 Database 不寫入操作紀錄。任務 34 在 Local_Stack 實際執行一次這些 SQL 確認可用。
+- `deploy/compose/prod.env.example`、`staging.env.example` 與 `.env.example` 的註解，以及根目錄 `README.md` Rust 章節中 `LM_PUBLIC_SIGNUP` 與首次管理員的說明，依上面的內容更新；根目錄 `README.md` 在 Branch_Point 已存在的行不修改（需求 1.9）。這些文件不寫入任何秘密的值（公開的 Repository）。
 
 ## Data Models
 
@@ -2965,7 +3319,8 @@ pub async fn signup(st: &AppState, req: SignupRequest) -> Result<SignupResponse,
     let username = validate_username(&req.username)?;      // 格式（3.2）與保留字（3.3）；不轉換大小寫、不去除空白
     let display_name = validate_display_name(&req.display_name)?;   // Participant_Name 之後檢查（3.4）
     validate_password(&req.password)?;                     // 原樣：12–72 字元，且 UTF-8 不超過 72 位元組（3.5）
-    if req.invite.is_none() && !st.config.public_signup {
+    // Registration_Policy 每次從 app.settings 讀取，沒有設定時用 LM_PUBLIC_SIGNUP（需求 37.2，元件 5.5）
+    if req.invite.is_none() && settings::public_signup(&st.db, &st.config).await? == Policy::Closed {
         return Err(ApiError::forbidden("signup_invite_only", "目前只接受以邀請連結註冊。"));   // 3.7
     }
     if let Some(invite) = &req.invite {
@@ -2984,7 +3339,7 @@ pub async fn signup(st: &AppState, req: SignupRequest) -> Result<SignupResponse,
 
     let joined = async {
         let mut tx = st.db.begin().await?;
-        // 第一個帳號成為管理員；advisory lock 讓兩個同時註冊的人只有一個成為管理員
+        // 第一個帳號成為管理員；advisory lock 讓兩個同時註冊的人只有一個成為管理員（停用的帳號也算在 profile_count 中）
         sqlx::query("select pg_advisory_xact_lock(hashtext('app.first_admin'))").execute(&mut *tx).await?;
         let role = if repo::profile_count(&mut tx).await? == 0 { Role::Admin } else { Role::Member };
         repo::insert_profile(&mut tx, user, &username, &display_name, role).await?;   // 帳號名稱重複時轉成 3.6 的 409
@@ -4007,6 +4362,7 @@ proptest! {
 - 旅行資料只透過 `lm-server` 的命令與快照存取；`app` schema 不在 PostgREST 的 `api.schemas` 中，全部啟用 RLS 且不授權給 `anon`、`authenticated`（B6）。
 - Realtime 頻道以 RLS 限制成員；客戶端沒有送 broadcast 的權限，變更集只能由資料庫發出（B6）。
 - 邀請 token 只保存 SHA-256；API 使用 Bearer token、不使用 cookie，所以沒有 CSRF 問題。
+- 管理後台（元件 5）：每個 `/api/admin/*` 請求都以當下 Database 的角色判斷（`AdminUser`），不是 admin 一律 403；新密碼只經 TLS（部署時）或 loopback 送到 `lm-server`，原樣轉給 GoTrue，不進入任何記錄、錯誤回應或瀏覽器儲存；重設與停用後刪除目標帳號在 `auth.sessions` 的每一列，使舊的 refresh token 失效；停用的帳號由 `AuthUser`、登入、換發與 `app.can_use_trip_topic()` 拒絕；帳號與管理操作寫入 `app.audit`，內容不含密碼與 token。
 - Presence 的內容（顯示名稱、編輯對象）由用戶端自行回報，Realtime 只檢查是不是成員，不檢查內容；成員可以假冒別人的顯示名稱。頭像與「正在編輯」因此只是提示，不影響權限與資料。顯示名稱一律以文字節點或屬性輸出（Leptos 會跳脫），超過 30 個字元就截斷。
 
 明確延後到資安工作流的項目：速率限制（GoTrue 內建的之外）、登入異常警示與安全事件、CSP 與安全標頭、token 存在 localStorage 時的 XSS 風險、HTTPS 與反向代理、Allowed_Hosts、信任的代理、`lm-server` 改用最低權限的資料庫角色（開發時以 `postgres` 連線）、縮短 JWT 有效時間、Realtime 只允許私有頻道的租戶設定、移除 PostgREST、秘密掃描與 DAST。
@@ -4057,7 +4413,7 @@ proptest! {
 - **從現行資料庫搬資料**：以 Rust 的一次性工具讀取 `trips.state_json` 與 `trip_ledgers.ledger_json`，轉成命令或直接寫入列。
 - **離線本機版**：`Replica` 與 pending 佇列存進 IndexedDB 即可離線使用，連線後補送命令。
 - **旅行列表即時更新**：新增每位使用者一個 `user:<uuid>` 私有頻道，推送旅行卡片與成員變化。
-- **收據 AI、管理後台、註冊政策畫面**：都是 `lm-server` 的新端點，不影響同步模型。
+- **收據 AI**：`lm-server` 的新端點，不影響同步模型。管理後台與註冊政策畫面已在增補中加入（元件 5）。
 
 
 ## 部署（Deploy_Host 與 Jenkins）
@@ -4068,7 +4424,7 @@ proptest! {
 - 設計：同目錄 `design.md` 的 Components 第 30 節：根目錄 `Dockerfile` 的工具鏈與 App_Image（`lm-server` 在 8080、`LM_STATIC_DIR=/app/dist`、`/app/migrations`）、每個環境一套的自架 Supabase（Postgres、Auth、Realtime 與 Caddy gateway；`SUPABASE_URL=http://gateway:8000`）、`lm-deploy` 套用 `supabase/migrations` 的方式、data-only 備份與還原演練。
 - 維運：[`deploy/README.md`](../../../deploy/README.md)（主機前置條件、Jenkins 憑證、以 `deploy/bin/lm-supabase-keys` 產生金鑰、`<env>.env`、NPM 與 Cloudflare、首次切換與回滾）。
 
-部署不需要修改 App 的程式碼：`lm-server` 沿用本文件的環境變數（`LM_BIND`、`LM_STATIC_DIR`、`SUPABASE_URL`、金鑰與 `LM_PUBLIC_SIGNUP` 等），健康檢查使用靜態檔 `/robots.txt`。
+部署不需要修改 App 的程式碼：`lm-server` 沿用本文件的環境變數（`LM_BIND`、`LM_STATIC_DIR`、`SUPABASE_URL`、金鑰與 `LM_PUBLIC_SIGNUP` 等），健康檢查使用靜態檔 `/robots.txt`。管理後台增補之後，`LM_PUBLIC_SIGNUP` 只是公開註冊的初始值，首次切換改在管理後台關閉公開註冊，另有「管理員的救援」一節（元件 5.9）。
 
 ## 參考資料
 
