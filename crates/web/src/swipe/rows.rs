@@ -74,6 +74,8 @@ pub fn action_role(action: &str) -> ActionRole {
     match action {
         "edit" => ActionRole::Edit,
         "delete" => ActionRole::Delete,
+        "purchase" => ActionRole::Purchase,
+        "unpurchase" => ActionRole::Unpurchase,
         _ => ActionRole::Other,
     }
 }
@@ -425,6 +427,19 @@ mod tests {
         let spec = ActionSpec::new("other", "完成".into(), true, false);
         assert_eq!(spec.swipe_label(), "操作");
         assert!(spec.danger);
+    }
+
+    #[test]
+    fn shopping_purchase_actions_have_their_own_labels() {
+        let spec = ActionSpec::new("purchase", "把雞蛋標為已買齊".into(), false, false);
+        assert_eq!(spec.role, ActionRole::Purchase);
+        assert_eq!(spec.swipe_label(), "已買齊");
+        assert!(!spec.danger);
+        // The role wins over a delete word in the item's name.
+        let spec = ActionSpec::new("unpurchase", "把移除膠帶移回清單".into(), false, false);
+        assert_eq!(spec.role, ActionRole::Unpurchase);
+        assert_eq!(spec.swipe_label(), "移回");
+        assert!(!spec.danger);
     }
 
     #[test]

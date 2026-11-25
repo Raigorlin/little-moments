@@ -416,10 +416,7 @@ fn on_pointer_down(inner: &Inner, env: &Env, event: &Event) {
     else {
         return;
     };
-    // A right swipe usually starts on the Right_Action itself (the row's
-    // checkbox, at its left edge); a tap on it still reaches it, because only
-    // a horizontal gesture suppresses the click that follows.
-    if closest(&target, INTERACTIVE).is_some() && closest(&target, RIGHT_ACTION).is_none() {
+    if closest(&target, INTERACTIVE).is_some() {
         return;
     }
     let end_stop = read_end_stop(&row);

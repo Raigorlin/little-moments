@@ -2,11 +2,11 @@
 //!
 //! - 沿用 `src/app.js` 的 `shopping()`：品項依採買分類的順序（`Category::ALL`）分組，只顯示有品項的分類，標題旁是
 //!   「{N} 項」；同一分類內依 Ordinal（`RowStore` 的排序鍵）。換了分類的品項只在原來的組移除、在新的組建立（需求 14.3）。
-//! - 每個品項：「{品項名稱}已買齊」的已買勾選（送出想要的值，也就是操作當下 Optimistic_View 中已買狀態的相反值，
+//! - 每個品項：「把{品項名稱}標為已買齊」或「把{品項名稱}移回清單」的按鈕（沒有勾選框；送出想要的值，也就是操作當下 Optimistic_View 中已買狀態的相反值，
 //!   需求 7.10）、名稱、Linked_Item 的「料理：」與連動的料理標題（依需求 24.1 的順序以「、」連接），或帶有「料理已移除」
 //!   標記時的「料理已不需要，保留採買品項」（需求 26.14）、「誰負責買」選單（立即送出只改負責人的 Command）、可以直接
 //!   修改的數量（只送出數量；有焦點時不被 Remote_Change 覆蓋，需求 14.11），以及編輯與移除的按鈕。
-//! - 每一列只讀自己那一列與它連動的料理的 signal，所以勾選或修改一個品項只重繪那一個品項（需求 26.15）。
+//! - 每一列只讀自己那一列與它連動的料理的 signal，所以標為已買或修改一個品項只重繪那一個品項（需求 26.15）。
 //! - 新增與編輯共用一個在行內開啟的表單；編輯只送出改過的欄位（需求 7.8）。Linked_Item 的名稱唯讀（需求 26.6）。
 //! - 移除：Linked_Item 對每位 Trip_Member 都開啟「移除這項食材？」對話框，列出連動的每一道料理並預設全部勾選，送出
 //!   `RemoveIngredientFromMeals`；沒有勾選任何料理時顯示「請至少勾選一道料理。」且不送出（需求 26.17）。其他品項的
@@ -269,7 +269,7 @@ fn CategoryGroup(
     }
 }
 
-/// 清單最下方的「已買齊」區：預設收合，標題旁是「{N} 項」；品項依分類與 Ordinal。取消勾選（或往右滑）的品項回到
+/// 清單最下方的「已買齊」區：預設收合，標題旁是「{N} 項」；品項依分類與 Ordinal。按「移回清單」（或往右滑）的品項回到
 /// 它的分類組。
 #[component]
 fn PurchasedGroup(keys: Memo<Vec<ShoppingId>>) -> impl IntoView {
@@ -310,7 +310,7 @@ fn ShoppingRow(id: ShoppingId) -> impl IntoView {
     .into_any()
 }
 
-/// 品項列（現行 `.shopping-row`）：已買勾選與名稱、「誰負責買」、數量與操作按鈕。
+/// 品項列（現行 `.shopping-row`）：名稱、「誰負責買」、數量與操作按鈕（已買齊／移回、編輯、移除）。
 #[component]
 fn ShoppingLine(id: ShoppingId, item: Memo<ShoppingItem>) -> impl IntoView {
     let TripContext {
@@ -343,7 +343,6 @@ fn ShoppingLine(id: ShoppingId, item: Memo<ShoppingItem>) -> impl IntoView {
             .collect::<Vec<_>>()
     });
 
-    let check = NodeRef::<html::Input>::new();
     // 需求 7.10：送出要設定的值，也就是操作當下 Optimistic_View 中已買狀態的相反值
     let toggle = move |_| {
         let current = purchased.get_untracked();
@@ -351,10 +350,6 @@ fn ShoppingLine(id: ShoppingId, item: Memo<ShoppingItem>) -> impl IntoView {
             id,
             purchased: !current,
         });
-        // 被拒絕時勾選框回到 Optimistic_View 的狀態
-        if let Some(element) = check.get_untracked() {
-            element.set_checked(purchased.get_untracked());
-        }
     };
 
     let select = NodeRef::<html::Select>::new();
@@ -417,21 +412,14 @@ fn ShoppingLine(id: ShoppingId, item: Memo<ShoppingItem>) -> impl IntoView {
     };
 
     view! {
-        // 手機版（≤760px）往左滑顯示編輯與移除、往右滑切換已買（swipe/）；勾選框與「‹」按鈕是不必滑動的替代方式
+        // 沒有勾選框：已買或移回清單是操作按鈕中的第一個。手機版（≤760px）往右滑就是按下它，往左滑（或「‹」按鈕）
+        // 顯示已買齊／移回、編輯與移除（swipe/）；桌面版直接顯示這些按鈕
         <div
             class=move || if purchased.get() { "shopping-row done" } else { "shopping-row" }
             data-swipe-row=""
             data-swipe-right=move || if purchased.get() { "移回清單" } else { "已買齊" }
         >
-            <label>
-                <input
-                    node_ref=check
-                    type="checkbox"
-                    data-swipe-right-action=""
-                    prop:checked=move || purchased.get()
-                    aria-label=move || format!("{}已買齊", name.get())
-                    on:change=toggle
-                />
+            <div class="shopping-item-name">
                 <span>
                     <b>{move || name.get()} <EditorAvatars item=slot size=AvatarSize::Row /></b>
                     {move || {
@@ -459,7 +447,7 @@ fn ShoppingLine(id: ShoppingId, item: Memo<ShoppingItem>) -> impl IntoView {
                         }
                     }}
                 </span>
-            </label>
+            </div>
             <select
                 node_ref=select
                 class="assignee-select"
@@ -498,6 +486,28 @@ fn ShoppingLine(id: ShoppingId, item: Memo<ShoppingItem>) -> impl IntoView {
                 placeholder=UNKNOWN_QUANTITY.to_owned()
             />
             <div class="shopping-row-actions">
+                <button
+                    type="button"
+                    class="icon-button shopping-purchase-button"
+                    data-row-action=move || if purchased.get() { "unpurchase" } else { "purchase" }
+                    data-swipe-right-action=""
+                    aria-label=move || {
+                        if purchased.get() {
+                            format!("把{}移回清單", name.get())
+                        } else {
+                            format!("把{}標為已買齊", name.get())
+                        }
+                    }
+                    on:click=toggle
+                >
+                    {move || {
+                        if purchased.get() {
+                            art::static_svg(icons::UNDO)
+                        } else {
+                            art::static_svg(icons::CHECK)
+                        }
+                    }}
+                </button>
                 <button
                     type="button"
                     class="icon-button"

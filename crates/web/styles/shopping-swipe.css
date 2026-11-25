@@ -6,6 +6,17 @@
 @media(max-width:760px){.swipe-row[data-swipe-right]::before{display:flex;transition:width .26s cubic-bezier(.22,.61,.36,1)}.swipe-row[data-swipe-right].swipe-dragging::before{transition:none}}
 @media(prefers-reduced-motion:reduce){.swipe-row[data-swipe-right]::before{transition:none}}
 
+/* 品項列沒有勾選框：名稱放在 .shopping-item-name（取代 styles.css 中 .shopping-row>label 的位置），
+   已買齊／移回清單是操作按鈕中的第一個，所以操作欄在桌面版是三個 44px 的按鈕。 */
+.shopping-row>.shopping-item-name{display:flex;align-items:center;flex:1;min-width:0;min-height:44px}
+.shopping-item-name>span{min-width:0}
+.shopping-row.done>.shopping-item-name{color:var(--muted)}
+.shopping-row{grid-template-columns:minmax(0,1fr) 156px minmax(64px,100px) 132px}
+@media(max-width:580px){.shopping-row{grid-template-columns:minmax(0,1fr) 88px}.shopping-row>.shopping-item-name{grid-column:1;grid-row:1}}
+/* 手機版的可滑動列：已買齊／移回清單由往右滑與往左滑的面板操作，原本的按鈕不佔位置（往右滑仍是按下它）。 */
+@media(max-width:760px){.swipe-row .shopping-purchase-button[data-swipe-original]{display:none}.shopping-row.swipe-row{grid-template-columns:minmax(0,1fr) 156px minmax(64px,100px) 88px}}
+@media(max-width:580px){.shopping-row.swipe-row{grid-template-columns:minmax(0,1fr) 88px}}
+
 /* 「已買齊」區：標題與分類標題相同，可以點選展開或收合。 */
 .shopping-purchased>summary{display:flex;align-items:center;gap:10px;min-height:44px;padding:10px 17px;background:var(--soft);border-bottom:1px solid var(--line);font-size:17px;font-weight:700;cursor:pointer;list-style:none}
 .shopping-purchased>summary::-webkit-details-marker{display:none}

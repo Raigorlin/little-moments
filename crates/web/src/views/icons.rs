@@ -74,3 +74,5 @@ pub const LINK: &str = icon!(
 pub const UP: &str = icon!(r#"<path d="M12 19V5m-6 6 6-6 6 6"/>"#);
 pub const DOWN: &str = icon!(r#"<path d="M12 5v14m-6-6 6 6 6-6"/>"#);
 pub const CHECK: &str = icon!(r#"<path d="m5 12 4 4L19 6"/>"#);
+/// 把已買的採買品項移回清單（Bun 沒有這個圖示）。
+pub const UNDO: &str = icon!(r#"<path d="M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-4"/>"#);
