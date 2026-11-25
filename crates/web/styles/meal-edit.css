@@ -1,0 +1,9 @@
+/* 料理菜單（Meals_Tab）在 Bun 之外新增的樣式。Bun 在對話框裡編輯餐次；這裡改在餐次卡片裡編輯（卡片加上 .wide）。
+   styles.css 必須與 Bun 的 src/styles.css 逐位元組相同，所以放在這裡。
+   styles.css 把日期分組裡的 .meal-card 排成「插圖欄＋內容欄」的格線（桌面 104px、580px 以下 64px，且 .meal-content 改為
+   display:contents），編輯表單因此被擠進插圖欄。編輯中的卡片沒有插圖，改回一般區塊，表單占滿卡片寬度，欄位排法與 Bun 的對話框相同。 */
+.meal-date-group .meal-card.wide{display:block}
+.meal-date-group .meal-card.wide>.meal-content{display:block}
+/* styles.css 的 .form-actions 是對話框用的黏底列，bottom 為 -26px（480px 以下 -20px），抵銷對話框內距；
+   放在頁面上時那段負值會把按鈕推出視窗底部，所以卡片裡的表單改貼齊視窗底部。 */
+.meal-card.wide .form-actions{bottom:0}
