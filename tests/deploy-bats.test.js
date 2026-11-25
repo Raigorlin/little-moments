@@ -19,5 +19,5 @@ describe('deploy/tests (bats)', () => {
     const out = r.stdout.toString() + r.stderr.toString();
     if (r.exitCode !== 0) console.error(out);
     expect(r.exitCode).toBe(0);
-  }, 120_000);
+  }, 600_000); // lm-deploy.bats 有 53 個測試；在較慢的主機（例如 WSL 1）約需 3 分鐘
 });
