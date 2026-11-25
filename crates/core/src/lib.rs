@@ -4,9 +4,10 @@
 //! 只做純計算：不使用網路、檔案、系統時間與執行緒，需要目前時間或新 id 的計算由呼叫端傳入，
 //! 同一份輸入在原生目標與 `wasm32-unknown-unknown` 上得到相同的結果（需求 1.3、1.4）。
 //! 各模組的內容依 design「Components and Interfaces」1.1，由之後的任務填入；`account` 是註冊與登入的欄位規則，
-//! 由 LM_Server 與 LM_Web 的註冊表單共用（需求 3.14）。
+//! 由 LM_Server 與 LM_Web 的註冊表單共用（需求 3.14）；`admin` 是管理後台的型別與規則（需求 34 至 41）。
 
 pub mod account;
+pub mod admin;
 pub mod api;
 pub mod apply;
 pub mod command;

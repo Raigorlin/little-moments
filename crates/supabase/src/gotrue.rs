@@ -1,5 +1,5 @@
-//! Auth_Service（GoTrue）的 REST 呼叫（design 2.2）：lm-server 只經 `AuthBackend` 建立與刪除使用者、以密碼登入、
-//! 換發與登出（需求 1.6），`GoTrueHttp` 以 reqwest 實作它。feature `server`，只由 lm-server 啟用（需求 1.10）。
+//! Auth_Service（GoTrue）的 REST 呼叫（design 2.2）：lm-server 只經 `AuthBackend` 建立與刪除使用者、設定密碼（需求 36.3）、
+//! 以密碼登入、換發與登出（需求 1.6），`GoTrueHttp` 以 reqwest 實作它。feature `server`，只由 lm-server 啟用（需求 1.10）。
 //!
 //! # 呼叫
 //!
@@ -7,6 +7,7 @@
 //! | --- | --- | --- | --- |
 //! | `create_user` | `POST /auth/v1/admin/users`，內容 `{"email", "password", "email_confirm": true, "user_metadata"}` | `apikey` 與 `Authorization: Bearer` 都是 service key | 200，回傳新使用者的 `id` |
 //! | `delete_user` | `DELETE /auth/v1/admin/users/{id}` | 同上 | 200 `{}` |
+//! | `update_user_password` | `PUT /auth/v1/admin/users/{id}`，內容只有 `{"password"}` | 同上 | 200，回傳使用者（不使用內容） |
 //! | `password_grant` | `POST /auth/v1/token?grant_type=password`，內容 `{"email", "password"}` | `apikey` 是 anon key | 200，Session |
 //! | `refresh` | `POST /auth/v1/token?grant_type=refresh_token`，內容 `{"refresh_token"}` | `apikey` 是 anon key | 200，Session |
 //! | `logout` | `POST /auth/v1/logout?scope=local`，沒有內容 | `apikey` 是 anon key，`Authorization: Bearer` 是使用者的 access token | 204 |
@@ -32,6 +33,7 @@
 //! | `create_user` | 400 `validation_failed` 而且 `msg` 提到 email address（格式不符、超過 255 個字元），或 400 `email_address_invalid` | `InvalidEmail` |
 //! | `create_user` | 422 `weak_password` | `WeakPassword`，內容是 `weak_password.reasons`，例如 `length` |
 //! | `delete_user` | 404 `user_not_found` | `Ok(())`：使用者已不存在，與刪除成功相同；需求 3.10 的補償只需要這個帳號名稱可以再註冊 |
+//! | `update_user_password` | 422 `weak_password`（例如少於 `GOTRUE_PASSWORD_MIN_LENGTH`；任務 28.1 在 GoTrue v2.198.0 實測） | `WeakPassword`，內容是 `weak_password.reasons` |
 //! | `password_grant` | 400 `invalid_credentials`（密碼不正確、email 不存在、密碼是空的或超過 72 個位元組） | `InvalidCredentials` |
 //! | `refresh` | 400 `refresh_token_not_found`（不存在、已登出或使用者已刪除）、`refresh_token_already_used`（被輪替掉的 refresh token 在 10 秒的重用間隔之後再用）、`session_not_found`、`session_expired`，以及 `validation_failed`（格式不符，包括空字串） | `InvalidCredentials` |
 //! | `logout` | 401 `no_authorization`（token 是空的）、403 `bad_jwt`（簽章不符或已過期）、`session_not_found`（已登出）、`user_not_found`（使用者已刪除） | `InvalidCredentials` |
@@ -92,6 +94,10 @@ pub trait AuthBackend: Send + Sync {
     /// 刪除使用者（`DELETE /auth/v1/admin/users/{id}`，service key）：註冊流程後半失敗時的補償（需求 3.10）。
     /// 使用者已不存在時也回傳 `Ok(())`。
     async fn delete_user(&self, id: UserId) -> Result<(), AuthError>;
+
+    /// 把使用者的密碼原樣設為 `password`（`PUT /auth/v1/admin/users/{id}`，service key，內容只有 `password`；
+    /// 需求 36.3、design 5.4）。不撤銷既有的工作階段：lm-server 之後另外刪除 `auth.sessions` 的列（design 5.1）。
+    async fn update_user_password(&self, id: UserId, password: &str) -> Result<(), AuthError>;
 
     /// 以 email 與原樣的密碼登入（`POST /auth/v1/token?grant_type=password`，anon key，需求 4.1）。
     async fn password_grant(&self, email: &str, password: &str)
@@ -340,6 +346,16 @@ impl AuthBackend for GoTrueHttp {
         }
     }
 
+    async fn update_user_password(&self, id: UserId, password: &str) -> Result<(), AuthError> {
+        let request = self
+            .admin(self.http.put(format!("{}/{id}", self.users_url)))
+            .json(&PasswordOnlyBody { password });
+        exchange(request)
+            .await
+            .map(|_| ())
+            .map_err(|failure| failure.into_error(Call::UpdatePassword))
+    }
+
     async fn password_grant(
         &self,
         email: &str,
@@ -379,6 +395,12 @@ struct CreateUserBody<'a> {
     password: &'a str,
     email_confirm: bool,
     user_metadata: &'a Value,
+}
+
+/// `update_user_password` 的請求內容：只有密碼，使用者的其他資料不變。
+#[derive(Serialize)]
+struct PasswordOnlyBody<'a> {
+    password: &'a str,
 }
 
 /// `password_grant` 的請求內容。
@@ -449,6 +471,7 @@ fn unexpected_body(status: StatusCode) -> AuthError {
 enum Call {
     CreateUser,
     DeleteUser,
+    UpdatePassword,
     PasswordGrant,
     Refresh,
     Logout,
@@ -566,6 +589,9 @@ impl ErrorReply {
             (Call::CreateUser, "email_address_invalid") => AuthError::InvalidEmail,
             (Call::CreateUser, "validation_failed") if self.about_email => AuthError::InvalidEmail,
             (Call::CreateUser, "weak_password") => AuthError::WeakPassword(self.reasons.join(", ")),
+            (Call::UpdatePassword, "weak_password") => {
+                AuthError::WeakPassword(self.reasons.join(", "))
+            }
             (Call::PasswordGrant, "invalid_credentials" | "invalid_grant") => {
                 AuthError::InvalidCredentials
             }
