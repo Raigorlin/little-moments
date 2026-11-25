@@ -232,7 +232,7 @@ describe('productionRecord：Build_Record 與「上線後」關卡（Req 14.8、
     expect(rec.patch.deployments[0].migrations).toEqual({ applied: 1, skipped: 2 });
     expect(rec.patch.deployments[0]).not.toHaveProperty('receiptAi');
     expect(classifyDeploy(0, deployOutput({ stack: false }), D).outcome).toBe('unknown');
-    for (const reason of ['stack_db_failed', 'stack_setup_failed', 'stack_auth_failed', 'stack_realtime_failed', 'stack_gateway_failed']) {
+    for (const reason of ['stack_db_failed', 'stack_setup_failed', 'stack_auth_failed', 'stack_realtime_failed', 'stack_gateway_failed', 'proxy_start_failed']) {
       const r = classifyDeploy(1, deployOutput({ upTo: 'app-env', stack: false, failure: { command: 'deploy', reason } }), D);
       expect(r).toMatchObject({ outcome: 'failed', failedStep: 'stack', code: reason, migrated: false, started: false });
     }

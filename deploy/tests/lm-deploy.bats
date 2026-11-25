@@ -66,6 +66,10 @@ fresh_backup() {
   [ "${#lines[@]}" -eq 7 ]
   assert_contains "${lines[0]}" '"command":"app-env"'
   assert_contains "${lines[1]}" '{"ok":true,"command":"stack","env":"staging","services":["db","auth","realtime","gateway"]'
+  # 執行中的 proxy 只查詢狀態，不重新建立。
+  assert_contains "${lines[1]}" '"proxy":"running"'
+  assert_call 'ps --status running -q proxy '
+  refute_call 'up -d --no-deps proxy'
   assert_contains "${lines[2]}" '"command":"backup"'
   assert_contains "${lines[3]}" '"command":"migrate"'
   assert_contains "${lines[3]}" '"applied":["20250101000000_app_schema.sql","20250102000000_profiles.sql"],"skipped":[]'
@@ -296,6 +300,50 @@ fresh_backup() {
   : >"$FAKE_DOCKER_LOG"
   lm staging deploy "$D2"
   [ "$(grep -c 'http://auth:9999/health' "$FAKE_DOCKER_LOG")" -eq 2 ]
+  [ "$(count_files '*.dump')" -eq 0 ]
+  [ "$(state_get PHASE)" = idle ]
+  [ "$(state_get ACTIVE_DIGEST)" = "$D1" ]
+}
+
+@test "stack: a stopped proxy (first cutover, new host) is started after the stack and before the backup" {
+  idle_green
+  export FAKE_PROXY_RUNNING=0
+  # 未啟動的 proxy 無法做健康檢查（fake-docker 與真的 Compose 一樣讓 exec -T proxy 失敗）。
+  lm staging health green
+  assert_status 1
+  assert_contains "$(last_line)" '"healthy":false'
+  : >"$FAKE_DOCKER_LOG"
+  lm staging deploy "$D2"
+  assert_status 0
+  local hg ps up dump hp
+  hg=$(call_line 'exec -T gateway sh -c .*/auth/v1/health')
+  ps=$(call_line 'ps --status running -q proxy ')
+  up=$(call_line 'up -d --no-deps proxy ')
+  dump=$(call_line 'exec -T db sh -c .*pg_dump')
+  hp=$(call_line 'exec -T proxy wget .*http://app-blue:8080/robots.txt')
+  [ "$ps" -gt "$hg" ]
+  [ "$up" -gt "$ps" ]
+  [ "$dump" -gt "$up" ]
+  [ "$hp" -gt "$up" ]
+  assert_contains "${lines[0]}" '"command":"stack"'
+  assert_contains "${lines[0]}" '"proxy":"started"'
+  assert_contains "$(last_line)" '"command":"switch"'
+  [ "$(state_get ACTIVE_COLOR)" = blue ]
+}
+
+@test "stack: proxy status or start failures stop the deploy before backup with proxy_start_failed" {
+  idle_green
+  local c
+  for c in "FAKE_PS_FAIL=1" "FAKE_PROXY_UP_FAIL=1"; do
+    : >"$FAKE_DOCKER_LOG"
+    export FAKE_PROXY_RUNNING=0 "$c"
+    lm staging deploy "$D2"
+    assert_status 1
+    assert_contains "$(last_line)" '"command":"stack"'
+    assert_contains "$(last_line)" '"reason":"proxy_start_failed"'
+    refute_call 'pg_dump|^create |up -d --no-deps app-|exec -T proxy'
+    unset FAKE_PS_FAIL FAKE_PROXY_UP_FAIL
+  done
   [ "$(count_files '*.dump')" -eq 0 ]
   [ "$(state_get PHASE)" = idle ]
   [ "$(state_get ACTIVE_DIGEST)" = "$D1" ]

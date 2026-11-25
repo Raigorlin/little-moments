@@ -39,7 +39,8 @@
 #                            之前：Supabase stack（stack 步驟）與備份都需要其中的金鑰，首次部署時尚無 app.env。
 #                            stack（plan.md D6）：up -d --wait db（pg_isready）→ supabase/db-setup.sql（角色密碼、
 #                            app.settings.jwt_*、_realtime schema；可重複執行）→ up -d auth、realtime、gateway → 經 gateway
-#                            容器輪詢 Auth、Realtime 與 gateway 的健康檢查 → {"command":"stack",...}。
+#                            容器輪詢 Auth、Realtime 與 gateway 的健康檢查 → proxy 未執行時 up -d --no-deps proxy
+#                            （執行中的不重新建立）→ {"command":"stack",...,"proxy":"running"|"started"}。
 #   drill                    還原演練（Req 14.6、14.7；plan.md D8）：取最新已驗證備份並重算 sha256 → 以 <env>/drill.yaml
 #                            建立獨立 Compose 專案 lm-drill-<env>-<8 hex>（只有 internal 網路與匿名卷；拋棄式金鑰由
 #                            lm-supabase-keys env drill 產生）→ db + db-setup.sql → auth、realtime、gateway → 以目前作用中
@@ -841,7 +842,30 @@ stack_services_up() {
     sh -c "$GATEWAY_HEALTH_SH" || return 1
 }
 
-# ensure_stack：deploy 的 stack 步驟（plan.md D6）；在備份之前，讓備份、遷移與新 App 都有執行中的 Supabase stack。
+# service_running <svc>：docker compose ps --status running -q <svc> 有輸出即為執行中；ps 失敗回傳 2。
+service_running() {
+  local ids
+  ids=$("${COMPOSE_CMD[@]}" ps --status running -q "$1" </dev/null 2>&"$XFD") || return 2
+  [[ -n $ids ]]
+}
+
+# ensure_proxy：LM_Proxy（proxy）未執行時以 up -d --no-deps proxy 啟動；執行中的 proxy 不重新建立。
+# 健康檢查（exec -T proxy wget）與切換（exec -T proxy caddy reload）都需要它；首次切換（deploy/README.md
+# § 首次切換第 3 步的 compose down）與全新主機時 proxy 尚未執行。P_STATE 為 running 或 started。
+ensure_proxy() {
+  local rc
+  P_STATE=running
+  if service_running proxy; then rc=0; else rc=$?; fi
+  ((rc != 2)) || die "$EX_FAIL" proxy_start_failed "無法查詢 proxy 服務狀態"
+  if ((rc != 0)); then
+    timeout -k 10s "$STACK_UP_TIMEOUT" "${COMPOSE_CMD[@]}" up -d --no-deps proxy </dev/null >&"$XFD" 2>&1 ||
+      die "$EX_FAIL" proxy_start_failed "無法啟動 LM_Proxy（proxy）"
+    P_STATE=started
+  fi
+}
+
+# ensure_stack：deploy 的 stack 步驟（plan.md D6）；在備份之前，讓備份、遷移與新 App 都有執行中的 Supabase stack，
+# 並確保 LM_Proxy 在健康檢查之前已執行。
 ensure_stack() {
   CMD=stack
   local f
@@ -851,7 +875,8 @@ ensure_stack() {
   build_compose ""
   stack_db_up COMPOSE_CMD || die "$EX_FAIL" "$X_REASON" "$X_MSG"
   stack_services_up COMPOSE_CMD || die "$EX_FAIL" "$X_REASON" "$X_MSG"
-  emit "{\"ok\":true,\"command\":\"stack\",\"env\":$(jstr "$ENVN"),\"services\":[\"db\",\"auth\",\"realtime\",\"gateway\"],\"setup\":\"db-setup.sql\"}"
+  ensure_proxy
+  emit "{\"ok\":true,\"command\":\"stack\",\"env\":$(jstr "$ENVN"),\"services\":[\"db\",\"auth\",\"realtime\",\"gateway\"],\"setup\":\"db-setup.sql\",\"proxy\":$(jstr "$P_STATE")}"
 }
 
 # ---------------------------------------------------------------------------------------------

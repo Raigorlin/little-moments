@@ -145,6 +145,7 @@ const FAILURES = Object.freeze({
   stack_auth_failed: ['stack', 'Supabase Auth 未啟動或未通過健康檢查；未備份、未遷移，App 容器未變更'],
   stack_realtime_failed: ['stack', 'Supabase Realtime 未啟動或未通過健康檢查；未備份、未遷移，App 容器未變更'],
   stack_gateway_failed: ['stack', 'API gateway 未啟動或未通過健康檢查；未備份、未遷移，App 容器未變更'],
+  proxy_start_failed: ['stack', 'LM_Proxy 無法查詢狀態或啟動；未備份、未遷移，App 容器未變更'],
   migration_changed: ['migrate', '已套用的遷移檔內容已變更（sha256 不符）；未套用任何遷移，未啟動新版容器'],
 });
 // 帶 `backup` 失敗原因時 Build_Record 記錄的類別（Req 14.3：建立失敗、驗證失敗或逾時）。

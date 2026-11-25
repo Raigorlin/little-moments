@@ -132,6 +132,7 @@ const FAILURES = Object.freeze({
   stack_auth_failed: ['stack', 'Supabase Auth 未啟動或未通過健康檢查；未備份、未遷移，Production 的 App 容器未變更'],
   stack_realtime_failed: ['stack', 'Supabase Realtime 未啟動或未通過健康檢查；未備份、未遷移，Production 的 App 容器未變更'],
   stack_gateway_failed: ['stack', 'API gateway 未啟動或未通過健康檢查；未備份、未遷移，Production 的 App 容器未變更'],
+  proxy_start_failed: ['stack', 'LM_Proxy 無法查詢狀態或啟動；未備份、未遷移，Production 的 App 容器未變更'],
   migration_changed: ['migrate', '已套用的遷移檔內容已變更（sha256 不符）；未套用任何遷移，未啟動新版容器'],
 });
 const BACKUP_FAILURE_KIND = Object.freeze({

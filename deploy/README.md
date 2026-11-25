@@ -434,7 +434,7 @@ Let's Encrypt 的 HTTP-01 驗證經 Cloudflare 代理時若失敗，改用 NPM �
 
 6. **合併到 `main`**。以 PR 把 `rust` 合併到 `main`（`main` 需要 PR 與審查）。`release/little-moments » main` 的建置：
    - 品質檢查、App_Image 建置、掃描、SBOM、推送與簽章通過。
-   - Staging Deploy：`lm-deploy staging deploy` 依序輸出 `app-env`、`stack`、`backup`（`"emptyDatabase":true`）、`migrate`（`applied` 為 `supabase/migrations` 的全部檔案）、`start`、`health`、`switch`。Smoke_Test 以 `--provision` 在登入回應 401 時註冊 `smoke-bot`；它是全新 Staging Database 的第一個帳號，因此也是 Staging 的管理員（只在 Staging，無害）。「Staging」關卡通過。
+   - Staging Deploy：`lm-deploy staging deploy` 依序輸出 `app-env`、`stack`（步驟 3 已停止 LM_Proxy，因此為 `"proxy":"started"`）、`backup`（`"emptyDatabase":true`）、`migrate`（`applied` 為 `supabase/migrations` 的全部檔案）、`start`、`health`、`switch`。Smoke_Test 以 `--provision` 在登入回應 401 時註冊 `smoke-bot`；它是全新 Staging Database 的第一個帳號，因此也是 Staging 的管理員（只在 Staging，無害）。「Staging」關卡通過。
    - Production Deploy：`lm-deploy prod status` 沒有作用中的 digest，建置以「Production 尚未完成首次部署，請依 deploy/README.md 的首次切換步驟完成 bootstrap」記錄「上線後」關卡失敗並停止，不會呼叫 `deploy`。Version Tag 不執行。
 
    自這個建置取得 Image_Digest：建置頁 Build Artifacts 中的 `reports/image-digest.txt`（一行 `sha256:<hex>`），以下以 `<digest>` 表示。它已通過 Staging 驗證。
@@ -448,7 +448,7 @@ Let's Encrypt 的 HTTP-01 驗證經 Cloudflare 代理時若失敗，改用 NPM �
       sudo cat "$S/lm-prod-supabase-env" | sudo /opt/lm/bin/lm-deploy prod deploy <digest> --app-env-stdin
       ```
 
-      預期 stdout 依序為 `app-env`、`stack`、`backup`（`"emptyDatabase":true`）、`migrate`、`start`、`health`、`switch` 七行，每行 `"ok":true`，結束碼 0。失敗時依[一般部署與 `lm-deploy` 的結束碼](#一般部署與-lm-deploy-的結束碼)處理後重新執行同一個指令。
+      預期 stdout 依序為 `app-env`、`stack`（`"proxy":"started"`：LM_Proxy 由這一步啟動）、`backup`（`"emptyDatabase":true`）、`migrate`、`start`、`health`、`switch` 七行，每行 `"ok":true`，結束碼 0。失敗時依[一般部署與 `lm-deploy` 的結束碼](#一般部署與-lm-deploy-的結束碼)處理後重新執行同一個指令。
    2. 註冊管理員：在 LAN 內的瀏覽器開啟 `http://192.168.1.121:8082/register`，以自己的帳號名稱、顯示名稱與密碼註冊。全新 Database 的第一個帳號就是管理員。管理員密碼由維運者自行保管，不放進 Credential_Store。
    3. 註冊 `smoke-bot`（顯示名稱 `smoke-bot`，密碼為 `lm-prod-smoke` 的內容）。密碼只在 root shell 的內建 `printf` 與管線中出現，不出現在任何程序的指令列：
 
@@ -521,7 +521,7 @@ Let's Encrypt 的 HTTP-01 驗證經 Cloudflare 代理時若失敗，改用 NPM �
 
 ## 一般部署與 `lm-deploy` 的結束碼
 
-Pipeline 經 SSH forced command 呼叫 `lm-deploy <env> deploy <digest> --app-env-stdin`，依序為：驗證並寫入 `app.env` → stack（`up -d --wait db` → `db-setup.sql` → `up -d auth realtime gateway` → 經 gateway 輪詢 Auth、Realtime 與 gateway 的健康檢查）→ 備份 → 遷移 → 在閒置槽位啟動新映像 → 健康檢查（`GET /robots.txt`，連續 3 次成功）→ 切換 proxy。Pipeline 接著執行 Smoke_Test（`bun ci/smoke.mjs`：`index`、`robots`、`login`、`me`、`trips`、`realtime`、`logout`），Production 另有 10 分鐘觀察，通過後 `finalize`；失敗時自動 `rollback`（切回舊槽位，不執行遷移）。
+Pipeline 經 SSH forced command 呼叫 `lm-deploy <env> deploy <digest> --app-env-stdin`，依序為：驗證並寫入 `app.env` → stack（`up -d --wait db` → `db-setup.sql` → `up -d auth realtime gateway` → 經 gateway 輪詢 Auth、Realtime 與 gateway 的健康檢查 → LM_Proxy 未執行時 `up -d --no-deps proxy`，執行中的不重新建立）→ 備份 → 遷移 → 在閒置槽位啟動新映像 → 健康檢查（`GET /robots.txt`，連續 3 次成功）→ 切換 proxy。Pipeline 接著執行 Smoke_Test（`bun ci/smoke.mjs`：`index`、`robots`、`login`、`me`、`trips`、`realtime`、`logout`），Production 另有 10 分鐘觀察，通過後 `finalize`；失敗時自動 `rollback`（切回舊槽位，不執行遷移）。
 
 遷移（plan.md D7）：`migrate` 以新映像的 `/app/migrations`（檔名 `^[0-9]{14}_[a-z0-9_]+\.sql$`）套用，先等 Realtime 建立 `realtime.messages`，再以 `lm_ops.schema_migrations(version, sha256, applied_at)` 記錄。每個未套用的檔案在一個交易內以 `postgres` 角色套用；已套用的檔案內容改變時以 `migration_changed` 拒絕，不套用任何檔案。遷移需要 `LM_BACKUP_MAX_AGE`（1 小時）內的已驗證備份。回滾從不執行遷移，所以遷移必須相容前一版映像（expand/contract）。
 
@@ -529,6 +529,7 @@ Pipeline 經 SSH forced command 呼叫 `lm-deploy <env> deploy <digest> --app-en
 |---|---|---|
 | 0 | — | 完成 |
 | 1 | `stack_db_failed`、`stack_setup_failed`、`stack_auth_failed`、`stack_realtime_failed`、`stack_gateway_failed` | Supabase stack 未就緒。以 `sudo docker logs lm-<env>-<db\|auth\|realtime\|gateway>-1 2>&1 \| tail -n 50` 查看原因，修正後重新部署 |
+| 1 | `proxy_start_failed` | LM_Proxy 無法查詢狀態或啟動（未備份、未遷移）。以 `sudo docker logs lm-<env>-proxy-1 2>&1 \| tail -n 50` 查看原因；常見原因是 `caddy/upstream.caddy` 不存在（重新執行 `install.sh`）或 `LAN_IP:LM_PUBLIC_PORT` 已被占用 |
 | 1 | `backup_create_failed`、`backup_verify_failed`、`backup_timeout` | 備份失敗，未遷移也未切換 |
 | 1 | `migration_changed`、`migrate_failed` | 輸出的 `migration` 欄位指出檔案。`migration_changed`：已套用的遷移被修改，改以新的遷移檔修正。`migrate_failed`：該檔案的交易已回復，`applied` 列出本次已提交的檔案 |
 | 1 | `start_failed`、`health_failed`、`switch_failed`、`rollback_failed`、`finalize_failed`、`upstream_render_failed`、`lock_failed`、`internal` | 依 `message` 處理；`sudo /opt/lm/bin/lm-deploy <env> status` 確認目前狀態 |

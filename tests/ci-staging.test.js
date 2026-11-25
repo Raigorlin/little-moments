@@ -214,7 +214,7 @@ describe('stagingRecord：Build_Record 與「Staging」關卡（Req 14.8、18.4�
     const noStack = classifyDeploy(0, deployOutput({ stack: false }), D);
     expect(noStack.outcome).toBe('unknown');
     expect(noStack.message).toContain('Supabase 服務');
-    for (const reason of ['stack_db_failed', 'stack_setup_failed', 'stack_auth_failed', 'stack_realtime_failed', 'stack_gateway_failed']) {
+    for (const reason of ['stack_db_failed', 'stack_setup_failed', 'stack_auth_failed', 'stack_realtime_failed', 'stack_gateway_failed', 'proxy_start_failed']) {
       const r = classifyDeploy(1, deployOutput({ upTo: 'app-env', stack: false, failure: { command: 'deploy', reason } }), D);
       expect(r).toMatchObject({ outcome: 'failed', failedStep: 'stack', code: reason, migrated: false, started: false, backup: null });
     }

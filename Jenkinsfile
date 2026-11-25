@@ -644,6 +644,8 @@ void unitTestsPostAlways() {
 // 靜態安全掃描（Req 6.1–6.9）：Gitleaks（受版本控制檔案 + Git 歷史範圍，--redact）→ osv-scanner v2（bun.lock）
 // → Trivy（安裝後的 node_modules 交叉掃描）→ Semgrep（src/、server/、scripts/）。每項掃描 15 分鐘逾時。
 // 結果經 ci/policy/normalize.mjs → ci/policy/evaluate.mjs 判定「安全」關卡（plan.md D14 已移除 DAST）。
+// Cargo.lock 與 Rust 程式碼尚未納入掃描：這是有日期的例外，原因與 2026-11-25 的手動掃描結果見 README.md
+// 「CI/CD 與部署（Rust 版本）」的「安全掃描範圍的例外」。
 // 任一掃描執行錯誤、逾時、報告缺失或漏洞資料庫無法取得 → 該掃描未完成 → 關卡未通過（fail closed，Req 6.8）。
 // 掃描器容器：digest 固定、非 root、唯讀根檔案系統、--cap-drop ALL、只以唯讀方式掛載掃描輸入，
 // 寫入只限本次掃描的暫存目錄；Gitleaks 與 Semgrep 無網路，osv-scanner／Trivy 只為取得漏洞資料庫而連線。
