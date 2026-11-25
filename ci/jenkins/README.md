@@ -290,6 +290,7 @@ Jenkins 解除 keepLog 需要 Run/Delete，與 Req 21.12「非管理員不可刪
 - 建置 commit 的所有受版本控制檔案仍每次以 `gitleaks dir` 完整掃描；起點只限制 Git 歷史的範圍。
 - 它是 `environment` 的常數，不是建置參數，Build Now 時不能覆寫（Req 23.4）。
 - 移動起點：先以 Gitleaks 掃描新起點的完整歷史，確認每筆結果都不是真實秘密並記錄於 design.md，之後才以經審查的 commit 修改 `LM_GITLEAKS_HISTORY_BASE` 與 `tests/ci-jenkinsfile.test.js` 的對應斷言。
+- 本機檢查：推送新增或修改測試假值的變更之前，在 repository 根目錄執行 `bun scripts/gitleaks-check.mjs`（Linux x64 或 Windows x64，需連到 github.com）。它下載 Gitleaks 8.30.1、以釘選的 SHA-256 驗證，依 `Jenkinsfile` 匯出 `HEAD` 的受版本控制檔案（刪除 repo 內的掃描器設定）並以 `<LM_GITLEAKS_HISTORY_BASE>..HEAD` 掃描 Git 歷史，再以 `ci/policy/normalize.mjs` 與 `ci/policy/evaluate.mjs` 評估；結束碼 0 才表示這兩項掃描在 CI 不會擋下建置。審查新起點時以 `--commit <sha> --range <sha>` 掃描該 commit 的完整歷史（design.md Components 第 31 節）。
 
 ## 仍待填入
 
