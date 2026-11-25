@@ -3,6 +3,8 @@
 
 /* 往右滑時露出在列左側的標示；寬度跟著 --swipe-x（只取正值），放開後與列一起滑回。 */
 .swipe-row[data-swipe-right]::before{content:attr(data-swipe-right);position:absolute;z-index:0;inset:0 auto 0 0;display:none;align-items:center;width:max(0px,var(--swipe-x));overflow:hidden;padding:0;text-indent:16px;white-space:nowrap;background:var(--green);color:var(--ink);font-size:14px;font-weight:700;pointer-events:none}
+/* 深色主題：淺色的 --ink 字在 --green 上對比不足，改用較深的綠色（對比約 4.6:1）。 */
+:root[data-theme=dark] .swipe-row[data-swipe-right]::before{background:#557042}
 @media(max-width:760px){.swipe-row[data-swipe-right]::before{display:flex;transition:width .26s cubic-bezier(.22,.61,.36,1)}.swipe-row[data-swipe-right].swipe-dragging::before{transition:none}}
 @media(prefers-reduced-motion:reduce){.swipe-row[data-swipe-right]::before{transition:none}}
 

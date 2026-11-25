@@ -8,7 +8,8 @@
     <link data-trunk rel="rust" href="Cargo.toml" data-wasm-opt="z" data-cargo-profile-release="wasm-release" />
     <!-- 樣式順序同 Bun：styles.css → accounts.css → scene-motion 版面規則 → expenses.css。
          styles.css 與 Bun 逐字相同，含 :root[data-theme=dark] 規則；根元素有 data-theme="dark" 時套用深色主題，
-         沒有 data-theme 時為淺色主題（schedule-tab-css-parity 需求 6）。此處不設定 data-theme。 -->
+         沒有 data-theme 時為淺色主題（schedule-tab-css-parity 需求 6）。此處不設定 data-theme；
+         src/theme.rs 依 localStorage 的 ggc-local-theme 設定它（同 Bun）。 -->
     <link data-trunk rel="css" href="styles/styles.css" data-no-minify />
     <link data-trunk rel="css" href="styles/accounts.css" data-no-minify />
     <link data-trunk rel="css" href="styles/scene-motion-layout.css" data-no-minify />

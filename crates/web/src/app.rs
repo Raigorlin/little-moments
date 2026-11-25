@@ -29,7 +29,7 @@ use crate::pages::trip::TripPage;
 use crate::session::{use_auth, Auth};
 use crate::sync::engine::TripSyncs;
 use crate::sync::realtime::TripChannels;
-use crate::views::icons;
+use crate::theme::{Theme, ThemeButton};
 
 /// Trip_Page 的五個分頁（`?tab=` 的值，需求 32.3）。
 pub const TRIP_TABS: [&str; 5] = ["schedule", "meals", "shopping", "gear", "expenses"];
@@ -257,6 +257,8 @@ fn decide(screen: Screen, user: Option<&ProfileDto>, next: Option<&str>, current
 #[component]
 pub fn App() -> impl IntoView {
     let toasts = Toasts::provide();
+    // 先套用存下的主題，畫面建立時就是對的顏色
+    Theme::provide();
     let auth = Auth::provide(toasts);
     // 每趟旅行的同步引擎屬於 App 的 Owner：前往 /login 再回來時沿用，切換帳號時捨棄（需求 4.9、4.10、4.14）
     let syncs = TripSyncs::provide(auth, toasts);
@@ -404,7 +406,8 @@ pub fn Shell(
     }
 }
 
-/// 頁首（`header()`）：品牌標誌與帳號選單。第一版沒有主題切換與管理後台（需求 32.7、design「第一版的範圍」）。
+/// 頁首（`header()`）：品牌標誌、主題按鈕與帳號選單。第一版沒有管理後台（需求 32.7、design「第一版的範圍」）。
+/// 主題按鈕在未登入時也顯示，同 Bun。
 #[component]
 fn Header(current: &'static str) -> impl IntoView {
     let user = use_auth().user();
@@ -425,15 +428,18 @@ fn Header(current: &'static str) -> impl IntoView {
                     </span>
                 </a>
                 <nav class="acct-nav" aria-label="帳號選單">
+                    <ThemeButton
+                        class="icon-button acct-theme"
+                        light_label="切換為深色模式"
+                        dark_label="切換為淺色模式"
+                        typed=true
+                    />
                     {move || user.get().map(|user| view! { <AccountMenu user current /> })}
                 </nav>
             </div>
         </header>
     }
 }
-
-/// 主題按鈕的提示：這個版本只有淺色畫面（schedule-tab-css-parity Decision D1）。
-const THEME_UNAVAILABLE: &str = "這個版本還不能切換深色模式";
 
 /// Trip_Page 的頁首（現行 `accountHeader()`）：品牌標誌、主題按鈕與帳號選單。LM_Web 沒有 `/admin`，
 /// 所以沒有 `.header-admin`。
@@ -466,12 +472,6 @@ fn TripHeader() -> impl IntoView {
 #[component]
 fn TripHeaderActions(user: ProfileDto) -> impl IntoView {
     let auth = use_auth();
-    let toasts = use_toasts();
-    // 只在建立時讀一次根元素的 data-theme，決定主題按鈕的圖示與說明（現行 `theme` 預設為 light）
-    let dark = document()
-        .document_element()
-        .and_then(|root| root.get_attribute("data-theme"))
-        .is_some_and(|theme| theme == "dark");
     let open = RwSignal::new(false);
     // 點選選單與開合按鈕以外的地方時收起選單
     let listener = window_event_listener(ev::click, move |event| {
@@ -499,13 +499,11 @@ fn TripHeaderActions(user: ProfileDto) -> impl IntoView {
     let logout = move |_| auth.logout();
     view! {
         <div class="header-actions">
-            <button
+            <ThemeButton
                 class="icon-button header-theme"
-                aria-label=if dark { "切換淺色模式" } else { "切換深色模式" }
-                on:click=move |_| toasts.show(THEME_UNAVAILABLE)
-            >
-                {art::static_svg(if dark { icons::SUN } else { icons::MOON })}
-            </button>
+                light_label="切換深色模式"
+                dark_label="切換淺色模式"
+            />
             <button
                 type="button"
                 class="icon-button header-menu-toggle"
