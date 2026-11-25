@@ -49,6 +49,15 @@ fn head((owner, seq, next_ordinal): (Uuid, i64, i64)) -> sqlx::Result<TripHead> 
     })
 }
 
+/// 旅行名稱：Audit_Log 的目標（需求 41.2，design 5.5）。在已以 `lock_trip()` 鎖住旅行列的交易中呼叫，所以旅行一定
+/// 存在（包括這個交易剛設定 `deleted_at` 的旅行）。
+pub async fn trip_title(tx: &mut PgTx, trip: TripId) -> sqlx::Result<String> {
+    sqlx::query_scalar::<_, String>("select title from app.trips where id = $1")
+        .bind(trip.0)
+        .fetch_one(&mut **tx)
+        .await
+}
+
 /// `user` 在這趟旅行綁定的旅伴（Bound_Person）；沒有時是 `None`。`unique (trip_id, user_id)` 保證最多一位。
 /// 成員資格一律以呼叫當下 Database 的資料判斷，不快取。
 pub async fn person_of<'e>(

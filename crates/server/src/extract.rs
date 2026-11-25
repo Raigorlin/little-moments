@@ -5,6 +5,7 @@
 //! | --- | --- | --- |
 //! | `AuthUser` | 以 Valid_Access_Token 登入的帳號 | 401 `unauthorized`；無法讀取 JWKS 或 Database 時 500 |
 //! | `Option<AuthUser>` | 同上；沒有 Valid_Access_Token 時是 `None`（邀請預覽，需求 5.8） | 無法讀取 JWKS 或 Database 時 500 |
+//! | `AdminUser` | 角色為 admin 的 `AuthUser`（Admin_Endpoint，需求 34.1、34.2，design 5.2） | 同 `AuthUser`；角色不是 admin 時 403 `admin_required` |
 //! | `TripPath` | 路徑參數 `{id}` 的旅行 id | 不是 UUID 時 404 `trip_not_found` |
 //! | `ApiPath<T>` | 其他路徑參數（包裝 axum 的 `Path`） | 400 `invalid_request` |
 //! | `ApiQuery<T>` | 查詢參數（包裝 axum 的 `Query`） | 400 `invalid_request` |
@@ -14,7 +15,7 @@
 //!
 //! design 3.1 依序判斷，回應第一個不通過的：路徑與方法（`/api` 的 fallback，任務 13.3）→ 登入 → 路徑中的旅行 id →
 //! 其他路徑參數、查詢參數與請求內容 → 處理函式。axum 依處理函式的參數順序執行擷取器，回應第一個失敗的擷取器，所以
-//! 參數必須依這個順序排列：`AuthUser`（或 `Option<AuthUser>`）、`TripPath`、`ApiPath`、`ApiQuery`，最後是 `ApiJson`
+//! 參數必須依這個順序排列：`AuthUser`（或 `Option<AuthUser>`、`AdminUser`）、`TripPath`、`ApiPath`、`ApiQuery`，最後是 `ApiJson`
 //! （axum 規定讀取請求內容的擷取器是最後一個參數）。`State` 不會失敗，位置不限。例如：
 //!
 //! ```ignore
@@ -36,8 +37,9 @@
 //!    token；`bearer` 等大小寫不同的寫法不接受。
 //! 2. 以路由器狀態中的 `TokenVerifier`（lm-server 使用 `AnyVerifier`）依系統時間驗證簽章與宣告（需求 5.2–5.4）：
 //!    `JwtError::Invalid` 是沒有 Valid_Access_Token；`JwtError::Unavailable`（無法讀取 JWKS）回應 500 並記錄。
-//! 3. 讀取 `app.profiles` 中 `user_id` 等於 `sub` 的列：沒有這一列時是沒有 Valid_Access_Token（需求 5.2）；查詢失敗
-//!    時回應 500 並記錄。帳號名稱、Display_Name 與角色都取自這一列，不看 token 的其他宣告（需求 5.6）。
+//! 3. 讀取 `app.profiles` 中 `user_id` 等於 `sub`、而且 `disabled_at` 是空值的列：沒有這一列（包括 Disabled_Account，
+//!    需求 40.4）時是沒有 Valid_Access_Token（需求 5.2）；查詢失敗時回應 500 並記錄。帳號名稱、Display_Name 與角色都
+//!    取自這一列，不看 token 的其他宣告（需求 5.6）。
 //!
 //! 每個請求都重新驗證與讀取，不沿用先前請求的結果（需求 6.1）。記錄不含 token；沒有 Valid_Access_Token 的原因只記
 //! 在 debug 層級。`Option<AuthUser>` 只把「沒有 Valid_Access_Token」當成未登入：無法讀取 JWKS 或 Database 時仍回應
@@ -198,6 +200,34 @@ where
     }))
 }
 
+/// 角色為 admin 的 `AuthUser`（design 5.2）。`AuthUser` 已依需求 5.1–5.6 驗證 token，並在這個請求中從
+/// `app.profiles` 讀取角色與 `disabled_at`，所以 Admin 被降為 member 之後的下一個請求就得到 403（需求 34.1）。
+/// 先判斷登入（401）再判斷角色（403），兩者都在 `ApiPath`、`ApiQuery` 與 `ApiJson` 的 400 之前（需求 34.2）。
+#[derive(Debug)]
+pub struct AdminUser(pub AuthUser);
+
+impl<S> FromRequestParts<S> for AdminUser
+where
+    S: Send + Sync,
+    PgPool: FromRef<S>,
+    Arc<dyn TokenVerifier>: FromRef<S>,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        // 401 在前（需求 34.2）
+        let user = <AuthUser as FromRequestParts<S>>::from_request_parts(parts, state).await?;
+        if user.role != Role::Admin {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "admin_required",
+                "需要管理員權限。",
+            ));
+        }
+        Ok(Self(user))
+    }
+}
+
 /// `Authorization: Bearer <token>` 中的 token（需求 5.1）：標頭只能有一個，值必須是 `Bearer`、一個空格與不是空的
 /// token；其他寫法是 `None`。
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -210,11 +240,13 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     (!token.is_empty()).then_some(token)
 }
 
-/// `app.profiles` 中 `user_id` 是 `id` 的帳號；沒有這一列時是 `None`。登入與換發 Session 也以它讀取 Session 的
-/// 帳號資料（`auth`）。
+/// `app.profiles` 中 `user_id` 是 `id` 的帳號；沒有這一列，或它是 Disabled_Account（`disabled_at` 不是空值）時是
+/// `None`。登入與換發 Session 也以它讀取 Session 的帳號資料（`auth`），所以 Disabled_Account 在 `AuthUser`、登入與
+/// 換發三處都等同沒有 `app.profiles`（需求 4.2、4.9、5.2、40.4，design 5.2）。
 pub async fn load_profile(db: &PgPool, id: UserId) -> sqlx::Result<Option<ProfileDto>> {
     let row = sqlx::query_as::<_, (String, String, String)>(
-        "select username, display_name, role from app.profiles where user_id = $1",
+        "select username, display_name, role from app.profiles \
+         where user_id = $1 and disabled_at is null",
     )
     .bind(id.0)
     .fetch_optional(db)

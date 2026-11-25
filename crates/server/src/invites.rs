@@ -51,6 +51,9 @@
 //!
 //! 呼叫端負責提交；任何一步失敗時交易被丟棄、回滾，連結仍未使用。
 //!
+//! 建立、撤銷與步驟 5 的加入在同一個交易中寫入一筆 Audit_Log（`audit`，需求 41.2，design 5.5）：目標是旅行名稱，
+//! 加入的補充說明是旅伴名字；步驟 3 已是成員時不寫。
+//!
 //! | 情況 | 狀態 | `code` | 訊息 |
 //! | --- | --- | --- | --- |
 //! | 連結不存在、已撤銷、已過期、旅行已被刪除，或已使用而使用者不是 Trip_Member（需求 30.13、6.16） | 404 | `invite_invalid` | 邀請連結無效或已過期。 |
@@ -72,6 +75,7 @@ use sqlx::types::{JsonValue, Uuid};
 use sqlx::PgPool;
 use time::{OffsetDateTime, UtcOffset};
 
+use crate::audit;
 use crate::commands::versioned_changes;
 use crate::error::ApiError;
 use crate::extract::{ApiJson, ApiPath, AuthUser, TripPath};
@@ -151,6 +155,9 @@ pub async fn create(
     .bind(i32::try_from(INVITE_TTL_DAYS).map_err(ApiError::internal)?)
     .fetch_one(&mut *tx)
     .await?;
+    // 需求 41.2：與建立在同一個交易
+    let title = repo::trip_title(&mut tx, trip).await?;
+    audit::write(&mut tx, Some(user.id), audit::INVITE_CREATE, &title, "").await?;
     tx.commit().await?;
     tracing::info!(%trip, user = %user.id, invite = %id, "invite created");
 
@@ -239,6 +246,9 @@ pub async fn revoke(
         .bind(invite)
         .execute(&mut *tx)
         .await?;
+    // 需求 41.2：與撤銷在同一個交易
+    let title = repo::trip_title(&mut tx, trip).await?;
+    audit::write(&mut tx, Some(user.id), audit::INVITE_REVOKE, &title, "").await?;
     tx.commit().await?;
     tracing::info!(%trip, user = %user.id, %invite, "invite revoked");
 
@@ -463,6 +473,15 @@ pub(crate) async fn join_in_tx(
         .bind(user.0)
         .execute(&mut **tx)
         .await?;
+    // 需求 41.2：目標是旅行名稱、補充說明是旅伴名字；步驟 3 的 AlreadyMember 不寫
+    audit::write(
+        tx,
+        Some(user),
+        audit::INVITE_JOIN,
+        &state.card.title,
+        &bound.name,
+    )
+    .await?;
     let cs = ChangeSet {
         trip,
         seq,
@@ -488,7 +507,8 @@ fn token_hash(token: &str) -> String {
 
 /// 回應中的時間：RFC 3339、UTC、毫秒（例如 `2026-01-08T03:04:05.678Z`）。
 /// 小數只取到毫秒（捨去微秒），與改用 time 之前的 chrono `to_rfc3339_opts(SecondsFormat::Millis, true)` 相同。
-fn timestamp(time: OffsetDateTime) -> String {
+/// 管理後台的時間欄位也使用它（design 5 的決定 1）。
+pub(crate) fn timestamp(time: OffsetDateTime) -> String {
     let utc = time.to_offset(UtcOffset::UTC);
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",

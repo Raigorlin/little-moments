@@ -32,6 +32,8 @@
 //! 路由器的狀態是 `AppState`（`state`）：連線池、Auth_Service 的用戶端、access token 的驗證器、設定與時鐘；登入狀態與
 //! 旅行資料都不保存在記憶體中（需求 1.11）。
 
+mod admin;
+mod audit;
 mod auth;
 mod commands;
 mod config;
@@ -45,6 +47,7 @@ mod extract;
 mod gateway;
 mod invites;
 mod repo;
+mod settings;
 mod state;
 mod static_files;
 mod trips;
@@ -53,7 +56,7 @@ use std::fmt::Display;
 use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
-use axum::routing::{any, delete, get, post};
+use axum::routing::{any, delete, get, patch, post};
 use axum::Router;
 use tokio::net::TcpListener;
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
@@ -164,6 +167,17 @@ fn api_routes() -> Router<AppState> {
         )
         .route("/invites/{token}", get(invites::preview))
         .route("/invites/{token}/join", post(invites::join))
+        // Admin_Endpoint（design 5.3）：每個處理函式的第一個擷取器是 AdminUser
+        .route("/admin/users", get(admin::list_users))
+        .route("/admin/users/{id}", patch(admin::update_user))
+        .route("/admin/users/{id}/password", post(admin::reset_password))
+        .route("/admin/users/{id}/disable", post(admin::disable_user))
+        .route("/admin/users/{id}/enable", post(admin::enable_user))
+        .route(
+            "/admin/settings",
+            get(admin::get_settings).patch(admin::patch_settings),
+        )
+        .route("/admin/audit", get(admin::list_audit))
 }
 
 /// 404 `api_not_found`：`/api/*` 下沒有這個路徑（需求 5.9）。

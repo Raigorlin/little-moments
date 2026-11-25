@@ -3,8 +3,8 @@
 //!
 //! | 模組 | 內容 |
 //! | --- | --- |
-//! | `profiles` | 註冊使用的 `app.profiles`（任務 14.1） |
-//! | `trips` | 旅行列的鎖與 Head：`lock_trip()`、`read_head()`、`person_of()` |
+//! | `profiles` | 註冊使用的 `app.profiles`（任務 14.1），以及管理後台的帳號查詢、鎖與登出（任務 30） |
+//! | `trips` | 旅行列的鎖與 Head：`lock_trip()`、`read_head()`、`person_of()`、`trip_title()` |
 //! | `load` | `load_trip()`：每張表一個 SELECT 讀出整趟旅行的 Trip_State |
 //! | `write` | `write_changes()`：把一個 Change_Set 的變化寫回各資料表；`insert_bound_person()` |
 //! | `changes` | Change_Log：`finish()`、`changeset_by_command()`、`changes_after()`，以及 `snapshot()` |
@@ -19,8 +19,11 @@ mod write;
 
 pub use changes::{changes_after, changeset_by_command, finish, snapshot};
 pub use load::load_trip;
-pub use profiles::{insert_profile, is_username_taken, lock_first_admin, profile_count};
-pub use trips::{lock_trip, person_of, read_head, TripHead};
+pub use profiles::{
+    active_admin_count, admin_user, delete_auth_sessions, insert_profile, is_username_taken,
+    list_admin_users, lock_first_admin, lock_profile, profile_count, trip_total,
+};
+pub use trips::{lock_trip, person_of, read_head, trip_title, TripHead};
 pub use write::{insert_bound_person, write_changes};
 
 /// 一個資料庫交易（`PgPool::begin()` 的結果）；以 `&mut **tx` 執行查詢。

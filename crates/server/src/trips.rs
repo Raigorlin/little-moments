@@ -23,7 +23,8 @@
 //!    `creator_name()` 檢查建立者的名字（Display_Name 經 Participant_Name）；不通過時 400，不寫入。
 //! 2. 一個交易：以 `INSERT … ON CONFLICT (id) DO NOTHING` 新增旅行（Seq 0、`next_ordinal` 1、Trip_Card 的
 //!    Row_Version 0），再以 `repo::insert_bound_person()` 帶 `user_id` 新增建立者的旅伴（角色「這趟的召集人」、
-//!    顏色 coral、Ordinal 0、Row_Version 0），提交。建立旅行不產生 Change_Set（Head 是 0）。
+//!    顏色 coral、Ordinal 0、Row_Version 0），寫入 `trip.create` 的 Audit_Log（需求 41.2），提交。建立旅行不產生
+//!    Change_Set（Head 是 0）。
 //! 3. 旅行 id 已被使用時 INSERT 不新增任何列：同一個 id 的另一個建立請求還沒提交時，INSERT 等它的交易結束，提交了
 //!    就不新增、回滾了就照常新增，所以同時送達的兩個請求也只建立一趟。不新增時放棄這個交易，再讀那趟旅行：請求者是
 //!    Trip_Owner 而且旅行沒有被刪除時，以目前 Database 的內容回傳既有的旅行（不依這次的請求修改）；否則 409
@@ -34,7 +35,7 @@
 //! 一個交易：`repo::lock_trip()` 鎖住旅行列；旅行不存在或已刪除時 404。以當下 Database 的資料判斷權限（需求 6.1）：
 //! 不是 Trip_Member 也不是 Admin 時 404；Collaborator（成員但不是 Trip_Manager）時 403 `deny_trip_delete`。通過時
 //! 設定 `deleted_at`，再以 `repo::finish()` 寫入 Seq 為 Head 加 1、`trip_deleted` 為真、沒有列變化的 Change_Set
-//! （trigger 在同一個交易中推送），提交後回應 200 `{}`。Trip_State 的列、Row_Version、Change_Log 既有的列與
+//! （trigger 在同一個交易中推送）與 `trip.delete` 的 Audit_Log（需求 41.2），提交後回應 200 `{}`。Trip_State 的列、Row_Version、Change_Log 既有的列與
 //! Invite_Link 都不變（需求 8.8）。這個 Change_Set 不是任何 Command 的結果，Command_Id 是 lm-server 產生的隨機
 //! UUID。兩個刪除同時送達時，後取得鎖的那一個讀到已設定 `deleted_at` 的列，`lock_trip()` 回傳 `None`，得到 404。
 //!
@@ -67,6 +68,7 @@ use sqlx::postgres::PgRow;
 use sqlx::types::{JsonValue, Uuid};
 use sqlx::{PgPool, Row as _};
 
+use crate::audit;
 use crate::error::ApiError;
 use crate::extract::{ApiJson, ApiQuery, AuthUser, TripPath};
 use crate::repo;
@@ -128,6 +130,8 @@ pub async fn create_trip(
         version: 0,
     };
     repo::insert_bound_person(&mut tx, trip, &creator, user.id).await?;
+    // 需求 41.2：只在實際建立時寫入（回傳既有旅行時不寫）
+    audit::write(&mut tx, Some(user.id), audit::TRIP_CREATE, &card.title, "").await?;
     tx.commit().await?;
     tracing::info!(%trip, user = %user.id, "trip created");
 
@@ -230,6 +234,9 @@ pub async fn delete_trip(
         trip_deleted: true,
     };
     repo::finish(&mut tx, trip, seq, head.next_ordinal, &cs).await?;
+    // 需求 41.2：與刪除在同一個交易
+    let title = repo::trip_title(&mut tx, trip).await?;
+    audit::write(&mut tx, Some(user.id), audit::TRIP_DELETE, &title, "").await?;
     tx.commit().await?;
     tracing::info!(%trip, user = %user.id, seq, "trip deleted");
 

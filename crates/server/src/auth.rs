@@ -21,13 +21,16 @@
 //!
 //! 1. lm-core 的 `account::check_signup()`：帳號名稱的格式與保留字、顯示名稱、密碼（需求 3.2 至 3.5）。LM_Web 的
 //!    註冊表單以同一份規則檢查（需求 3.14）。
-//! 2. 沒有邀請而 `LM_PUBLIC_SIGNUP` 是 `false`：不呼叫 Auth_Service（需求 3.7）。
+//! 2. 沒有邀請時以 `settings::public_signup()` 從 Database 讀取當下的 Registration_Policy（`app.settings` 的
+//!    `public_signup`，沒有時是 `LM_PUBLIC_SIGNUP` 的初始值，需求 37.2）：關閉時、或讀取失敗時都不呼叫 Auth_Service
+//!    （需求 3.7、3.11）。
 //! 3. 附邀請：`invites::check_usable()` 不加鎖檢查連結是 Active_Invite、旅行沒有被刪除（需求 30.13）；不通過時不呼叫
-//!    Auth_Service。這個註冊不受 `LM_PUBLIC_SIGNUP` 影響（需求 30.12）。
+//!    Auth_Service。這個註冊不讀也不受 Registration_Policy 影響（需求 30.12、37.8）。
 //! 4. 以 admin API 建立 email 為 Synthetic_Email、email 已確認的使用者：密碼原樣，`user_metadata` 是
 //!    `{"username": <帳號名稱>}`（需求 3.1）。
 //! 5. 一個交易：取得 advisory lock，`app.profiles` 沒有任何一列時角色是 admin、否則是 member（需求 3.8、3.9），新增
-//!    `app.profiles`（顯示名稱是經 Participant_Name 的值）；附邀請時以 `invites::join_in_tx()` 鎖住旅行、再驗證連結、
+//!    `app.profiles`（顯示名稱是經 Participant_Name 的值）並寫入 `account.register` 的 Audit_Log（需求 41.2）；
+//!    附邀請時以 `invites::join_in_tx()` 鎖住旅行、再驗證連結、
 //!    檢查旅伴名字與角色、新增綁定這個帳號的旅伴、標記連結已使用並寫入 Change_Set（需求 30.10、30.12）；提交。
 //! 6. 交易失敗時（沒有提交，所以也沒有旅伴、Change_Set 與連結的使用紀錄，不推送）刪除步驟 4 的使用者，使這個帳號
 //!    名稱可以再註冊，回應原本的錯誤（例如「邀請連結無效或已過期。」）；刪除也失敗時在記錄中寫下
@@ -40,11 +43,11 @@
 //! | --- | --- | --- | --- | --- |
 //! | 請求內容的格式不正確（需求 5.9） | 400 | `invalid_request` | `null` | 資料格式不正確。 |
 //! | 需求 3.2 至 3.5 | 400 | 見 lm-core 的 `account` | 見 lm-core 的 `account` | 見 lm-core 的 `account` |
-//! | 沒有邀請而 `LM_PUBLIC_SIGNUP` 是 `false`（需求 3.7） | 403 | `signup_invite_only` | `null` | 目前只接受以邀請連結註冊。 |
+//! | 沒有邀請而 Registration_Policy 是關閉（需求 3.7、37.2） | 403 | `signup_invite_only` | `null` | 目前只接受以邀請連結註冊。 |
 //! | 附邀請，連結不存在、已撤銷、已過期、已使用或旅行已被刪除（需求 30.13，步驟 3 或 5） | 404 | `invite_invalid` | `null` | 邀請連結無效或已過期。 |
 //! | 附邀請，旅伴名字或角色不符合需求 19.1–19.7（需求 30.15，步驟 5） | 400 或 409 | 見 lm-core 的 `Rejection` | 見 lm-core | 見 lm-core |
 //! | Auth_Service 已有這個 email，包括同時進行、先建立使用者的另一個註冊；或 `app.profiles` 已有這個帳號名稱（需求 3.6） | 409 | `username_taken` | `username` | 這個帳號名稱已被使用。 |
-//! | Auth_Service 拒收 email、無法連線或回報其他錯誤（需求 3.11）；步驟 3 或 5 的 Database 錯誤（需求 3.10） | 500 | `signup_unavailable` | `null` | 註冊暫時無法使用，請聯絡管理員。 |
+//! | Auth_Service 拒收 email、無法連線或回報其他錯誤（需求 3.11）；步驟 2、3 或 5 的 Database 錯誤（需求 3.10、37.2） | 500 | `signup_unavailable` | `null` | 註冊暫時無法使用，請聯絡管理員。 |
 //! | 已提交，但無法取得 Session（需求 3.16） | 503 | `signup_login_unavailable` | `null` | 帳號已建立，但暫時無法登入，請稍後到登入頁登入。 |
 //!
 //! 409 的 `field` 是 `username`，因為錯誤所指的是帳號名稱這個欄位（需求 5.5）。
@@ -92,8 +95,9 @@
 //!
 //! # 沒有 `app.profiles` 的使用者
 //!
-//! 登入或換發成功，但 `app.profiles` 沒有 Session 的使用者時（例如註冊的補償刪除失敗而留下的使用者，或
-//! `app.profiles` 已被刪除的 Account），這個 Session 不交給用戶端，所以另以 `tokio::spawn` 請 Auth_Service 撤銷它
+//! 登入或換發成功，但 `app.profiles` 沒有 Session 的使用者時（例如註冊的補償刪除失敗而留下的使用者、
+//! `app.profiles` 已被刪除的 Account，或 Disabled_Account：`load_profile()` 不讀停用的帳號，需求 40.4），這個
+//! Session 不交給用戶端，所以另以 `tokio::spawn` 請 Auth_Service 撤銷它
 //! （`logout`）；不等待結果，401 不因此延遲，撤銷失敗時只記錄。讀取 `app.profiles` 失敗時不撤銷：換發時 Auth_Service
 //! 已輪替 refresh token，用戶端之後仍可以原本的 refresh token 重試（需求 4.13），撤銷會讓它被登出。
 //!
@@ -130,6 +134,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 use lm_core::account::{self, Violation};
+use lm_core::admin::Policy;
 use lm_core::api::{
     InviteJoin, ProfileDto, RefreshRequest, SessionDto, SignupRequest, SignupResponse,
 };
@@ -140,11 +145,13 @@ use lm_supabase::gotrue::{AuthError, GoTrueSession};
 // 解析成它
 use sqlx::types::JsonValue;
 
+use crate::audit;
 use crate::config::Config;
 use crate::error::ApiError;
 use crate::extract::{load_profile, ApiJson, AuthUser};
 use crate::invites::{self, JoinError, Joined};
 use crate::repo;
+use crate::settings;
 use crate::state::AppState;
 
 /// `POST /api/auth/signup`（見模組說明）。
@@ -169,13 +176,21 @@ async fn signup(st: &AppState, request: SignupRequest) -> Result<SignupResponse,
     } = request;
     // 1. 需求 3.2 至 3.5；帳號名稱與密碼都原樣使用
     let display_name = account::check_signup(&username, &display_name, &password)?;
-    // 2. 需求 3.7
-    if invite.is_none() && !st.config.public_signup {
-        return Err(ApiError::new(
-            StatusCode::FORBIDDEN,
-            "signup_invite_only",
-            "目前只接受以邀請連結註冊。",
-        ));
+    // 2. 需求 3.7、37.2：每次都讀 Database 中的 Registration_Policy；附邀請的註冊不讀（需求 37.8）
+    if invite.is_none() {
+        let policy = settings::public_signup(&st.db, &st.config)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "could not read the public signup setting");
+                signup_unavailable()
+            })?;
+        if policy == Policy::Closed {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "signup_invite_only",
+                "目前只接受以邀請連結註冊。",
+            ));
+        }
     }
     // 3. 需求 30.13：先不加鎖檢查連結，步驟 5 的交易中會再驗證一次
     if let Some(invite) = &invite {
@@ -263,6 +278,28 @@ async fn create_profile(
             Role::Member
         };
         repo::insert_profile(&mut tx, user, username, display_name, role).await?;
+        // 需求 41.2：與新增 app.profiles 在同一個交易
+        let detail = format!(
+            "{}{}",
+            if role == Role::Admin {
+                "管理員"
+            } else {
+                "成員"
+            },
+            if invite.is_some() {
+                "・經邀請連結"
+            } else {
+                ""
+            }
+        );
+        audit::write(
+            &mut tx,
+            Some(user),
+            audit::ACCOUNT_REGISTER,
+            &format!("@{username}"),
+            &detail,
+        )
+        .await?;
         let joined = match invite {
             Some(invite) => Some(
                 invites::join_in_tx(
@@ -363,7 +400,8 @@ pub async fn refresh_handler(
     Ok(Json(session_dto(&st, session, profile)))
 }
 
-/// 登入或換發得到的 Session 的帳號資料（需求 4.2、4.9）：`app.profiles` 沒有 Session 的使用者時是 `None`，並撤銷這個
+/// 登入或換發得到的 Session 的帳號資料（需求 4.2、4.9、40.4）：`app.profiles` 沒有 Session 的使用者，或它是
+/// Disabled_Account 時是 `None`，並撤銷這個
 /// Session（見模組說明的「沒有 `app.profiles` 的使用者」）；讀取失敗時是 500。
 async fn session_profile(
     st: &AppState,
@@ -374,8 +412,8 @@ async fn session_profile(
         let user = session.user_id;
         tracing::warn!(
             %user,
-            "Auth_Service user has no app.profiles row, so its session is revoked instead of returned; \
-             delete this Auth_Service user if the account was removed"
+            "Auth_Service user has no app.profiles row or its account is disabled, so its session is \
+             revoked instead of returned; delete this Auth_Service user if the account was removed"
         );
         let auth = st.auth.clone();
         let access_token = session.access_token.clone();

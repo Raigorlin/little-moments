@@ -19,7 +19,7 @@
 //! | `SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_KEY` | 是 | | |
 //! | `SUPABASE_JWT_SECRET` | 否 | 只以 JWKS 驗證，HS256 的 access token 一律無效 | |
 //! | `LM_AUTH_EMAIL_DOMAIN` | 否 | `users.little-moments.invalid` | |
-//! | `LM_PUBLIC_SIGNUP` | 否 | `true` | 只接受 `true` 與 `false` |
+//! | `LM_PUBLIC_SIGNUP` | 否 | 沒有初始值：公開註冊預設開放（需求 37.2、37.3） | 只接受 `true` 與 `false`；只是公開註冊的初始值，Admin 在管理後台儲存之後不再生效 |
 //! | `LM_STATIC_DIR` | 是 | | |
 //!
 //! 不通過時一次列出每個未設定的必要變數與每個格式不符的變數，依 `.env.example` 的順序，附上原因與值的來源（環境或
@@ -136,8 +136,10 @@ pub struct Config {
     pub supabase_jwt_secret: Option<Secret>,
     /// `LM_AUTH_EMAIL_DOMAIN`：合成 email 的網域，未設定時是 users.little-moments.invalid（需求 3.12）。
     pub auth_email_domain: String,
-    /// `LM_PUBLIC_SIGNUP`：是否開放不經邀請的註冊，未設定時是 true（需求 3.12）。
-    pub public_signup: bool,
+    /// `LM_PUBLIC_SIGNUP`：公開註冊的初始值（Registration_Seed，需求 3.12、37.2）；未設定時是 `None`，由
+    /// `lm_core::admin::resolve_public_signup()` 分出 `seed` 與 `default`（需求 37.3）。`app.settings` 有
+    /// `public_signup` 這一列時不再使用（`settings`）。
+    pub public_signup: Option<bool>,
     /// `LM_STATIC_DIR`：LM_Web 的靜態檔目錄。
     pub static_dir: PathBuf,
 }
@@ -255,7 +257,7 @@ impl Config {
             Ok(value.unwrap_or(DEFAULT_AUTH_EMAIL_DOMAIN).to_owned())
         });
         let public_signup = checker.check(LM_PUBLIC_SIGNUP, Echo::Value, |value| {
-            value.map_or(Ok(true), parse_public_signup)
+            value.map(parse_public_signup).transpose()
         });
         let static_dir = checker.check(LM_STATIC_DIR, Echo::Nothing, |value| {
             required(value).map(PathBuf::from)
