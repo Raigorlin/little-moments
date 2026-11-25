@@ -412,8 +412,9 @@ fn ShoppingLine(id: ShoppingId, item: Memo<ShoppingItem>) -> impl IntoView {
     };
 
     view! {
-        // 沒有勾選框：已買或移回清單是操作按鈕中的第一個。手機版（≤760px）往右滑就是按下它，往左滑（或「‹」按鈕）
-        // 顯示已買齊／移回、編輯與移除（swipe/）；桌面版直接顯示這些按鈕
+        // 沒有勾選框：已買或移回清單是操作按鈕中的第一個。桌面版直接顯示這些按鈕；手機版（≤760px）往右滑就是按下它，
+        // 往左滑（或「‹」按鈕）只顯示編輯與移除（swipe/ 只複製帶 `data-row-action` 的按鈕），已買按鈕在畫面上隱藏，
+        // 但鍵盤與螢幕報讀器仍可以操作（shopping-swipe.css）
         <div
             class=move || if purchased.get() { "shopping-row done" } else { "shopping-row" }
             data-swipe-row=""
@@ -489,7 +490,6 @@ fn ShoppingLine(id: ShoppingId, item: Memo<ShoppingItem>) -> impl IntoView {
                 <button
                     type="button"
                     class="icon-button shopping-purchase-button"
-                    data-row-action=move || if purchased.get() { "unpurchase" } else { "purchase" }
                     data-swipe-right-action=""
                     aria-label=move || {
                         if purchased.get() {

@@ -1,11 +1,15 @@
 /* 採買清單（Shopping_Tab）在 Bun 之外新增的樣式：手機版往右滑切換已買，以及清單最下方預設收合的「已買齊」區。
    styles.css 必須與 Bun 的 src/styles.css 逐位元組相同，所以放在這裡。 */
 
-/* 往右滑時露出在列左側的標示；寬度跟著 --swipe-x（只取正值），放開後與列一起滑回。 */
-.swipe-row[data-swipe-right]::before{content:attr(data-swipe-right);position:absolute;z-index:0;inset:0 auto 0 0;display:none;align-items:center;width:max(0px,var(--swipe-x));overflow:hidden;padding:0;text-indent:16px;white-space:nowrap;background:var(--green);color:var(--ink);font-size:14px;font-weight:700;pointer-events:none}
+/* 往右滑時露出在列左側的標示：上方是平面的購物車圖示（未買是購物車打勾，已買的「移回清單」是購物車加返回箭頭），
+   以 "\A" 換行後是文字；寬度跟著 --swipe-x（只取正值），放開後與列一起滑回。圖示是 28px 的 SVG，顏色依主題固定寫在 data URI 裡
+   （與 styles.css 的 --select-arrow 相同做法）：淺色是 --ink 的線條與 --paper 的車籃，深色是 --ink 的車籃與 --paper 的勾。 */
+.swipe-row[data-swipe-right]::before{content:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='%233e3a39' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 3.8h2.4l.6 2.6'/%3E%3Cpath d='M5.5 6.4h14.2l-1.6 7.1a1.5 1.5 0 0 1-1.5 1.2H8.4a1.5 1.5 0 0 1-1.5-1.2z' fill='%23fffcf6'/%3E%3Cpath d='m7.6 14.7.5 2.3h9.6'/%3E%3Ccircle cx='9' cy='19.6' r='1.5' fill='%233e3a39'/%3E%3Ccircle cx='16.6' cy='19.6' r='1.5' fill='%233e3a39'/%3E%3Cpath d='m9.7 10.1 2 2 3.9-3.9' stroke-width='2'/%3E%3C/svg%3E") "\A" attr(data-swipe-right);position:absolute;z-index:0;inset:0 auto 0 0;display:none;flex-direction:column;align-items:flex-start;justify-content:center;gap:2px;width:max(0px,var(--swipe-x));overflow:hidden;padding:0 0 0 min(16px,max(0px,var(--swipe-x)));white-space:pre;background:var(--green);color:var(--ink);font-size:14px;font-weight:700;line-height:1.2;pointer-events:none}
+.swipe-row.done[data-swipe-right]::before{content:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='%233e3a39' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 3.8h2.4l.6 2.6'/%3E%3Cpath d='M5.5 6.4h14.2l-1.6 7.1a1.5 1.5 0 0 1-1.5 1.2H8.4a1.5 1.5 0 0 1-1.5-1.2z' fill='%23fffcf6'/%3E%3Cpath d='m7.6 14.7.5 2.3h9.6'/%3E%3Ccircle cx='9' cy='19.6' r='1.5' fill='%233e3a39'/%3E%3Ccircle cx='16.6' cy='19.6' r='1.5' fill='%233e3a39'/%3E%3Cpath d='M11.4 7.9 9.6 9.7l1.8 1.8M9.6 9.7h4.4a1.7 1.7 0 0 1 0 3.4h-1.2' stroke-width='1.8'/%3E%3C/svg%3E") "\A" attr(data-swipe-right)}
 /* 深色主題：淺色的 --ink 字在 --green 上對比不足，改用較深的綠色（對比約 4.6:1）。 */
-:root[data-theme=dark] .swipe-row[data-swipe-right]::before{background:#557042}
-@media(max-width:760px){.swipe-row[data-swipe-right]::before{display:flex;transition:width .26s cubic-bezier(.22,.61,.36,1)}.swipe-row[data-swipe-right].swipe-dragging::before{transition:none}}
+:root[data-theme=dark] .swipe-row[data-swipe-right]::before{background:#557042;content:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='%23f1ebdd' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 3.8h2.4l.6 2.6'/%3E%3Cpath d='M5.5 6.4h14.2l-1.6 7.1a1.5 1.5 0 0 1-1.5 1.2H8.4a1.5 1.5 0 0 1-1.5-1.2z' fill='%23f1ebdd'/%3E%3Cpath d='m7.6 14.7.5 2.3h9.6'/%3E%3Ccircle cx='9' cy='19.6' r='1.5' fill='%23f1ebdd'/%3E%3Ccircle cx='16.6' cy='19.6' r='1.5' fill='%23f1ebdd'/%3E%3Cpath d='m9.7 10.1 2 2 3.9-3.9' stroke='%23252b28' stroke-width='2'/%3E%3C/svg%3E") "\A" attr(data-swipe-right)}
+:root[data-theme=dark] .swipe-row.done[data-swipe-right]::before{content:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='%23f1ebdd' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 3.8h2.4l.6 2.6'/%3E%3Cpath d='M5.5 6.4h14.2l-1.6 7.1a1.5 1.5 0 0 1-1.5 1.2H8.4a1.5 1.5 0 0 1-1.5-1.2z' fill='%23f1ebdd'/%3E%3Cpath d='m7.6 14.7.5 2.3h9.6'/%3E%3Ccircle cx='9' cy='19.6' r='1.5' fill='%23f1ebdd'/%3E%3Ccircle cx='16.6' cy='19.6' r='1.5' fill='%23f1ebdd'/%3E%3Cpath d='M11.4 7.9 9.6 9.7l1.8 1.8M9.6 9.7h4.4a1.7 1.7 0 0 1 0 3.4h-1.2' stroke='%23252b28' stroke-width='1.8'/%3E%3C/svg%3E") "\A" attr(data-swipe-right)}
+@media(max-width:760px){.swipe-row[data-swipe-right]::before{display:flex;transition:width .26s cubic-bezier(.22,.61,.36,1),padding-left .26s cubic-bezier(.22,.61,.36,1)}.swipe-row[data-swipe-right].swipe-dragging::before{transition:none}}
 @media(prefers-reduced-motion:reduce){.swipe-row[data-swipe-right]::before{transition:none}}
 
 /* 品項列沒有勾選框：名稱放在 .shopping-item-name（取代 styles.css 中 .shopping-row>label 的位置），
@@ -15,8 +19,9 @@
 .shopping-row.done>.shopping-item-name{color:var(--muted)}
 .shopping-row{grid-template-columns:minmax(0,1fr) 156px minmax(64px,100px) 132px}
 @media(max-width:580px){.shopping-row{grid-template-columns:minmax(0,1fr) 88px}.shopping-row>.shopping-item-name{grid-column:1;grid-row:1}}
-/* 手機版的可滑動列：已買齊／移回清單由往右滑與往左滑的面板操作，原本的按鈕不佔位置（往右滑仍是按下它）。 */
-@media(max-width:760px){.swipe-row .shopping-purchase-button[data-swipe-original]{display:none}.shopping-row.swipe-row{grid-template-columns:minmax(0,1fr) 156px minmax(64px,100px) 88px}}
+/* 手機版的可滑動列：已買齊／移回清單由往右滑操作（就是按下這個按鈕），往左滑的面板只有編輯與移除。按鈕在畫面上隱藏、
+   不佔位置，但仍在 Tab 順序與無障礙樹中；用鍵盤移到它時顯示在操作欄的左側。 */
+@media(max-width:760px){.swipe-row .shopping-purchase-button{position:absolute;width:1px;min-width:0;height:1px;min-height:0;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.swipe-row .shopping-purchase-button:focus-visible{z-index:2;top:50%;left:0;width:44px;min-width:44px;height:44px;min-height:44px;margin:-22px 0 0;padding:10px;overflow:visible;clip-path:none;background:var(--paper);color:var(--ink)}.shopping-row.swipe-row{grid-template-columns:minmax(0,1fr) 156px minmax(64px,100px) 88px}}
 @media(max-width:580px){.shopping-row.swipe-row{grid-template-columns:minmax(0,1fr) 88px}}
 
 /* 「已買齊」區：標題與分類標題相同，可以點選展開或收合。 */

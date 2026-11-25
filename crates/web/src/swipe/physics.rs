@@ -191,23 +191,14 @@ pub fn should_suppress_click(axis: Option<Axis>, total_dx: f64) -> bool {
 pub enum ActionRole {
     Edit,
     Delete,
-    /// Marks a shopping item purchased (not part of Bun).
-    Purchase,
-    /// Moves a purchased shopping item back to the list (not part of Bun).
-    Unpurchase,
     Other,
 }
 
 /// Requirement 4.3: Edit → 「編輯」; otherwise a label containing 「移除」 or
 /// 「刪除」 → 「刪除」; else 「操作」. The Delete role does not change the label.
-/// The shopping roles, which Bun does not have, are 「已買齊」 and 「移回」.
 pub fn swipe_label(role: ActionRole, label: &str) -> &'static str {
     if role == ActionRole::Edit {
         "編輯"
-    } else if role == ActionRole::Purchase {
-        "已買齊"
-    } else if role == ActionRole::Unpurchase {
-        "移回"
     } else if label.contains("移除") || label.contains("刪除") {
         "刪除"
     } else {
