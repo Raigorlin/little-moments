@@ -1,0 +1,18 @@
+/* 採買清單（Shopping_Tab）在 Bun 之外新增的樣式：手機版往右滑切換已買，以及清單最下方預設收合的「已買齊」區。
+   styles.css 必須與 Bun 的 src/styles.css 逐位元組相同，所以放在這裡。 */
+
+/* 往右滑時露出在列左側的標示；寬度跟著 --swipe-x（只取正值），放開後與列一起滑回。 */
+.swipe-row[data-swipe-right]::before{content:attr(data-swipe-right);position:absolute;z-index:0;inset:0 auto 0 0;display:none;align-items:center;width:max(0px,var(--swipe-x));overflow:hidden;padding:0;text-indent:16px;white-space:nowrap;background:var(--green);color:var(--ink);font-size:14px;font-weight:700;pointer-events:none}
+@media(max-width:760px){.swipe-row[data-swipe-right]::before{display:flex;transition:width .26s cubic-bezier(.22,.61,.36,1)}.swipe-row[data-swipe-right].swipe-dragging::before{transition:none}}
+@media(prefers-reduced-motion:reduce){.swipe-row[data-swipe-right]::before{transition:none}}
+
+/* 「已買齊」區：標題與分類標題相同，可以點選展開或收合。 */
+.shopping-purchased>summary{display:flex;align-items:center;gap:10px;min-height:44px;padding:10px 17px;background:var(--soft);border-bottom:1px solid var(--line);font-size:17px;font-weight:700;cursor:pointer;list-style:none}
+.shopping-purchased>summary::-webkit-details-marker{display:none}
+.shopping-purchased>summary::before{content:"";flex:none;width:8px;height:8px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg);transition:transform .2s}
+.shopping-purchased[open]>summary::before{transform:rotate(45deg)}
+.shopping-purchased>summary>span{margin-left:auto;font-size:14px;font-weight:400;color:var(--muted)}
+.shopping-purchased:not([open])>summary{border-bottom:0}
+.shopping-purchased>summary:focus-visible{outline:3px solid var(--focus);outline-offset:-3px}
+.shopping-category+.shopping-purchased>summary{border-top:1px solid var(--line)}
+@media(prefers-reduced-motion:reduce){.shopping-purchased>summary::before{transition:none}}

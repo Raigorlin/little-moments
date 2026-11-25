@@ -14,6 +14,11 @@ use super::physics::{is_danger, swipe_label, ActionRole};
 pub const ROW: &str = "[data-swipe-row]";
 /// A Row_Action inside a Schedule_Row.
 pub const ROW_ACTION: &str = "[data-row-action]";
+/// A Schedule_Row that can also be swiped to the right; the attribute's value
+/// is the label shown behind the row while it is dragged (not part of Bun).
+pub const RIGHT_ROW: &str = "[data-swipe-right]";
+/// The control a right swipe clicks, inside a `RIGHT_ROW`.
+pub const RIGHT_ACTION: &str = "[data-swipe-right-action]";
 /// A pointer going down inside one of these does not start a gesture (Requirement 5.1).
 pub const INTERACTIVE: &str = "button,a,input,select,textarea,summary";
 

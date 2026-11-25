@@ -24,10 +24,11 @@ use web_sys::{
 };
 
 use super::physics::{
-    prune_samples, release_velocity, resolve_axis, resolve_release, should_suppress_click,
-    track_offset, Axis, Release, Sample, ACTION_WIDTH, CLICK_SUPPRESS_MS, SETTLE_FALLBACK_MS,
+    prune_samples, release_velocity, resolve_axis, resolve_release, resolve_right_release,
+    should_suppress_click, track_offset, track_right, Axis, Release, Sample, ACTION_WIDTH,
+    CLICK_SUPPRESS_MS, SETTLE_FALLBACK_MS,
 };
-use super::rows::{self, INTERACTIVE, ROW, ROW_ACTION};
+use super::rows::{self, INTERACTIVE, RIGHT_ACTION, RIGHT_ROW, ROW, ROW_ACTION};
 
 const TOUCH_LAYOUT: &str = "(max-width: 760px)";
 const REDUCED_MOTION: &str = "(prefers-reduced-motion: reduce)";
@@ -83,6 +84,9 @@ struct Gesture {
     start_offset: f64,
     end_stop: f64,
     was_open: bool,
+    /// The row was closed and has a Right_Action, so it can be dragged to the
+    /// right (not part of Bun's controller).
+    right: bool,
     axis: Option<Axis>,
     offset: f64,
     samples: Vec<Sample>,
@@ -412,14 +416,19 @@ fn on_pointer_down(inner: &Inner, env: &Env, event: &Event) {
     else {
         return;
     };
-    if closest(&target, INTERACTIVE).is_some() {
+    // A right swipe usually starts on the Right_Action itself (the row's
+    // checkbox, at its left edge); a tap on it still reaches it, because only
+    // a horizontal gesture suppresses the click that follows.
+    if closest(&target, INTERACTIVE).is_some() && closest(&target, RIGHT_ACTION).is_none() {
         return;
     }
     let end_stop = read_end_stop(&row);
     // From the state class, so the start is exactly 0 or End_Stop even mid-transition.
     let was_open = row.class_list().contains("swipe-open");
     let start_offset = if was_open { end_stop } else { 0.0 };
+    let right = !was_open && row.matches(RIGHT_ROW).unwrap_or(false);
     state.gesture = Some(Gesture {
+        right,
         writer: FrameWriter::new(&env.window, &row),
         row,
         pointer_id: number_prop(event, "pointerId"),
@@ -480,7 +489,11 @@ fn on_pointer_move(inner: &Inner, env: &Env, event: &Event) {
         }
 
         event.prevent_default();
-        gesture.offset = track_offset(gesture.start_offset, dx, gesture.end_stop, env.reduced());
+        gesture.offset = if gesture.right && dx > 0.0 {
+            track_right(dx, env.reduced())
+        } else {
+            track_offset(gesture.start_offset, dx, gesture.end_stop, env.reduced())
+        };
         gesture.writer.push(gesture.offset);
 
         // The axis is sticky, so this is the first horizontal resolution.
@@ -492,7 +505,7 @@ fn on_pointer_move(inner: &Inner, env: &Env, event: &Event) {
 }
 
 fn on_pointer_up(inner: &Inner, env: &Env, event: &Event) {
-    let (gesture, open, total_dx) = {
+    let (gesture, open, total_dx, right_action) = {
         let mut state = inner.state.borrow_mut();
         let Some(gesture) = state.gesture.as_ref() else {
             return;
@@ -511,23 +524,31 @@ fn on_pointer_up(inner: &Inner, env: &Env, event: &Event) {
                 t: env.performance.now(),
             },
         );
-        let open = resolve_release(&Release {
-            offset: gesture.offset,
-            end_stop: gesture.end_stop,
-            velocity,
-            total_dx,
-            total_dy,
-            axis: gesture.axis,
-            was_open: gesture.was_open,
-        });
+        // A row dragged to the right of its resting place never opens; it runs
+        // its Right_Action when released far enough or flicked.
+        let dragged_right = gesture.right && gesture.offset > 0.0;
+        let right_action = dragged_right && resolve_right_release(gesture.offset, velocity);
+        let open = !dragged_right
+            && resolve_release(&Release {
+                offset: gesture.offset,
+                end_stop: gesture.end_stop,
+                velocity,
+                total_dx,
+                total_dy,
+                axis: gesture.axis,
+                was_open: gesture.was_open,
+            });
         gesture.writer.cancel();
         // Cleared before the settle batch, so no listener sees a live gesture.
         let Some(gesture) = state.gesture.take() else {
             return;
         };
-        (gesture, open, total_dx)
+        (gesture, open, total_dx, right_action)
     };
     settle_gesture(inner, gesture.row.as_ref(), open);
+    if right_action {
+        run_right_action(inner, gesture.row.as_ref());
+    }
     if should_suppress_click(gesture.axis, total_dx) {
         inner.state.borrow_mut().suppress_click_until = env.performance.now() + CLICK_SUPPRESS_MS;
     }
@@ -611,6 +632,27 @@ fn original_for(copy: &Element) -> Option<HtmlElement> {
         .dyn_into::<HtmlElement>()
         .ok()?;
     (original.is_connected() && !original.has_attribute("disabled")).then_some(original)
+}
+
+/// Clicks the row's enabled, connected `[data-swipe-right-action]` control,
+/// the same control a keyboard or screen-reader user operates directly, so a
+/// right swipe goes through the row's own handler. The nested click passes
+/// through `on_click` untouched.
+fn run_right_action(inner: &Inner, row: &Element) {
+    if !row.is_connected() {
+        return;
+    }
+    let Some(action) = query_all(row, RIGHT_ACTION)
+        .into_iter()
+        .find(|action| closest(action, ".swipe-actions").is_none())
+        .and_then(|action| action.dyn_into::<HtmlElement>().ok())
+        .filter(|action| !action.has_attribute("disabled"))
+    else {
+        return;
+    };
+    inner.state.borrow_mut().delegating = true;
+    action.click();
+    inner.state.borrow_mut().delegating = false;
 }
 
 /// Touch_Layout changed in either direction (Requirement 5.15).

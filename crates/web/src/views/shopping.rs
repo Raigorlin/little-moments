@@ -92,8 +92,9 @@ fn use_shopping() -> ShoppingContext {
     expect_context::<ShoppingContext>()
 }
 
-fn category_of(item: &ShoppingItem) -> Category {
-    item.category
+/// 品項所在的分類組；已買的品項不在任何分類組，而在清單最下方的「已買」區（`None`）。
+fn open_category_of(item: &ShoppingItem) -> Option<Category> {
+    (!item.purchased).then_some(item.category)
 }
 
 /// 料理依需求 24.1 的順序：日期、餐次、Ordinal。
@@ -157,7 +158,12 @@ pub fn ShoppingTab() -> impl IntoView {
         removal: LinkedRemoval::new(),
     });
 
-    let groups = stores.shopping.grouped(category_of);
+    let groups = stores.shopping.grouped(open_category_of);
+    // 已買的品項依分類與 Ordinal（`RowStore` 的排序鍵），放在清單最下方預設收合的「已買」區
+    let bought = stores.shopping.filtered(|item| item.purchased);
+    let any_bought = Memo::new(move |_| bought.with(|keys| !keys.is_empty()));
+    let names = group_names(groups);
+    let open_groups = move || names().into_iter().flatten().collect::<Vec<Category>>();
     let progress = Memo::new(move |_| {
         handle
             .with_view(|state| {
@@ -217,10 +223,11 @@ pub fn ShoppingTab() -> impl IntoView {
                     })
             }}
             <For
-                each=group_names(groups)
+                each=open_groups
                 key=|category| *category
                 children=move |category| view! { <CategoryGroup category groups /> }
             />
+            {move || any_bought.get().then(|| view! { <PurchasedGroup keys=bought /> })}
             {move || {
                 empty
                     .get()
@@ -243,9 +250,9 @@ pub fn ShoppingTab() -> impl IntoView {
 #[component]
 fn CategoryGroup(
     category: Category,
-    groups: Memo<Vec<(Category, Vec<ShoppingId>)>>,
+    groups: Memo<Vec<(Option<Category>, Vec<ShoppingId>)>>,
 ) -> impl IntoView {
-    let members = group_keys(groups, category);
+    let members = group_keys(groups, Some(category));
     let keys = Memo::new(move |_| members());
     view! {
         <section class="shopping-category">
@@ -259,6 +266,25 @@ fn CategoryGroup(
                 children=move |id| view! { <ShoppingRow id /> }
             />
         </section>
+    }
+}
+
+/// 清單最下方的「已買齊」區：預設收合，標題旁是「{N} 項」；品項依分類與 Ordinal。取消勾選（或往右滑）的品項回到
+/// 它的分類組。
+#[component]
+fn PurchasedGroup(keys: Memo<Vec<ShoppingId>>) -> impl IntoView {
+    view! {
+        <details class="shopping-category shopping-purchased">
+            <summary>
+                "已買齊"
+                <span>{move || format!("{} 項", keys.with(Vec::len))}</span>
+            </summary>
+            <For
+                each=move || keys.get()
+                key=|id| *id
+                children=move |id| view! { <ShoppingRow id /> }
+            />
+        </details>
     }
 }
 
@@ -391,11 +417,17 @@ fn ShoppingLine(id: ShoppingId, item: Memo<ShoppingItem>) -> impl IntoView {
     };
 
     view! {
-        <div class=move || if purchased.get() { "shopping-row done" } else { "shopping-row" }>
+        // 手機版（≤760px）往左滑顯示編輯與移除、往右滑切換已買（swipe/）；勾選框與「‹」按鈕是不必滑動的替代方式
+        <div
+            class=move || if purchased.get() { "shopping-row done" } else { "shopping-row" }
+            data-swipe-row=""
+            data-swipe-right=move || if purchased.get() { "移回清單" } else { "已買齊" }
+        >
             <label>
                 <input
                     node_ref=check
                     type="checkbox"
+                    data-swipe-right-action=""
                     prop:checked=move || purchased.get()
                     aria-label=move || format!("{}已買齊", name.get())
                     on:change=toggle
@@ -469,6 +501,7 @@ fn ShoppingLine(id: ShoppingId, item: Memo<ShoppingItem>) -> impl IntoView {
                 <button
                     type="button"
                     class="icon-button"
+                    data-row-action="edit"
                     aria-label=move || format!("編輯 {}", name.get())
                     on:click=edit
                 >
@@ -481,6 +514,7 @@ fn ShoppingLine(id: ShoppingId, item: Memo<ShoppingItem>) -> impl IntoView {
                                 <button
                                     type="button"
                                     class="icon-button meal-remove-button"
+                                    data-row-action="delete"
                                     aria-label=move || format!("移除 {}", name.get())
                                     on:click=remove
                                 >

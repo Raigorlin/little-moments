@@ -23,6 +23,13 @@ pub const CLICK_SUPPRESS_MS: f64 = 450.0;
 /// Fallback that clears `.swipe-settling` when `transitionend` never fires.
 pub const SETTLE_FALLBACK_MS: u32 = 320;
 
+/// Linear travel of a right swipe (Right_Action) before the rubber band.
+pub const RIGHT_STOP: f64 = 96.0;
+/// A right swipe released at or past this offset runs the Right_Action.
+pub const RIGHT_COMMIT: f64 = 72.0;
+/// A rightward flick runs the Right_Action once it has travelled this far.
+pub const RIGHT_FLICK_MIN: f64 = 24.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Axis {
     Horizontal,
@@ -65,6 +72,31 @@ pub fn track_offset(start: f64, dx: f64, end_stop: f64, reduced: bool) -> f64 {
     }
     let overshoot = end_stop - raw; // positive
     end_stop - RUBBER_MAX.min(overshoot * RUBBER_RESIST)
+}
+
+/// The offset of a closed row dragged to the right by `dx`: 0 for a leftward
+/// `dx`, 1:1 up to `RIGHT_STOP`, then the same rubber band as `track_offset`,
+/// or a hard clamp under reduced motion. Not part of Bun's controller.
+pub fn track_right(dx: f64, reduced: bool) -> f64 {
+    if dx <= 0.0 {
+        return 0.0;
+    }
+    if dx <= RIGHT_STOP {
+        return dx;
+    }
+    if reduced {
+        return RIGHT_STOP;
+    }
+    RIGHT_STOP + RUBBER_MAX.min((dx - RIGHT_STOP) * RUBBER_RESIST)
+}
+
+/// Whether a right swipe released at `offset` runs the Right_Action: far
+/// enough, or a rightward flick that has left the dead zone.
+pub fn resolve_right_release(offset: f64, velocity: Option<f64>) -> bool {
+    if offset >= RIGHT_COMMIT {
+        return true;
+    }
+    offset >= RIGHT_FLICK_MIN && velocity.is_some_and(|velocity| velocity >= FLICK_THRESHOLD)
 }
 
 /// `sampleVelocity`: px/ms over the final `window` ms, negative leftward.
@@ -177,4 +209,37 @@ pub fn swipe_label(role: ActionRole, label: &str) -> &'static str {
 /// Requirement 4.4: the original has class `danger`, or the swipe label is 「刪除」.
 pub fn is_danger(has_danger_class: bool, swipe_label: &str) -> bool {
     has_danger_class || swipe_label == "刪除"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn right_track_is_linear_then_rubber_banded() {
+        assert_eq!(track_right(-30.0, false), 0.0);
+        assert_eq!(track_right(0.0, false), 0.0);
+        assert_eq!(track_right(50.0, false), 50.0);
+        assert_eq!(track_right(RIGHT_STOP, false), RIGHT_STOP);
+        assert_eq!(track_right(RIGHT_STOP + 100.0, false), RIGHT_STOP + 30.0);
+        assert_eq!(
+            track_right(RIGHT_STOP + 1000.0, false),
+            RIGHT_STOP + RUBBER_MAX
+        );
+        assert_eq!(track_right(RIGHT_STOP + 100.0, true), RIGHT_STOP);
+    }
+
+    #[test]
+    fn right_release_needs_distance_or_a_flick() {
+        assert!(resolve_right_release(RIGHT_COMMIT, None));
+        assert!(resolve_right_release(RIGHT_COMMIT, Some(-1.0)));
+        assert!(!resolve_right_release(RIGHT_COMMIT - 1.0, None));
+        assert!(!resolve_right_release(RIGHT_COMMIT - 1.0, Some(0.1)));
+        assert!(resolve_right_release(
+            RIGHT_FLICK_MIN,
+            Some(FLICK_THRESHOLD)
+        ));
+        assert!(!resolve_right_release(RIGHT_FLICK_MIN - 1.0, Some(2.0)));
+        assert!(!resolve_right_release(40.0, Some(-FLICK_THRESHOLD)));
+    }
 }
