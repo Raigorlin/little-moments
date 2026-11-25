@@ -2017,6 +2017,43 @@ v1.1.5 到 v2.0.0 是全新開始：以 Bun 的 `lm-deploy` 備份並封存到 `
 - Realtime 只在第一次啟動時建立 tenant；更換 `LM_JWT_SECRET`／`LM_JWKS` 後是否需要更新 tenant 設定尚未在實機確認。
 - 以上元件的 Docker、Jenkins 與 Deploy_Host 行為只以靜態測試、fake docker 的 bats 與 `docker-compose config` 驗證，實機檢查清單見 `deploy/README.md` 的「只能在實際主機或 Jenkins 執行的檢查」。
 
+### 31. rust 分支建置 #5 的 Gitleaks 測試假值與歷史起點移動（新增；Req 6.1、6.4、6.10）
+
+#### 31.1 現況
+
+Jenkins `ci/little-moments` 的 `rust` 建置 #5（commit `4b5a1697fcdb83307f683fb71f57a6806ebbe126`）在 Security Scan 的「安全」關卡失敗：`evaluation.json` 為 `pass: false`，55 筆結果中 12 筆未處理，都是 Gitleaks 8.30.1 預設規則在 `tests/ci-scrub-dir.test.js` 的結果。同樣 6 行各出現兩次：`gitleaks dir` 一次、`gitleaks git` 一次（commit `65df54e514b3da26a0b8c8535648c22d1e870919`，「feat(ci): Jenkins CI for rust branches and main releases of the Rust version」）。`rust` 沒有成功的建置，`GIT_PREVIOUS_SUCCESSFUL_COMMIT` 為空，歷史範圍是 `c084474..4b5a169`（126 個 commit）。
+
+| 行 | 規則 | 內容（不照抄值） | 判定 |
+|---|---|---|---|
+| 127 | `generic-api-key` | `.env` 測試文字的 `LM_DB_PASSWORD` 行：依序的 16 個十六進位字元重複兩次 | 測試假值，沒有隨機性 |
+| 128 | `generic-api-key` | `LM_JWT_SECRET` 行：反向的 16 個十六進位字元重複兩次再接前 8 個 | 測試假值 |
+| 130 | `jwt` | `LM_ANON_KEY` 行：三段 base64url，解碼為 `{"alg":"HS256"}`、`{"role":"anon"}` 與 ASCII 字串 `signature-fake`（14 位元組，不是 32 位元組的 HMAC） | 測試假值，沒有金鑰能產生這個簽章 |
+| 131 | `generic-api-key` | `LM_REALTIME_DB_ENC_KEY` 行：`a1`、`b2`… 交替的 16 字元，結尾 `\r` 測試 CRLF | 測試假值 |
+| 139 | `jwt` | `envFileSecretEntries` 預期輸出中與第 130 行相同的值 | 同第 130 行 |
+| 155 | `generic-api-key` | 遮罩測試的 `deploy.log` 行 `password=<第 127 行的值>` | 同第 127 行 |
+
+`ci/policy/evaluate.mjs` 對 `kind: secret` 一律視為未處理（檔頭規則 (a)；判定在查詢例外之前），`security/exceptions.json` 的任何項目都不能讓它通過，這是 Req 6.4 的設計，不變更。
+
+#### 31.2 目前檔案的改寫
+
+與第 27.2 節相同：值在執行時組合，原始碼中沒有任何字串常值符合 Gitleaks 預設規則；測試看到的 `.env` 文字與 `deploy.log` 行與改寫前逐位元組相同，所有 `expect` 不變。片段存在名稱不含 `key`／`secret`／`token`／`password` 等字樣的常數（`hex`、`rev`、`dbValue`、`jwtValue`、`anonValue`、`encValue`），再以 template literal 放入 `KEY=VALUE` 行。不使用 `gitleaks:allow` 註解與 repo 的 Gitleaks 設定（理由見第 27.2 節）。
+
+#### 31.3 歷史起點移到 `65df54e`
+
+`65df54e` 已推送到公開的 `rust`，不改寫歷史。沒有成功的建置之前範圍一直是 `<起點>..<sha>`，每次建置都會重新找到這 6 筆，只改目前檔案無法通過（與第 27.1 節 `main` #11 的情況相同）。依第 27.3 節的移動規則，`LM_GITLEAKS_HISTORY_BASE` 改為 `65df54e514b3da26a0b8c8535648c22d1e870919`。`floor..head` 不含起點本身，所以起點設在 `65df54e` 正好排除這 6 筆，之後的 `7a21e34..4b5a169` 與新的 commit 仍在掃描範圍內。
+
+**審查紀錄**（2026-11-25，`bun scripts/gitleaks-check.mjs`，Gitleaks 8.30.1 預設規則，SHA-256 已驗證）：
+
+- `--commit 65df54e… --range 65df54e…`（`65df54e` 的完整歷史，140 個 commit）：`git` 10 筆，即第 27.1 節的 4 筆（`139d8ac` `tests/ci-scrub-dir.test.js:32` `private-key`；`ffdbef2` `tests/deploy-config.test.js:207`；`cd06606` `tests/assignment-motion.e2e.js:3` 與 `tests/gear-presets.e2e.js:49`，`generic-api-key`）加上第 31.1 節表中的 6 筆。沒有其他結果。
+- `--commit 65df54e… --range c084474…..65df54e…`（121 個 commit）：只有第 31.1 節表中的 6 筆。
+- 結論：`65df54e` 與其所有祖先不含真實秘密。舊起點 `c084474` 是 `65df54e` 的祖先。
+
+**影響**：不含 `65df54e` 的非 PR 建置（例如目前的 `main`，或以 squash 合併 `rust` 的 `main`）在帶有這個 `Jenkinsfile` 後歷史掃描未完成（fail closed）。`rust` 合併到 `main` 時使用 fast-forward 或 merge commit。`gitleaks dir` 仍每次掃描所有受版本控制檔案；PR 仍使用 merge base；Secret 不可豁免的政策不變；沒有新增例外或 repo 掃描器設定；不需要 Jenkins 伺服器上的任何操作（Multibranch Job 從建置的分支讀取 `Jenkinsfile`）。
+
+#### 31.4 本機檢查
+
+這次沒有在推送前發現，因為 Gitleaks 只在 Jenkins 的 Security Scan 執行，第 27.5 節的手動驗證沒有在 `65df54e` 前重做；`scripts/scan-secrets.mjs` 的規則不同（沒有 JWT 規則），也不在 CI 或 bun 測試中執行。新增 `scripts/gitleaks-check.mjs`：下載 Gitleaks 8.30.1（`linux_x64` 與 `windows_x64` 發行檔，SHA-256 釘選自上游 `checksums.txt`，下載後重新計算），依 `Jenkinsfile` 匯出建置 commit 的受版本控制檔案（刪除相同的掃描器設定檔）並建立只含該 commit 的 bare repository，以 `<LM_GITLEAKS_HISTORY_BASE>..<sha>` 掃描歷史，再以 `normalize.mjs` 與 `evaluate.mjs` 評估；結束碼與 `evaluate.mjs` 相同。不新增以靜態規則模仿 Gitleaks 的測試（第 27.6 節的理由）。
+
 ## Data Models
 
 ### PostgreSQL Schema（`migrations/0001_initial.sql`）
@@ -2774,6 +2811,15 @@ test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ 
 - **範例**：保留名稱作為第一次設定的帳號名稱時回應 400 且 Setup_Token 仍有效；設定完成後回應 409。
 - **回歸**：seed `1236998821` 通過。
 - **維運者檢查**：合併後的建置通過 Unit Tests 與 SBOM 階段。
+
+### Gitleaks 測試假值與本機檢查（Components 第 31 節）
+
+不新增 PBT：變更是測試假值的寫法、一個常數與一個本機腳本。測試如下：
+
+- **假值改寫**：`tests/ci-scrub-dir.test.js` 的測試數與斷言不變（9 個測試通過）；`bun scripts/gitleaks-check.mjs` 的 `gitleaks dir` 沒有結果。
+- **起點**：`tests/ci-jenkinsfile.test.js` 斷言 `LM_GITLEAKS_HISTORY_BASE` 為 `65df54e…`；第 31.3 節的兩次審查掃描。
+- **本機腳本**（`tests/secret-scan-gitleaks.test.js`，不連網）：版本與 `Jenkinsfile` 的 Gitleaks 映像相同、SHA-256 為 64 位小寫 hex、刪除的掃描器設定檔與 `Jenkinsfile` 相同、`parseHistoryBase` 與 `verifySha256` 的行為。
+- **維運者檢查**：下一次 `rust` 建置的主控台顯示 `Gitleaks Git 歷史範圍：65df54e514b3da26a0b8c8535648c22d1e870919..<sha>`，`evaluation.json` 為 `pass: true` 且沒有 `kind: secret` 的結果。
 ## Open Risks
 
 1. **資料層重寫工作量**：`server/accounts.js` 約 50 個同步 prepared statement、所有路由與 `tx` 呼叫點都要改為 async，測試檔也要全面改寫。這是本功能最大的工作項目，也最容易引入行為差異。緩解：先建立 `queries.js` 一對一轉換、以既有測試作回歸基準、用全域 advisory lock 保留單一寫入者語意；Bun.SQL 若在 BIGINT 型別、錯誤型別或重連上有問題，切換到 `postgres@3.4.7`。
@@ -2796,4 +2842,4 @@ test('config parsing', () => { fc.assert(fc.property(envArb, env => { /* ... */ 
 18. **bun test 卡住的原因尚未證實**：第 24 節的 H1–H5 要在任務 26.1 以 CI 相同的映像重現後才能判定，本機可能無法重現 Linux 上的時序。測試連線的逾時與結束時終止 backend 讓任何一種原因都只會使個別測試失敗，不會讓整個套件等到 15 分鐘上限；殘留的風險是 `lock_timeout` 在極少數情況下回報逾時但鎖已取得（PostgreSQL 郵件清單有此報告），此時 `close()` 終止 backend 仍會釋放它。另一個風險是套件總時間：本機約 603 秒，Linux 上的 Bun 1.3.14 為 876 秒，接近 900 秒上限；改在 Bun 1.4.4 上量測，由任務 28.4 決定是否需要另外處理（Components 第 26 節）。
 19. **Production 收據 AI 的金鑰與費用**：金鑰以明文存在同一台主機 `192.168.1.121` 的兩個位置：Jenkins controller 的秘密目錄（1000:1000、0600）與 `/srv/lm/prod/secrets/openai-api-key`（root 0700 目錄內、10001:10001、0400）。取得該主機 root 的人都能讀到。Credentials Binding 不遮罩 `file` 憑證的內容，主控台的安全只靠腳本不輸出金鑰與封存前的 scrub。Production 對網際網路公開，政策為 `all` 時每個可編輯旅行的成員都能使用，費用上限只有每位使用者、每日與每月的次數上限，以及 OpenAI 後台的預算。輪替只在下一次部署生效，舊槽位在觀察期內仍使用舊金鑰；金鑰外洩時先在 OpenAI 撤銷，再輪替（Components 第 25.7 節）。照片會送到 OpenAI，README 已提醒使用者確認 OpenAI 的 API 資料政策。
 20. **Bun 1.4.4 升級**：1.4 是 minor 版本升級，release notes 沒有逐條確認 Components 第 26.1 節的三個問題已修正，修正與否只能由任務 28.3 實測判定；本機（WSL 或 Windows）的時序與 CI 的 Build_Image 不同，本機通過不保證 CI 通過。28.1–28.4 合併到 28.5 合併之間，所有 `ci/` 與 `release/` 建置都在 Toolchain 失敗（第 26.4 節，fail closed）；維運者延遲重建 Build_Image 時，這段期間無法發布。`bun.lock` 若被 1.4.4 改為 `lockfileVersion: 2`，osv-scanner 與 Trivy 可能無法解析（Open Risk 4），所以預設保留 v1。preview-deploy Job 不在本 repository，其 `oven/bun` digest 由維運者另外更新，忘記時該 Job 仍以 1.3.14 執行。
-21. **Secret_History_Baseline 之前的歷史不再掃描**：`c084474` 與其祖先的歷史只在 2026-11-13 審查過一次（Components 第 27.3 節）。之後 Gitleaks 新增的規則若會在舊 commit 找到真實秘密，Pipeline 不會發現。這段歷史只有 19 個 commit，且當時的 4 筆結果都是測試假值；需要時可在本機以新版 Gitleaks 掃描完整歷史。另一個影響是指向 `c084474` 之前 commit 的 Release_Tag 會在 Security Scan 失敗（fail closed）。Semgrep 的排除路徑若依賴 project root 的判定，Semgrep 升級後可能再次改變；`tests/ci-semgrep-rules.test.js` 只檢查寫法，真正的確認是每次升級後在 CI 形式的匯出上執行掃描。
+21. **Secret_History_Baseline 之前的歷史不再掃描**：`65df54e` 與其祖先的歷史只在 2026-11-25 審查過一次（Components 第 31.3 節；前一個起點 `c084474` 於 2026-11-13 審查，第 27.3 節）。之後 Gitleaks 新增的規則若會在舊 commit 找到真實秘密，Pipeline 不會發現。這段歷史有 140 個 commit，審查時的 10 筆結果都是測試假值；需要時可在本機以新版 Gitleaks 掃描完整歷史。另一個影響是不含 `65df54e` 的 commit（Release_Tag 或 squash 合併的 `main`）會在 Security Scan 失敗（fail closed）。Semgrep 的排除路徑若依賴 project root 的判定，Semgrep 升級後可能再次改變；`tests/ci-semgrep-rules.test.js` 只檢查寫法，真正的確認是每次升級後在 CI 形式的匯出上執行掃描。

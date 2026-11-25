@@ -1063,6 +1063,17 @@
   - [ ] 33.3 Jenkins 上的確認（維運者）
     - `rust` 分支下一次建置的 Security Scan：osv-scanner（Cargo.lock）完成、`reports/security/osv-cargo.json` 封存、「安全」關卡通過且 `paste` 顯示例外已套用
     - _Requirements: 6.7_
+
+- [ ] 34. `rust` 建置 #5 的 Gitleaks 測試假值與歷史起點（Requirement 6.1、6.4、6.10；design.md Components 第 31 節）
+  - [x] 34.1 `tests/ci-scrub-dir.test.js` 的 6 個假值改為執行時組合，測試斷言不變
+    - _Requirements: 6.1, 6.4_
+  - [x] 34.2 本機 Gitleaks 檢查 `scripts/gitleaks-check.mjs`（8.30.1，SHA-256 釘選）與 `tests/secret-scan-gitleaks.test.js`；`ci/jenkins/README.md`
+    - _Requirements: 6.1_
+  - [x] 34.3 審查 `65df54e` 的完整歷史並把 `LM_GITLEAKS_HISTORY_BASE` 移到 `65df54e`；`tests/ci-jenkinsfile.test.js`、`ci/jenkins/README.md`、本規格
+    - _Requirements: 6.1, 6.10_
+  - [ ] 34.4 Jenkins 上的確認（維運者）
+    - `rust` 下一次建置的主控台顯示 `Gitleaks Git 歷史範圍：65df54e514b3da26a0b8c8535648c22d1e870919..<sha>`，`reports/security/evaluation.json` 為 `pass: true` 且沒有 `kind: secret` 的結果
+    - _Requirements: 6.1, 6.7_
 ## Notes
 
 - 標記 `*` 的子任務為選用（property test、整合測試與額外檢查），可為加快 MVP 而略過。

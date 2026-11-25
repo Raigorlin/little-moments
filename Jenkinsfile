@@ -57,8 +57,9 @@ import groovy.json.JsonSlurperClassic
 //   docker.io/aquasec/trivy:0.76.2、docker.io/semgrep/semgrep:1.185.0。
 //   更新版本：修改 deploy/registry/mirror.list 後執行 deploy/registry/mirror.sh，再以其輸出的 digest 取代下列值。
 // LM_GITLEAKS_HISTORY_BASE（Secret_History_Baseline；Req 6.1、6.10；design.md Components 第 27.3 節）：
-//   非 PR 建置的 Gitleaks Git 歷史掃描起點（範圍為 `<起點或上次成功建置>..<sha>`）。2026-11-13 審查：
-//   Gitleaks 8.30.1 以預設規則掃描 c084474 的完整歷史只有 4 筆已確認的測試假值，c084474 與其祖先不含真實秘密。
+//   非 PR 建置的 Gitleaks Git 歷史掃描起點（範圍為 `<起點或上次成功建置>..<sha>`）。2026-11-25 審查（design.md 第 31 節）：
+//   Gitleaks 8.30.1 以預設規則掃描 65df54e 的完整歷史只有 10 筆已確認的測試假值（第 27.1 節的 4 筆與
+//   tests/ci-scrub-dir.test.js 的 6 筆），65df54e 與其祖先不含真實秘密。前一個起點 c084474（2026-11-13）是它的祖先。
 //   只在以 Gitleaks 掃描新起點的完整歷史、確認每筆結果並記錄於 design.md 之後，以經審查的 commit 修改。
 //   不是建置參數，也不從 params.* 或 Job 設定讀取（Req 23.4）；起點無效或不是建置 commit 的祖先時歷史掃描未完成。
 // LM_TRIVY_DB_REPOSITORY：
@@ -142,7 +143,7 @@ pipeline {
     LM_BUN_TESTS = 'tests/ci-*.test.js tests/deploy-*.test.js tests/schedule-css-parity.test.js tests/storybook-studio-parity.test.js tests/readme.test.js tests/secret-scan.test.js'
     LM_POSTGRES_IMAGE = 'postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3'
     LM_GITLEAKS_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/gitleaks@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb'
-    LM_GITLEAKS_HISTORY_BASE = 'c08447436cb3db000b577a3de28f8be8acbee540'
+    LM_GITLEAKS_HISTORY_BASE = '65df54e514b3da26a0b8c8535648c22d1e870919'
     LM_OSV_SCANNER_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/osv-scanner@sha256:bc10cae80da100d32572aea48cfc48e592be9adc4a8b0820fd5d2c2db71f9446'
     LM_TRIVY_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/trivy@sha256:6fa071ef8daa2e58b90cbf1710bedca91adbb3bf98693533226f442035b836a6'
     LM_SEMGREP_IMAGE = 'registry.our-littlemoments.com:8443/little-moments/mirror/semgrep@sha256:f83a64e8a7d985eaa51ee3978c9c882be946964c68633fba5d2817cf297a3912'

@@ -433,7 +433,7 @@ describe('Security Scan 階段（Req 6.1–6.9、23.1、23.3、23.5）', () => {
     const environment = functionBody('  environment {');
     expect(environment.match(/^\s*LM_GITLEAKS_HISTORY_BASE\s*=\s*'[0-9a-f]{40}'\s*$/gm)?.length).toBe(1);
     expect(code.match(/\bLM_GITLEAKS_HISTORY_BASE\s*=\s*'/g)?.length).toBe(1);
-    expect(/LM_GITLEAKS_HISTORY_BASE\s*=\s*'([^']+)'/.exec(environment)?.[1]).toBe('c08447436cb3db000b577a3de28f8be8acbee540');
+    expect(/LM_GITLEAKS_HISTORY_BASE\s*=\s*'([^']+)'/.exec(environment)?.[1]).toBe('65df54e514b3da26a0b8c8535648c22d1e870919');
     expect(structure).not.toMatch(/\bparameters\s*[{(]/);
     expect(code).not.toMatch(/params\.[\w.?]*LM_GITLEAKS_HISTORY_BASE|params\[\s*['"]LM_GITLEAKS_HISTORY_BASE/);
     expect(code).not.toMatch(/LM_GITLEAKS_HISTORY_BASE=|env\.LM_GITLEAKS_HISTORY_BASE\s*=/);

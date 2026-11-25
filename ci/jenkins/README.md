@@ -283,10 +283,10 @@ Jenkins 解除 keepLog 需要 Run/Delete，與 Req 21.12「非管理員不可刪
 
 ### Gitleaks 歷史起點（Secret_History_Baseline）
 
-`Jenkinsfile` 的 `LM_GITLEAKS_HISTORY_BASE` 是非 PR 建置（`main` 與 `rust` 等分支的推送）Gitleaks Git 歷史掃描的固定起點，目前為 commit `c084474`（完整的 40 字元 SHA 見 `Jenkinsfile`；2026-11-13 審查，design.md Components 第 27.3 節）。這個 commit 與它所有祖先已以 Gitleaks 8.30.1 的預設規則掃描，結果只有已確認的測試假值，沒有真實秘密。
+`Jenkinsfile` 的 `LM_GITLEAKS_HISTORY_BASE` 是非 PR 建置（`main` 與 `rust` 等分支的推送）Gitleaks Git 歷史掃描的固定起點，目前為 commit `65df54e`（完整的 40 字元 SHA 見 `Jenkinsfile`；2026-11-25 審查，design.md Components 第 31 節；前一個起點 `c084474` 見第 27.3 節）。這個 commit 與它所有祖先已以 Gitleaks 8.30.1 的預設規則掃描，結果只有已確認的測試假值，沒有真實秘密。
 
 - 掃描範圍：上次成功建置的 commit（`GIT_PREVIOUS_SUCCESSFUL_COMMIT`）有效、是建置 commit 的祖先且不比起點舊時為 `<上次成功建置>..<sha>`，否則為 `<起點>..<sha>`。不再掃描完整歷史。PR 仍使用 `<merge base>..<sha>`，不受起點影響。
-- 起點無效、不存在或不是建置 commit 的祖先時（例如建置 commit 在 `c084474` 之前），歷史掃描未完成，「安全」關卡不通過（fail closed）。以包含起點的 commit 重新建置。
+- 起點無效、不存在或不是建置 commit 的祖先時（例如建置 commit 不含 `65df54e`），歷史掃描未完成，「安全」關卡不通過（fail closed）。以包含起點的 commit 重新建置。`rust` 合併到 `main` 時使用 fast-forward 或 merge commit，不使用 squash，`main` 才會包含起點。
 - 建置 commit 的所有受版本控制檔案仍每次以 `gitleaks dir` 完整掃描；起點只限制 Git 歷史的範圍。
 - 它是 `environment` 的常數，不是建置參數，Build Now 時不能覆寫（Req 23.4）。
 - 移動起點：先以 Gitleaks 掃描新起點的完整歷史，確認每筆結果都不是真實秘密並記錄於 design.md，之後才以經審查的 commit 修改 `LM_GITLEAKS_HISTORY_BASE` 與 `tests/ci-jenkinsfile.test.js` 的對應斷言。
