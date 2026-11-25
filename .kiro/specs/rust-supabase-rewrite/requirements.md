@@ -907,7 +907,7 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 14. WHEN 兩個以上加入或以連結註冊的請求同時使用同一個 Active_Invite，THE LM_Server SHALL 只讓其中一個請求新增旅伴並把連結標記為已使用；其餘請求的使用者已是 Trip_Member 時（例如同一個 Account 在另一個分頁先加入）依需求 30.11 回傳旅行 id，否則回應「邀請連結無效或已過期。」，以連結註冊的請求也依需求 3.10 不留下 Account。
 15. THE LM_Core SHALL 以需求 19.1 至 19.7 的規則與訊息，檢查以邀請加入與以連結註冊時填寫的旅伴名字與角色。
 16. THE LM_Server SHALL 讓邀請預覽只回傳旅行名稱、目的地、起訖日期與建立者的 Display_Name，已登入時另外回傳使用者是否已是這趟旅行的 Trip_Member；預覽不回傳其他 Trip_State，也不改變連結的狀態。
-17. WHEN 使用者開啟 Trip_Menu 的「邀請」，THE LM_Web SHALL 列出需求 30.5 或 30.6 回傳的 Active_Invite，每個顯示建立者、建立時間、到期時間與「撤銷」按鈕，並提供「建立邀請連結」按鈕，開啟時不自動建立連結；建立成功時顯示完整的邀請網址（目前網頁的 origin 加上 `/invite/<token>`）、到期時間、「複製邀請網址」按鈕與「連結只會顯示這一次，請現在複製。」；建立被拒絕時在「邀請」中顯示拒絕的訊息；建立或撤銷成功後重新列出 Active_Invite。
+17. WHEN 有邀請權限的使用者按下旅行頁的「邀請旅伴」，THE LM_Web SHALL 開啟「邀請旅伴，名字讓他自己填」對話框，只顯示說明「對方用邀請連結登入或建立帳號後，再自行填寫這趟旅行使用的名字。」、完整的邀請網址（目前網頁的 origin 加上 `/invite/<token>`）、「這個連結 7 天內有效（到期：…）。」與「複製邀請網址」按鈕，不需要按「建立邀請連結」：開啟時自動建立連結；這個旅行頁先前產生的連結仍在需求 30.5 或 30.6 回傳的 Active_Invite 中時沿用它而不另外建立；建立中顯示「正在產生邀請連結…」；建立被拒絕或失敗時在對話框中顯示訊息與「再試一次」。WHEN 使用者開啟 Trip_Menu 的「邀請」，THE LM_Web SHALL 列出 Active_Invite，每個顯示建立者、建立時間、到期時間與「撤銷」按鈕，撤銷之後重新列出 Active_Invite。
 18. WHEN Invite_Page 為不是這趟旅行 Trip_Member 的使用者顯示 Active_Invite，THE Invite_Page SHALL 顯示加入表單：未登入時包含帳號名稱、顯示名稱、密碼、旅伴名字（留空時以表單中的顯示名稱代替）與選填的角色，以及前往 `/login?next=/invite/<token>` 的「已經有帳號？登入後加入」連結；已登入時包含預先填入 Account 的 Display_Name 的旅伴名字與選填的角色；加入或註冊成功後，前往這趟旅行的 Trip_Page `/<帳號名稱>/trips/<旅行 id>`。
 
 ### Requirement 31: 文字版與複製

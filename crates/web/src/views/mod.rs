@@ -9,6 +9,7 @@ pub mod editors;
 pub mod forms;
 pub mod gear;
 pub mod icons;
+pub mod invite_dialog;
 pub mod ledger;
 pub mod meals;
 pub mod schedule;

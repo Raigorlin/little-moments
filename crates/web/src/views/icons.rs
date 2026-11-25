@@ -67,6 +67,10 @@ pub const CAR: &str =
     icon!(r#"<path d="m4 10 2-6h12l2 6M3 10h18v8H3v-8Zm2 8v3m14-3v3M6 14h2m8 0h2"/>"#);
 pub const EDIT: &str = icon!(r#"<path d="m14 5 5 5M4 20l5-1L21 7l-5-5L4 14v6Z"/>"#);
 pub const CLOSE: &str = icon!(r#"<path d="m6 6 12 12M6 18 18 6"/>"#);
+/// 現行 `icon('link')`（「複製邀請網址」）。
+pub const LINK: &str = icon!(
+    r#"<path d="m10 14 4-4m-6 6-2 2a4 4 0 0 1-6-6l5-5a4 4 0 0 1 6 0m2 10a4 4 0 0 0 6 0l4-4a4 4 0 0 0-6-6l-2 2" transform="translate(1 0) scale(.9)"/>"#
+);
 pub const UP: &str = icon!(r#"<path d="M12 19V5m-6 6 6-6 6 6"/>"#);
 pub const DOWN: &str = icon!(r#"<path d="M12 5v14m-6-6 6 6 6-6"/>"#);
 pub const CHECK: &str = icon!(r#"<path d="m5 12 4 4L19 6"/>"#);

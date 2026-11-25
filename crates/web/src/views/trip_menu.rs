@@ -10,9 +10,9 @@
 //!   不能移除時以 Toast 顯示訊息、不開啟對話框；可以移除時開啟「移除這位旅伴？」，按下「確認移除」才送出（需求 19.17）。
 //!   清單直接讀 `RowStore`，所以其他分頁的新增、修改與移除不需重新載入就出現（需求 19.18）。
 //! - 「車輛」：任務 21.3 的共用車輛清單與表單（`<VehicleList form=MENU_VEHICLE_FORM />`，需求 20.8）。
-//! - 「邀請」：沿用 `renderAccountInviteDialog()` 的內容（需求 30.17）：開啟選單時只列出 Active_Invite，不自動建立；
-//!   建立成功時顯示完整的邀請網址、到期時間、「複製邀請網址」與「連結只會顯示這一次，請現在複製。」；建立被拒絕時在
-//!   「邀請」中顯示訊息；建立或撤銷之後重新列出。
+//! - 「邀請」：開啟選單時列出尚未使用的 Active_Invite 與「撤銷」，撤銷之後重新列出（需求 30.5、30.17）。邀請連結由
+//!   旅行頁的「邀請旅伴」對話框自動產生（`views::invite_dialog`）；撤銷的是對話框顯示的連結時，對話框下次開啟改為產生
+//!   新的連結。
 //! - 「刪除旅行」：只給 Trip_Manager（需求 6.17、17.10）。確認對話框沿用 `openDeleteTripDialog()` 的文字；輸入的文字與
 //!   目前的旅行名稱逐字相同之前停用「確認刪除旅行」（其他成員在對話框開啟期間改名時以新的名稱為準，需求 32.4）。
 //!   成功時以 `TripHandle::leave_trip()` 離開：它只在這趟旅行的 `TripSync` 還在時離開並顯示「這趟旅行已被刪除。」，
@@ -91,7 +91,7 @@ fn person_initial(name: &str) -> String {
 }
 
 /// 現行 `inviteTime()`：`new Date(value).toLocaleString('zh-TW')`。
-fn invite_time(value: &str) -> String {
+pub(crate) fn invite_time(value: &str) -> String {
     js_sys::Date::new(&JsValue::from_str(value))
         .to_locale_string("zh-TW", &JsValue::UNDEFINED)
         .into()
@@ -910,26 +910,15 @@ fn RemovePersonDialog() -> impl IntoView {
 
 // ── 邀請 ──
 
-/// 剛建立的邀請連結：只在這個畫面顯示這一次（需求 30.2、30.17）。
-#[derive(Clone, Debug, PartialEq)]
-struct CreatedInvite {
-    id: Uuid,
-    /// 目前網頁的 origin 加上 `/invite/<token>`
-    url: String,
-    expires_at: String,
-}
-
-/// 「邀請」（沿用 `renderAccountInviteDialog()`，需求 30.17）。
+/// 「邀請」：列出尚未使用的邀請連結與「撤銷」（需求 30.5、30.17）。連結由「邀請旅伴」對話框自動產生
+/// （`views::invite_dialog`），這裡沒有「建立邀請連結」。
 #[component]
 fn InviteSection() -> impl IntoView {
-    let TripContext { trip, .. } = use_trip();
+    let TripContext { trip, ui, .. } = use_trip();
     let api = use_api();
     let toasts = use_toasts();
     let invites = RwSignal::new(Vec::<InviteListItem>::new());
-    let created = RwSignal::new(None::<CreatedInvite>);
-    let error = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
-    let url_input = NodeRef::<html::Input>::new();
     // 只採用最後一次列出的結果
     let loads = StoredValue::new(0_u64);
     let message = |failure: ApiFailure| (!failure.is_unauthorized()).then_some(failure.message);
@@ -952,43 +941,9 @@ fn InviteSection() -> impl IntoView {
             }
         }
     };
-    // 開啟時只列出，不自動建立連結
+    // 開啟時只列出，不建立連結
     spawn_local(load());
 
-    // 建立成功時焦點移到邀請網址（現行 `focus='#invite-url'`）
-    Effect::new(move |_| {
-        if created.with(Option::is_some) {
-            if let Some(input) = url_input.get() {
-                let _ = input.focus();
-            }
-        }
-    });
-
-    let create = move |_| {
-        if busy.get_untracked() {
-            return;
-        }
-        busy.set(true);
-        spawn_local(async move {
-            match api.create_invite(trip).await {
-                Ok(invite) => {
-                    let origin = window().location().origin().unwrap_or_default();
-                    created.try_set(Some(CreatedInvite {
-                        id: invite.id,
-                        url: format!("{origin}{}", invite.url_path),
-                        expires_at: invite.expires_at,
-                    }));
-                    error.try_set(None);
-                    load().await;
-                }
-                // 建立被拒絕（例如已有 20 個有效連結）時在「邀請」中顯示訊息
-                Err(failure) => {
-                    error.try_set(message(failure));
-                }
-            }
-            busy.try_set(false);
-        });
-    };
     let revoke = move |id: Uuid| {
         if busy.get_untracked() {
             return;
@@ -998,11 +953,13 @@ fn InviteSection() -> impl IntoView {
             match api.revoke_invite(trip, id).await {
                 Ok(()) => {
                     toasts.show("邀請連結已撤銷");
-                    if created
+                    // 「邀請旅伴」對話框下次開啟時改為產生新的連結
+                    if ui
+                        .invite_link
                         .try_with_untracked(|shown| shown.as_ref().is_some_and(|c| c.id == id))
                         .unwrap_or(false)
                     {
-                        created.try_set(None);
+                        ui.invite_link.try_set(None);
                     }
                 }
                 Err(failure) => {
@@ -1016,47 +973,7 @@ fn InviteSection() -> impl IntoView {
             busy.try_set(false);
         });
     };
-    let copy = move |_| {
-        let Some(url) = created.with_untracked(|shown| shown.as_ref().map(|c| c.url.clone()))
-        else {
-            return;
-        };
-        spawn_local(async move {
-            if write_clipboard(&url).await {
-                toasts.show("已複製邀請網址");
-            } else {
-                if let Some(input) = url_input.get_untracked() {
-                    input.select();
-                }
-                toasts.show("請選取邀請網址後手動複製");
-            }
-        });
-    };
 
-    let link = move || {
-        created.get().map(|invite| {
-            view! {
-                <label class="field">
-                    <span>"邀請網址"</span>
-                    <input id="invite-url" type="text" readonly value=invite.url node_ref=url_input />
-                </label>
-                <div class="form-actions">
-                    <button type="button" class="button" on:click=copy>
-                        "複製邀請網址"
-                    </button>
-                </div>
-                <p>
-                    {format!(
-                        "這個連結只能讓一位旅伴加入，建立 7 天後失效（有效期限：{}）。沒有帳號的人可以直接在邀請頁建立帳號。",
-                        invite_time(&invite.expires_at),
-                    )}
-                </p>
-                <p class="dialog-note">
-                    <b>"連結只會顯示這一次，請現在複製。"</b>
-                </p>
-            }
-        })
-    };
     let list = move || {
         let items = invites.get();
         if items.is_empty() {
@@ -1103,46 +1020,10 @@ fn InviteSection() -> impl IntoView {
         <section class="trip-menu-section" aria-labelledby="trip-menu-invites">
             <h3 id="trip-menu-invites">"邀請"</h3>
             <p>"對方用邀請連結登入或建立帳號後，再自行填寫這趟旅行使用的名字。"</p>
-            {link}
-            <p class="form-error" role="alert">
-                {move || error.get()}
-            </p>
-            <div class="form-actions">
-                <button
-                    type="button"
-                    class="button primary"
-                    disabled=move || busy.get()
-                    on:click=create
-                >
-                    "建立邀請連結"
-                </button>
-            </div>
             <h3>"尚未使用的邀請連結"</h3>
             {list}
         </section>
     }
-}
-
-/// 以 `navigator.clipboard.writeText()` 寫入純文字；瀏覽器不提供剪貼簿或拒絕寫入時回傳 `false`。
-#[cfg(target_arch = "wasm32")]
-async fn write_clipboard(text: &str) -> bool {
-    let navigator = window().navigator();
-    // 沒有剪貼簿時 `navigator.clipboard` 是 undefined，不能直接呼叫它的方法
-    let clipboard = match js_sys::Reflect::get(&navigator, &"clipboard".into()) {
-        Ok(value) if !value.is_undefined() && !value.is_null() => {
-            value.unchecked_into::<web_sys::Clipboard>()
-        }
-        _ => return false,
-    };
-    wasm_bindgen_futures::JsFuture::from(clipboard.write_text(text))
-        .await
-        .is_ok()
-}
-
-/// 原生目標（只用於 `cargo clippy` 與 `cargo test` 的編譯）沒有剪貼簿。
-#[cfg(not(target_arch = "wasm32"))]
-async fn write_clipboard(_text: &str) -> bool {
-    false
 }
 
 // ── 刪除旅行 ──

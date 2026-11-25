@@ -36,6 +36,7 @@ use crate::views::editors::EditorAvatars;
 use crate::views::forms::{OpenForm, SessionSlot};
 use crate::views::gear::GearTab;
 use crate::views::icons;
+use crate::views::invite_dialog::{CreatedInvite, InviteDialog};
 use crate::views::ledger::LedgerTab;
 use crate::views::meals::MealsTab;
 use crate::views::schedule::ScheduleTab;
@@ -152,6 +153,10 @@ pub struct UiState {
     form_serial: StoredValue<u64>,
     /// Trip_Menu 是否開啟
     pub menu_open: RwSignal<bool>,
+    /// 「邀請旅伴」對話框是否開啟
+    pub invite_open: RwSignal<bool>,
+    /// 「邀請旅伴」對話框產生的連結；再次開啟時仍有效就沿用
+    pub invite_link: RwSignal<Option<CreatedInvite>>,
     /// Schedule_Tab 選定的第 N 天（0 為第 1 天）；旅行日期改變時由 Schedule_Tab 依需求 22.16 調整
     pub schedule_day: RwSignal<usize>,
 }
@@ -169,6 +174,8 @@ impl UiState {
             sessions: StoredValue::new_local(None),
             form_serial: StoredValue::new(0),
             menu_open: RwSignal::new(false),
+            invite_open: RwSignal::new(false),
+            invite_link: RwSignal::new(None),
             schedule_day: RwSignal::new(0),
         }
     }
@@ -461,13 +468,22 @@ fn TripLoaded(trip: TripId, handle: TripHandle, stores: TripStores) -> impl Into
                     {art::static_svg(icons::D_DOWNLOAD)}
                     <span>"匯出手冊"</span>
                 </button>
-                // 邀請在 Trip_Menu 中（需求 32.4）
+                // 開啟「邀請旅伴」對話框並自動產生連結；沒有邀請權限時開啟 Trip_Menu（需求 30.17、32.4）
                 <button
                     type="button"
                     class="button blue"
                     aria-label="邀請旅伴"
                     title="邀請旅伴"
-                    on:click=move |_| ui.menu_open.set(true)
+                    on:click=move |_| {
+                        let can_invite = untrack(|| {
+                            handle.viewer().is_some_and(|viewer| viewer.caps.can_invite)
+                        });
+                        if can_invite {
+                            ui.invite_open.set(true);
+                        } else {
+                            ui.menu_open.set(true);
+                        }
+                    }
                 >
                     {art::static_svg(icons::D_PEOPLE)}
                     <span>"邀請旅伴"</span>
@@ -507,6 +523,7 @@ fn TripLoaded(trip: TripId, handle: TripHandle, stores: TripStores) -> impl Into
             <Sidebar departure=Signal::derive(departure) open_gear />
         </div>
         {move || ui.menu_open.get().then(|| view! { <TripMenu /> })}
+        <InviteDialog />
     }
 }
 
