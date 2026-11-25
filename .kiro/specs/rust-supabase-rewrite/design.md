@@ -1970,7 +1970,12 @@ repo::delete_auth_sessions(&st.db, target.id).await.map_err(|error| {       // d
     ApiError::internal("password_reset_signout_failed",
         "新密碼已設定，但其他裝置可能仍維持登入，請再按一次『設定新密碼』。")
 })?;
-audit::write_one(&st.db, actor.id, "admin.user.password_reset", &format!("@{}", target.username), "").await?;
+audit::write_one(&st.db, actor.id, "admin.user.password_reset", &format!("@{}", target.username), "").await
+    .map_err(|error| {                                                      // 需求 36.10：重設已經生效
+        tracing::warn!(%error, actor = %actor.id, target = %target.id, "admin password reset: audit log write failed");
+        ApiError::internal("password_reset_audit_failed",
+            "新密碼已設定，其他裝置也已登出，但這次操作沒有寫入操作紀錄。")
+    })?;
 tracing::info!(actor = %actor.id, target = %target.id, "admin.password_reset");             // 需求 34.10
 ```
 
@@ -1986,8 +1991,9 @@ tracing::info!(actor = %actor.id, target = %target.id, "admin.password_reset"); 
 | 重設密碼 | 新密碼不符合規則 | 是 | 400 `invalid_password` | 不記錄 |
 | 重設密碼 | GoTrue 以 422 拒絕、5xx、無法連線、10 秒逾時 | 是；密碼沒有改變 | 500 `password_reset_unavailable` | error：原因與目標 id |
 | 重設密碼 | 刪除 `auth.sessions` 失敗 | 是；以同一個新密碼重送，兩步都是冪等的 | 500 `password_reset_signout_failed` | error：原因與目標 id |
+| 重設密碼 | 前兩步成功之後寫入 Audit_Log 失敗（三步不在同一個交易中） | 是；重設已經生效，不需要重送，只少了這次的操作紀錄 | 500 `password_reset_audit_failed`「新密碼已設定，其他裝置也已登出，但這次操作沒有寫入操作紀錄。」；Admin_Page 依成功處理，Toast 另加說明（需求 36.10） | warn：原因、Admin 與目標 id（不含密碼） |
 | 停用 | 交易提交後刪除 `auth.sessions` 失敗 | 是；停用已生效，重送時再刪一次（不再寫紀錄） | 500 `account_disable_signout_failed`「帳號已停用，但其他裝置可能仍維持登入，請再按一次『停用帳號』。」 | error：原因與目標 id |
-| 全部 | Database 錯誤（包括 Audit_Log 寫入失敗，整個交易回滾） | 是 | 500 `internal_error` | error |
+| 全部 | Database 錯誤（包括交易中的 Audit_Log 寫入失敗，整個交易回滾；重設密碼見上） | 是 | 500 `internal_error` | error |
 
 請求內容不經 `tower-http` 的 trace 記錄（第一版只記錄方法、路徑與狀態碼），`ApiError` 的訊息是固定文字，不含輸入；`AuthError` 的 `Display` 不含密碼（任務 28.2 確認）。
 
@@ -2128,6 +2134,7 @@ Command 不寫 Audit_Log：它們已在 `app.trip_changes`，數量也比帳號�
 | 409 | `last_admin` | 至少需要保留一位管理員。 | `null` | 需求 39.3、40.3 |
 | 500 | `password_reset_unavailable` | 暫時無法重設密碼，請稍後再試。 | `null` | 需求 36.5 |
 | 500 | `password_reset_signout_failed` | 新密碼已設定，但其他裝置可能仍維持登入，請再按一次『設定新密碼』。 | `null` | 需求 36.6 |
+| 500 | `password_reset_audit_failed` | 新密碼已設定，其他裝置也已登出，但這次操作沒有寫入操作紀錄。 | `null` | 需求 36.10；Admin_Page 依成功處理 |
 | 500 | `account_disable_signout_failed` | 帳號已停用，但其他裝置可能仍維持登入，請再按一次『停用帳號』。 | `null` | 需求 40.5 |
 | 400 | `invalid_setting` | 公開註冊只能設為開放或關閉。 | `public_signup` | 需求 37.5 |
 | 400 | `invalid_page` | 沒有這一頁的操作紀錄。 | `page` | 需求 41.4 |

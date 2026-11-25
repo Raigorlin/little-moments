@@ -609,7 +609,7 @@ trunk serve --poll --config crates/web/Trunk.toml
 6. **停用與啟用。** 以 Admin 停用一個帳號，再啟用它。
    預期結果：停用後，它的分頁在下一個請求回到登入頁，以正確密碼登入得到「帳號或密碼不正確。」；啟用後可以登入，它的旅行與旅伴都沒有改變。
 7. **最後一位 Admin。** 兩位 Admin 幾乎同時以 API 互相降級（`PATCH /api/admin/users/<id>`，`{"role":"member"}`），或互相停用（`POST /api/admin/users/<id>/disable`）。
-   預期結果：伺服器依序處理；先到的請求成功，後到的得到 409 `last_admin`（它在先到的請求完成之後才送達時則是 403 `admin_required`），Database 中留下一位有效的 Admin。
+   預期結果：伺服器依序處理；先到的請求成功，後到的得到 409 `last_admin`（它在先到的請求完成之後才送達時，互相降級得到 403 `admin_required`，互相停用則因為送出者已被停用而得到 401 `unauthorized`），Database 中留下一位有效的 Admin。
 8. **公開註冊的開關。** 在管理後台關閉「開放公開註冊」，以無痕視窗開啟 `/register` 註冊；再以邀請連結註冊；最後重新開啟開關並註冊。
    預期結果：關閉時 `/register` 顯示 403 的訊息、以邀請連結仍可註冊；重新開啟後可以註冊；都不需要重新啟動 lm-server。
 9. **操作紀錄。** 檢視管理後台的「操作紀錄」。

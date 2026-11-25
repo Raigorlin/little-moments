@@ -1063,6 +1063,7 @@ design.md 以 B1–B12 描述必要行為，下表列出驗收這些行為的需
 7. THE LM_Server 與 LM_Web SHALL 不在任何記錄、錯誤回應、Audit_Log、URL、localStorage 或 sessionStorage 中保存或輸出新密碼；LM_Web 在對話框關閉時清空兩個密碼欄位。
 8. WHEN LM_Server 回應重設密碼的請求，THE Admin_Page SHALL 在成功時關閉對話框、顯示 Toast「已為 {Display_Name} 設定新密碼」並依需求 34.8 重新讀取；在 LM_Server 回應錯誤時保留對話框與輸入內容，並在對話框中顯示「尚未設定：{message}」；在網路錯誤或逾時時保留對話框，顯示「尚未設定，請檢查網路後再試一次。」；送出期間停用「設定新密碼」按鈕，避免重複送出。
 9. THE LM_Server SHALL 不提供重設密碼的伺服器指令；唯一的 Admin 忘記自己的密碼時，依需求 38.3 寫在 `deploy/README.md` 的步驟直接在 Database 中處理。
+10. IF Auth_Service 已設定新密碼、登入工作階段也已刪除，但寫入 Audit_Log 失敗，THEN THE LM_Server SHALL 回應 500（`password_reset_audit_failed`、「新密碼已設定，其他裝置也已登出，但這次操作沒有寫入操作紀錄。」），不回應 `internal_error`，並在伺服器記錄中以 warn 層級寫下原因、執行的 Admin 與目標的 Account id（不含新密碼）；THE Admin_Page SHALL 依需求 36.8 的成功處理（關閉對話框、清空兩個密碼欄位、依需求 34.8 重新讀取），Toast 改為「已為 {Display_Name} 設定新密碼，但這次操作沒有寫入操作紀錄」。這種情況以獨立的錯誤代碼回應而不是 200：200 `{}` 只表示需求 36.3 的每一步（包括 Audit_Log）都完成，與需求 36.5、36.6 一樣以專屬的 500 代碼說明哪些步驟已經生效，而且不改變成功回應的格式；重設已經生效，所以 Admin_Page 不要求再送出一次。
 
 ### Requirement 37: 公開註冊的設定
 

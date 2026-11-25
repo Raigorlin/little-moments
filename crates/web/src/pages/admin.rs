@@ -25,7 +25,7 @@ use lm_core::account::{check_display_name, check_password, PASSWORD_MISMATCH};
 use lm_core::admin::{
     account_matches, admin_stats, audit_action_label, taipei_minute, AdminStats, AdminUserDto,
     AdminUsersResponse, AuditEntryDto, AuditPage, Policy, PublicSignupSetting,
-    ResetPasswordRequest, SettingSource, UpdateUserRequest,
+    ResetPasswordRequest, SettingSource, UpdateUserRequest, PASSWORD_RESET_AUDIT_FAILED,
 };
 use lm_core::ids::UserId;
 use lm_core::model::Role;
@@ -110,6 +110,16 @@ fn failure_text(prefix: &str, failure: &ApiFailure) -> String {
         format!("{prefix}，請檢查網路後再試一次。")
     } else {
         format!("{prefix}：{}", failure.message)
+    }
+}
+
+/// 重設密碼完成時的 Toast（需求 36.8）；LM_Server 回應 `password_reset_audit_failed` 時重設已經生效，另外說明
+/// 這次操作沒有寫入操作紀錄（需求 36.10）。
+fn password_set_toast(display_name: &str, logged: bool) -> String {
+    if logged {
+        format!("已為 {display_name} 設定新密碼")
+    } else {
+        format!("已為 {display_name} 設定新密碼，但這次操作沒有寫入操作紀錄")
     }
 }
 
@@ -619,9 +629,9 @@ fn AdminContent(denied: RwSignal<bool>) -> impl IntoView {
             });
         }
     });
-    let password_set = Callback::new(move |target: AdminUserDto| {
+    let password_set = Callback::new(move |(target, logged): (AdminUserDto, bool)| {
         reset_target.set(None);
-        toasts.show(format!("已為 {} 設定新密碼", target.display_name));
+        toasts.show(password_set_toast(&target.display_name, logged));
         after_write();
     });
     let disabled = Callback::new(move |updated: AdminUserDto| {
@@ -1094,7 +1104,7 @@ fn ResetPasswordForm(
     busy: RwSignal<bool>,
     denied: RwSignal<bool>,
     on_cancel: Callback<()>,
-    on_done: Callback<AdminUserDto>,
+    on_done: Callback<(AdminUserDto, bool)>,
 ) -> impl IntoView {
     let api = use_api();
     let password = RwSignal::new(String::new());
@@ -1131,7 +1141,11 @@ fn ResetPasswordForm(
             let result = api.reset_password(user.id, &request).await;
             busy.try_set(false);
             match result {
-                Ok(()) => on_done.run(user),
+                Ok(()) => on_done.run((user, true)),
+                // 需求 36.10：重設已經生效，只是沒有寫入操作紀錄
+                Err(failure) if failure.code == PASSWORD_RESET_AUDIT_FAILED => {
+                    on_done.run((user, false))
+                }
                 Err(failure) => {
                     if let Some(failure) = unhandled(failure, denied) {
                         error.try_set(Some(failure_text(NOT_SET, &failure)));
@@ -1233,5 +1247,19 @@ fn DisableUserForm(
                 focus_cancel=true
             />
         </form>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::password_set_toast;
+
+    #[test]
+    fn password_set_toast_mentions_a_missing_audit_entry() {
+        assert_eq!(password_set_toast("小明", true), "已為 小明 設定新密碼");
+        assert_eq!(
+            password_set_toast("小明", false),
+            "已為 小明 設定新密碼，但這次操作沒有寫入操作紀錄"
+        );
     }
 }

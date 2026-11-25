@@ -21,6 +21,13 @@ pub const AUDIT_PAGE_SIZE: u32 = 20;
 /// 操作紀錄最多的頁數：只回傳最新的 200 筆（需求 41.3）。
 pub const AUDIT_MAX_PAGES: u32 = 10;
 
+/// 重設密碼的新密碼已設定、登入工作階段也已刪除，但 Audit_Log 沒有寫入時的錯誤代碼（需求 36.10）。LM_Web 收到它時
+/// 依重設成功處理，只在 Toast 加上說明。
+pub const PASSWORD_RESET_AUDIT_FAILED: &str = "password_reset_audit_failed";
+/// `PASSWORD_RESET_AUDIT_FAILED` 的訊息（需求 36.10）。
+pub const PASSWORD_RESET_AUDIT_FAILED_MESSAGE: &str =
+    "新密碼已設定，其他裝置也已登出，但這次操作沒有寫入操作紀錄。";
+
 /// `GET /api/admin/users` 中的一個帳號，也是修改、停用與啟用的回應（需求 35.1）。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminUserDto {

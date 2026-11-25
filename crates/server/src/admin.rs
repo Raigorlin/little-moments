@@ -24,7 +24,8 @@
 //! - 修改：只改 `app.profiles` 的 Display_Name 與角色，不改旅伴名字（需求 39.4）；Admin 被改為 member 時撤銷他
 //!   建立的、所屬旅行中他不是 Trip_Member 的 Active_Invite（需求 39.5）。沒有任何變化時不寫入 Audit_Log。
 //! - 重設密碼：以 Auth_Service 的 admin API 設定密碼，再刪除這個帳號在 `auth.sessions` 的每一列，兩步都成功之後才
-//!   寫入 Audit_Log（需求 36.3–36.6）。
+//!   寫入 Audit_Log（需求 36.3–36.6）。三步不在同一個交易中；Audit_Log 寫入失敗時重設已經生效，所以回應
+//!   `password_reset_audit_failed` 而不是 `internal_error`（需求 36.10）。
 //! - 停用：`disabled_at` 為空值時設為 `now()` 並寫入 Audit_Log，已停用時不變；提交之後刪除這個帳號在
 //!   `auth.sessions` 的每一列（再送一次時再刪一次，需求 40.3、40.5）。啟用只把 `disabled_at` 設為空值，已啟用時不變
 //!   （需求 40.6）。
@@ -42,10 +43,11 @@
 //! | 重設密碼：新密碼不符合需求 3.5 | 400 | `invalid_password` | `password` | 見 lm-core 的 `account` |
 //! | 重設密碼：Auth_Service 拒絕、無法連線或逾時 | 500 | `password_reset_unavailable` | `null` | 暫時無法重設密碼，請稍後再試。 |
 //! | 重設密碼：刪除登入工作階段失敗 | 500 | `password_reset_signout_failed` | `null` | 新密碼已設定，但其他裝置可能仍維持登入，請再按一次『設定新密碼』。 |
+//! | 重設密碼：新密碼已設定、登入工作階段已刪除，但 Audit_Log 寫入失敗（warn 記錄） | 500 | `password_reset_audit_failed` | `null` | 新密碼已設定，其他裝置也已登出，但這次操作沒有寫入操作紀錄。 |
 //! | 停用：提交後刪除登入工作階段失敗 | 500 | `account_disable_signout_failed` | `null` | 帳號已停用，但其他裝置可能仍維持登入，請再按一次『停用帳號』。 |
 //! | 設定：不是 `{"public_signup": "open"}` 或 `{"public_signup": "closed"}` | 400 | `invalid_setting` | `public_signup` | 公開註冊只能設為開放或關閉。 |
 //! | 操作紀錄：`page` 不是 1 至 10 的整數，或大於總頁數 | 400 | `invalid_page` | `page` | 沒有這一頁的操作紀錄。 |
-//! | Database 錯誤（包括 Audit_Log 寫入失敗，整個交易回滾） | 500 | `internal_error` | `null` | 伺服器暫時無法處理，請稍後再試。 |
+//! | Database 錯誤（包括交易中的 Audit_Log 寫入失敗，整個交易回滾；重設密碼見上） | 500 | `internal_error` | `null` | 伺服器暫時無法處理，請稍後再試。 |
 //!
 //! # 記錄（需求 34.10、36.7）
 //!
@@ -60,7 +62,7 @@ use lm_core::account;
 use lm_core::admin::{
     check_disable, check_role_change, AdminRejection, AdminSettingsResponse, AdminUserDto,
     AdminUsersResponse, AuditPage, Policy, ResetPasswordRequest, UpdateUserRequest,
-    AUDIT_MAX_PAGES,
+    AUDIT_MAX_PAGES, PASSWORD_RESET_AUDIT_FAILED, PASSWORD_RESET_AUDIT_FAILED_MESSAGE,
 };
 use lm_core::ids::UserId;
 use lm_core::model::Role;
@@ -234,9 +236,27 @@ pub async fn reset_password(
         &format!("@{}", target.username),
         "",
     )
-    .await?;
+    .await
+    .map_err(|error| password_reset_audit_failed(&error, admin.id, target.id))?;
     tracing::info!(actor = %admin.id, target = %target.id, "admin.user.password_reset");
     Ok(Json(JsonValue::Object(Default::default())))
+}
+
+/// 需求 36.10：新密碼已設定、登入工作階段已刪除，之後 Audit_Log 寫入失敗。重設已經生效，所以不回應
+/// `internal_error`：以 warn 記下原因、執行的 Admin 與目標的 Account id（不含密碼），回應 500
+/// `password_reset_audit_failed`，訊息說明重設已經生效。
+fn password_reset_audit_failed(error: &sqlx::Error, actor: UserId, target: UserId) -> ApiError {
+    tracing::warn!(
+        %error,
+        %actor,
+        %target,
+        "admin password reset: audit log write failed after the reset took effect"
+    );
+    ApiError::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        PASSWORD_RESET_AUDIT_FAILED,
+        PASSWORD_RESET_AUDIT_FAILED_MESSAGE,
+    )
 }
 
 /// `POST /api/admin/users/{id}/disable`：停用帳號並登出每個裝置（需求 40.3、40.5，見模組說明）。不讀請求內容。
@@ -449,10 +469,35 @@ mod tests {
     use lm_core::admin::Policy;
     use sqlx::types::JsonValue;
 
-    use super::{parse_page, parse_public_signup};
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use lm_core::ids::UserId;
+    use sqlx::types::Uuid;
+
+    use super::{parse_page, parse_public_signup, password_reset_audit_failed};
 
     fn json(text: &str) -> JsonValue {
         text.parse().expect("test JSON")
+    }
+
+    #[tokio::test]
+    async fn audit_failure_after_reset_says_the_reset_took_effect() {
+        let response = password_reset_audit_failed(
+            &sqlx::Error::PoolTimedOut,
+            UserId(Uuid::nil()),
+            UserId(Uuid::from_u128(1)),
+        )
+        .into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        assert_eq!(
+            json(std::str::from_utf8(&body).expect("UTF-8 body")),
+            json(
+                r#"{"code":"password_reset_audit_failed","message":"新密碼已設定，其他裝置也已登出，但這次操作沒有寫入操作紀錄。","field":null}"#
+            )
+        );
     }
 
     #[test]
