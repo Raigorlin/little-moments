@@ -632,79 +632,79 @@
   - 請使用者依 README 執行需求 33.9 的三個手動確認。Ensure all tests pass, ask the user if questions arise.
   - _Requirements: 1.9, 1.12, 33.8, 33.9_
 
-- [ ] 28. 管理後台：Auth_Service 呼叫與遷移檔
-  - [ ] 28.1 在 Local_Stack 確認重設密碼與登出的假設
+- [x] 28. 管理後台：Auth_Service 呼叫與遷移檔
+  - [x] 28.1 在 Local_Stack 確認重設密碼與登出的假設
     - 在 WSL 中以 Local_Stack 實測，不提交任何檔案：以 service key 呼叫 `PUT /auth/v1/admin/users/{id}`、內容只有 `{"password": …}`，確認新密碼可以密碼登入、舊密碼不行，並記下 GoTrue 對過短密碼的狀態碼；以 `DATABASE_URL` 的角色（`postgres`）執行 `delete from auth.sessions where user_id = $1`，確認有權限，而且之後以原本的 refresh token 換發得到 401
     - 任一項不成立時停下來回報使用者，不改用其他做法（design 5.1）
     - _Requirements: 36.3, 36.4, 40.3_
-  - [ ] 28.2 `AuthBackend::update_user_password`（`crates/supabase/src/gotrue.rs`，feature `server`）
+  - [x] 28.2 `AuthBackend::update_user_password`（`crates/supabase/src/gotrue.rs`，feature `server`）
     - 依 design 2.2 與 5.4：`PUT /auth/v1/admin/users/{id}`，10 秒逾時；422 為 `WeakPassword`，其他錯誤、5xx、無法連線與逾時為 `Upstream`；`AuthError` 的 `Display` 與任何記錄都不含密碼
     - LM_Server 中實作 `AuthBackend` 的測試替身（如果有）一併加上這個方法
     - _Requirements: 1.10, 36.3, 36.5, 36.7_
-  - [ ] 28.3 遷移檔 `supabase/migrations/20260301000000_admin.sql`
+  - [x] 28.3 遷移檔 `supabase/migrations/20260301000000_admin.sql`
     - 依 design 5.5：`app.profiles.disabled_at`、`app.settings`、`app.audit`（操作代碼的 check 清單與需求 41.2 相同）與索引；兩張新表啟用 RLS、不建立政策、撤銷 `anon` 與 `authenticated` 的權限；以 `create or replace` 重新定義 `app.can_use_trip_topic()`，兩個條件各加 `disabled_at is null`，其他內容與 `20260101000100_realtime_authorization.sql` 相同
     - 以 `supabase db reset` 套用，確認依檔名順序套用全部遷移檔
     - _Requirements: 2.3, 6.14, 37.1, 40.1, 40.4, 41.1_
-- [ ] 29. LM_Core：`admin` 模組
-  - [ ] 29.1 型別與規則（`crates/core/src/admin.rs`）
+- [x] 29. LM_Core：`admin` 模組
+  - [x] 29.1 型別與規則（`crates/core/src/admin.rs`）
     - 依 design 5.3：API 型別（`AdminUserDto`、`AdminUsersResponse`、`UpdateUserRequest`、`ResetPasswordRequest`、`Policy`、`SettingSource`、`PublicSignupSetting`、`ActorDto`、`AdminSettingsResponse`、`AuditEntryDto`、`AuditPage`）、`AUDIT_PAGE_SIZE` 與 `AUDIT_MAX_PAGES`；`resolve_public_signup()`、`account_matches()`、`admin_stats()`、`check_role_change()`、`check_disable()`（`AdminRejection` 與其代碼、訊息）、`audit_action_label()`、`audit_page_count()`
     - _Requirements: 35.1, 35.4, 35.6, 37.2, 37.3, 39.3, 40.3, 41.2, 41.3, 41.5_
-  - [ ] 29.2 範例測試
+  - [x] 29.2 範例測試
     - 依 design 5.8 列出的 `lm-core::admin` 案例
     - _Requirements: 35.4, 35.6, 37.2, 39.3, 40.3, 41.3, 41.5_
-- [ ] 30. LM_Server：Admin_Endpoint
-  - [ ] 30.1 `AdminUser`、停用的帳號與帳號列表（`crates/server/src/extract.rs`、`crates/server/src/auth.rs`、`crates/server/src/admin.rs`、`crates/server/src/main.rs`）
+- [x] 30. LM_Server：Admin_Endpoint
+  - [x] 30.1 `AdminUser`、停用的帳號與帳號列表（`crates/server/src/extract.rs`、`crates/server/src/auth.rs`、`crates/server/src/admin.rs`、`crates/server/src/main.rs`）
     - 依 design 5.2：`AdminUser` 內含 `AuthUser`，角色不是 admin 時 403 `admin_required`；`load_profile()` 只讀 `disabled_at is null` 的列，使 `AuthUser`、登入與換發都把 Disabled_Account 當成沒有 `app.profiles`（登入與換發 401 並撤銷這次的工作階段）；`profile_count()` 仍計算全部的列
     - `GET /api/admin/users` 依 design 5.3 的查詢與 `trip_total`；在 `api_routes()` 加入 design 5.3 的全部路由
     - _Requirements: 1.1, 4.2, 4.9, 5.2, 34.1, 34.2, 35.1, 40.4_
-  - [ ] 30.2 Audit_Log（`crates/server/src/audit.rs`、`auth.rs`、`trips.rs`、`invites.rs`）
+  - [x] 30.2 Audit_Log（`crates/server/src/audit.rs`、`auth.rs`、`trips.rs`、`invites.rs`）
     - `audit::write()` 與 `audit::page()`（design 5.5）；在 design 5.5 表中的每個位置、既有的交易中寫入，失敗時整個交易回滾；`trip.create` 只在實際建立時寫入，`invite.join` 在已是成員而直接回傳時不寫
     - `GET /api/admin/audit?page=N`：`page` 不是 1–10 的整數或大於總頁數時 400 `invalid_page`
     - _Requirements: 41.1, 41.2, 41.3, 41.4_
-  - [ ] 30.3 修改帳號（`crates/server/src/admin.rs`）
+  - [x] 30.3 修改帳號（`crates/server/src/admin.rs`）
     - 依 design 5.4：advisory lock、`for update`、`check_display_name()`、計算有效的 Admin 數量、`check_role_change()`；降級時撤銷 design 5.4 條件的 Active_Invite；寫入 Audit_Log；不寫 Change_Log、不改旅伴名字
     - _Requirements: 34.10, 39.3, 39.4, 39.5, 41.2_
-  - [ ] 30.4 重設密碼、停用與啟用（`crates/server/src/admin.rs`、`crates/server/src/repo/profiles.rs`）
+  - [x] 30.4 重設密碼、停用與啟用（`crates/server/src/admin.rs`、`crates/server/src/repo/profiles.rs`）
     - 重設密碼依 design 5.4 的程式與失敗表；`repo::delete_auth_sessions()`
     - 停用：advisory lock、`check_disable()`、已停用時不變也不寫紀錄；提交後刪除 `auth.sessions`，失敗時 500 `account_disable_signout_failed`；啟用：設為空值、寫紀錄，已啟用時不寫
     - 每個成功的寫入寫一行 info 記錄（操作、Admin 的 id、目標 id）；任何記錄、錯誤與 Audit_Log 都不含密碼
     - _Requirements: 34.10, 36.3, 36.4, 36.5, 36.6, 36.7, 40.3, 40.5, 40.6_
-  - [ ] 30.5 公開註冊的設定（`crates/server/src/settings.rs`、`config.rs`、`auth.rs`、`admin.rs`）
+  - [x] 30.5 公開註冊的設定（`crates/server/src/settings.rs`、`config.rs`、`auth.rs`、`admin.rs`）
     - `Config` 把 `LM_PUBLIC_SIGNUP` 存成 `Option<bool>`；`settings::public_signup()` 每次讀 Database；`signup` 沒有邀請時以它判斷 403 `signup_invite_only`，讀取失敗時 500「註冊暫時無法使用，請聯絡管理員。」且不呼叫 Auth_Service；以邀請註冊不讀這個設定
     - `GET`／`PATCH /api/admin/settings`：`public_signup` 必須是字串 `open` 或 `closed`，缺少、其他值或多出欄位都是 400 `invalid_setting`；寫入與 Audit_Log 在同一個交易
     - 更新 `auth.rs` 開頭的說明與錯誤表中的 `LM_PUBLIC_SIGNUP` 字樣
     - _Requirements: 3.7, 3.12, 30.12, 34.10, 37.2, 37.3, 37.4, 37.5, 37.8_
-  - [ ] 30.6 單元測試
+  - [x] 30.6 單元測試
     - `PATCH /api/admin/settings` 內容的解析（`"open"`、`"closed"` 通過；`"OPEN"`、`true`、缺少與多出欄位為 `invalid_setting`）與 `page` 參數的解析（`1`、`10` 通過；`0`、`11`、`abc`、`1.5` 為 `invalid_page`）；不連 Database
     - _Requirements: 37.5, 41.4_
-- [ ] 31. LM_Web：Admin_Page
-  - [ ] 31.1 路由與帳號選單（`crates/web/src/app.rs`）
+- [x] 31. LM_Web：Admin_Page
+  - [x] 31.1 路由與帳號選單（`crates/web/src/app.rs`）
     - `Screen::parse()` 加 `/admin`；In_App_Path 加 `/admin`；沒有 Session 時前往 `/login?next=%2Fadmin`；`AccountMenu` 對 admin 在「我的旅行」之後輸出 `<a class="acct-admin-link" href="/admin">管理後台</a>`，在 Admin_Page 上加 `aria-current="page"`；刪除 `app.rs` 中「第一版沒有管理後台」的註解
     - _Requirements: 32.1, 32.11, 34.3, 34.4_
-  - [ ] 31.2 頁面外框、統計列、公開註冊與帳號列表（`crates/web/src/pages/admin.rs`、`crates/web/src/api.rs`）
+  - [x] 31.2 頁面外框、統計列、公開註冊與帳號列表（`crates/web/src/pages/admin.rs`、`crates/web/src/api.rs`）
     - 依 design 5.6 的結構與 class；文件標題「管理後台 · 日子拾光」；Session 的角色不是 admin 或回應 403 `admin_required` 時顯示需求 34.5 的訊息頁
     - 三個區塊各自讀取，載入中、失敗與「重新載入」互不影響；統計列以 `admin_stats()` 計算；開關依需求 37.6 與 37.7
     - 帳號列表依需求 35.2（Disabled_Account 加 `is-deleted`、自己的列停用「停用帳號」並顯示說明）；搜尋欄以 `account_matches()` 即時篩選；重新讀取時保留搜尋文字
     - 伺服器回傳的文字一律以文字節點輸出
     - _Requirements: 32.6, 34.5, 34.6, 34.7, 34.8, 35.2, 35.3, 35.5, 35.6, 37.6, 37.7_
-  - [ ] 31.3 對話框：編輯帳號、重設密碼、停用與啟用（`crates/web/src/pages/admin.rs`）
+  - [x] 31.3 對話框：編輯帳號、重設密碼、停用與啟用（`crates/web/src/pages/admin.rs`）
     - 沿用刪除旅行確認對話框的結構；焦點與 Esc 依需求 34.9；送出期間停用按鈕
     - 編輯帳號依需求 39.1、39.2、39.6、39.7；重設密碼依需求 36.1、36.2、36.7、36.8（關閉時清空密碼，不寫入 localStorage 或 sessionStorage）；停用依需求 40.2、40.7，啟用不經對話框
     - 每次成功之後重新讀取帳號列表與操作紀錄第 1 頁
     - _Requirements: 34.8, 34.9, 36.1, 36.2, 36.7, 36.8, 39.1, 39.2, 39.6, 39.7, 40.2, 40.7_
-  - [ ] 31.4 操作紀錄區塊（`crates/web/src/pages/admin.rs`）
+  - [x] 31.4 操作紀錄區塊（`crates/web/src/pages/admin.rs`）
     - 依需求 41.5 與 41.6：`acct-audit` 列表、台灣時間、`audit_action_label()`、執行者已不存在時「已刪除的帳號」；換頁列與「只顯示最新的 200 筆。」；換頁只重新讀取這個區塊
     - _Requirements: 41.5, 41.6_
-  - [ ] 31.5 `admin.css`（`crates/web/styles/admin.css`、`crates/web/index.html`）
+  - [x] 31.5 `admin.css`（`crates/web/styles/admin.css`、`crates/web/index.html`）
     - 只有 design 5.6 列出的五組規則，顏色只用既有的 CSS 變數；在 `index.html` 的 `presence.css` 之後連結；在淺色與深色主題下確認文字對比至少 4.5:1、開關與欄位邊框至少 3:1、焦點可見；`styles/styles.css` 與其他既有樣式檔不修改（以 `git diff --stat` 確認）
     - _Requirements: 32.7, 32.8, 34.9_
-- [ ] 32. 文件：首次切換、管理員的救援與 `LM_PUBLIC_SIGNUP`
+- [x] 32. 文件：首次切換、管理員的救援與 `LM_PUBLIC_SIGNUP`
   - 依 design 5.9 更新 `deploy/README.md`（第 5 節的表格、「首次切換」步驟 7，以及新增「管理員的救援」）、`deploy/compose/prod.env.example` 與 `staging.env.example` 的註解、根目錄 `README.md` Rust 章節中 `LM_PUBLIC_SIGNUP` 與首次管理員的說明，以及 `.env.example` 的註解；根目錄 `README.md` 在 Branch_Point 已存在的行不修改（需求 1.9）
   - 在 Local_Stack 實際執行一次「管理員的救援」的每段 SQL，確認可用（例如直接設定的密碼可以登入）
   - 在 `README.md` 的手動確認加入 design 5.8 的管理後台步驟
   - 不寫入任何秘密的值；新增的內容讓 `tests/readme.test.js` 照常通過（同任務 26）
   - _Requirements: 1.9, 1.12, 38.2, 38.3, 38.4_
-- [ ] 33. Checkpoint - 管理後台
+- [x] 33. Checkpoint - 管理後台
   - 在 Repository 根目錄執行 `cargo test`、`cargo clippy --workspace -- -D warnings`、`cargo fmt --check` 與 `trunk build --release --config crates/web/Trunk.toml`，結束碼都是 0；確認 Bun_App 的檔案（`server/`、`src/` 等）沒有變更，`crates/web/styles/styles.css` 與 Bun_App 的 `src/styles.css` 逐字相同，行程表分頁的輸出沒有改變
   - 請使用者依 README 執行管理後台的手動確認。Ensure all tests pass, ask the user if questions arise.
   - _Requirements: 1.9, 32.7, 32.8, 33.8_
