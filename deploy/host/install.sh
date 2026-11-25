@@ -25,8 +25,10 @@
 #   帳號      lm-ops（維運帳號，system、nologin）；lm-deploy-<env>（部署帳號，無密碼、只能以公鑰登入，
 #             移出 docker／sudo／adm／lxd 等特權群組）
 #   /opt/lm/bin/lm-deploy                 root 0755（來源 deploy/bin/lm-deploy）
+#   /opt/lm/bin/lm-supabase-keys          root 0755（來源 deploy/bin/lm-supabase-keys；還原演練以它產生拋棄式金鑰）
 #   /srv/lm/<env>/                        root 0750；compose.yaml、drill.yaml 0644、caddy/ 0755（Caddyfile、tls-*.caddy、
 #                                         upstream.caddy.tmpl，首次安裝時產生指向 blue 的 upstream.caddy）、
+#                                         supabase/ 0755（gateway.Caddyfile、db-setup.sql 0644）、
 #                                         state/ 0700；<env>.env 只在不存在時由範本建立（0644，需替換佔位符）
 #   /var/backups/little-moments/<env>/    lm-ops:lm-ops 0700（不屬於 Docker 卷、不在 repository，Req 14.4）
 #   /etc/lm/docker-user.rules             root 0644；以 iptables-restore --test 驗證後安裝（檔頭註解列出
@@ -37,9 +39,11 @@
 #                                         /etc/sudoers 與（存在時）/etc/sudoers-rs 都必須載入 /etc/sudoers.d
 #   ~lm-deploy-<env>/.ssh/authorized_keys root 0644（forced command、from=、no-pty）
 #
-# 不會建立或覆寫秘密：db.env／app.env（0600 root）須由維運者依 deploy/compose/*.env.example 建立；
-# app.env 亦可由 Pipeline 經 `lm-deploy <env> app-env`（stdin）寫入。範本中的佔位符密碼不得使用，
-# 因此本腳本不複製這兩個範本。
+# 不會建立或覆寫秘密：app.env（0600 root；Supabase 的 8 個金鑰，以 deploy/bin/lm-supabase-keys 產生）由 Pipeline 經
+# `lm-deploy <env> deploy <digest> --app-env-stdin`（或維運者經 `lm-deploy <env> app-env`）的 stdin 寫入；本腳本只收斂
+# 既有 app.env 的擁有者與權限，不複製 app.env.example。Bun 版本的 db.env 不再使用。
+#
+# 需要 Docker Compose v2.24 以上（compose.yaml 以兩個 --env-file 替換變數，lm-deploy 使用 `up --wait`）。
 #
 # 安裝後執行 deploy/host/verify-host.sh 確認設定已生效。
 #
@@ -55,6 +59,7 @@ shopt -u patsub_replacement 2>/dev/null || true
 readonly OPS_USER=lm-ops
 readonly LM_OPT=/opt/lm
 readonly LM_BIN=/opt/lm/bin/lm-deploy
+readonly LM_KEYS_BIN=/opt/lm/bin/lm-supabase-keys
 readonly LM_ROOT=/srv/lm
 readonly LM_ETC=/etc/lm
 readonly BACKUP_ROOT=/var/backups/little-moments
@@ -329,21 +334,38 @@ fi
 # ---------------------------------------------------------------------------------------------
 
 [[ ${EUID} -eq 0 ]] || die "必須以 root 執行"
-for cmd in install getent groupadd useradd usermod gpasswd id visudo iptables-restore systemctl mktemp stat; do
+for cmd in install getent groupadd useradd usermod gpasswd id visudo iptables-restore systemctl mktemp stat docker; do
   command -v "$cmd" >/dev/null 2>&1 || die "缺少必要指令：$cmd"
 done
 
+# Docker Compose ≥ 2.24（plan.md D6）：compose.yaml 以多個 --env-file 替換變數，lm-deploy 使用 `up --wait`。
+check_compose_version() {
+  local v
+  v=$(docker compose version --short 2>/dev/null) || die "無法執行 docker compose version（需要 Docker Compose v2.24 以上）"
+  v=${v#v}
+  [[ $v =~ ^([0-9]+)\.([0-9]+) ]] || die "無法解析 docker compose 的版本：$v"
+  if ((BASH_REMATCH[1] < 2 || (BASH_REMATCH[1] == 2 && BASH_REMATCH[2] < 24))); then
+    die "docker compose $v 過舊，需要 2.24 以上"
+  fi
+  log "docker compose $v"
+}
+check_compose_version
+
 SRC_LM_DEPLOY="$DEPLOY_DIR/bin/lm-deploy"
+SRC_KEYS="$DEPLOY_DIR/bin/lm-supabase-keys"
 SRC_COMPOSE="$DEPLOY_DIR/compose/compose.yaml"
 SRC_DRILL="$DEPLOY_DIR/compose/drill.yaml"
 SRC_CADDY_DIR="$DEPLOY_DIR/caddy"
 CADDY_FILES=(Caddyfile tls-off.caddy tls-internal.caddy tls-file.caddy upstream.caddy.tmpl)
+SRC_SUPABASE_DIR="$DEPLOY_DIR/supabase"
+SUPABASE_FILES=(gateway.Caddyfile db-setup.sql)
 SRC_UNIT="$SCRIPT_DIR/$UNIT_NAME"
 SRC_SUDOERS="$SCRIPT_DIR/sudoers.d/lm-deploy"
 SRC_AUTHKEYS="$SCRIPT_DIR/authorized_keys.tmpl"
 
-srcs=("$SRC_LM_DEPLOY" "$SRC_COMPOSE" "$SRC_DRILL" "$SRC_RULES" "$SRC_UNIT" "$SRC_SUDOERS" "$SRC_AUTHKEYS")
+srcs=("$SRC_LM_DEPLOY" "$SRC_KEYS" "$SRC_COMPOSE" "$SRC_DRILL" "$SRC_RULES" "$SRC_UNIT" "$SRC_SUDOERS" "$SRC_AUTHKEYS")
 for f in "${CADDY_FILES[@]}"; do srcs+=("$SRC_CADDY_DIR/$f"); done
+for f in "${SUPABASE_FILES[@]}"; do srcs+=("$SRC_SUPABASE_DIR/$f"); done
 for e in "${ENV_LIST[@]}"; do srcs+=("$DEPLOY_DIR/compose/$e.env.example"); done
 for f in "${srcs[@]}"; do src_ok "$f"; done
 
@@ -433,7 +455,9 @@ install_lm_deploy() {
   install -d -o root -g root -m 0755 -- "$LM_OPT" "$LM_OPT/bin"
   install_atomic "$SRC_LM_DEPLOY" "$LM_BIN" 0755
   path_safe "$LM_BIN" || die "$LM_BIN 或其上層目錄不是 root 擁有或群組／其他人可寫"
-  log "已安裝 $LM_BIN"
+  install_atomic "$SRC_KEYS" "$LM_KEYS_BIN" 0755
+  path_safe "$LM_KEYS_BIN" || die "$LM_KEYS_BIN 或其上層目錄不是 root 擁有或群組／其他人可寫"
+  log "已安裝 $LM_BIN 與 $LM_KEYS_BIN"
 }
 
 install_env() {
@@ -442,14 +466,17 @@ install_env() {
   install -d -o root -g root -m 0750 -- "$d"
   install -d -o root -g root -m 0700 -- "$d/state"
   install -d -o root -g root -m 0755 -- "$d/caddy"
-  chown root:root -- "$d" "$d/state" "$d/caddy"
+  install -d -o root -g root -m 0755 -- "$d/supabase"
+  chown root:root -- "$d" "$d/state" "$d/caddy" "$d/supabase"
   chmod 0750 -- "$d"
   chmod 0700 -- "$d/state"
-  chmod 0755 -- "$d/caddy"
+  chmod 0755 -- "$d/caddy" "$d/supabase"
   install_atomic "$SRC_COMPOSE" "$d/compose.yaml" 0644
   # 還原演練專案（lm-deploy <env> drill）；只有 internal 網路與匿名卷，不含任何秘密。
   install_atomic "$SRC_DRILL" "$d/drill.yaml" 0644
   for f in "${CADDY_FILES[@]}"; do install_atomic "$SRC_CADDY_DIR/$f" "$d/caddy/$f" 0644; done
+  # Supabase API gateway 的 Caddyfile（gateway 服務唯讀掛載）與 lm-deploy 每次部署執行的 db-setup.sql；不含秘密。
+  for f in "${SUPABASE_FILES[@]}"; do install_atomic "$SRC_SUPABASE_DIR/$f" "$d/supabase/$f" 0644; done
   # proxy 首次啟動需要 upstream.caddy；之後只由 lm-deploy switch／rollback 改寫。
   if [[ ! -e $d/caddy/upstream.caddy ]]; then
     local tmp
@@ -465,14 +492,13 @@ install_env() {
   elif grep -q '<[a-z-]*>' -- "$d/$env.env"; then
     warn "$d/$env.env 仍含 <...> 佔位符"
   fi
-  for f in app.env db.env; do
-    if [[ -e $d/$f ]]; then
-      chown root:root -- "$d/$f"
-      chmod 0600 -- "$d/$f"
-    else
-      warn "$d/$f 不存在：請依 deploy/compose/$f.example 建立（0600 root，不得使用範本中的佔位值）"
-    fi
-  done
+  if [[ -e $d/app.env ]]; then
+    chown root:root -- "$d/app.env"
+    chmod 0600 -- "$d/app.env"
+  else
+    warn "$d/app.env 不存在：第一次部署以 lm-deploy $env deploy <digest> --app-env-stdin 寫入（金鑰以 deploy/bin/lm-supabase-keys 產生）"
+  fi
+  [[ ! -e $d/db.env ]] || warn "$d/db.env 已不再使用（Bun 版本的 Database 憑證）；確認不再需要後可移除"
   log "已安裝 $d"
 }
 

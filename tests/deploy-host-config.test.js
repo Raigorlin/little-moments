@@ -63,7 +63,7 @@ describe('deploy/host', () => {
     expect(cmnds).toHaveLength(2);
   });
 
-  test('smoke-account 只限 Host_Operator：SSH 允許清單不含它、require_operator 擋部署帳號（Req 27.17、27.18、15.9）', () => {
+  test('SSH forced command 只接受固定的子命令清單；smoke-account 與收據 AI 已移除（Req 27.18、15.9；plan.md D14）', () => {
     const sh = readFileSync(LM_DEPLOY, 'utf8');
     const m = sh.match(/^readonly SSH_SUBCOMMANDS="([^"]*)"$/m);
     expect(m).not.toBeNull();
@@ -73,36 +73,41 @@ describe('deploy/host', () => {
     expect(list.sort()).toEqual(
       ['app-env', 'backup', 'deploy', 'drill', 'finalize', 'health', 'migrate', 'prune', 'rollback', 'start', 'status', 'switch'],
     );
-    expect(list).not.toContain('smoke-account');
     // parse_ssh_command 以清單拒絕其他子命令。
     expect(fnBody(sh, 'parse_ssh_command')).toContain('" $SSH_SUBCOMMANDS " != *" ${toks[0]} "*');
+    for (const gone of ['smoke-account', 'require_operator', 'create-smoke-account', 'LM_OPENAI_API_KEY', 'LM_RECEIPT_AI', 'db.env']) {
+      expect(sh).not.toContain(gone);
+    }
 
-    const op = fnBody(sh, 'require_operator');
-    expect(op).toContain('SSH_ORIGINAL_COMMAND');
-    expect(op).toContain('lm-deploy-staging');
-    expect(op).toContain('lm-deploy-prod');
-    expect(op).toContain('SUDO_USER');
-    expect(op).toContain('EUID');
-    expect(op).toContain('operator_only');
-
-    // smoke-account 分支：require_operator 是第一個動作，stdin 為終端機的檢查在取鎖之前。
-    const branch = sh.slice(sh.indexOf('\n    smoke-account)\n'));
-    const first = branch.indexOf('require_operator');
-    expect(first).toBeGreaterThan(0);
-    expect(first).toBeLessThan(branch.indexOf('acquire_lock'));
-    expect(branch.indexOf('-t 0')).toBeLessThan(branch.indexOf('acquire_lock'));
-    // 密碼只經工具的 stdin。
-    expect(sh).toContain('/app/tools/create-smoke-account.js "$@" <"$SMOKE_PW_FILE"');
-
-    // sudoers 不變：完整比對參數的 lm-deploy <env>，無法在 argv 加上 smoke-account。
+    // sudoers 不變：完整比對參數的 lm-deploy <env>，無法在 argv 加上其他子命令。
     const cmnds = body(read('sudoers.d/lm-deploy')).filter(l => l.startsWith('Cmnd_Alias'));
     expect(cmnds).toEqual([
       'Cmnd_Alias LM_DEPLOY_STAGING_CMD = /opt/lm/bin/lm-deploy staging',
       'Cmnd_Alias LM_DEPLOY_PROD_CMD = /opt/lm/bin/lm-deploy prod',
     ]);
-    expect(read('sudoers.d/lm-deploy')).not.toContain('smoke-account');
   });
 
+  test('lm-deploy：app.env 只接受 lm-supabase-keys 的 8 個鍵，Compose 以 <env>.env 與 app.env 兩個 --env-file 執行（plan.md D6、D16）', () => {
+    const sh = readFileSync(LM_DEPLOY, 'utf8');
+    const m = sh.match(/^readonly APP_ENV_KEYS=" ([^"]*) "$/m);
+    expect(m).not.toBeNull();
+    expect(m[1].split(' ')).toEqual([
+      'LM_DB_PASSWORD', 'LM_JWT_SECRET', 'LM_ANON_KEY', 'LM_SERVICE_KEY', 'LM_JWT_KEYS', 'LM_JWKS',
+      'LM_REALTIME_SECRET_KEY_BASE', 'LM_REALTIME_DB_ENC_KEY',
+    ]);
+    const keys = readFileSync(join(import.meta.dir, '..', 'deploy', 'bin', 'lm-supabase-keys'), 'utf8');
+    for (const k of m[1].split(' ')) expect(keys).toContain(`printf '${k}=%s\\n'`);
+    expect(keys.includes('\r')).toBe(false);
+    expect(fnBody(sh, 'build_compose')).toContain('--env-file "$ENV_DIR/$ENVN.env" --env-file "$ENV_DIR/app.env"');
+    // 健康檢查是 8080 上的 /robots.txt（plan.md D4）。
+    expect(fnBody(sh, 'check_health_once')).toContain('"http://app-$color:8080/robots.txt"');
+    // deploy 的順序：app.env → stack → backup → migrate → start → health → switch。
+    const deploy = fnBody(sh, 'do_deploy');
+    const order = ['install_app_env', 'ensure_stack', 'do_backup', 'do_migrate', 'do_start', 'health_wait', 'do_switch'];
+    const at = order.map(s => deploy.indexOf(s));
+    for (const i of at) expect(i).toBeGreaterThan(0);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+  });
   test('install.sh／verify-host.sh：/etc/sudoers-rs 存在時也必須載入 /etc/sudoers.d；sudo -l 以 LC_ALL=C 解析', () => {
     const install = read('install.sh');
     expect(install).toContain('for main in /etc/sudoers /etc/sudoers-rs; do');
@@ -175,8 +180,19 @@ describe('deploy/host', () => {
     expect(sh).toContain('install -d -o "$OPS_USER" -g "$OPS_USER" -m 0700 -- "$BACKUP_ROOT"');
     expect(sh).toContain('readonly BACKUP_ROOT=/var/backups/little-moments');
     expect(sh).toContain('install_atomic "$SRC_LM_DEPLOY" "$LM_BIN" 0755');
-    // 不得把佔位密碼範本複製成實際秘密檔。
+    expect(sh).toContain('install_atomic "$SRC_KEYS" "$LM_KEYS_BIN" 0755');
+    expect(sh).toContain('readonly LM_KEYS_BIN=/opt/lm/bin/lm-supabase-keys');
+    // Supabase 的 gateway.Caddyfile 與 db-setup.sql 安裝到 /srv/lm/<env>/supabase/（0644）。
+    expect(sh).toContain('SUPABASE_FILES=(gateway.Caddyfile db-setup.sql)');
+    expect(sh).toContain('install_atomic "$SRC_SUPABASE_DIR/$f" "$d/supabase/$f" 0644');
+    // Docker Compose ≥ 2.24，在 root 檢查之後、安裝任何檔案之前。
+    const compose = sh.indexOf('check_compose_version\n');
+    expect(compose).toBeGreaterThan(sh.indexOf('[[ ${EUID} -eq 0 ]] || die'));
+    expect(compose).toBeLessThan(sh.indexOf('\nensure_ops_user\n'));
+    expect(fnBody(sh, 'check_compose_version')).toContain('BASH_REMATCH[2] < 24');
+    // 不得把佔位密碼範本複製成實際秘密檔；db.env 不再需要。
     expect(sh).not.toMatch(/(app|db)\.env\.example" "\$d\//);
+    expect(fnBody(sh, 'install_env')).not.toContain('for f in app.env db.env');
   });
 
   test('verify-host.sh：涵蓋規則、備份目錄、db 連接埠與 docker 群組檢查', () => {
@@ -188,6 +204,13 @@ describe('deploy/host', () => {
     expect(sh).toContain('iptables -w 5 -C DOCKER-USER');
     expect(sh).toContain('.HostConfig.PortBindings');
     expect(sh).toContain('sudo -n -l -U "$user"');
+    // 只有 proxy 發布連接埠：db、auth、realtime、gateway 與 app-* 皆不得有 ports（plan.md D6）。
+    expect(sh).toContain('readonly INTERNAL_SERVICES="db auth realtime gateway app-blue app-green"');
+    expect(fnBody(sh, 'check_db')).toContain('for svc in $INTERNAL_SERVICES; do');
+    // app.env 為 root 0600，supabase/ 的檔案與 lm-supabase-keys 存在；db.env 不再預期。
+    const files = fnBody(sh, 'check_files');
+    for (const s of ['supabase/gateway.Caddyfile supabase/db-setup.sql', '$LM_KEYS_BIN', 'app.env 為 root 0600']) expect(files).toContain(s);
+    expect(files).not.toContain('for f in app.env db.env');
     // 唯讀：不得呼叫會修改主機狀態的指令。
     for (const cmd of ['iptables-restore', 'usermod', 'gpasswd', 'chmod ', 'chown ', 'systemctl reload', 'systemctl restart', 'docker rm', 'rm -']) {
       expect(body(sh).some(l => l.includes(cmd) && !/^\s*(fail|pass|warn) /.test(l))).toBe(false);

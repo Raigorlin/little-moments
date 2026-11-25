@@ -244,11 +244,20 @@ describe('LAN Registry 與映像的實際值（tasks 19.4）', () => {
     }
   });
 
-  test('Compose 的第三方映像以 64 位十六進位 digest 固定', () => {
+  test('Compose 的第三方映像以 64 位十六進位 digest 固定（plan.md D5）', () => {
     const compose = parseCompose('deploy/compose/compose.yaml');
-    expect(compose.services.proxy.image).toBe('caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d');
+    const caddy = 'caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d';
+    expect(compose.services.proxy.image).toBe(caddy);
+    // Supabase CLI 3.2.0 的 supabase.lock 所用的 ghcr.io/supabase/cli 映像（多平台 index digest）；API gateway 與 proxy 同一個 Caddy。
+    const supabase = {
+      db: 'ghcr.io/supabase/cli/postgres:17.12.0.000-r0@sha256:f76f17ab40da704b0ab60c012277144e93abf85e396c26f9a272d7b5bd20073f',
+      auth: 'ghcr.io/supabase/cli/auth:v2.198.0-r0@sha256:6119529b17c2b335fdeb49673cbb5d602bf5e4368d1f1032ba11bc4bfd24b850',
+      realtime: 'ghcr.io/supabase/cli/realtime:v2.167.0-r0@sha256:7a052b1772f830e6496fd8a84ea7179514584186a331c935a58d2bcb49a3cfc9',
+      gateway: caddy,
+    };
     for (const file of COMPOSE_FILES) {
-      expect(parseCompose(file).services.db.image).toBe('postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3');
+      const services = parseCompose(file).services;
+      for (const [svc, image] of Object.entries(supabase)) expect({ file, svc, image: services[svc].image }).toEqual({ file, svc, image });
     }
   });
 
@@ -396,54 +405,16 @@ describe('Compose：db 不發布連接埠（Req 11.10）', () => {
   }
 });
 
-describe('CAMPING_OPENAI_* 預設為空字串（Req 15.6）', () => {
-  // server/receipt-ai.js 與 server/config.js 讀取的全部 OpenAI 變數。
-  const NAMES = ['CAMPING_OPENAI_API_KEY', 'CAMPING_OPENAI_API_KEY_FILE', 'CAMPING_OPENAI_MODEL_ID', 'CAMPING_OPENAI_IMAGE_DETAIL', 'CAMPING_OPENAI_MAX_COMPLETION_TOKENS'];
-  // 金鑰只以金鑰檔提供：CAMPING_OPENAI_API_KEY 在 Compose 中固定為空字串，也不出現在 Compose 變數範本。
-  const KEY = 'CAMPING_OPENAI_API_KEY';
-
-  for (const file of COMPOSE_FILES) {
-    test(file, () => {
-      const services = parseCompose(file).services ?? {};
-      let seen = 0;
-      for (const [svc, def] of Object.entries(services)) {
-        for (const [key, value] of envEntries(def.environment)) {
-          if (!key.startsWith('CAMPING_OPENAI_')) continue;
-          seen++;
-          // 只接受空字串，或由同名 Compose 變數帶入且預設為空字串的 `${NAME:-}`／`${NAME-}`；金鑰本身只接受空字串。
-          const ok = value === '' || (key !== KEY && (value === `\${${key}:-}` || value === `\${${key}-}`));
-          if (!ok) throw new Error(`${file} services.${svc}.environment.${key} 的預設值不是空字串：${value}`);
-        }
-      }
-      // 執行 App 的服務都必須明確設定全部變數（不依賴映像或 env_file）。
-      const appServices = Object.entries(services).filter(([, d]) => !d.entrypoint && d.user === '10001:10001');
-      expect(appServices.length).toBeGreaterThan(0);
-      for (const [, d] of appServices) {
-        const keys = envEntries(d.environment).map(([k]) => k);
-        for (const n of NAMES) expect(keys).toContain(n);
-      }
-      expect(seen).toBeGreaterThan(0);
-    });
-  }
-
-  test('Compose 變數範本（*.env.example）中 CAMPING_OPENAI_* 為空值，且不含 API 金鑰變數', () => {
+describe('CAMPING_OPENAI_* 不再出現在部署設定（收據 AI 已移除，plan.md D14）', () => {
+  test('Compose 檔案與 Compose 變數範本（*.env.example）不含任何 CAMPING_* 變數', () => {
     const dir = 'deploy/compose';
-    const files = readdirSync(resolve(root, dir)).filter((f) => f.endsWith('.env.example'));
-    expect(files.length).toBeGreaterThan(0);
-    for (const f of files) {
-      for (const line of read(`${dir}/${f}`).split(/\r?\n/)) {
-        const m = /^\s*(CAMPING_OPENAI_[A-Z_]+)\s*=(.*)$/.exec(line);
-        if (!m) continue;
-        expect([m[1], m[2].trim()]).toEqual([m[1], '']);
-        expect(m[1]).not.toBe(KEY);
-      }
-    }
-    for (const env of ['staging', 'prod']) {
-      const text = read(`${dir}/${env}.env.example`);
-      for (const n of NAMES.filter((n) => n !== KEY)) expect(text).toMatch(new RegExp(`^${n}=$`, 'm'));
+    const files = [...COMPOSE_FILES, ...readdirSync(resolve(root, dir)).filter((f) => f.endsWith('.env.example')).map((f) => `${dir}/${f}`)];
+    expect(files.length).toBeGreaterThan(2);
+    for (const file of files) {
+      const code = read(file).split(/\r?\n/).filter((l) => !l.trimStart().startsWith('#')).join('\n');
+      expect({ file, camping: /CAMPING_/.test(code) }).toEqual({ file, camping: false });
     }
   });
-
   test('Pipeline 不以非空值設定 CAMPING_OPENAI_*', () => {
     for (const file of pipelineFiles) {
       const code = stripComments(read(file));

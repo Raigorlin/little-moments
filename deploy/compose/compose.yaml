@@ -1,31 +1,40 @@
-# Deploy_Host Compose 專案（Requirement 11.4、11.10、15.6、18.6、20.2、20.3；design.md Components §12）。
+# Deploy_Host Compose 專案（Requirement 11.4、11.10、18.6、20.2、20.3；plan.md D5、D6、D12）。
 #
-# 每個環境一份獨立專案：以 `--env-file /srv/lm/<env>/<env>.env` 啟動，`name: lm-<env>` 使
-# 網路、卷與容器名稱皆以 lm-staging_／lm-prod_ 為前綴，兩環境不共用 Database、資料卷或網路。
+# 每個環境一份獨立專案：以 `--env-file /srv/lm/<env>/<env>.env --env-file /srv/lm/<env>/app.env` 啟動，
+# `name: lm-<env>` 使網路、卷與容器名稱皆以 lm-staging_／lm-prod_ 為前綴，兩環境不共用 Database、資料卷、
+# 金鑰或網路。
 #
-#   docker compose -f compose.yaml --env-file prod.env --profile green up -d app-green
+#   docker compose -f compose.yaml --env-file prod.env --env-file app.env --profile green up -d app-green
 #
 # 檔案配置（由 deploy/host/install.sh 安裝，lm-deploy 操作）：
 #   /srv/lm/<env>/compose.yaml   本檔
 #   /srv/lm/<env>/<env>.env      Compose 變數（非秘密；範本見 staging.env.example／prod.env.example）
-#   /srv/lm/<env>/app.env        0600 root；App 的 DB 憑證與 Setup_Token（範本見 app.env.example）
-#   /srv/lm/<env>/db.env         0600 root；PostgreSQL 初始化憑證（範本見 db.env.example）
+#   /srv/lm/<env>/app.env        0600 root；Supabase 的 8 個金鑰（LM_*；範本見 app.env.example，以
+#                                deploy/bin/lm-supabase-keys 產生），只用於 ${...} 變數替換，不以 env_file 整份傳入容器
+#   /srv/lm/<env>/supabase/      deploy/supabase/ 的 gateway.Caddyfile（API gateway）與 db-setup.sql（lm-deploy 執行）
 #   /srv/lm/<env>/caddy/         deploy/caddy/ 的內容 + lm-deploy 產生的 upstream.caddy
-#   /srv/lm/prod/secrets/openai-api-key  只有 Production；10001:10001 0400，由 lm-deploy deploy 寫入（secrets/ 為 root 0700）
 #
-# 映像一律以 `repo@sha256:<digest>` 引用（Req 17.7、20.1）。APP_IMAGE_* 由 lm-deploy 在每次呼叫時
-# 提供並驗證格式；第三方映像（proxy、db）以上游多平台 index 的 digest 固定，見下方註解。
+# 映像一律以 `repo@sha256:<digest>` 引用（Req 17.7、20.1）。APP_IMAGE_* 由 lm-deploy 在每次呼叫時提供並驗證格式；
+# 第三方映像以上游多平台 index 的 digest 固定（plan.md D5：與本機 Supabase CLI 3.2.0 的 supabase.lock 相同的
+# ghcr.io/supabase/cli 映像，2026-11-25 經 ghcr API 確認），更新時 drill.yaml 一起修改。
+#
+# 服務：
+#   proxy               LM_Proxy（Caddy）：唯一發布連接埠的服務；拒絕 LM_ALLOWED_HOSTS 以外的 Host（421）。
+#   app-blue／app-green lm-server（App_Image：/app/bin/little-moments-server、/app/dist、/app/migrations；8080）。
+#   db                  Supabase Postgres 17（初始化、角色與 Supabase 遷移由映像在首次啟動時完成）。
+#   auth                GoTrue（`gotrue` 先 migrate 再 serve）。
+#   realtime            Realtime（/app/entry.sh 先執行 prepare：遷移並建立 tenant realtime-dev）。
+#   gateway             API gateway（與 proxy 相同的 Caddy 映像）：/auth/v1、/realtime/v1，檢查 apikey。
 #
 # 網路：
 #   edge  一般 bridge，只有 proxy；唯一發布連接埠的服務，綁定 ${LAN_IP}。LAN 網段限制由
 #         deploy/host 的 DOCKER-USER 規則在 Docker 轉送層生效（Req 8.6）。Production 另經同主機的
 #         Edge_Proxy（Nginx Proxy Manager + Cloudflare）連到此連接埠；proxy 只採信 LM_EDGE_TRUSTED_PROXIES
 #         （Edge_Trusted_Proxies）來源送來的 X-Forwarded-For／X-Forwarded-Proto（Req 25.1–25.6）。
-#   app   internal、固定子網；proxy ↔ app-blue／app-green。proxy 使用固定 IP，App 只採信該 /32
-#         的 X-Forwarded-*（Req 9.12、25.10；design Open Risks 6：不得設為整個 LAN 網段），
-#         不論 LM_EDGE_TRUSTED_PROXIES 的內容。
-#   data  internal；app-blue／app-green／migrate ↔ db。proxy 不在此網路，無法直接連線 Database。
-# db 不宣告 ports，不發布到 Deploy_Host 任何介面（Req 11.10）。
+#   app   internal、固定子網；proxy ↔ app-blue／app-green。
+#   data  internal；app-blue／app-green ↔ db、gateway；gateway ↔ auth、realtime；auth、realtime ↔ db。
+#         proxy 不在此網路，無法直接連線 Database 或 Supabase 服務。
+# db、auth、realtime、gateway 與 app-* 都不宣告 ports，不發布到 Deploy_Host 任何介面（Req 11.10）。
 
 name: lm-${LM_ENV:?LM_ENV 必須為 staging 或 prod}
 
@@ -41,66 +50,49 @@ x-hardening: &hardening
   security_opt: ["no-new-privileges:true"]
   logging: *logging
 
+# Supabase 服務：不設 read_only（Postgres 寫 /run 與資料卷、Realtime 寫 /tmp 與 release 暫存），其餘與 hardening 相同。
+x-supabase: &supabase
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging: *logging
+  networks: [data]
+  restart: unless-stopped
+
 x-app: &app
   <<: *hardening
-  # App_Image 已在映像內設定 USER 10001:10001；此處再次明確指定，避免被覆寫為 root。
-  user: "10001:10001"
-  env_file: [app.env]
+  # App_Image 已在映像內設定 USER 65532:65532；此處再次明確指定，避免被覆寫為 root。
+  user: "65532:65532"
   environment:
-    NODE_ENV: production
-    CAMPING_BIND_ADDRESS: 0.0.0.0
-    PORT: "5173"
-    CAMPING_ALLOWED_HOSTS: ${ALLOWED_HOSTS:?ALLOWED_HOSTS 未設定}
-    CAMPING_TRUSTED_PROXIES: ${PROXY_IP:?PROXY_IP 未設定}/32
-    CAMPING_DATABASE_HOST: db
-    CAMPING_DATABASE_PORT: "5432"
-    # 同一 Compose internal 網路，不經過主機網路介面（design Components §1 預設 disable）。
-    CAMPING_DATABASE_SSLMODE: disable
-    CAMPING_DIST: /app/dist
-    CAMPING_MIGRATIONS_DIR: /app/migrations
-    # 公開註冊政策（Req 26.16）：這只是啟動初始值（Registration_Seed），未設定或空字串時為 closed，
-    # 帳號只能經旅行邀請連結建立。管理員在 /admin 儲存的值優先，儲存後此值不再生效。
-    CAMPING_REGISTRATION: ${CAMPING_REGISTRATION:-closed}
-    # 雲端 AI 收據辨識（OpenAI；Req 15.6、15.7；design.md Components §25）：金鑰只以金鑰檔提供，
-    # CAMPING_OPENAI_API_KEY 固定為空字串。CAMPING_OPENAI_API_KEY_FILE 由 lm-deploy 每次執行時以呼叫端環境傳入：
-    # Production 的 /srv/lm/prod/secrets/openai-api-key 存在時為 /run/secrets/openai-api-key（下方 x-openai-key
-    # 的掛載），否則為空字串（Staging 一律為空字串），App 沒有可用的金鑰即停用。金鑰內容只來自 release/ 的
-    # Credential_Store（lm-prod-openai-api-key），經 Production Deploy 的 stdin 交給 lm-deploy。其他 CAMPING_OPENAI_*
-    # 維持空字串（App 使用預設值）；<env>.env 中這些變數的非空值會被 lm-deploy 拒絕。
-    CAMPING_OPENAI_API_KEY: ""
-    CAMPING_OPENAI_API_KEY_FILE: ${CAMPING_OPENAI_API_KEY_FILE:-}
-    CAMPING_OPENAI_MODEL_ID: ${CAMPING_OPENAI_MODEL_ID:-}
-    CAMPING_OPENAI_IMAGE_DETAIL: ${CAMPING_OPENAI_IMAGE_DETAIL:-}
-    CAMPING_OPENAI_MAX_COMPLETION_TOKENS: ${CAMPING_OPENAI_MAX_COMPLETION_TOKENS:-}
+    LM_BIND: 0.0.0.0:8080
+    LM_STATIC_DIR: /app/dist
+    # 同一 Compose internal 網路，不經過主機網路介面。postgres 是遷移與 App 使用的角色（plan.md D7）。
+    DATABASE_URL: postgresql://postgres:${LM_DB_PASSWORD:?LM_DB_PASSWORD 未設定（app.env）}@db:5432/postgres?sslmode=disable
+    SUPABASE_URL: http://gateway:8000
+    SUPABASE_ANON_KEY: ${LM_ANON_KEY:?LM_ANON_KEY 未設定（app.env）}
+    SUPABASE_SERVICE_KEY: ${LM_SERVICE_KEY:?LM_SERVICE_KEY 未設定（app.env）}
+    SUPABASE_JWT_SECRET: ${LM_JWT_SECRET:?LM_JWT_SECRET 未設定（app.env）}
+    LM_AUTH_EMAIL_DOMAIN: ${LM_AUTH_EMAIL_DOMAIN:-users.little-moments.invalid}
+    # 不經邀請的註冊（plan.md D9）：Staging 為 true（smoke --provision），Production 為 false。
+    LM_PUBLIC_SIGNUP: ${LM_PUBLIC_SIGNUP:-false}
   tmpfs:
     - /tmp:rw,noexec,nosuid,nodev,size=16m
   networks: [app, data]
   depends_on:
     db:
       condition: service_healthy
+    gateway:
+      condition: service_started
   restart: unless-stopped
-  # 收到 SIGTERM 後 serve.mjs 停止接受新連線並在 5 秒內關閉連線池；略長於 Caddy grace_period 30s。
+  # 略長於 Caddy grace_period 30s。
   stop_grace_period: 35s
   # distroless 映像沒有 shell 或 wget，不在容器內設 healthcheck。健康檢查由 lm-deploy 經 proxy 容器
-  # 呼叫 http://app-<color>:5173/healthz（5 秒逾時，design Components §12）。
+  # 呼叫 http://app-<color>:8080/robots.txt（5 秒逾時；lm-server 沒有 /healthz）。
   deploy:
     resources:
       limits:
         cpus: "${APP_CPUS:-1.0}"
-        memory: ${APP_MEMORY:-512M}
+        memory: ${APP_MEMORY:-256M}
         pids: 256
-
-# 收據 AI 的金鑰檔（design.md Components §25.5）：只掛載到 app-blue／app-green（不含 migrate、proxy、db）。
-# 來源由 lm-deploy 決定：金鑰檔存在時為 /srv/lm/prod/secrets/openai-api-key，否則為 /dev/null（停用時的佔位）。
-# 長語法加 create_host_path: false：來源不存在時 up 直接失敗，不會由 Docker 建立目錄（短語法會建立目錄，
-# App 讀取時得到 EISDIR）。單檔 bind mount 停留在建立容器時的 inode，輪替在下一次部署的新槽位生效。
-x-openai-key: &openai_key
-  type: bind
-  source: ${LM_OPENAI_KEY_SOURCE:-/dev/null}
-  target: /run/secrets/openai-api-key
-  read_only: true
-  bind:
-    create_host_path: false
 
 services:
   proxy:
@@ -116,6 +108,8 @@ services:
       LM_SITE_ADDRESS: ${LM_SITE_ADDRESS:-http://:8080}
       LM_TLS_MODE: ${LM_TLS_MODE:-off}
       LM_HEALTH_HOST: ${LM_HEALTH_HOST:?LM_HEALTH_HOST 未設定}
+      # Host 允許清單（plan.md D12）：以空白分隔；其他 Host 由 Caddyfile 回應 421。格式由 lm-deploy 驗證。
+      LM_ALLOWED_HOSTS: ${LM_ALLOWED_HOSTS:?LM_ALLOWED_HOSTS 未設定}
       # Edge_Trusted_Proxies（Req 25.7）；未設定或為空字串時為 127.0.0.1/32，等同不信任任何來源（Req 25.6）。
       # 格式由 lm-deploy 驗證（Req 25.8）。變更後須重新建立 proxy 容器（up -d --no-deps proxy）。
       LM_EDGE_TRUSTED_PROXIES: ${LM_EDGE_TRUSTED_PROXIES:-127.0.0.1/32}
@@ -144,51 +138,39 @@ services:
     <<: *app
     image: ${APP_IMAGE_BLUE:?APP_IMAGE_BLUE 未設定（repo@sha256:...）}
     profiles: [blue]
-    volumes: [*openai_key]
 
   app-green:
     <<: *app
     image: ${APP_IMAGE_GREEN:?APP_IMAGE_GREEN 未設定（repo@sha256:...）}
     profiles: [green]
-    volumes: [*openai_key]
-
-  # Migration_Runner：以新版 App_Image 執行一次後結束（Req 18.2）；回滾時不執行（Req 20.9）。
-  migrate:
-    <<: *app
-    image: ${APP_IMAGE_NEW:?APP_IMAGE_NEW 未設定（repo@sha256:...）}
-    entrypoint: ["bun", "/app/server/migrate.js"]
-    networks: [data]
-    restart: "no"
-    profiles: [ops]
 
   db:
-    <<: *hardening
-    # digest 為 postgres:17.6-bookworm 的多平台 index（`docker buildx imagetools inspect postgres:17.6-bookworm`）；
-    # 必須與 drill.yaml 的 db 及 Jenkinsfile 的 LM_POSTGRES_IMAGE 相同。
-    # 主要版本須與 lm-deploy 使用的 pg_dump／pg_restore 一致（17）。
-    image: postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
-    # 以映像內 postgres 帳號（999:999）直接執行：entrypoint 不需 chown／gosu，因此可 cap_drop ALL。
-    # 新建立的具名卷會複製映像中 /var/lib/postgresql/data 的擁有者（postgres），首次 initdb 可寫入。
-    user: "999:999"
-    env_file: [db.env]
+    <<: *supabase
+    # ghcr.io/supabase/cli/postgres:17.12.0.000-r0 的多平台 index（plan.md D5）；必須與 drill.yaml 的 db 相同。
+    image: ghcr.io/supabase/cli/postgres:17.12.0.000-r0@sha256:f76f17ab40da704b0ab60c012277144e93abf85e396c26f9a272d7b5bd20073f
+    # 映像以 root 啟動 /usr/local/bin/docker-entrypoint.sh：建立 /run/postgresql 並 chown／chmod 給 postgres（100:101），
+    # 再以 busybox su 降為 postgres 執行 initdb、Supabase 遷移與伺服器，因此只加回這四項能力。
+    cap_add: [CHOWN, FOWNER, SETUID, SETGID]
     environment:
-      PGDATA: /var/lib/postgresql/data/pgdata
+      # 首次初始化時設定 supabase_admin（initdb）與 postgres（migrate.sh）的密碼；其他角色與 JWT 設定由
+      # lm-deploy 每次部署以 deploy/supabase/db-setup.sql（psql \getenv 讀取下列變數）設定。
+      POSTGRES_PASSWORD: ${LM_DB_PASSWORD:?LM_DB_PASSWORD 未設定（app.env）}
+      JWT_SECRET: ${LM_JWT_SECRET:?LM_JWT_SECRET 未設定（app.env）}
+      JWT_EXP: "3600"
     volumes:
-      # 容器外具名卷 lm-<env>_pgdata：`docker compose down`（不加 -v）或替換映像後資料仍在（Req 11.4）。
-      - pgdata:/var/lib/postgresql/data
-    tmpfs:
-      - /var/run/postgresql:rw,noexec,nosuid,nodev,mode=1777,size=1m
-      - /tmp:rw,noexec,nosuid,nodev,mode=1777,size=64m
+      # 容器外具名卷 lm-<env>_sbdata：`docker compose down`（不加 -v）或替換映像後資料仍在（Req 11.4）。
+      # Bun 版本的 lm-<env>_pgdata 不再掛載，保留原狀（plan.md D6、D11）。新卷複製映像中
+      # /var/lib/postgresql/data 的擁有者（postgres 100:101），首次 initdb 可寫入。
+      - sbdata:/var/lib/postgresql/data
     shm_size: 128m
-    # 不宣告 ports（Req 11.10）。
-    networks: [data]
+    # 不宣告 ports（Req 11.10）。pg_hba：容器內 socket 與 127.0.0.1 為 trust，其他來源為 scram-sha-256。
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -q -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      # 首次啟動的暫時伺服器只監聽私有 socket，因此 TCP 就緒即代表初始化與 Supabase 遷移已完成。
+      test: ["CMD", "pg_isready", "-q", "-h", "127.0.0.1", "-p", "5432", "-U", "supabase_admin", "-d", "postgres"]
       interval: 5s
       timeout: 5s
-      retries: 12
-      start_period: 30s
-    restart: unless-stopped
+      retries: 24
+      start_period: 120s
     stop_grace_period: 60s
     deploy:
       resources:
@@ -196,6 +178,131 @@ services:
           cpus: "${DB_CPUS:-1.0}"
           memory: ${DB_MEMORY:-1G}
           pids: 256
+
+  auth:
+    <<: *supabase
+    # ghcr.io/supabase/cli/auth:v2.198.0-r0 的多平台 index（plan.md D5）；映像以 1000:1000 執行 `gotrue`
+    # （先 migrate 再 serve），內含 busybox wget。
+    image: ghcr.io/supabase/cli/auth:v2.198.0-r0@sha256:6119529b17c2b335fdeb49673cbb5d602bf5e4368d1f1032ba11bc4bfd24b850
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m
+    # 與本機 ~/lm-spike/stack.sh auth_env 相同（plan.md D6），位址改為 Compose 服務名稱。
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: http://gateway:8000/auth/v1
+      GOTRUE_JWT_ISSUER: http://gateway:8000/auth/v1
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${LM_DB_PASSWORD:?LM_DB_PASSWORD 未設定（app.env）}@db:5432/postgres
+      GOTRUE_DB_MAX_POOL_SIZE: "2"
+      GOTRUE_DB_MAX_IDLE_POOL_SIZE: "2"
+      GOTRUE_SITE_URL: ${LM_SITE_URL:?LM_SITE_URL 未設定}
+      GOTRUE_URI_ALLOW_LIST: ""
+      GOTRUE_JWT_SECRET: ${LM_JWT_SECRET:?LM_JWT_SECRET 未設定（app.env）}
+      GOTRUE_JWT_KEYS: ${LM_JWT_KEYS:?LM_JWT_KEYS 未設定（app.env）}
+      GOTRUE_JWT_VALIDMETHODS: HS256,RS256,ES256
+      GOTRUE_JWT_VALID_METHODS: HS256,RS256,ES256
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      # 註冊只經 lm-server 以 service_role 呼叫 Auth 的 admin API（LM_PUBLIC_SIGNUP 由 lm-server 判斷）。
+      GOTRUE_DISABLE_SIGNUP: "true"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_SMS_AUTOCONFIRM: "false"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
+      GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: "false"
+      GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: "true"
+      GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: "10"
+      GOTRUE_PASSWORD_MIN_LENGTH: "6"
+      GOTRUE_RATE_LIMIT_EMAIL_SENT: "360000"
+      GOTRUE_RATE_LIMIT_SMS_SENT: "30"
+      GOTRUE_RATE_LIMIT_ANONYMOUS_USERS: "30"
+      GOTRUE_RATE_LIMIT_TOKEN_REFRESH: "150"
+      GOTRUE_RATE_LIMIT_OTP: "30"
+      GOTRUE_RATE_LIMIT_VERIFY: "30"
+      GOTRUE_RATE_LIMIT_WEB3: "30"
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "${AUTH_CPUS:-0.5}"
+          memory: ${AUTH_MEMORY:-128M}
+          pids: 128
+
+  realtime:
+    <<: *supabase
+    # ghcr.io/supabase/cli/realtime:v2.167.0-r0 的多平台 index（plan.md D5）；映像以 65532:65532 執行
+    # /app/entry.sh：SEED_SELF_HOST=true 時以 Realtime.OneShotPrepare 遷移 _realtime 並建立 tenant，再啟動伺服器。
+    image: ghcr.io/supabase/cli/realtime:v2.167.0-r0@sha256:7a052b1772f830e6496fd8a84ea7179514584186a331c935a58d2bcb49a3cfc9
+    # 與本機 ~/lm-spike/stack.sh realtime_env 相同（plan.md D6），位址改為 Compose 服務名稱。
+    environment:
+      PORT: "4000"
+      PHX_HTTP_IP: 0.0.0.0
+      DATABASE_URL: postgres://supabase_admin:${LM_DB_PASSWORD:?LM_DB_PASSWORD 未設定（app.env）}@db:5432/postgres
+      DB_URL: postgres://supabase_admin:${LM_DB_PASSWORD:?LM_DB_PASSWORD 未設定（app.env）}@db:5432/postgres
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${LM_DB_PASSWORD:?LM_DB_PASSWORD 未設定（app.env）}
+      DB_NAME: postgres
+      DB_IP_VERSION: ipv4
+      DB_AFTER_CONNECT_QUERY: SET search_path TO _realtime
+      API_JWT_SECRET: ${LM_JWT_SECRET:?LM_JWT_SECRET 未設定（app.env）}
+      API_JWT_JWKS: ${LM_JWKS:?LM_JWKS 未設定（app.env）}
+      METRICS_JWT_SECRET: ${LM_JWT_SECRET:?LM_JWT_SECRET 未設定（app.env）}
+      DB_ENC_KEY: ${LM_REALTIME_DB_ENC_KEY:?LM_REALTIME_DB_ENC_KEY 未設定（app.env）}
+      SECRET_KEY_BASE: ${LM_REALTIME_SECRET_KEY_BASE:?LM_REALTIME_SECRET_KEY_BASE 未設定（app.env）}
+      DNS_NODES: "''"
+      APP_NAME: realtime
+      SEED_SELF_HOST: "true"
+      SELF_HOST_TENANT_NAME: realtime-dev
+      RUN_JANITOR: "true"
+      MAX_HEADER_LENGTH: "4096"
+      ERL_AFLAGS: -proto_dist inet_tcp
+      ERL_MAX_PORTS: "65536"
+      GEN_RPC_TCP_SERVER_PORT: "5369"
+      GEN_RPC_TCP_CLIENT_PORT: "5369"
+      GEN_RPC_SOCKET_IP: 127.0.0.1
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "${REALTIME_CPUS:-1.0}"
+          memory: ${REALTIME_MEMORY:-512M}
+          pids: 512
+
+  gateway:
+    <<: *supabase
+    # 與 proxy 相同的 Caddy 映像（plan.md D5）；路由與 apikey 檢查見 deploy/supabase/gateway.Caddyfile。
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    read_only: true
+    # 理由同 proxy（/usr/bin/caddy 的檔案能力）；只監聽 8000。
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      LM_ANON_KEY: ${LM_ANON_KEY:?LM_ANON_KEY 未設定（app.env）}
+      LM_SERVICE_KEY: ${LM_SERVICE_KEY:?LM_SERVICE_KEY 未設定（app.env）}
+    volumes:
+      - ./supabase/gateway.Caddyfile:/etc/caddy/Caddyfile:ro
+    tmpfs:
+      - /config:rw,noexec,nosuid,nodev,size=1m
+      - /data:rw,noexec,nosuid,nodev,size=1m
+      - /tmp:rw,noexec,nosuid,nodev,size=8m
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: ${GATEWAY_MEMORY:-64M}
+          pids: 128
 
 networks:
   edge: {}
@@ -208,5 +315,5 @@ networks:
     internal: true
 
 volumes:
-  pgdata: {}
+  sbdata: {}
   caddy_data: {}

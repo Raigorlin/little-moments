@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# lm-supabase-keys — 產生一個環境的 Supabase 金鑰（plan.md D6、D16）。
+#
+# 用法：
+#   lm-supabase-keys env <staging|prod|drill>
+#
+# 在 stdout 依序輸出 app.env 的 8 行 KEY=VALUE（每個值只有一行，格式即 lm-deploy 的 app.env 驗證規則）：
+#   LM_DB_PASSWORD               /dev/urandom 的 24 位元組，48 個小寫十六進位字元（所有 Database 角色的密碼）
+#   LM_JWT_SECRET                32 位元組，64 個十六進位字元（HS256；GoTrue、Realtime 與 lm-server 共用）
+#   LM_ANON_KEY                  以 LM_JWT_SECRET 簽署的 HS256 JWT {"iss":"supabase","role":"anon","iat":…,"exp":…+10 年}
+#   LM_SERVICE_KEY               同上，role 為 service_role
+#   LM_JWT_KEYS                  GOTRUE_JWT_KEYS：[ES256 P-256 私鑰 JWK]（kid 為 UUID，key_ops sign、verify）
+#   LM_JWKS                      Realtime 的 API_JWT_JWKS：{"keys":[同一把公鑰（key_ops verify），{"kty":"oct","k":…}]}
+#   LM_REALTIME_SECRET_KEY_BASE  64 位元組，128 個十六進位字元
+#   LM_REALTIME_DB_ENC_KEY       8 位元組，16 個十六進位字元（Realtime 以 AES-128 加密 tenant 設定）
+# JWK 的形狀與本機 ~/lm-spike/stack.sh install 產生的相同。
+#
+# 使用方式：輸出導向維運者自己建立的 0600 檔案（例如 `(umask 077; lm-supabase-keys env prod > prod-supabase.env)`），
+# 再存為 Jenkins 的 Secret file（lm-<env>-supabase-env）。本工具不寫入任何檔案，秘密不出現在 stderr 或任何程式的
+# 指令列（HMAC 以 bash 計算 ipad／opad，只經 stdin 交給 openssl dgst；私鑰只經管線傳遞）。
+# `drill` 由 lm-deploy 的還原演練使用（拋棄式金鑰）。
+#
+# 需要：bash ≥ 4、openssl（ecparam、ec、dgst）、od、tr、base64、/proc/sys/kernel/random/uuid 或 od。
+# 結束碼：0 成功；1 產生失敗；2 參數錯誤。
+
+set -euo pipefail
+umask 077
+export LC_ALL=C
+
+die() { printf '[lm-supabase-keys] %s\n' "$1" >&2; exit "${2:-1}"; }
+usage() { printf '%s\n' '用法：lm-supabase-keys env <staging|prod|drill>' >&2; exit 2; }
+
+(($# == 2)) && [[ $1 == env && $2 =~ ^(staging|prod|drill)$ ]] || usage
+command -v openssl >/dev/null 2>&1 || die "找不到 openssl"
+
+# rand_hex <bytes>：2*bytes 個小寫十六進位字元。
+rand_hex() {
+  local h
+  h=$(od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n')
+  [[ $h =~ ^[0-9a-f]+$ && ${#h} -eq $(($1 * 2)) ]] || die "無法讀取 /dev/urandom"
+  printf '%s' "$h"
+}
+
+# b64url：stdin 的位元組 → base64url（無填補、無換行）。
+b64url() { base64 -w0 | tr '+/' '-_' | tr -d '='; }
+
+# hex_bytes <hex>：把十六進位字串寫成位元組到 stdout（bash printf，不經外部程式的指令列）。
+hex_bytes() {
+  local hex=$1 out="" i
+  for ((i = 0; i < ${#hex}; i += 2)); do out+="\\x${hex:i:2}"; done
+  printf '%b' "$out"
+}
+
+# hmac_b64url <key>：以 <key>（ASCII，最多 64 位元組）對 stdin 計算 HMAC-SHA256，輸出 base64url。
+# RFC 2104：金鑰不超過區塊大小（64）時補 0 至 64 位元組，H((K ⊕ opad) ‖ H((K ⊕ ipad) ‖ m))。
+hmac_b64url() {
+  local key=$1 i c ipad="" opad=""
+  ((${#key} <= 64)) || die "HMAC 金鑰超過 64 位元組"
+  for ((i = 0; i < 64; i++)); do
+    c=0
+    if ((i < ${#key})); then printf -v c '%d' "'${key:i:1}"; fi
+    printf -v ipad '%s\\x%02x' "$ipad" "$((c ^ 0x36))"
+    printf -v opad '%s\\x%02x' "$opad" "$((c ^ 0x5c))"
+  done
+  { printf '%b' "$opad"; { printf '%b' "$ipad"; cat; } | openssl dgst -sha256 -binary; } |
+    openssl dgst -sha256 -binary | b64url
+}
+
+# jwt_hs256 <secret> <payload-json>
+jwt_hs256() {
+  local secret=$1 header payload sig
+  header=$(printf '%s' '{"alg":"HS256","typ":"JWT"}' | b64url)
+  payload=$(printf '%s' "$2" | b64url)
+  sig=$(printf '%s' "$header.$payload" | hmac_b64url "$secret")
+  [[ -n $sig ]] || die "無法簽署 JWT"
+  printf '%s.%s.%s' "$header" "$payload" "$sig"
+}
+
+uuid4() {
+  local u
+  if [[ -r /proc/sys/kernel/random/uuid ]]; then
+    u=$(</proc/sys/kernel/random/uuid)
+  else
+    u=$(rand_hex 16)
+    u="${u:0:8}-${u:8:4}-4${u:13:3}-a${u:17:3}-${u:20:12}"
+  fi
+  [[ $u =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || die "無法產生 kid"
+  printf '%s' "$u"
+}
+
+# ES256 金鑰：P-256 私鑰的 DER（RFC 5915 ECPrivateKey，具名曲線）固定 121 位元組：
+#   30 77 02 01 01 04 20 <d：32> a0 0a 06 08 2a8648ce3d030107 a1 44 03 42 00 04 <x：32> <y：32>
+readonly EC_DER_HEAD=30770201010420
+readonly EC_DER_MID=a00a06082a8648ce3d030107a14403420004
+es256_hex() {
+  local der
+  der=$(openssl ecparam -name prime256v1 -genkey -noout 2>/dev/null | openssl ec -outform DER 2>/dev/null |
+    od -An -tx1 -v | tr -d ' \n') || die "openssl 無法產生 ES256 金鑰"
+  [[ ${#der} -eq 242 && ${der:0:14} == "$EC_DER_HEAD" && ${der:78:36} == "$EC_DER_MID" ]] ||
+    die "openssl 產生的 ES256 金鑰格式不符"
+  printf '%s' "$der"
+}
+
+DB_PASSWORD=$(rand_hex 24)
+JWT_SECRET=$(rand_hex 32)
+SECRET_KEY_BASE=$(rand_hex 64)
+DB_ENC_KEY=$(rand_hex 8)
+
+NOW=$(date -u +%s)
+EXP=$((NOW + 315360000))
+ANON_KEY=$(jwt_hs256 "$JWT_SECRET" "{\"iss\":\"supabase\",\"role\":\"anon\",\"iat\":$NOW,\"exp\":$EXP}")
+SERVICE_KEY=$(jwt_hs256 "$JWT_SECRET" "{\"iss\":\"supabase\",\"role\":\"service_role\",\"iat\":$NOW,\"exp\":$EXP}")
+
+DER=$(es256_hex)
+D=$(hex_bytes "${DER:14:64}" | b64url)
+X=$(hex_bytes "${DER:114:64}" | b64url)
+Y=$(hex_bytes "${DER:178:64}" | b64url)
+DER=""
+KID=$(uuid4)
+OCT=$(printf '%s' "$JWT_SECRET" | b64url)
+
+PUBLIC="\"kty\":\"EC\",\"kid\":\"$KID\",\"use\":\"sig\",\"alg\":\"ES256\",\"ext\":true,\"crv\":\"P-256\",\"x\":\"$X\",\"y\":\"$Y\""
+JWT_KEYS="[{$PUBLIC,\"key_ops\":[\"sign\",\"verify\"],\"d\":\"$D\"}]"
+JWKS="{\"keys\":[{$PUBLIC,\"key_ops\":[\"verify\"]},{\"kty\":\"oct\",\"k\":\"$OCT\"}]}"
+
+for v in "$D" "$X" "$Y" "$OCT" "$ANON_KEY" "$SERVICE_KEY"; do
+  [[ -n $v && $v =~ ^[A-Za-z0-9_.-]+$ ]] || die "金鑰編碼失敗"
+done
+
+printf 'LM_DB_PASSWORD=%s\n' "$DB_PASSWORD"
+printf 'LM_JWT_SECRET=%s\n' "$JWT_SECRET"
+printf 'LM_ANON_KEY=%s\n' "$ANON_KEY"
+printf 'LM_SERVICE_KEY=%s\n' "$SERVICE_KEY"
+printf 'LM_JWT_KEYS=%s\n' "$JWT_KEYS"
+printf 'LM_JWKS=%s\n' "$JWKS"
+printf 'LM_REALTIME_SECRET_KEY_BASE=%s\n' "$SECRET_KEY_BASE"
+printf 'LM_REALTIME_DB_ENC_KEY=%s\n' "$DB_ENC_KEY"

@@ -1,0 +1,71 @@
+# Supabase API gateway（plan.md D5、D6）：deploy/compose/compose.yaml 與 drill.yaml 的 gateway 服務，唯讀掛載為
+# /etc/caddy/Caddyfile。由 ~/lm-spike/stack.sh 的 write_caddyfile（本機開發 stack）移植，路由與 apikey 檢查相同：
+#
+#   /auth/v1/*            → auth:9999（去掉 /auth/v1）
+#   /realtime/v1/api/*    → realtime:4000 /api/*（Host: realtime-dev）
+#   /realtime/v1/*        → realtime:4000 /socket/*（WebSocket；apikey 在查詢參數，Host: realtime-dev）
+#   其他                   404
+#
+# 請求需要 anon 或 service_role key（標頭 apikey；Realtime 的 WebSocket 以查詢參數 apikey 傳遞），例外是 JWKS
+# 文件與 Auth 的 verify、callback、authorize 重新導向。金鑰由容器環境 LM_ANON_KEY／LM_SERVICE_KEY 提供
+# （compose 自 app.env 替換），{$VAR} 在解析 Caddyfile 前替換。只在 internal 網路 data（或 drill）上監聽 8000，
+# 不發布到主機；呼叫端只有 lm-server（SUPABASE_URL=http://gateway:8000）與 lm-deploy 的健康檢查。
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:8000 {
+	# route 依寫入順序執行：先檢查金鑰，再改寫路徑並轉送。
+	handle /auth/v1/* {
+		route {
+			@no_key {
+				not path /auth/v1/.well-known/jwks.json /auth/v1/verify* /auth/v1/callback* /auth/v1/authorize*
+				not header apikey *
+			}
+			respond @no_key `{"message":"No API key found in request"}` 401
+			@bad_key {
+				not path /auth/v1/.well-known/jwks.json /auth/v1/verify* /auth/v1/callback* /auth/v1/authorize*
+				not header apikey {$LM_ANON_KEY}
+				not header apikey {$LM_SERVICE_KEY}
+			}
+			respond @bad_key `{"message":"Invalid API key"}` 401
+			uri strip_prefix /auth/v1
+			reverse_proxy auth:9999
+		}
+	}
+	handle /realtime/v1/api/* {
+		route {
+			@no_key not header apikey *
+			respond @no_key `{"message":"No API key found in request"}` 401
+			@bad_key {
+				not header apikey {$LM_ANON_KEY}
+				not header apikey {$LM_SERVICE_KEY}
+			}
+			respond @bad_key `{"message":"Invalid API key"}` 401
+			uri strip_prefix /realtime/v1
+			reverse_proxy realtime:4000 {
+				header_up Host realtime-dev
+			}
+		}
+	}
+	handle /realtime/v1/* {
+		route {
+			@no_key not query apikey=*
+			respond @no_key `{"message":"No API key found in request"}` 401
+			@bad_key {
+				not query apikey={$LM_ANON_KEY}
+				not query apikey={$LM_SERVICE_KEY}
+			}
+			respond @bad_key `{"message":"Invalid API key"}` 401
+			uri path_regexp ^/realtime/v1 /socket
+			reverse_proxy realtime:4000 {
+				header_up Host realtime-dev
+			}
+		}
+	}
+	handle {
+		respond `{"message":"no Route matched with those values"}` 404
+	}
+}

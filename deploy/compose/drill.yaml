@@ -1,27 +1,23 @@
-# 還原演練 Compose 專案（Requirement 14.6、14.7；design.md Components §13；tasks 14.5）。
+# 還原演練 Compose 專案（Requirement 14.6、14.7；plan.md D8）。
 #
 # 只由 `lm-deploy <env> drill` 使用，每次演練一個獨立專案 `lm-drill-<env>-<8 hex>`：
 #
-#   docker compose -p lm-drill-prod-1a2b3c4d --project-directory <0700 暫存目錄> -f /srv/lm/prod/drill.yaml up -d ...
+#   docker compose -p lm-drill-prod-1a2b3c4d --project-directory <0700 暫存目錄> -f /srv/lm/prod/drill.yaml \
+#     --env-file <0700 暫存目錄>/drill.env up -d ...
 #
 # 隔離（Req 14.6）：
 #   * 只有一個 `drill` 網路，`internal: true`：不連接 lm-<env>_edge／_app／_data，無對外路由，也不發布任何連接埠。
 #     網路名稱為 <專案>_drill，與正式環境的 Compose 專案不重疊。
-#   * Database 只使用匿名卷（不宣告任何具名卷），`docker compose down -v` 時一併刪除；不掛載 lm-<env>_pgdata。
-#   * 秘密只來自暫存目錄內的 drill-*.env（0600，每次演練以 /dev/urandom 產生，演練結束即刪除）；
-#     檔名與正式環境的 app.env／db.env 不同，誤設專案目錄時會因找不到檔案而失敗，不會讀到正式憑證。
-#   * 不使用 <env>.env 或 app.env：Allowed_Hosts、Database 位置等皆為下列固定值。雲端 AI 收據辨識強制停用。
+#   * Database 只使用匿名卷（不宣告任何具名卷），`docker compose down -v` 時一併刪除；不掛載 lm-<env>_sbdata。
+#   * 秘密只來自暫存目錄內的 drill.env（0600）：每次演練以 `lm-supabase-keys env drill` 產生的拋棄式金鑰，
+#     演練結束即刪除；不使用 <env>.env 或 app.env，誤設專案目錄時會因找不到檔案而失敗，不會讀到正式金鑰。
+#   * 沒有 App 與 proxy：演練只驗證備份能還原到以目前映像遷移的全新 Supabase stack。
 #
-# 映像：
-#   APP_IMAGE_DRILL  由 lm-deploy 提供，為目前 Production 作用中槽位的 repo@sha256:<digest>（App 與 tool 共用）。
-#   db               與 compose.yaml 的 db 相同；兩者必須是同一個 postgres 映像與 digest
-#                    （tests/ci-restore-drill.test.js 檢查），主要版本與 pg_dump 一致（17）。
+# 映像：與 compose.yaml 的 db、auth、realtime、gateway 相同（同一個 repo、tag 與 digest；
+# tests/ci-restore-drill.test.js 檢查），更新時兩處一起修改。
 #
-# 服務：
-#   db    PostgreSQL；以 TCP pg_isready 作為 healthcheck（初始化期間的暫時伺服器不監聽 TCP），通過後才 pg_restore。
-#   app      App_Server（與正式環境相同的映像與強化設定），Allowed_Hosts 只含服務名稱 `app`。
-#   migrate  /app/server/migrate.js（profile ops）：還原後補齊遷移，與正式部署的 Migration_Runner 相同。
-#   tool     /app/tools/drill.js（profile ops）：插入臨時合成管理員、建立 smoke-fixture 行程並執行 Smoke_Test。
+# 變數（由 lm-deploy 提供）：LM_DRILL_PROJECT、LM_DRILL_ENV、LM_SUPABASE_DIR（/srv/lm/<env>/supabase，
+# 唯讀掛載 gateway.Caddyfile），以及 drill.env 的 8 個 LM_* 金鑰。
 
 name: ${LM_DRILL_PROJECT:?LM_DRILL_PROJECT 必須為 lm-drill-<env>-<8 hex>}
 
@@ -31,65 +27,36 @@ x-logging: &logging
     max-size: "10m"
     max-file: "2"
 
-x-hardening: &hardening
-  read_only: true
+x-supabase: &supabase
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
   logging: *logging
+  networks: [drill]
+  restart: "no"
   labels:
     lm.drill: ${LM_DRILL_ENV:?LM_DRILL_ENV 未設定}
     lm.drill.project: ${LM_DRILL_PROJECT}
 
-x-app: &app
-  <<: *hardening
-  image: ${APP_IMAGE_DRILL:?APP_IMAGE_DRILL 未設定（repo@sha256:...）}
-  user: "10001:10001"
-  tmpfs:
-    - /tmp:rw,noexec,nosuid,nodev,size=16m
-  networks: [drill]
-  restart: "no"
-  deploy:
-    resources:
-      limits:
-        cpus: "1.0"
-        memory: 512M
-        pids: 256
-
-x-app-env: &app-env
-  NODE_ENV: production
-  CAMPING_DATABASE_HOST: db
-  CAMPING_DATABASE_PORT: "5432"
-  CAMPING_DATABASE_NAME: lm_drill
-  CAMPING_DATABASE_USER: lm_drill
-  CAMPING_DATABASE_SSLMODE: disable
-
 services:
   db:
-    <<: *hardening
-    # 與 compose.yaml 的 db 映像相同（postgres:17.6-bookworm 的多平台 index digest）；更新時兩處一起修改。
-    image: postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
-    user: "999:999"
-    env_file: [drill-db.env]
+    <<: *supabase
+    # 與 compose.yaml 的 db 映像相同（plan.md D5）。
+    image: ghcr.io/supabase/cli/postgres:17.12.0.000-r0@sha256:f76f17ab40da704b0ab60c012277144e93abf85e396c26f9a272d7b5bd20073f
+    cap_add: [CHOWN, FOWNER, SETUID, SETGID]
     environment:
-      POSTGRES_USER: lm_drill
-      POSTGRES_DB: lm_drill
-      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
-      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_PASSWORD: ${LM_DB_PASSWORD:?LM_DB_PASSWORD 未設定（drill.env）}
+      JWT_SECRET: ${LM_JWT_SECRET:?LM_JWT_SECRET 未設定（drill.env）}
+      JWT_EXP: "3600"
     volumes:
       # 匿名卷：只屬於本次演練的容器，`down -v` 時刪除（Req 14.6）。
       - /var/lib/postgresql/data
-    tmpfs:
-      - /var/run/postgresql:rw,noexec,nosuid,nodev,mode=1777,size=1m
-      - /tmp:rw,noexec,nosuid,nodev,mode=1777,size=64m
     shm_size: 128m
-    networks: [drill]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -q -h 127.0.0.1 -p 5432 -U lm_drill -d lm_drill"]
+      test: ["CMD", "pg_isready", "-q", "-h", "127.0.0.1", "-p", "5432", "-U", "supabase_admin", "-d", "postgres"]
       interval: 2s
       timeout: 5s
-      retries: 60
-      start_period: 30s
-    restart: "no"
+      retries: 90
+      start_period: 120s
     deploy:
       resources:
         limits:
@@ -97,46 +64,103 @@ services:
           memory: 1G
           pids: 256
 
-  app:
-    <<: *app
-    env_file: [drill-app.env]
+  auth:
+    <<: *supabase
+    image: ghcr.io/supabase/cli/auth:v2.198.0-r0@sha256:6119529b17c2b335fdeb49673cbb5d602bf5e4368d1f1032ba11bc4bfd24b850
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m
     environment:
-      <<: *app-env
-      CAMPING_BIND_ADDRESS: 0.0.0.0
-      PORT: "5173"
-      CAMPING_ALLOWED_HOSTS: app
-      CAMPING_DIST: /app/dist
-      CAMPING_MIGRATIONS_DIR: /app/migrations
-      CAMPING_OPENAI_API_KEY: ""
-      CAMPING_OPENAI_API_KEY_FILE: ""
-      CAMPING_OPENAI_MODEL_ID: ""
-      CAMPING_OPENAI_IMAGE_DETAIL: ""
-      CAMPING_OPENAI_MAX_COMPLETION_TOKENS: ""
-    depends_on:
-      db:
-        condition: service_healthy
-    stop_grace_period: 10s
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: http://gateway:8000/auth/v1
+      GOTRUE_JWT_ISSUER: http://gateway:8000/auth/v1
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${LM_DB_PASSWORD:?LM_DB_PASSWORD 未設定（drill.env）}@db:5432/postgres
+      GOTRUE_DB_MAX_POOL_SIZE: "2"
+      GOTRUE_DB_MAX_IDLE_POOL_SIZE: "2"
+      GOTRUE_SITE_URL: http://gateway:8000
+      GOTRUE_URI_ALLOW_LIST: ""
+      GOTRUE_JWT_SECRET: ${LM_JWT_SECRET:?LM_JWT_SECRET 未設定（drill.env）}
+      GOTRUE_JWT_KEYS: ${LM_JWT_KEYS:?LM_JWT_KEYS 未設定（drill.env）}
+      GOTRUE_JWT_VALIDMETHODS: HS256,RS256,ES256
+      GOTRUE_JWT_VALID_METHODS: HS256,RS256,ES256
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_DISABLE_SIGNUP: "true"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+          pids: 128
 
-  # 映像內的 Migration_Runner：補齊備份建立之後才套用的遷移（與正式部署相同的程式；已是最新時不做任何事）。
-  migrate:
-    <<: *app
-    entrypoint: ["bun", "/app/server/migrate.js"]
-    env_file: [drill-app.env]
+  realtime:
+    <<: *supabase
+    image: ghcr.io/supabase/cli/realtime:v2.167.0-r0@sha256:7a052b1772f830e6496fd8a84ea7179514584186a331c935a58d2bcb49a3cfc9
     environment:
-      <<: *app-env
-      CAMPING_MIGRATIONS_DIR: /app/migrations
-    profiles: [ops]
+      PORT: "4000"
+      PHX_HTTP_IP: 0.0.0.0
+      DATABASE_URL: postgres://supabase_admin:${LM_DB_PASSWORD:?LM_DB_PASSWORD 未設定（drill.env）}@db:5432/postgres
+      DB_URL: postgres://supabase_admin:${LM_DB_PASSWORD:?LM_DB_PASSWORD 未設定（drill.env）}@db:5432/postgres
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${LM_DB_PASSWORD:?LM_DB_PASSWORD 未設定（drill.env）}
+      DB_NAME: postgres
+      DB_IP_VERSION: ipv4
+      DB_AFTER_CONNECT_QUERY: SET search_path TO _realtime
+      API_JWT_SECRET: ${LM_JWT_SECRET:?LM_JWT_SECRET 未設定（drill.env）}
+      API_JWT_JWKS: ${LM_JWKS:?LM_JWKS 未設定（drill.env）}
+      METRICS_JWT_SECRET: ${LM_JWT_SECRET:?LM_JWT_SECRET 未設定（drill.env）}
+      DB_ENC_KEY: ${LM_REALTIME_DB_ENC_KEY:?LM_REALTIME_DB_ENC_KEY 未設定（drill.env）}
+      SECRET_KEY_BASE: ${LM_REALTIME_SECRET_KEY_BASE:?LM_REALTIME_SECRET_KEY_BASE 未設定（drill.env）}
+      DNS_NODES: "''"
+      APP_NAME: realtime
+      SEED_SELF_HOST: "true"
+      SELF_HOST_TENANT_NAME: realtime-dev
+      RUN_JANITOR: "false"
+      MAX_HEADER_LENGTH: "4096"
+      ERL_AFLAGS: -proto_dist inet_tcp
+      ERL_MAX_PORTS: "65536"
+      GEN_RPC_TCP_SERVER_PORT: "5369"
+      GEN_RPC_TCP_CLIENT_PORT: "5369"
+      GEN_RPC_SOCKET_IP: 127.0.0.1
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+          pids: 512
 
-  tool:
-    <<: *app
-    entrypoint: ["bun", "/app/tools/drill.js"]
-    env_file: [drill-tool.env]
+  gateway:
+    <<: *supabase
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    read_only: true
+    cap_add: [NET_BIND_SERVICE]
     environment:
-      <<: *app-env
-      CAMPING_DRILL_PROJECT: ${LM_DRILL_PROJECT}
-      CAMPING_SMOKE_BASE_URL: http://app:5173
-      CAMPING_SMOKE_FIXTURE: smoke-fixture
-    profiles: [ops]
+      LM_ANON_KEY: ${LM_ANON_KEY:?LM_ANON_KEY 未設定（drill.env）}
+      LM_SERVICE_KEY: ${LM_SERVICE_KEY:?LM_SERVICE_KEY 未設定（drill.env）}
+    volumes:
+      - ${LM_SUPABASE_DIR:?LM_SUPABASE_DIR 未設定}/gateway.Caddyfile:/etc/caddy/Caddyfile:ro
+    tmpfs:
+      - /config:rw,noexec,nosuid,nodev,size=1m
+      - /data:rw,noexec,nosuid,nodev,size=1m
+      - /tmp:rw,noexec,nosuid,nodev,size=8m
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 64M
+          pids: 128
 
 networks:
   drill:

@@ -215,16 +215,18 @@ function shellFunction(src, name) {
   return src.slice(start, end + 2);
 }
 
-describe('deploy/compose/drill.yaml 隔離（Req 14.6）', () => {
+describe('deploy/compose/drill.yaml 隔離（Req 14.6；plan.md D8）', () => {
+  const services = Object.entries(drillYaml.services);
+
   test('專案名稱來自 LM_DRILL_PROJECT，只有一個 internal 網路，沒有發布任何連接埠', () => {
     expect(drillYaml.name).toMatch(/^\$\{LM_DRILL_PROJECT:\?/);
     expect(Object.keys(drillYaml.networks)).toEqual(['drill']);
     expect(drillYaml.networks.drill.internal).toBe(true);
     expect(drillYaml.networks.drill.external).toBeUndefined();
-    for (const [name, svc] of Object.entries(drillYaml.services)) {
+    expect(Object.keys(drillYaml.services).sort()).toEqual(['auth', 'db', 'gateway', 'realtime']);
+    for (const [name, svc] of services) {
       expect({ name, ports: svc.ports, expose: svc.expose, network_mode: svc.network_mode }).toEqual({ name, ports: undefined, expose: undefined, network_mode: undefined });
       expect(svc.networks).toEqual(['drill']);
-      expect(svc.read_only).toBe(true);
       expect(svc.cap_drop).toEqual(['ALL']);
       expect(svc.security_opt).toEqual(['no-new-privileges:true']);
       expect(svc.restart).toBe('no');
@@ -232,34 +234,31 @@ describe('deploy/compose/drill.yaml 隔離（Req 14.6）', () => {
     }
   });
 
-  test('Database 只使用匿名卷（沒有具名卷、bind mount 或 Production 的 pgdata）', () => {
+  test('Database 只使用匿名卷；唯一的 bind mount 是唯讀的 gateway.Caddyfile（沒有具名卷或 Production 的 sbdata）', () => {
     expect(drillYaml.volumes).toBeUndefined();
     expect(drillYaml.services.db.volumes).toEqual(['/var/lib/postgresql/data']);
-    for (const svc of Object.values(drillYaml.services)) {
-      for (const v of svc.volumes ?? []) expect(String(v)).not.toContain(':');
+    for (const [name, svc] of services) {
+      for (const v of svc.volumes ?? []) {
+        if (name === 'gateway') expect(v).toBe('${LM_SUPABASE_DIR:?LM_SUPABASE_DIR 未設定}/gateway.Caddyfile:/etc/caddy/Caddyfile:ro');
+        else expect(String(v)).not.toContain(':');
+      }
     }
-    expect(drillYamlText).not.toMatch(/pgdata:|lm-(prod|staging)_|external:\s*true/);
+    expect(drillYamlText).not.toMatch(/pgdata:|sbdata:|lm-(prod|staging)_|external:\s*true/);
   });
 
-  test('秘密只來自 drill-*.env；不讀取正式環境的 app.env／db.env 或 <env>.env', () => {
-    const files = Object.values(drillYaml.services).flatMap((s) => s.env_file ?? []);
-    expect(files.length).toBeGreaterThan(0);
-    for (const f of files) expect(f).toMatch(/^drill-(db|app|tool)\.env$/);
+  test('秘密只來自 lm-deploy 傳入的 drill.env（--env-file）；不讀取正式環境的 app.env、db.env 或 <env>.env', () => {
+    for (const [, svc] of services) expect(svc.env_file).toBeUndefined();
     const yamlCode = drillYamlText.split('\n').filter((l) => !l.trim().startsWith('#')).join('\n');
     expect(yamlCode).not.toMatch(/(?<![-\w])(app|db|prod|staging)\.env\b/);
-    expect(drillYaml.services.app.environment.CAMPING_OPENAI_API_KEY).toBe('');
-    expect(drillYaml.services.app.environment.CAMPING_OPENAI_API_KEY_FILE).toBe('');
-    expect(drillYaml.services.app.environment.CAMPING_ALLOWED_HOSTS).toBe('app');
-    expect(drillYaml.services.tool.environment.CAMPING_DATABASE_NAME).toBe('lm_drill');
+    expect(drillYaml.services.db.environment.POSTGRES_PASSWORD).toMatch(/^\$\{LM_DB_PASSWORD:\?/);
+    expect(drillYaml.services.auth.environment.GOTRUE_JWT_KEYS).toMatch(/^\$\{LM_JWT_KEYS:\?/);
+    expect(drillYaml.services.gateway.environment.LM_ANON_KEY).toMatch(/^\$\{LM_ANON_KEY:\?/);
   });
 
-  test('db 映像與 compose.yaml 相同；App／Migration_Runner／tool 皆使用 APP_IMAGE_DRILL', () => {
-    expect(drillYaml.services.db.image).toBe(composeYaml.services.db.image);
+  test('db、auth、realtime、gateway 的映像與 compose.yaml 相同；db 以 TCP pg_isready 判斷就緒', () => {
+    for (const s of ['db', 'auth', 'realtime', 'gateway']) expect(drillYaml.services[s].image).toBe(composeYaml.services[s].image);
     expect(drillYaml.services.db.healthcheck.test.join(' ')).toContain('-h 127.0.0.1');
-    for (const s of ['app', 'migrate', 'tool']) expect(drillYaml.services[s].image).toMatch(/^\$\{APP_IMAGE_DRILL:\?/);
-    expect(drillYaml.services.migrate.entrypoint).toEqual(['bun', '/app/server/migrate.js']);
-    expect(drillYaml.services.tool.entrypoint).toEqual(['bun', '/app/tools/drill.js']);
-    expect(drillYaml.services.tool.profiles).toEqual(['ops']);
+    expect(drillYamlText).not.toContain('APP_IMAGE');
   });
 });
 
@@ -280,46 +279,47 @@ describe('lm-deploy drill', () => {
     expect(shellFunction(lmDeploy, 'drill_remove_dir')).toContain('$d == "$STATE_DIR"/.drill.*');
   });
 
-  test('重算 sha256 後才還原；專案名稱與正式專案不同；所有 compose 呼叫都經 DRILL_CMD（drill.yaml）', () => {
+  test('重算 sha256 後才還原；專案名稱與正式專案不同；所有 compose 呼叫都經 DRILL_CMD（drill.yaml + drill.env）', () => {
     const verify = doDrill.indexOf('backup_checksum_mismatch');
     const restore = doDrill.indexOf('pg_restore');
     expect(verify).toBeGreaterThan(0);
     expect(restore).toBeGreaterThan(verify);
     expect(doDrill).toContain('[[ $DRILL_PROJECT =~ $DRILL_PROJECT_RE && $DRILL_PROJECT != "lm-$ENVN" ]]');
     expect(lmDeploy).toContain("readonly DRILL_PROJECT_RE='^lm-drill-(staging|prod)-[0-9a-f]{8}$'");
-    expect(doDrill).toContain('-f "$ENV_DIR/drill.yaml"');
+    expect(doDrill).toContain('-f "$ENV_DIR/drill.yaml" --env-file "$DRILL_DIR/drill.env"');
     expect(doDrill).not.toContain('COMPOSE_CMD');
     expect(doDrill).not.toContain('compose.yaml');
-    expect(doDrill).toContain('pg_restore --no-owner --no-privileges --exit-on-error --single-transaction -U lm_drill -d lm_drill');
+    expect(doDrill).toContain('pg_restore --data-only --disable-triggers --no-owner --no-privileges --exit-on-error --single-transaction');
   });
 
-  test('任何結束路徑都 down -v；秘密只寫入 0600 暫存檔，不輸出', () => {
+  test('步驟順序：db + db-setup.sql → auth／realtime／gateway → 目前映像的遷移 → 還原 → 筆數驗證（plan.md D8）', () => {
+    const at = ['stack_db_up DRILL_CMD', 'stack_services_up DRILL_CMD', 'run_migrations DRILL_CMD "$DRILL_DIGEST"', 'pg_restore --data-only', 'Q_DRILL_COUNTS', 'drill_down']
+      .map((s) => doDrill.indexOf(s));
+    for (const i of at) expect(i).toBeGreaterThan(0);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    for (const step of ['backup_select', 'backup_verify', 'setup', 'db_start', 'stack_start', 'migrate', 'restore', 'verify', 'cleanup']) {
+      expect(doDrill).toMatch(new RegExp(`\\b${step}\\b`));
+    }
+    expect(lmDeploy).toContain('readonly Q_DRILL_COUNTS="select (select count(*) from auth.users) || \' \' || (select count(*) from app.profiles)"');
+    expect(doDrill).toContain('((profiles <= users))');
+  });
+
+  test('任何結束路徑都 down -v；拋棄式金鑰只寫入 0600 的 drill.env，不輸出', () => {
     expect(shellFunction(lmDeploy, 'drill_down')).toContain('down -v --remove-orphans');
     expect(shellFunction(lmDeploy, 'cleanup')).toMatch(/DRILL_UP == 1 \]\]; then drill_down/);
     expect(shellFunction(lmDeploy, 'drill_fail')).toMatch(/drill_down[\s\S]*drill_remove_dir[\s\S]*die/);
     for (const sig of ["trap 'exit 129' HUP", "trap 'exit 130' INT", "trap 'exit 143' TERM"]) expect(doDrill).toContain(sig);
     const secrets = shellFunction(lmDeploy, 'drill_write_secrets');
     expect(secrets).toContain('chmod 0600');
-    expect(secrets).not.toMatch(/emit|log |printf '[^']*'\s*"\$(dbpw|pw|token)"\s*$/m);
-    expect(secrets).not.toMatch(/>&2|>>"\$DRILL_LOG"/);
-    // docker／pg_restore 輸出只進 0600 的 drill-last.log（tool 的 stdout 進暫存檔），不進 stdout／stderr。
+    expect(secrets).toContain('"$keys" env drill >"$f"');
+    expect(secrets).toContain('app_env_check "$f"');
+    expect(secrets).not.toMatch(/emit|log |>&2/);
+    // docker／pg_restore 輸出只進 0600 的 drill-last.log，不進 stdout／stderr。
     expect(doDrill).not.toContain('>&2');
-    expect([...doDrill.matchAll(/>>"\$DRILL_LOG" 2>&1/g)].length).toBe(4);
-    expect(doDrill).toContain('tool run >"$out" 2>>"$DRILL_LOG"');
+    expect(doDrill).toContain('exec {XFD}>>"$DRILL_LOG"');
     expect(doDrill).toContain('chmod 0600 -- "$DRILL_LOG"');
   });
-
-  test('tool 輸出只在符合嚴格字元集時才嵌入 JSON', () => {
-    // POSIX ERE 的 `[]...]` 在 JS 需寫成 `[\]...]`。
-    const re = new RegExp(/readonly DRILL_TOOL_JSON_RE='([^']+)'/.exec(lmDeploy)[1].replace('[][', '[\\][') );
-    expect(re.test(JSON.stringify(toolOk))).toBe(true);
-    expect(re.test('{"a":"b c"}')).toBe(false);
-    expect(re.test('{"a":"\\u0000"}')).toBe(false);
-    expect(re.test('{"a":"x"}\n{"b":1}')).toBe(false);
-    expect(lmDeploy).toContain(`[[ $DRILL_TOOL != '{"ok":true,"failedStep":null,'* ]]`);
-  });
 });
-
 describe('安裝與打包', () => {
   test('install.sh 安裝 drill.yaml；build-server 打包 /app/tools/drill.js', () => {
     const install = read('deploy/host/install.sh');

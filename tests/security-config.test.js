@@ -214,70 +214,55 @@ describe('deploy/compose', () => {
         if (!m) return;
         const pair = { name: m[1], value: m[2].trim() };
         if (!pair.value || !SECRET_NAME.test(pair.name) || /_FILE$/i.test(pair.name)) return;
-        if (/^\$\{[A-Za-z_][A-Za-z0-9_]*(?::?-)?\}$/.test(pair.value)) return; // ${VAR} or ${VAR:-} with an empty default
+        // ${VAR}, ${VAR:-} with an empty default, or ${VAR:?message} (required; the message is fixed text, not a value).
+        if (/^\$\{[A-Za-z_][A-Za-z0-9_]*(?::?-|:\?[^}$]*)?\}$/.test(pair.value)) return;
         // A bare YAML anchor (`x-openai-key: &openai_key`) is not a value; the mapping's own lines are checked separately.
         if (/^&[A-Za-z0-9_-]+$/.test(pair.value)) return;
+        // Boolean and numeric settings whose names contain TOKEN/PASSWORD (GOTRUE_PASSWORD_MIN_LENGTH, ...) are not secrets.
+        if (/^(true|false|\d{1,6})$/.test(pair.value)) return;
         bad.push(`${file}:${i + 1} ${pair.name}`);
       });
     }
     expect(bad).toEqual([]);
   });
 
-  test('the OpenAI key is provided only as a key file, never as an environment value (Req 14.6)', () => {
-    // environment may be a map or a KEY=value list; a bare KEY passes the caller's value through.
-    const entries = env => Array.isArray(env)
-      ? env.map(s => { const i = String(s).indexOf('='); return i < 0 ? [String(s), undefined] : [String(s).slice(0, i), String(s).slice(i + 1)]; })
-      : Object.entries(env ?? {}).map(([k, v]) => [k, v === null || v === undefined ? undefined : String(v)]);
-    const bad = [];
-    let keySeen = 0;
-    for (const file of COMPOSE_FILES) {
-      for (const [svc, def] of Object.entries(YAML.parse(read(file)).services ?? {})) {
-        for (const [key, value] of entries(def.environment)) {
-          if (key === 'CAMPING_OPENAI_API_KEY') {
-            keySeen++;
-            if (value !== '') bad.push(`${file} services.${svc} sets CAMPING_OPENAI_API_KEY`);
-          }
-          if (key === 'CAMPING_OPENAI_API_KEY_FILE' && !(value === '' || value === '${CAMPING_OPENAI_API_KEY_FILE:-}' || /^\/run\/secrets\/[A-Za-z0-9_.-]+$/.test(value ?? ''))) {
-            bad.push(`${file} services.${svc} CAMPING_OPENAI_API_KEY_FILE is not empty or a /run/secrets/ path`);
-          }
-        }
-      }
+  test('the receipt-AI OpenAI settings are gone from the deployment (plan.md D14)', () => {
+    for (const file of [...COMPOSE_FILES, ...ENV_EXAMPLES]) {
+      expect({ file, openai: /CAMPING_OPENAI_|OPENAI_API_KEY/.test(read(file)) }).toEqual({ file, openai: false });
     }
-    expect(bad).toEqual([]);
-    // The App services pin the key to the empty string, so app.env or <env>.env cannot supply it.
-    expect(keySeen).toBeGreaterThan(0);
-    for (const file of ENV_EXAMPLES) expect(read(file)).not.toMatch(/^\s*CAMPING_OPENAI_API_KEY\s*=/m);
   });
 
-  test('the proxy gets Edge_Trusted_Proxies with a 127.0.0.1/32 default; the App trusts only PROXY_IP/32 (Req 25.6, 25.7, 25.10)', () => {
+  test('the proxy gets Edge_Trusted_Proxies with a 127.0.0.1/32 default and the Host allowlist; the App gets neither (Req 25.6, 25.7; plan.md D12)', () => {
     const compose = YAML.parse(read('deploy/compose/compose.yaml'));
     expect(compose.services.proxy.environment.LM_EDGE_TRUSTED_PROXIES).toBe('${LM_EDGE_TRUSTED_PROXIES:-127.0.0.1/32}');
-    expect(compose['x-app'].environment.CAMPING_TRUSTED_PROXIES).toBe('${PROXY_IP:?PROXY_IP 未設定}/32');
-    // Edge_Trusted_Proxies never reaches the App_Server.
+    expect(compose.services.proxy.environment.LM_ALLOWED_HOSTS).toBe('${LM_ALLOWED_HOSTS:?LM_ALLOWED_HOSTS 未設定}');
+    // Edge_Trusted_Proxies never reaches the App_Server; Supabase services stay on the internal data network.
     expect(JSON.stringify(compose['x-app'])).not.toContain('LM_EDGE_TRUSTED_PROXIES');
+    for (const svc of ['db', 'auth', 'realtime', 'gateway']) {
+      expect({ svc, ports: compose.services[svc].ports, networks: compose.services[svc].networks ?? compose['x-supabase'].networks })
+        .toEqual({ svc, ports: undefined, networks: ['data'] });
+    }
   });
 
-  test('public registration defaults to closed on the Deploy_Host, and the caller cannot override it (Req 26.16)', () => {
+  test('signup without an invitation is off unless <env>.env enables it, and the caller cannot override it (plan.md D9)', () => {
     const text = read('deploy/compose/compose.yaml');
     const compose = YAML.parse(text);
-    // `:-` turns both unset and empty into closed; app-blue, app-green and migrate get it through <<: *app.
-    expect(compose['x-app'].environment.CAMPING_REGISTRATION).toBe('${CAMPING_REGISTRATION:-closed}');
-    for (const svc of ['app-blue', 'app-green', 'migrate']) {
+    // `:-` turns both unset and empty into false; app-blue and app-green get it through <<: *app.
+    expect(compose['x-app'].environment.LM_PUBLIC_SIGNUP).toBe('${LM_PUBLIC_SIGNUP:-false}');
+    for (const svc of ['app-blue', 'app-green']) {
       expect(new RegExp(`^  ${svc}:\\n    <<: \\*app$`, 'm').test(text.replace(/\r\n/g, '\n'))).toBe(true);
     }
-    for (const env of ['staging', 'prod']) {
-      expect(read(`deploy/compose/${env}.env.example`)).toMatch(/^CAMPING_REGISTRATION=closed$/m);
-    }
+    expect(read('deploy/compose/staging.env.example')).toMatch(/^LM_PUBLIC_SIGNUP=true$/m);
+    expect(read('deploy/compose/prod.env.example')).toMatch(/^LM_PUBLIC_SIGNUP=false$/m);
     const deploy = read('deploy/bin/lm-deploy').replace(/\r\n/g, '\n');
     const unset = /^unset ((?:[^\n]*\\\n)*[^\n]*)$/m.exec(deploy)?.[1].replace(/\\\n/g, ' ').trim().split(/\s+/) ?? [];
-    expect(unset).toContain('CAMPING_REGISTRATION');
+    expect(unset).toContain('LM_PUBLIC_SIGNUP');
     // Non-secret setting: it lives in <env>.env, never in app.env.
     const appEnvKeys = /^readonly APP_ENV_KEYS="([^"]*)"$/m.exec(deploy)?.[1].trim().split(/\s+/) ?? [];
-    expect(appEnvKeys.length).toBeGreaterThan(0);
-    expect(appEnvKeys).not.toContain('CAMPING_REGISTRATION');
+    expect(appEnvKeys.length).toBe(8);
+    expect(appEnvKeys).not.toContain('LM_PUBLIC_SIGNUP');
   });
 });
-
 describe('Compose variable templates for Edge_Proxy (Req 25.6–25.8)', () => {
   const env = name => Object.fromEntries(lines(read(`deploy/compose/${name}.env.example`))
     .map(l => /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(l)).filter(Boolean).map(m => [m[1], m[2]]));
@@ -292,14 +277,14 @@ describe('Compose variable templates for Edge_Proxy (Req 25.6–25.8)', () => {
   test('prod uses port 8082 and only placeholders for public and Edge values', () => {
     const p = env('prod');
     expect(p.LM_PUBLIC_PORT).toBe('8082');
-    expect(p.ALLOWED_HOSTS).toBe('<public-hostname>,<deploy-host-lan-ip>');
-    expect(p.LM_HEALTH_HOST).toBe('<public-hostname>');
+    expect(p.LM_ALLOWED_HOSTS).toBe('www.our-littlemoments.com <deploy-host-lan-ip>');
+    expect(p.LM_HEALTH_HOST).toBe('www.our-littlemoments.com');
     expect(p.LM_EDGE_TRUSTED_PROXIES).toBe('<npm-docker-subnet> <cloudflare-ipv4-ranges> <cloudflare-ipv6-ranges>');
     expect(p.LM_LAN_CIDR).toBe('<lan-cidr>');
     // No address literal in either template value (real values live only on the Deploy_Host).
     for (const name of ['staging', 'prod']) {
       const e = env(name);
-      for (const key of ['LM_EDGE_TRUSTED_PROXIES', 'LM_LAN_CIDR', 'ALLOWED_HOSTS', 'LM_HEALTH_HOST']) {
+      for (const key of ['LM_EDGE_TRUSTED_PROXIES', 'LM_LAN_CIDR', 'LM_ALLOWED_HOSTS', 'LM_HEALTH_HOST']) {
         expect(e[key]).not.toMatch(/\d+\.\d+\.\d+\.\d+|[0-9a-f]*:[0-9a-f]*:/i);
       }
     }

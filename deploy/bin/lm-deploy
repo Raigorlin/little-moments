@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# lm-deploy — Deploy_Host 部署腳本（design.md Components §12、§13；Requirements 14、18、20）。
+# lm-deploy — Deploy_Host 部署腳本（design.md Components §12、§13；Requirements 14、18、20；plan.md D6–D8）。
 #
 # 安裝於 /opt/lm/bin/lm-deploy（root 擁有、0755），由部署帳號以 sudo 執行（sudoers 只允許固定環境參數）。
+# 每個環境一個 Compose 專案 lm-<env>：LM_Proxy（proxy）、lm-server（app-blue／app-green）與自架的 Supabase stack
+# （db、auth、realtime、gateway；見 deploy/compose/compose.yaml）。
 #
 # 用法（環境參數兩種位置皆可）：
 #   lm-deploy <env> <subcommand> [args...]
@@ -12,60 +14,57 @@
 #   <digest>：sha256:<64 hex> 或 <LM_IMAGE_REPO>@sha256:<64 hex>（repo 必須等於 <env>.env 的 LM_IMAGE_REPO）
 #
 # 子命令（會改變狀態者皆先取得 flock -n <LM_LOCK_DIR>/lm-<env>.lock，取不到即以結束碼 4 失敗，Req 20.12）：
-#   backup                   pg_dump -Fc（30 分鐘逾時）→ 驗證大小／pg_restore --list／sha256 → rename → 修剪至 14 份
-#   migrate <digest>         以新映像執行 Migration_Runner；需要 LM_BACKUP_MAX_AGE 秒內的已驗證備份（Req 14.3）
+#   backup                   db 容器內 pg_dump -Fc --data-only（schema app 與 auth，不含 auth.schema_migrations；
+#                            30 分鐘逾時）→ 驗證大小／pg_restore --list／sha256 → rename → 修剪至 14 份
+#   migrate <digest>         以新映像的 /app/migrations 套用遷移（plan.md D7）；需要 LM_BACKUP_MAX_AGE 秒內的已驗證
+#                            備份（Req 14.3）。docker create／cp／rm 取出遷移檔（檔名 ^[0-9]{14}_[a-z0-9_]+\.sql$）→ 經
+#                            gateway 呼叫 Realtime 的 tenant health，等待 realtime.messages → lm_ops.schema_migrations
+#                            （version、sha256、applied_at）→ 每個未套用的檔案在一個交易內套用並記錄。已套用的檔案
+#                            sha256 改變時為 migration_changed（不套用任何檔案）。
 #   start <digest>           以 repo@digest 在閒置槽位（blue/green）啟動新 App 容器；不改 proxy（Req 20.2）
-#   health [color] [--wait]  經 proxy 容器 GET http://app-<color>:5173/healthz（5 秒逾時）；--wait 為 120 秒內
+#   health [color] [--wait]  經 proxy 容器 GET http://app-<color>:8080/robots.txt（5 秒逾時）；--wait 為 120 秒內
 #                            每 5 秒（prod，Req 20.3、20.4）或每 10 秒（staging，Req 18.3）一次、連續 3 次成功。
 #                            不取鎖（觀察期由 Pipeline 呼叫）
 #   switch                   健康檢查新槽位 → 原子 rename upstream.caddy → caddy reload（grace 30s，Req 20.3）
 #   rollback                 自動回滾：未切換 → 移除新槽位；已切換 → upstream 切回舊槽位並停止新槽位（Req 20.6）
 #   rollback <digest>        手動回滾：digest 必須在保留的 3 個映像中（Req 20.10），以 start/health/switch 流程切換
-#                            兩者皆不執行 Migration_Runner（Req 20.9）
+#                            兩者皆不執行遷移（Req 20.9）
 #   finalize                 停止舊槽位、記錄目前版本、保留最近 3 個映像並移除其餘（Req 20.7）
 #   status                   輸出機器可讀 JSON（active/candidate/previous/history/retained/backups），不取鎖
 #   prune                    依保留規則修剪備份（14 份）與本機映像（3 個），並清除殘留 .partial
-#   app-env                  由 stdin 讀取 app.env 內容，驗證鍵名後以 0600 原子寫入（不輸出任何值）
+#   app-env                  由 stdin 讀取 app.env 內容，驗證鍵名與格式後以 0600 原子寫入（不輸出任何值）
 #   deploy <digest> [--app-env-stdin]
-#                            backup → (app.env、收據 AI 金鑰檔) → migrate → start → health --wait → switch；任一步失敗即停止。
-#                            --app-env-stdin 的 stdin 另接受兩個不寫入 app.env 的控制鍵（design.md Components §25.4）：
-#                            LM_RECEIPT_AI=enabled|disabled 與（只在 prod 的 enabled）LM_OPENAI_API_KEY=<金鑰>。
-#                            全部在備份與任何 docker 指令前驗證；staging 收到 enabled 或金鑰為 receipt_ai_forbidden。
-#                            備份後 enabled 以原子方式寫入 secrets/openai-api-key（10001:10001、0400），disabled 刪除它，
-#                            未提供開關時不變。金鑰不出現在輸出、日誌、指令列、export 的變數或狀態檔。
-#   drill                    還原演練（Req 14.6、14.7）：取最新已驗證備份並重算 sha256 → 以 <env>/drill.yaml 建立獨立
-#                            Compose 專案 lm-drill-<env>-<8 hex>（只有 internal 網路與匿名卷）→ pg_restore → 以映像的
-#                            Migration_Runner 補齊遷移 → 以目前作用中 digest 啟動 App → /app/tools/drill.js 插入臨時合成
-#                            管理員、建立 smoke-fixture 並執行 Smoke_Test → `down -v`。不取部署鎖（改取
-#                            lm-<env>-drill.lock，不阻擋部署）、不寫入狀態檔、不修剪或刪除任何備份（失敗時亦同）。
-#                            docker／pg_restore 輸出寫入 state/drill-last.log（0600），不輸出到 stdout／stderr。
-#   smoke-account <digest> [--username <name>] [--fixture <title>]
-#                            只限 Host_Operator（root、未設定 SSH_ORIGINAL_COMMAND、SUDO_USER 不是部署帳號；Req 27.17）：
-#                            密碼由 stdin 讀入 state/.smoke-pw.XXXXXX（0600，任何結束路徑皆刪除）→ db／proxy 未執行時
-#                            啟動（db 等待健康檢查）→ backup → migrate → 以 ops profile 執行
-#                            /app/tools/create-smoke-account.js（密碼只經其 stdin）。不改槽位、不改 upstream.caddy
-#                            （Req 27.19–27.24；design.md Components §21.4）。
-#                            此子命令不在 SSH forced command 的允許清單（SSH_SUBCOMMANDS）內，部署憑證無法執行。
-#   用法：sudo cat <secret-file> | sudo /opt/lm/bin/lm-deploy <env> smoke-account <LM_IMAGE_REPO>@sha256:<hex>
+#                            (app.env) → stack → backup → migrate → start → health --wait → switch；任一步失敗即停止。
+#                            --app-env-stdin 的 stdin 在任何 docker 指令前驗證並寫入 app.env。app.env 現在寫在備份
+#                            之前：Supabase stack（stack 步驟）與備份都需要其中的金鑰，首次部署時尚無 app.env。
+#                            stack（plan.md D6）：up -d --wait db（pg_isready）→ supabase/db-setup.sql（角色密碼、
+#                            app.settings.jwt_*、_realtime schema；可重複執行）→ up -d auth、realtime、gateway → 經 gateway
+#                            容器輪詢 Auth、Realtime 與 gateway 的健康檢查 → {"command":"stack",...}。
+#   drill                    還原演練（Req 14.6、14.7；plan.md D8）：取最新已驗證備份並重算 sha256 → 以 <env>/drill.yaml
+#                            建立獨立 Compose 專案 lm-drill-<env>-<8 hex>（只有 internal 網路與匿名卷；拋棄式金鑰由
+#                            lm-supabase-keys env drill 產生）→ db + db-setup.sql → auth、realtime、gateway → 以目前作用中
+#                            映像的 /app/migrations 遷移 → pg_restore --data-only --disable-triggers → 驗證 auth.users 與
+#                            app.profiles 的筆數（profiles ≤ users）→ `down -v`。不取部署鎖（改取 lm-<env>-drill.lock，
+#                            不阻擋部署）、不寫入狀態檔、不修剪或刪除任何備份（失敗時亦同）。docker／pg_restore 輸出
+#                            寫入 state/drill-last.log（0600），不輸出到 stdout／stderr。
+#                            步驟：backup_select、backup_verify、setup、db_start、stack_start、migrate、restore、verify、cleanup。
 #
 # 輸出：stdout 每個步驟一行 JSON 物件（失敗時 {"ok":false,"reason":...}）；docker 與診斷訊息只寫 stderr。
 # 結束碼：0 成功；1 操作失敗；2 參數／設定錯誤；3 狀態不允許（例如已有未完成的部署）；4 鎖已被持有。
 #
-# 設定驗證：需要 Compose 的子命令在任何 docker 呼叫前讀取 <env>.env 並驗證；Edge_Trusted_Proxies
-#   （LM_EDGE_TRUSTED_PROXIES：空白分隔、1–64 個 IPv4／IPv6 位址或 CIDR）非空時，拒絕無法解析、前綴 0、
-#   IPv4-mapped IPv6（與 ::ffff:0:0/96 重疊）、涵蓋 LM_LAN_CIDR 任一整個網段的項目，以及 LM_LAN_CIDR 未設定或
-#   無效（1–8 個逗號分隔的 IPv4 網路位址/8–/32）；失敗以結束碼 2（config_invalid）結束，只輸出無效項目
-#   （Req 25.7、25.8；design.md Components §18.4）。
+# 設定驗證：需要 Compose 的子命令在任何 docker 呼叫前讀取 <env>.env 並驗證：LM_IMAGE_REPO；LM_HEALTH_HOST；
+#   LM_ALLOWED_HOSTS（空白分隔、1–16 個主機名稱或 IPv4、不得含 *、必須包含 LM_HEALTH_HOST）；LM_SITE_URL（http(s)
+#   origin）；LM_PUBLIC_SIGNUP（true｜false）；Edge_Trusted_Proxies（LM_EDGE_TRUSTED_PROXIES：空白分隔、1–64 個
+#   IPv4／IPv6 位址或 CIDR）非空時，拒絕無法解析、前綴 0、IPv4-mapped IPv6（與 ::ffff:0:0/96 重疊）、涵蓋 LM_LAN_CIDR
+#   任一整個網段的項目，以及 LM_LAN_CIDR 未設定或無效（1–8 個逗號分隔的 IPv4 網路位址/8–/32）；失敗以結束碼 2
+#   （config_invalid）結束，只輸出無效項目（Req 25.7、25.8；design.md Components §18.4）。組出 Compose 指令時 app.env
+#   必須存在（config_missing）；app.env 只接受 8 個鍵（見 APP_ENV_KEYS）且逐一檢查格式。
 #
-# 收據 AI（Req 15.6、15.7；design.md Components §25.4）：<env>.env 中非空的 CAMPING_OPENAI_* 或 LM_OPENAI_KEY_SOURCE 為
-#   config_invalid（這些值只由 lm-deploy 決定）。每次組出 Compose 指令時依金鑰檔決定 LM_OPENAI_KEY_SOURCE 與
-#   CAMPING_OPENAI_API_KEY_FILE：prod 的金鑰檔存在（一般檔案、1–512 位元組；以 root 執行時擁有者 10001、0400）時為
-#   該檔與 /run/secrets/openai-api-key，不存在時為 /dev/null 與空字串；其他狀態與 staging 有金鑰檔皆為 config_invalid。
-#
-# 檔案（<LM_ROOT>/<env>/）：compose.yaml、<env>.env（含 LM_IMAGE_REPO、LM_HEALTH_HOST、LM_EDGE_TRUSTED_PROXIES、
-#   LM_LAN_CIDR）、app.env、db.env、secrets/openai-api-key（只有 prod；secrets/ 為 root 0700）、
-#   caddy/{Caddyfile,upstream.caddy.tmpl,upstream.caddy}、state/lm.state（唯一狀態來源，key=value，
-#   讀取時逐項驗證、從不 source）與 state/active.json（每次寫入狀態時產生的 JSON 快照）。
+# 檔案（<LM_ROOT>/<env>/）：compose.yaml、drill.yaml、<env>.env（含 LM_IMAGE_REPO、LM_HEALTH_HOST、LM_ALLOWED_HOSTS、
+#   LM_SITE_URL、LM_PUBLIC_SIGNUP、LM_EDGE_TRUSTED_PROXIES、LM_LAN_CIDR）、app.env（0600 root；Compose 的第二個
+#   --env-file）、supabase/{gateway.Caddyfile,db-setup.sql}、caddy/{Caddyfile,upstream.caddy.tmpl,upstream.caddy}、
+#   state/lm.state（唯一狀態來源，key=value，讀取時逐項驗證、從不 source）與 state/active.json（每次寫入狀態時產生的
+#   JSON 快照）。
 #
 # 保留規則：與 ci/retention.mjs 的 pruneBackups／retainImages 相同（Deploy_Host 不安裝 Bun，因此在此以 bash
 #   重現；修改任一方時必須同步修改另一方，deploy/tests/lm-deploy.bats 驗證此行為）：
@@ -74,17 +73,15 @@
 #   - 映像：history 由舊到新；由新到舊取前 3 個相異 digest 為 retained，其餘為 removed。
 #
 # 測試覆寫（僅在「非 sudo 執行」時採用；以 root 經 sudo 執行時一律忽略並重設 PATH）：
-#   LM_ROOT=/srv/lm  LM_BACKUP_ROOT=/var/backups/little-moments  LM_LOCK_DIR=/run
+#   LM_ROOT=/srv/lm  LM_BACKUP_ROOT=/var/backups/little-moments  LM_LOCK_DIR=/run  LM_BIN_DIR=/opt/lm/bin
 #   LM_BACKUP_TIMEOUT=30m  LM_VERIFY_TIMEOUT=10m  LM_MIGRATE_TIMEOUT=30m  LM_BACKUP_MAX_AGE=3600
 #   LM_BACKUP_KEEP=14  LM_IMAGE_KEEP=3  LM_HEALTH_TIMEOUT=5  LM_HEALTH_INTERVAL=5（staging 為 10）  LM_HEALTH_WINDOW=120
-#   LM_HEALTH_NEED=3  LM_RESTORE_TIMEOUT=60m  LM_DRILL_UP_TIMEOUT=5m  LM_DRILL_TOOL_TIMEOUT=15m  LM_DRILL_DOWN_TIMEOUT=2m
-#   LM_DB_UP_TIMEOUT=5m  LM_SMOKE_TOOL_TIMEOUT=5m
-#   LM_TEST_OPERATOR=1（只供 bats：非 root 執行 smoke-account 時視為 Host_Operator）
+#   LM_HEALTH_NEED=3  LM_RESTORE_TIMEOUT=60m  LM_STACK_UP_TIMEOUT=5m  LM_STACK_TRIES=60  LM_STACK_INTERVAL=3
+#   LM_SQL_TIMEOUT=2m  LM_DRILL_DOWN_TIMEOUT=2m
 #   docker、timeout、flock、sha256sum、sleep、date 皆經 PATH 呼叫，可由測試替換。
 #
 # SSH forced command 經 sudo 時需在 sudoers 保留 SSH_ORIGINAL_COMMAND（deploy/host/sudoers.d/lm-deploy）。
-# 每個 token 只允許 [A-Za-z0-9@:/._=-]，且不得指向另一個環境；子命令必須在 SSH_SUBCOMMANDS 清單內
-# （不含 smoke-account，Req 27.18）。
+# 每個 token 只允許 [A-Za-z0-9@:/._=-]，且不得指向另一個環境；子命令必須在 SSH_SUBCOMMANDS 清單內（Req 27.18）。
 
 set -euo pipefail
 umask 077
@@ -96,28 +93,32 @@ readonly COLOR_RE='^(blue|green)$'
 readonly DIGEST_RE='^sha256:[0-9a-f]{64}$'
 readonly REPO_RE='^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?(/[a-z0-9]+([._-][a-z0-9]+)*)+$'
 readonly BACKUP_ID_RE='^(staging|prod)-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{7}$'
-readonly HOST_RE='^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)$'
-readonly DBNAME_RE='^[A-Za-z_][A-Za-z0-9_]{0,62}$'
+# LM_HEALTH_HOST 與 LM_ALLOWED_HOSTS 的每一項：主機名稱或 IPv4（plan.md D12）。
+readonly ALLOWED_HOST_RE='^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$'
+readonly ALLOWED_HOSTS_MAX=16
+readonly SITE_URL_RE='^https?://[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[0-9]{1,5})?$'
 readonly ZERO_DIGEST="sha256:0000000000000000000000000000000000000000000000000000000000000000"
-# app.env 只接受這些鍵（CAMPING_OPENAI_* 由 compose environment 決定，不經 app.env）。
-readonly APP_ENV_KEYS=" CAMPING_DATABASE_NAME CAMPING_DATABASE_USER CAMPING_DATABASE_PASSWORD CAMPING_SETUP_TOKEN "
-readonly APP_ENV_REQUIRED="CAMPING_DATABASE_NAME CAMPING_DATABASE_USER CAMPING_DATABASE_PASSWORD"
+# app.env 只接受這些鍵（plan.md D6、D16；由 lm-supabase-keys 產生），全部必要。值的格式見 app_env_value_ok。
+readonly APP_ENV_KEYS=" LM_DB_PASSWORD LM_JWT_SECRET LM_ANON_KEY LM_SERVICE_KEY LM_JWT_KEYS LM_JWKS LM_REALTIME_SECRET_KEY_BASE LM_REALTIME_DB_ENC_KEY "
 readonly APP_ENV_MAX_BYTES=65536
-# 收據 AI（design.md Components §25.4）：deploy --app-env-stdin 的控制鍵（不寫入 app.env）與金鑰檔。
-readonly OPENAI_KEY_RE='^sk-[A-Za-z0-9_-]{20,500}$'   # 與 server/receipt-ai.js 相同，另加長度上限
-readonly OPENAI_KEY_TARGET=/run/secrets/openai-api-key  # 容器內路徑
-readonly OPENAI_KEY_MAX_BYTES=512
-readonly APP_UID=10001
-# SSH forced command（$SSH_ORIGINAL_COMMAND）只接受這些子命令（Req 27.18）。smoke-account 刻意不在清單內：
-# 部署憑證只能經 forced command 執行 lm-deploy <env>，因此無法建立帳號（Req 15.9）。
+readonly JWT_RE='^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$'
+readonly JSON_VAL_RE='^[][{}":,A-Za-z0-9_.+/=-]+$'
+# SSH forced command（$SSH_ORIGINAL_COMMAND）只接受這些子命令（Req 27.18）。
 readonly SSH_SUBCOMMANDS="backup migrate start health switch rollback finalize status prune app-env deploy drill"
-# smoke-account（design.md Components §21.4）
-readonly SMOKE_USER_RE='^[a-z][a-z0-9-]{2,31}$'
-readonly SMOKE_FIXTURE_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$'
-readonly SMOKE_PW_MAX=4096
-# Smoke_Provisioner 的單行 JSON 只在只含這些字元時嵌入輸出（不含空白、反斜線或控制字元）。
-readonly SMOKE_TOOL_JSON_RE='^\{[][{}"A-Za-z0-9_:,.-]*\}$'
-readonly SMOKE_TOOL_MAX=4096
+# 遷移（plan.md D7）。
+readonly MIGRATION_RE='^[0-9]{14}_[a-z0-9_]+\.sql$'
+readonly APPLIED_RE='^([0-9]{14}_[a-z0-9_]+) ([0-9a-f]{64})$'
+readonly Q_REALTIME_MESSAGES="select to_regclass('realtime.messages') is not null"
+readonly Q_OPS_SCHEMA="create schema if not exists lm_ops; create table if not exists lm_ops.schema_migrations (version text primary key, sha256 text not null, applied_at timestamptz not null default now())"
+readonly Q_APPLIED="select version || ' ' || sha256 from lm_ops.schema_migrations order by version"
+readonly Q_DRILL_COUNTS="select (select count(*) from auth.users) || ' ' || (select count(*) from app.profiles)"
+# 在容器內由 sh 展開的指令（金鑰與密碼只取自該容器的環境，不出現在主機的指令列）。
+# shellcheck disable=SC2016
+readonly GATEWAY_HEALTH_SH='wget -q -O /dev/null -T 5 --header "apikey: $LM_ANON_KEY" http://127.0.0.1:8000/auth/v1/health'
+# shellcheck disable=SC2016
+readonly REALTIME_TENANT_SH='wget -q -O /dev/null -T 30 --header "apikey: $LM_SERVICE_KEY" --header "Authorization: Bearer $LM_SERVICE_KEY" http://127.0.0.1:8000/realtime/v1/api/tenants/realtime-dev/health'
+# shellcheck disable=SC2016
+readonly PG_DUMP_SH='PGPASSWORD=$POSTGRES_PASSWORD exec pg_dump -Fc --no-password -h /run/postgresql -U supabase_admin -d postgres --data-only --schema=app --schema=auth --exclude-table=auth.schema_migrations'
 
 # ---------------------------------------------------------------------------------------------
 # 設定
@@ -130,18 +131,28 @@ if [[ ${EUID} -eq 0 && -n ${SUDO_USER:-} ]]; then
 else
   LM_TRUST_ENV=1
 fi
-# 呼叫端環境中的這些值會覆寫 <env>.env，一律移除，讓 Compose 專案設定只來自 Deploy_Host 上的檔案。
-unset CAMPING_OPENAI_API_KEY CAMPING_OPENAI_API_KEY_FILE CAMPING_OPENAI_MODEL_ID \
-  CAMPING_OPENAI_IMAGE_DETAIL CAMPING_OPENAI_MAX_COMPLETION_TOKENS CAMPING_REGISTRATION \
-  COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_PROFILES COMPOSE_ENV_FILES APP_IMAGE_BLUE APP_IMAGE_GREEN APP_IMAGE_NEW \
-  LM_OPENAI_KEY_SOURCE
+# 呼叫端環境中的這些值會覆寫 --env-file（Compose 以環境變數優先），一律移除，讓 Compose 專案設定與金鑰只來自
+# Deploy_Host 上的檔案。
+unset COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_PROFILES COMPOSE_ENV_FILES APP_IMAGE_BLUE APP_IMAGE_GREEN APP_IMAGE_NEW \
+  LM_DB_PASSWORD LM_JWT_SECRET LM_ANON_KEY LM_SERVICE_KEY LM_JWT_KEYS LM_JWKS LM_REALTIME_SECRET_KEY_BASE \
+  LM_REALTIME_DB_ENC_KEY LM_ALLOWED_HOSTS LM_SITE_URL LM_PUBLIC_SIGNUP LM_AUTH_EMAIL_DOMAIN LM_SUPABASE_DIR \
+  LM_DRILL_PROJECT LM_DRILL_ENV
 
 CMD=""
 ENVN=""
+STATE_DIR=""
 TMP_FILES=()
 # 還原演練（do_drill）的清理狀態：DRILL_UP=1 表示 drill 專案可能有容器／網路／匿名卷需要 `down -v`。
 DRILL_UP=0
 DRILL_DIR=""
+# 遷移（run_migrations）的暫存容器與目錄；cleanup 在任何結束路徑移除。
+MIG_CID=""
+MIG_DIR=""
+# 共用的 stack／遷移函式失敗時的原因（X_REASON）、訊息（X_MSG）與額外 JSON 欄位（X_FIELDS）。
+X_REASON="" X_MSG="" X_FIELDS=""
+M_APPLIED=() M_SKIPPED=()
+# docker 輸出的去處：一般為 stderr，還原演練時改為 state/drill-last.log。
+exec {XFD}>&2
 
 log() { printf '[lm-deploy] %s\n' "$*" >&2; }
 
@@ -176,11 +187,22 @@ die() {
   exit "$code"
 }
 
+# xfail <reason> <message>：共用函式的失敗結果；一律回傳 1。
+xfail() {
+  X_REASON=$1
+  X_MSG=$2
+  return 1
+}
+
 cleanup() {
   local f
   # 任何結束路徑（含失敗、HUP／INT／TERM）都先銷毀 drill 專案，再刪除其秘密暫存目錄。
   if [[ $DRILL_UP == 1 ]]; then drill_down || true; fi
   if [[ -n $DRILL_DIR ]]; then drill_remove_dir || true; fi
+  if [[ -n $MIG_CID ]]; then docker rm -f "$MIG_CID" >/dev/null 2>&1 || true; fi
+  if [[ -n $MIG_DIR && -d $MIG_DIR && ! -L $MIG_DIR && -n $STATE_DIR && $MIG_DIR == "$STATE_DIR"/.migrations.* ]]; then
+    rm -rf -- "$MIG_DIR"
+  fi
   for f in "${TMP_FILES[@]}"; do [[ -n $f ]] && rm -f -- "$f"; done
   return 0
 }
@@ -210,6 +232,7 @@ readonly NUM_RE='^[1-9][0-9]{0,5}$'
 cfg LM_ROOT /srv/lm "$PATH_RE"; LM_ROOT=$REPLY
 cfg LM_BACKUP_ROOT /var/backups/little-moments "$PATH_RE"; LM_BACKUP_ROOT=$REPLY
 cfg LM_LOCK_DIR /run "$PATH_RE"; LM_LOCK_DIR=$REPLY
+cfg LM_BIN_DIR /opt/lm/bin "$PATH_RE"; BIN_DIR=$REPLY
 cfg LM_BACKUP_TIMEOUT 30m "$DUR_RE"; BACKUP_TIMEOUT=$REPLY
 cfg LM_VERIFY_TIMEOUT 10m "$DUR_RE"; VERIFY_TIMEOUT=$REPLY
 cfg LM_MIGRATE_TIMEOUT 30m "$DUR_RE"; MIGRATE_TIMEOUT=$REPLY
@@ -224,15 +247,14 @@ if [[ $LM_TRUST_ENV == 1 && -n ${LM_HEALTH_INTERVAL:-} ]]; then HEALTH_INTERVAL_
 cfg LM_HEALTH_WINDOW 120 "$NUM_RE"; HEALTH_WINDOW=$REPLY
 cfg LM_HEALTH_NEED 3 "$NUM_RE"; HEALTH_NEED=$REPLY
 cfg LM_RESTORE_TIMEOUT 60m "$DUR_RE"; RESTORE_TIMEOUT=$REPLY
-cfg LM_DRILL_UP_TIMEOUT 5m "$DUR_RE"; DRILL_UP_TIMEOUT=$REPLY
-cfg LM_DRILL_TOOL_TIMEOUT 15m "$DUR_RE"; DRILL_TOOL_TIMEOUT=$REPLY
+cfg LM_STACK_UP_TIMEOUT 5m "$DUR_RE"; STACK_UP_TIMEOUT=$REPLY
+cfg LM_STACK_TRIES 60 "$NUM_RE"; STACK_TRIES=$REPLY
+cfg LM_STACK_INTERVAL 3 "$NUM_RE"; STACK_INTERVAL=$REPLY
+cfg LM_SQL_TIMEOUT 2m "$DUR_RE"; SQL_TIMEOUT=$REPLY
 cfg LM_DRILL_DOWN_TIMEOUT 2m "$DUR_RE"; DRILL_DOWN_TIMEOUT=$REPLY
-cfg LM_DB_UP_TIMEOUT 5m "$DUR_RE"; DB_UP_TIMEOUT=$REPLY
-cfg LM_SMOKE_TOOL_TIMEOUT 5m "$DUR_RE"; SMOKE_TOOL_TIMEOUT=$REPLY
 
 usage() {
   printf '%s\n' '用法：lm-deploy <staging|prod> <backup|migrate|start|health|switch|rollback|finalize|status|prune|app-env|deploy|drill> [args]' >&2
-  printf '%s\n' '      lm-deploy <staging|prod> smoke-account <digest> [--username <name>] [--fixture <title>]（只限 Host_Operator，密碼經 stdin；不經 SSH forced command）' >&2
   CMD=${CMD:-usage}
   die "$EX_USAGE" usage "${1:-參數無效}"
 }
@@ -265,14 +287,20 @@ init_env() {
   BACKUP_DIR="$LM_BACKUP_ROOT/$ENVN"
   LOCK_FILE="$LM_LOCK_DIR/lm-$ENVN.lock"
   CADDY_DIR="$ENV_DIR/caddy"
-  # 收據 AI 金鑰檔的主機路徑（prod 為 /srv/lm/prod/secrets/openai-api-key）。
-  SECRETS_DIR="$ENV_DIR/secrets"
-  OPENAI_KEY_FILE="$SECRETS_DIR/openai-api-key"
+  SUPABASE_DIR="$ENV_DIR/supabase"
   IMAGE_REPO=""
   HEALTH_HOST=""
   if [[ $HEALTH_INTERVAL_OVERRIDE == 0 ]]; then
     if [[ $ENVN == staging ]]; then HEALTH_INTERVAL=10; else HEALTH_INTERVAL=5; fi
   fi
+}
+
+# host_ok <host>：主機名稱或 IPv4（看起來是 IPv4 時每個八位元組必須有效）。
+host_ok() {
+  local h=$1
+  [[ $h =~ $ALLOWED_HOST_RE && $h != *..* ]] || return 1
+  if [[ $h =~ ^[0-9.]+$ ]]; then ipv4_to_int "$h" || return 1; fi
+  return 0
 }
 
 # 讀取 <env>.env 的非秘密設定；需要 Compose 的子命令才呼叫。
@@ -286,72 +314,44 @@ load_env_config() {
   [[ $REPLY =~ $REPO_RE ]] || die "$EX_USAGE" config_invalid "LM_IMAGE_REPO 未設定或格式無效"
   IMAGE_REPO=$REPLY
   env_get "$envfile" LM_HEALTH_HOST
-  v=$REPLY
-  if [[ -z $v ]]; then
-    env_get "$envfile" ALLOWED_HOSTS
-    v=${REPLY%%,*}
-  fi
-  [[ $v =~ $HOST_RE ]] || die "$EX_USAGE" config_invalid "LM_HEALTH_HOST 未設定或格式無效"
-  HEALTH_HOST=$v
+  host_ok "$REPLY" || die "$EX_USAGE" config_invalid "LM_HEALTH_HOST 未設定或格式無效" '"field":"LM_HEALTH_HOST"'
+  HEALTH_HOST=$REPLY
+  check_allowed_hosts "$envfile"
+  env_get "$envfile" LM_SITE_URL
+  [[ $REPLY =~ $SITE_URL_RE ]] ||
+    die "$EX_USAGE" config_invalid "LM_SITE_URL 必須是 http:// 或 https:// 開頭的 origin（不含路徑）" '"field":"LM_SITE_URL"'
+  env_get "$envfile" LM_PUBLIC_SIGNUP
+  [[ $REPLY == true || $REPLY == false ]] ||
+    die "$EX_USAGE" config_invalid "LM_PUBLIC_SIGNUP 只接受 true 或 false" '"field":"LM_PUBLIC_SIGNUP"'
   env_get "$envfile" LM_CADDY_DIR
   v=${REPLY:-./caddy}
   [[ $v =~ ^(\./)?[A-Za-z0-9._/-]+$|^/[A-Za-z0-9._/-]+$ && $v != *..* ]] || die "$EX_USAGE" config_invalid "LM_CADDY_DIR 格式無效"
   if [[ $v == /* ]]; then CADDY_DIR=$v; else CADDY_DIR="$ENV_DIR/${v#./}"; fi
   CADDY_DIR=${CADDY_DIR%/}
-  check_openai_env "$envfile"
   check_edge_proxies "$envfile"
 }
 
-# check_openai_env <envfile>：CAMPING_OPENAI_* 與 LM_OPENAI_KEY_SOURCE 只由 lm-deploy 決定（Req 15.6、15.7；
-# design.md Components §25.4）。任何一行為非空值即 config_invalid；訊息只含變數名稱，不含值。
-check_openai_env() {
-  local envfile=$1 line name v
-  [[ -f $envfile && -r $envfile ]] || return 0
-  while IFS= read -r line || [[ -n $line ]]; do
-    line=${line%$'\r'}
-    [[ $line =~ ^[[:space:]]*(export[[:space:]]+)?(CAMPING_OPENAI_[A-Za-z0-9_]*|LM_OPENAI_KEY_SOURCE)[[:space:]]*=(.*)$ ]] || continue
-    name=${BASH_REMATCH[2]}
-    v=${BASH_REMATCH[3]}
-    v=${v#"${v%%[![:space:]]*}"}
-    v=${v%"${v##*[![:space:]]}"}
-    [[ $v == '""' || $v == "''" ]] && v=""
-    [[ -z $v ]] || die "$EX_USAGE" config_invalid \
-      "$ENVN.env 的 $name 必須保持空白（收據 AI 的設定只由 lm-deploy 決定）" "\"field\":$(jstr "$name")"
-  done <"$envfile"
-}
-
-# ---------------------------------------------------------------------------------------------
-# 收據 AI 金鑰檔（Req 15.6、15.7；design.md Components §25.4）
-# ---------------------------------------------------------------------------------------------
-
-# secrets/ 必須是目錄且不是符號連結；以 root 執行時必須由 root 擁有且權限為 0700。
-check_secrets_dir() {
-  [[ -d $SECRETS_DIR && ! -L $SECRETS_DIR ]] || die "$EX_USAGE" config_invalid "secrets/ 必須是目錄且不是符號連結"
-  if [[ ${EUID} -eq 0 && $(stat -c '%u %a' -- "$SECRETS_DIR") != "0 700" ]]; then
-    die "$EX_USAGE" config_invalid "secrets/ 必須由 root 擁有且權限為 0700"
+# check_allowed_hosts <envfile>：LM_ALLOWED_HOSTS 為 1–16 個以空白分隔的主機名稱或 IPv4（plan.md D12；Caddyfile 的
+# `not host` 以此回應 421），不得含 *，且必須包含 LM_HEALTH_HOST。失敗以結束碼 2 結束，只列出無效項目。
+check_allowed_hosts() {
+  local envfile=$1 h found=0
+  local -a hosts=() bad=()
+  env_get "$envfile" LM_ALLOWED_HOSTS
+  read -r -a hosts <<<"$REPLY" || true
+  ((${#hosts[@]} >= 1 && ${#hosts[@]} <= ALLOWED_HOSTS_MAX)) || die "$EX_USAGE" config_invalid \
+    "LM_ALLOWED_HOSTS 必須為 1–$ALLOWED_HOSTS_MAX 個以空白分隔的主機名稱或 IPv4（目前 ${#hosts[@]} 個）" '"field":"LM_ALLOWED_HOSTS"'
+  for h in "${hosts[@]}"; do
+    if host_ok "$h"; then
+      [[ $h == "$HEALTH_HOST" ]] && found=1
+    else
+      bad+=("$h")
+    fi
+  done
+  if ((${#bad[@]} > 0)); then
+    die "$EX_USAGE" config_invalid "LM_ALLOWED_HOSTS 含無效項目（只接受主機名稱或 IPv4，不得含 *）：${bad[*]}" \
+      "\"field\":\"LM_ALLOWED_HOSTS\",\"invalid\":$(jarr "${bad[@]}")"
   fi
-  return 0
-}
-
-# openai_key_state：依主機上的金鑰檔決定 Compose 變數 OPENAI_SOURCE（LM_OPENAI_KEY_SOURCE）與
-# OPENAI_FILE_ENV（CAMPING_OPENAI_API_KEY_FILE）。不符合條件時以 config_invalid 結束（不呼叫 docker）。
-openai_key_state() {
-  local f=$OPENAI_KEY_FILE size st
-  OPENAI_SOURCE=/dev/null
-  OPENAI_FILE_ENV=""
-  if [[ -e $SECRETS_DIR || -L $SECRETS_DIR ]]; then check_secrets_dir; fi
-  [[ -e $f || -L $f ]] || return 0
-  [[ $ENVN == prod ]] || die "$EX_USAGE" config_invalid "Staging 不得有 OpenAI 金鑰檔（secrets/openai-api-key）"
-  [[ -f $f && ! -L $f ]] || die "$EX_USAGE" config_invalid "secrets/openai-api-key 必須是一般檔案（不是符號連結）"
-  size=$(stat -c %s -- "$f")
-  ((size >= 1 && size <= OPENAI_KEY_MAX_BYTES)) ||
-    die "$EX_USAGE" config_invalid "secrets/openai-api-key 的大小必須為 1–$OPENAI_KEY_MAX_BYTES 位元組"
-  if [[ ${EUID} -eq 0 ]]; then
-    st=$(stat -c '%u %a' -- "$f")
-    [[ $st == "$APP_UID 400" ]] || die "$EX_USAGE" config_invalid "secrets/openai-api-key 必須由 $APP_UID 擁有且權限為 0400"
-  fi
-  OPENAI_SOURCE=$f
-  OPENAI_FILE_ENV=$OPENAI_KEY_TARGET
+  ((found == 1)) || die "$EX_USAGE" config_invalid "LM_ALLOWED_HOSTS 必須包含 LM_HEALTH_HOST（$HEALTH_HOST）" '"field":"LM_ALLOWED_HOSTS"'
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -672,22 +672,22 @@ require_phase() {
 # Docker Compose
 # ---------------------------------------------------------------------------------------------
 
-# build_compose [new-digest]：組出 COMPOSE_CMD。所有 APP_IMAGE_* 皆為 repo@sha256:<64 hex>。
+# build_compose [new-digest]：組出 COMPOSE_CMD。所有 APP_IMAGE_* 皆為 repo@sha256:<64 hex>。app.env 是第二個
+# --env-file（Supabase 金鑰只用於 compose.yaml 的 ${...} 替換）；不存在時以 config_missing 結束（不呼叫 docker）。
 build_compose() {
   local new=${1:-} fb
+  [[ -f "$ENV_DIR/app.env" && ! -L "$ENV_DIR/app.env" ]] ||
+    die "$EX_USAGE" config_missing "找不到 app.env（以 deploy --app-env-stdin 或 app-env 寫入；見 lm-supabase-keys）"
   fb=${new:-${S_ACTIVE_DIGEST:-${S_CANDIDATE_DIGEST:-${S_PREVIOUS_DIGEST:-$ZERO_DIGEST}}}}
   local -A slot=([blue]="" [green]="")
   [[ -n $S_PREVIOUS_COLOR ]] && slot[$S_PREVIOUS_COLOR]=$S_PREVIOUS_DIGEST
   [[ -n $S_ACTIVE_COLOR ]] && slot[$S_ACTIVE_COLOR]=$S_ACTIVE_DIGEST
   [[ -n $S_CANDIDATE_COLOR ]] && slot[$S_CANDIDATE_COLOR]=$S_CANDIDATE_DIGEST
-  local blue=${slot[blue]:-$fb} green=${slot[green]:-$fb} nimg=${new:-$fb} d
-  for d in "$blue" "$green" "$nimg"; do [[ $d =~ $DIGEST_RE ]] || die "$EX_FAIL" internal "digest 驗證失敗"; done
-  # 收據 AI：只傳路徑（不是金鑰）；Compose 以呼叫端環境優先於 --env-file（design.md Components §25.4、§25.5）。
-  openai_key_state
-  COMPOSE_CMD=(env "LM_ENV=$ENVN"
-    "APP_IMAGE_BLUE=$IMAGE_REPO@$blue" "APP_IMAGE_GREEN=$IMAGE_REPO@$green" "APP_IMAGE_NEW=$IMAGE_REPO@$nimg"
-    "LM_OPENAI_KEY_SOURCE=$OPENAI_SOURCE" "CAMPING_OPENAI_API_KEY_FILE=$OPENAI_FILE_ENV"
-    docker compose --project-directory "$ENV_DIR" -f "$ENV_DIR/compose.yaml" --env-file "$ENV_DIR/$ENVN.env")
+  local blue=${slot[blue]:-$fb} green=${slot[green]:-$fb} d
+  for d in "$blue" "$green"; do [[ $d =~ $DIGEST_RE ]] || die "$EX_FAIL" internal "digest 驗證失敗"; done
+  COMPOSE_CMD=(env "LM_ENV=$ENVN" "APP_IMAGE_BLUE=$IMAGE_REPO@$blue" "APP_IMAGE_GREEN=$IMAGE_REPO@$green"
+    docker compose --project-directory "$ENV_DIR" -f "$ENV_DIR/compose.yaml"
+    --env-file "$ENV_DIR/$ENVN.env" --env-file "$ENV_DIR/app.env")
 }
 
 remove_slot() {
@@ -696,13 +696,13 @@ remove_slot() {
   "${COMPOSE_CMD[@]}" --profile "$color" rm -s -f "app-$color" >&2
 }
 
-# 一次健康檢查；H_OK/H_MS 為結果。
+# 一次健康檢查（lm-server 沒有 /healthz，以靜態檔 /robots.txt 判斷；plan.md D4）；H_OK/H_MS 為結果。
 check_health_once() {
   local color=$1 t0
   [[ $color =~ $COLOR_RE ]] || die "$EX_USAGE" invalid_color "color 只接受 blue 或 green"
   t0=$(now_ms)
   if timeout -k 2s "$((HEALTH_TIMEOUT + 10))s" "${COMPOSE_CMD[@]}" exec -T proxy \
-    wget -q -O - --header "Host: $HEALTH_HOST" -T "$HEALTH_TIMEOUT" "http://app-$color:5173/healthz" >/dev/null 2>&1; then
+    wget -q -O - --header "Host: $HEALTH_HOST" -T "$HEALTH_TIMEOUT" "http://app-$color:8080/robots.txt" </dev/null >/dev/null 2>&1; then
     H_OK=true
   else
     H_OK=false
@@ -740,7 +740,7 @@ apply_upstream() {
   tmp=$(mktemp "$CADDY_DIR/.upstream.caddy.XXXXXX")
   TMP_FILES+=("$tmp")
   sed "s/__COLOR__/$color/g" -- "$tmpl" >"$tmp"
-  grep -q "reverse_proxy app-$color:5173" -- "$tmp" || die "$EX_FAIL" upstream_render_failed "upstream 樣板內容無效"
+  grep -q "reverse_proxy app-$color:8080" -- "$tmp" || die "$EX_FAIL" upstream_render_failed "upstream 樣板內容無效"
   ! grep -q '__COLOR__' -- "$tmp" || die "$EX_FAIL" upstream_render_failed "upstream 樣板仍含 __COLOR__"
   chmod 0644 -- "$tmp"
   if [[ -f $target ]]; then
@@ -750,14 +750,14 @@ apply_upstream() {
   fi
   mv -f -- "$tmp" "$target"
   untrack "$tmp"
-  if "${COMPOSE_CMD[@]}" exec -T proxy caddy reload --config /etc/caddy/Caddyfile >&2; then
+  if "${COMPOSE_CMD[@]}" exec -T proxy caddy reload --config /etc/caddy/Caddyfile </dev/null >&2; then
     return 0
   fi
   log "caddy reload 失敗，還原先前的 upstream.caddy"
   if [[ -n $prev ]]; then
     mv -f -- "$prev" "$target"
     untrack "$prev"
-    "${COMPOSE_CMD[@]}" exec -T proxy caddy reload --config /etc/caddy/Caddyfile >&2 || log "還原後 reload 仍失敗，需人工介入"
+    "${COMPOSE_CMD[@]}" exec -T proxy caddy reload --config /etc/caddy/Caddyfile </dev/null >&2 || log "還原後 reload 仍失敗，需人工介入"
   fi
   return 1
 }
@@ -785,6 +785,175 @@ prune_images() {
   local i nh=()
   for ((i = ${#R_RETAINED[@]} - 1; i >= 0; i--)); do nh+=("${R_RETAINED[i]}"); done
   S_HISTORY=("${nh[@]}")
+}
+
+# ---------------------------------------------------------------------------------------------
+# Supabase stack（plan.md D5、D6）
+# ---------------------------------------------------------------------------------------------
+# 以下函式由部署（COMPOSE_CMD）與還原演練（DRILL_CMD）共用：第一個參數是 Compose 指令陣列的名稱，docker 輸出寫到
+# fd $XFD；失敗時以 xfail 設定 X_REASON／X_MSG 並回傳 1，由呼叫端決定 die 或 drill_fail。
+
+# db_sql <compose-array> <role> <psql 參數...>：在 db 容器內經 unix socket 執行 psql（pg_hba 的 local 為 trust，不需要密碼）。
+db_sql() {
+  local -n qc=$1
+  local role=$2
+  shift 2
+  timeout -k 5s "$SQL_TIMEOUT" "${qc[@]}" exec -T db psql -h /run/postgresql -U "$role" -d postgres \
+    -v ON_ERROR_STOP=1 --no-psqlrc -qAt "$@" </dev/null 2>&"$XFD"
+}
+
+# stack_poll <compose-array> <reason> <message> <command...>：在 gateway 容器內執行 <command>，最多 STACK_TRIES 次、
+# 每次間隔 STACK_INTERVAL 秒，成功即回傳 0。
+stack_poll() {
+  local -n pc=$1
+  local reason=$2 msg=$3 i
+  shift 3
+  for ((i = 0; i < STACK_TRIES; i++)); do
+    if timeout -k 2s 20s "${pc[@]}" exec -T gateway "$@" </dev/null >&"$XFD" 2>&1; then return 0; fi
+    if ((i + 1 < STACK_TRIES)); then sleep "$STACK_INTERVAL"; fi
+  done
+  xfail "$reason" "$msg"
+}
+
+# stack_db_up <compose-array>：db 通過健康檢查（pg_isready）→ supabase/db-setup.sql（可重複執行）。
+stack_db_up() {
+  local -n dc=$1
+  timeout -k 10s "$STACK_UP_TIMEOUT" "${dc[@]}" up -d --wait --no-deps db </dev/null >&"$XFD" 2>&1 ||
+    { xfail stack_db_failed "Database 未在 $STACK_UP_TIMEOUT 內啟動並通過健康檢查"; return 1; }
+  timeout -k 10s "$SQL_TIMEOUT" "${dc[@]}" exec -T db psql -h /run/postgresql -U supabase_admin -d postgres \
+    -v ON_ERROR_STOP=1 --no-psqlrc -q -f - <"$SUPABASE_DIR/db-setup.sql" >&"$XFD" 2>&1 ||
+    { xfail stack_setup_failed "supabase/db-setup.sql 執行失敗（角色密碼、JWT 設定或 _realtime schema）"; return 1; }
+}
+
+# stack_services_up <compose-array>：auth、realtime、gateway → 經 gateway 容器輪詢三者的健康檢查。
+stack_services_up() {
+  local -n uc=$1
+  local svc
+  for svc in auth realtime gateway; do
+    timeout -k 10s "$STACK_UP_TIMEOUT" "${uc[@]}" up -d --no-deps "$svc" </dev/null >&"$XFD" 2>&1 ||
+      { xfail "stack_${svc}_failed" "無法啟動 $svc"; return 1; }
+  done
+  stack_poll "$1" stack_auth_failed "Auth 未通過健康檢查（http://auth:9999/health）" \
+    wget -q -O /dev/null -T 5 http://auth:9999/health || return 1
+  stack_poll "$1" stack_realtime_failed "Realtime 未通過健康檢查（http://realtime:4000/healthcheck）" \
+    wget -q -O /dev/null -T 5 http://realtime:4000/healthcheck || return 1
+  stack_poll "$1" stack_gateway_failed "API gateway 未通過健康檢查（/auth/v1/health）" \
+    sh -c "$GATEWAY_HEALTH_SH" || return 1
+}
+
+# ensure_stack：deploy 的 stack 步驟（plan.md D6）；在備份之前，讓備份、遷移與新 App 都有執行中的 Supabase stack。
+ensure_stack() {
+  CMD=stack
+  local f
+  for f in db-setup.sql gateway.Caddyfile; do
+    [[ -f $SUPABASE_DIR/$f && ! -L $SUPABASE_DIR/$f ]] || die "$EX_USAGE" config_missing "找不到 supabase/$f"
+  done
+  build_compose ""
+  stack_db_up COMPOSE_CMD || die "$EX_FAIL" "$X_REASON" "$X_MSG"
+  stack_services_up COMPOSE_CMD || die "$EX_FAIL" "$X_REASON" "$X_MSG"
+  emit "{\"ok\":true,\"command\":\"stack\",\"env\":$(jstr "$ENVN"),\"services\":[\"db\",\"auth\",\"realtime\",\"gateway\"],\"setup\":\"db-setup.sql\"}"
+}
+
+# ---------------------------------------------------------------------------------------------
+# 遷移（plan.md D7）
+# ---------------------------------------------------------------------------------------------
+
+# migrations_extract <digest>：以 docker create／cp／rm 取出映像的 /app/migrations 到 MIG_DIR；MIG_FILES 為依檔名排序的路徑。
+migrations_extract() {
+  local digest=$1 out f name
+  MIG_FILES=()
+  mkdir -p -- "$STATE_DIR"
+  MIG_DIR=$(mktemp -d "$STATE_DIR/.migrations.XXXXXX") || { xfail internal "無法建立遷移暫存目錄"; return 1; }
+  out=$(docker create "$IMAGE_REPO@$digest" </dev/null 2>&"$XFD") || { xfail migrate_failed "無法由新映像建立暫存容器"; return 1; }
+  [[ $out =~ ^[0-9a-f]{12,64}$ ]] || { xfail migrate_failed "docker create 的輸出無效"; return 1; }
+  MIG_CID=$out
+  if ! docker cp "$MIG_CID:/app/migrations/." "$MIG_DIR/" </dev/null >&"$XFD" 2>&1; then
+    xfail migrate_failed "無法取出映像的 /app/migrations"
+    return 1
+  fi
+  docker rm -f "$MIG_CID" </dev/null >&"$XFD" 2>&1 || log "無法移除暫存容器 $MIG_CID"
+  MIG_CID=""
+  for f in "$MIG_DIR"/* "$MIG_DIR"/.[!.]*; do
+    [[ -e $f || -L $f ]] || continue
+    name=${f##*/}
+    [[ $name =~ $MIGRATION_RE && -f $f && ! -L $f ]] ||
+      { xfail migrate_failed "映像的 /app/migrations 含無效的項目：$name"; return 1; }
+    MIG_FILES+=("$f")
+  done
+  ((${#MIG_FILES[@]} > 0)) || { xfail migrate_failed "映像的 /app/migrations 沒有任何遷移檔"; return 1; }
+}
+
+# run_migrations <compose-array> <digest>：取出遷移檔 → Realtime 建立 realtime.messages（app 的遷移依賴它）→
+# lm_ops.schema_migrations → 檢查已套用檔案的 sha256 → 依序套用未套用的檔案（每個檔案與其紀錄在同一個交易內，
+# 以 postgres 角色執行）。M_APPLIED／M_SKIPPED 為檔名。
+run_migrations() {
+  local cname=$1 digest=$2 f name ver sha out line i
+  local -n mc=$1
+  local -A applied=()
+  M_APPLIED=() M_SKIPPED=() X_FIELDS=""
+  migrations_extract "$digest" || return 1
+
+  out=$(db_sql "$cname" supabase_admin -c "$Q_REALTIME_MESSAGES") || { xfail migrate_failed "無法查詢 Database"; return 1; }
+  if [[ $out != t ]]; then
+    # Realtime 第一次連線到 tenant 的 Database 時才建立 realtime.messages 與 realtime.send()。
+    timeout -k 5s 45s "${mc[@]}" exec -T gateway sh -c "$REALTIME_TENANT_SH" </dev/null >&"$XFD" 2>&1 ||
+      log "Realtime tenant health 呼叫失敗，繼續等待 realtime.messages"
+    for ((i = 0; i < STACK_TRIES; i++)); do
+      out=$(db_sql "$cname" supabase_admin -c "$Q_REALTIME_MESSAGES") || out=""
+      [[ $out == t ]] && break
+      if ((i + 1 < STACK_TRIES)); then sleep "$STACK_INTERVAL"; fi
+    done
+  fi
+  [[ $out == t ]] || { xfail migrate_failed "Realtime 未建立 realtime.messages"; return 1; }
+
+  db_sql "$cname" postgres -c "$Q_OPS_SCHEMA" >/dev/null || { xfail migrate_failed "無法建立 lm_ops.schema_migrations"; return 1; }
+  out=$(db_sql "$cname" postgres -c "$Q_APPLIED") || { xfail migrate_failed "無法讀取 lm_ops.schema_migrations"; return 1; }
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    [[ $line =~ $APPLIED_RE ]] || { xfail migrate_failed "lm_ops.schema_migrations 的內容無效"; return 1; }
+    applied[${BASH_REMATCH[1]}]=${BASH_REMATCH[2]}
+  done <<<"$out"
+
+  # 已套用的檔案內容不得改變；任何一個不符就不套用任何檔案。
+  for f in "${MIG_FILES[@]}"; do
+    name=${f##*/}
+    ver=${name%.sql}
+    [[ -n ${applied[$ver]:-} ]] || continue
+    sha=$(sha256sum -- "$f")
+    sha=${sha%% *}
+    if [[ $sha != "${applied[$ver]}" ]]; then
+      X_FIELDS="\"migration\":$(jstr "$name")"
+      xfail migration_changed "已套用的遷移 $name 內容已變更（sha256 與 lm_ops.schema_migrations 不符）；未套用任何遷移"
+      return 1
+    fi
+  done
+
+  for f in "${MIG_FILES[@]}"; do
+    name=${f##*/}
+    ver=${name%.sql}
+    if [[ -n ${applied[$ver]:-} ]]; then
+      M_SKIPPED+=("$name")
+      continue
+    fi
+    sha=$(sha256sum -- "$f")
+    sha=${sha%% *}
+    [[ $sha =~ ^[0-9a-f]{64}$ ]] || { xfail migrate_failed "無法計算 $name 的 sha256"; return 1; }
+    if ! { cat -- "$f"; printf "\n;\nINSERT INTO lm_ops.schema_migrations (version, sha256) VALUES ('%s', '%s');\n" "$ver" "$sha"; } |
+      timeout -k 30s "$MIGRATE_TIMEOUT" "${mc[@]}" exec -T db psql -h /run/postgresql -U postgres -d postgres \
+        -v ON_ERROR_STOP=1 --no-psqlrc -q --single-transaction -f - >&"$XFD" 2>&1; then
+      X_FIELDS="\"migration\":$(jstr "$name")"
+      xfail migrate_failed "遷移 $name 失敗（該檔案已整筆復原，之後的檔案未套用）"
+      return 1
+    fi
+    M_APPLIED+=("$name")
+  done
+  rm -rf -- "$MIG_DIR"
+  MIG_DIR=""
+}
+
+# migrate_fields：失敗或成功 JSON 的遷移欄位。
+migrate_fields() {
+  printf '%s"applied":%s,"skipped":%s' "${X_FIELDS:+$X_FIELDS,}" "$(jarr "${M_APPLIED[@]}")" "$(jarr "${M_SKIPPED[@]}")"
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -837,21 +1006,11 @@ own_like_dir() {
   fi
 }
 
-read_db_names() {
-  env_get "$ENV_DIR/db.env" POSTGRES_USER
-  [[ $REPLY =~ $DBNAME_RE ]] || die "$EX_USAGE" config_invalid "db.env 的 POSTGRES_USER 未設定或格式無效"
-  DB_USER=$REPLY
-  env_get "$ENV_DIR/db.env" POSTGRES_DB
-  [[ $REPLY =~ $DBNAME_RE ]] || die "$EX_USAGE" config_invalid "db.env 的 POSTGRES_DB 未設定或格式無效"
-  DB_NAME=$REPLY
-}
-
 do_backup() {
   CMD=backup
   check_backup_dir
-  read_db_names
   build_compose ""
-  local epoch ts created partial listfile rc size total tdata tables sha id final meta shaf
+  local epoch ts created partial listfile rc size tdata appdata sha id final meta shaf
   epoch=$(date -u +%s)
   ts=$(date -u -d "@$epoch" +%Y%m%dT%H%M%SZ)
   created=$(date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%S+00:00)
@@ -861,9 +1020,9 @@ do_backup() {
   fi
   TMP_FILES+=("$partial")
 
-  # 1. pg_dump -Fc：單一 repeatable-read 快照，涵蓋 schema、資料與序列值（Req 14.1）。
-  if timeout -k 30s "$BACKUP_TIMEOUT" "${COMPOSE_CMD[@]}" exec -T db \
-    pg_dump -Fc --no-password -U "$DB_USER" -d "$DB_NAME" >"$partial"; then
+  # 1. db 容器內 pg_dump -Fc --data-only（plan.md D8）：單一 repeatable-read 快照，涵蓋 schema app 與 auth 的資料與
+  #    序列值（Req 14.1）；schema 由遷移與 GoTrue 建立，因此只需資料即可還原到全新的 stack。密碼取自容器環境。
+  if timeout -k 30s "$BACKUP_TIMEOUT" "${COMPOSE_CMD[@]}" exec -T db sh -c "$PG_DUMP_SH" </dev/null >"$partial"; then
     rc=0
   else
     rc=$?
@@ -871,7 +1030,7 @@ do_backup() {
   if ((rc == 124 || rc == 137)); then die "$EX_FAIL" backup_timeout "備份未在 $BACKUP_TIMEOUT 內完成"; fi
   ((rc == 0)) || die "$EX_FAIL" backup_create_failed "pg_dump 失敗（結束碼 $rc）"
 
-  # 2. 驗證（Req 14.2）：大小 > 0、pg_restore --list 成功、有資料表時至少一個 TABLE DATA、sha256。
+  # 2. 驗證（Req 14.2）：大小 > 0、pg_restore --list 成功、至少一個 TABLE DATA（auth 的資料表在 stack 步驟後一定存在）、sha256。
   size=$(stat -c %s -- "$partial")
   ((size > 0)) || die "$EX_FAIL" backup_verify_failed "備份檔大小為 0"
   listfile="$partial.list"
@@ -882,11 +1041,9 @@ do_backup() {
     rc=$?
   fi
   ((rc == 0)) || die "$EX_FAIL" backup_verify_failed "pg_restore --list 失敗（結束碼 $rc）"
-  total=$(grep -cE '^[0-9]+; [0-9]+ [0-9]+ TABLE ' -- "$listfile" || true)
   tdata=$(grep -cE '^[0-9]+; [0-9]+ [0-9]+ TABLE DATA ' -- "$listfile" || true)
-  tables=$((total - tdata))
-  # 資料庫尚無任何資料表（首次部署、遷移前）時 pg_dump 不會有 TABLE DATA；其餘情況必須至少一個。
-  if ((tables > 0 && tdata == 0)); then die "$EX_FAIL" backup_verify_failed "備份不含任何 TABLE DATA 條目"; fi
+  appdata=$(grep -cE '^[0-9]+; [0-9]+ [0-9]+ TABLE DATA app ' -- "$listfile" || true)
+  ((tdata > 0)) || die "$EX_FAIL" backup_verify_failed "備份不含任何 TABLE DATA 條目"
   sha=$(sha256sum -- "$partial")
   sha=${sha%% *}
   [[ $sha =~ ^[0-9a-f]{64}$ ]] || die "$EX_FAIL" backup_verify_failed "無法計算校驗碼"
@@ -900,9 +1057,10 @@ do_backup() {
   mv -f -- "$partial" "$final"
   untrack "$partial"
   TMP_FILES+=("$final" "$meta")
-  B_JSON=$(printf '{"id":%s,"env":%s,"createdAt":%s,"sizeBytes":%s,"sha256":%s,"tables":%s,"emptyDatabase":%s}' \
-    "$(jstr "$id")" "$(jstr "$ENVN")" "$(jstr "$created")" "$size" "$(jstr "$sha")" "$tables" \
-    "$( ((tables == 0)) && printf true || printf false)")
+  # tables：TABLE DATA 條目數（app 與 auth）；emptyDatabase：沒有任何 app.* 的 TABLE DATA（首次部署、遷移前）。
+  B_JSON=$(printf '{"id":%s,"env":%s,"createdAt":%s,"sizeBytes":%s,"sha256":%s,"tables":%s,"appTables":%s,"emptyDatabase":%s}' \
+    "$(jstr "$id")" "$(jstr "$ENVN")" "$(jstr "$created")" "$size" "$(jstr "$sha")" "$tdata" "$appdata" \
+    "$( ((appdata == 0)) && printf true || printf false)")
   printf '%s\n' "$B_JSON" >"$meta.tmp"
   TMP_FILES+=("$meta.tmp")
   mv -f -- "$meta.tmp" "$meta"
@@ -929,91 +1087,61 @@ do_backup() {
 # app.env
 # ---------------------------------------------------------------------------------------------
 
-# stage_app_env [deploy]：由 stdin 讀入並驗證，放在 ENV_DIR 的 0600 暫存檔（APP_ENV_STAGED）；不輸出任何值。
-# 參數為 deploy 時另接受收據 AI 的控制鍵（design.md Components §25.4）：LM_RECEIPT_AI 決定 RECEIPT_AI_MODE
-# （enabled｜disabled｜空字串 = 未提供，不變更）；prod 的 enabled 時 LM_OPENAI_API_KEY 以內建 printf 寫入
-# secrets/.openai-api-key.XXXXXX（RECEIPT_AI_STAGED）。控制鍵不寫入 app.env；app.env 以 bash 迴圈逐行寫入，
-# 含金鑰的行不經任何外部程式。錯誤訊息只含固定文字與鍵名。
+# app_env_value_ok <key> <value>：lm-supabase-keys 的輸出格式（plan.md D16）。
+app_env_value_ok() {
+  local key=$1 v=$2
+  case $key in
+    LM_DB_PASSWORD | LM_JWT_SECRET) [[ $v =~ ^[0-9a-f]{32,128}$ ]] ;;
+    LM_REALTIME_SECRET_KEY_BASE) [[ $v =~ ^[0-9a-f]{64,256}$ ]] ;;
+    LM_REALTIME_DB_ENC_KEY) [[ $v =~ ^[0-9a-f]{16}$ ]] ;;
+    LM_ANON_KEY | LM_SERVICE_KEY) ((${#v} <= 2048)) && [[ $v =~ $JWT_RE ]] ;;
+    LM_JWT_KEYS) ((${#v} <= 8192)) && [[ $v == \[* && $v =~ $JSON_VAL_RE ]] ;;
+    LM_JWKS) ((${#v} <= 8192)) && [[ $v == \{* && $v =~ $JSON_VAL_RE ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+# app_env_check <file>：每行為 KEY=VALUE（允許空行與 # 開頭的註解）；只接受 APP_ENV_KEYS、不得重複、值不得為空且格式
+# 有效、8 個鍵齊全。有效時 APP_ENV_KEYS_SEEN 為鍵（依出現順序）並回傳 0；無效時 REPLY 為原因（只含固定文字與鍵名，
+# 不含任何值）並回傳 1。
+app_env_check() {
+  local file=$1 line key val keys_seen=" " k
+  APP_ENV_KEYS_SEEN=()
+  while IFS= read -r line || [[ -n $line ]]; do
+    if [[ $line == *$'\r'* ]]; then REPLY="內容不得包含 NUL 或 CR"; return 1; fi
+    [[ -z $line || $line == \#* ]] && continue
+    if [[ ! $line =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]]; then REPLY="每行必須為 KEY=VALUE"; return 1; fi
+    key=${BASH_REMATCH[1]}
+    val=${BASH_REMATCH[2]}
+    if [[ $APP_ENV_KEYS != *" $key "* ]]; then REPLY="不允許的鍵：$key"; return 1; fi
+    if [[ $keys_seen == *" $key "* ]]; then REPLY="重複的鍵：$key"; return 1; fi
+    if [[ -z $val ]]; then REPLY="鍵 $key 的值為空"; return 1; fi
+    if ! app_env_value_ok "$key" "$val"; then REPLY="鍵 $key 的值格式無效"; return 1; fi
+    keys_seen+="$key "
+    APP_ENV_KEYS_SEEN+=("$key")
+  done <"$file"
+  line="" val=""
+  for k in $APP_ENV_KEYS; do
+    if [[ $keys_seen != *" $k "* ]]; then REPLY="缺少必要的鍵：$k"; return 1; fi
+  done
+  return 0
+}
+
+# stage_app_env：由 stdin 讀入並驗證，放在 ENV_DIR 的 0600 暫存檔（APP_ENV_STAGED）；不輸出任何值。
 stage_app_env() {
-  local mode=${1:-} raw tmp size line key val seen=" " k ai="" ai_seen=0 has_key=0 openai_key="" ktmp nul=""
+  local raw size
   [[ -d $ENV_DIR ]] || die "$EX_USAGE" config_missing "環境目錄不存在"
-  RECEIPT_AI_MODE=""
-  RECEIPT_AI_STAGED=""
-  raw=$(mktemp "$ENV_DIR/.app-env-in.XXXXXX")
+  raw=$(mktemp "$ENV_DIR/.app.env.XXXXXX")
   TMP_FILES+=("$raw")
-  tmp=$(mktemp "$ENV_DIR/.app.env.XXXXXX")
-  TMP_FILES+=("$tmp")
-  chmod 0600 -- "$raw" "$tmp"
+  chmod 0600 -- "$raw"
   head -c "$((APP_ENV_MAX_BYTES + 1))" >"$raw"
   size=$(stat -c %s -- "$raw")
   ((size > 0)) || die "$EX_USAGE" app_env_invalid "stdin 沒有內容"
   ((size <= APP_ENV_MAX_BYTES)) || die "$EX_USAGE" app_env_invalid "內容超過 $APP_ENV_MAX_BYTES 位元組"
-  # read -d '' 只在讀到 NUL 時成功；CR 於下方逐行檢查。
-  if IFS= read -r -d '' nul <"$raw"; then die "$EX_USAGE" app_env_invalid "內容不得包含 NUL 或 CR"; fi
-  nul=""
-  APP_ENV_KEYS_SEEN=()
-  while IFS= read -r line || [[ -n $line ]]; do
-    [[ $line != *$'\r'* ]] || die "$EX_USAGE" app_env_invalid "內容不得包含 NUL 或 CR"
-    if [[ -z $line || $line == \#* ]]; then printf '%s\n' "$line" >>"$tmp"; continue; fi
-    [[ $line =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]] || die "$EX_USAGE" app_env_invalid "每行必須為 KEY=VALUE"
-    key=${BASH_REMATCH[1]}
-    val=${BASH_REMATCH[2]}
-    case $key in
-      LM_RECEIPT_AI)
-        [[ $mode == deploy ]] || die "$EX_USAGE" app_env_invalid "不允許的鍵：$key"
-        ((ai_seen == 0)) || die "$EX_USAGE" app_env_invalid "重複的鍵：$key"
-        [[ $val == enabled || $val == disabled ]] || die "$EX_USAGE" app_env_invalid "LM_RECEIPT_AI 只接受 enabled 或 disabled"
-        ai_seen=1
-        ai=$val
-        continue
-        ;;
-      LM_OPENAI_API_KEY)
-        [[ $mode == deploy ]] || die "$EX_USAGE" app_env_invalid "不允許的鍵：$key"
-        [[ $ENVN == prod ]] || die "$EX_USAGE" receipt_ai_forbidden "Staging 不啟用收據 AI，不得提供 LM_OPENAI_API_KEY"
-        ((has_key == 0)) || die "$EX_USAGE" app_env_invalid "重複的鍵：$key"
-        [[ $val =~ $OPENAI_KEY_RE ]] || die "$EX_USAGE" app_env_invalid "LM_OPENAI_API_KEY 格式無效"
-        has_key=1
-        openai_key=$val
-        val=""
-        continue
-        ;;
-    esac
-    [[ $APP_ENV_KEYS == *" $key "* ]] || die "$EX_USAGE" app_env_invalid "不允許的鍵：$key"
-    [[ $seen != *" $key "* ]] || die "$EX_USAGE" app_env_invalid "重複的鍵：$key"
-    [[ -n $val ]] || die "$EX_USAGE" app_env_invalid "鍵 $key 的值為空"
-    seen+="$key "
-    APP_ENV_KEYS_SEEN+=("$key")
-    printf '%s\n' "$line" >>"$tmp"
-  done <"$raw"
-  line=""
-  rm -f -- "$raw"
-  untrack "$raw"
-  if [[ $ENVN != prod && $ai == enabled ]]; then
-    die "$EX_USAGE" receipt_ai_forbidden "Staging 不啟用收據 AI（LM_RECEIPT_AI 只能是 disabled）"
-  fi
-  if [[ $ai == enabled ]] && ((has_key == 0)); then
-    die "$EX_USAGE" app_env_invalid "LM_RECEIPT_AI=enabled 需要恰一行 LM_OPENAI_API_KEY"
-  fi
-  if [[ $ai != enabled ]] && ((has_key == 1)); then
-    die "$EX_USAGE" app_env_invalid "只有 LM_RECEIPT_AI=enabled 時可以提供 LM_OPENAI_API_KEY"
-  fi
-  for k in $APP_ENV_REQUIRED; do
-    [[ $seen == *" $k "* ]] || die "$EX_USAGE" app_env_invalid "缺少必要的鍵：$k"
-  done
-  if [[ $ENVN == prod ]]; then RECEIPT_AI_MODE=$ai; fi
-  if ((has_key == 1)); then
-    if [[ ! -e $SECRETS_DIR && ! -L $SECRETS_DIR ]]; then
-      mkdir -m 0700 -- "$SECRETS_DIR" || die "$EX_FAIL" receipt_ai_install_failed "無法建立 secrets/"
-    fi
-    check_secrets_dir
-    ktmp=$(mktemp "$SECRETS_DIR/.openai-api-key.XXXXXX") || die "$EX_FAIL" receipt_ai_install_failed "無法建立金鑰暫存檔"
-    TMP_FILES+=("$ktmp")
-    chmod 0600 -- "$ktmp"
-    printf '%s\n' "$openai_key" >"$ktmp"
-    openai_key=""
-    RECEIPT_AI_STAGED=$ktmp
-  fi
-  APP_ENV_STAGED=$tmp
+  # read -d '' 只在讀到 NUL 時成功；CR 由 app_env_check 逐行檢查。
+  if IFS= read -r -d '' _ <"$raw"; then die "$EX_USAGE" app_env_invalid "內容不得包含 NUL 或 CR"; fi
+  app_env_check "$raw" || die "$EX_USAGE" app_env_invalid "$REPLY"
+  APP_ENV_STAGED=$raw
 }
 
 install_app_env() {
@@ -1022,36 +1150,9 @@ install_app_env() {
   chmod 0600 -- "$ENV_DIR/app.env"
 }
 
-# emit_app_env [receiptAi]：app-env 結果行；deploy 時加上寫入後的收據 AI 狀態。keys 只列 app.env 的鍵。
+# emit_app_env：app-env 結果行；keys 只列鍵名。
 emit_app_env() {
-  local extra=""
-  [[ -z ${1:-} ]] || extra=",\"receiptAi\":$(jstr "$1")"
-  emit "{\"ok\":true,\"command\":\"app-env\",\"env\":$(jstr "$ENVN"),\"keys\":$(jarr "${APP_ENV_KEYS_SEEN[@]}")$extra}"
-}
-
-# install_receipt_ai：在 do_deploy 中緊接 install_app_env（備份之後、Migration_Runner 之前）。
-# enabled：暫存檔 → chown 10001:10001（非 root 時比照 own_like_dir 容忍失敗）→ chmod 0400 → mv -f 到金鑰檔；
-# disabled：刪除金鑰檔；未提供開關：不變。RECEIPT_AI_STATE 為寫入後的實際狀態（enabled｜disabled）。
-install_receipt_ai() {
-  case $RECEIPT_AI_MODE in
-    enabled)
-      if ! chown "$APP_UID:$APP_UID" -- "$RECEIPT_AI_STAGED" 2>/dev/null; then
-        [[ ${EUID} -ne 0 ]] || die "$EX_FAIL" receipt_ai_install_failed "無法設定金鑰檔擁有者"
-      fi
-      chmod 0400 -- "$RECEIPT_AI_STAGED"
-      mv -f -- "$RECEIPT_AI_STAGED" "$OPENAI_KEY_FILE"
-      untrack "$RECEIPT_AI_STAGED"
-      RECEIPT_AI_STAGED=""
-      ;;
-    disabled)
-      rm -f -- "$OPENAI_KEY_FILE"
-      ;;
-  esac
-  if [[ $ENVN == prod && -f $OPENAI_KEY_FILE && ! -L $OPENAI_KEY_FILE ]]; then
-    RECEIPT_AI_STATE=enabled
-  else
-    RECEIPT_AI_STATE=disabled
-  fi
+  emit "{\"ok\":true,\"command\":\"app-env\",\"env\":$(jstr "$ENVN"),\"keys\":$(jarr "${APP_ENV_KEYS_SEEN[@]}")}"
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -1065,13 +1166,14 @@ do_migrate() {
   now=$(date -u +%s)
   if [[ -z $S_LAST_BACKUP_ID || -z $S_LAST_BACKUP_AT ]] || ((now - S_LAST_BACKUP_AT > BACKUP_MAX_AGE)) ||
     [[ ! -f "$BACKUP_DIR/$S_LAST_BACKUP_ID.dump.sha256" ]]; then
-    die "$EX_STATE" backup_required "執行 Migration_Runner 前需要 ${BACKUP_MAX_AGE} 秒內的已驗證備份"
+    die "$EX_STATE" backup_required "套用遷移前需要 ${BACKUP_MAX_AGE} 秒內的已驗證備份"
   fi
   build_compose "$digest"
-  if ! timeout -k 30s "$MIGRATE_TIMEOUT" "${COMPOSE_CMD[@]}" --profile ops run --rm --no-deps -T migrate >&2; then
-    die "$EX_FAIL" migrate_failed "Migration_Runner 失敗；未啟動新容器，現有容器維持執行"
+  if ! run_migrations COMPOSE_CMD "$digest"; then
+    die "$EX_FAIL" "$X_REASON" "$X_MSG；未啟動新容器，現有容器維持執行" \
+      "\"digest\":$(jstr "$digest"),$(migrate_fields)"
   fi
-  emit "{\"ok\":true,\"command\":\"migrate\",\"env\":$(jstr "$ENVN"),\"digest\":$(jstr "$digest"),\"backupId\":$(jstr "$S_LAST_BACKUP_ID")}"
+  emit "{\"ok\":true,\"command\":\"migrate\",\"env\":$(jstr "$ENVN"),\"digest\":$(jstr "$digest"),\"backupId\":$(jstr "$S_LAST_BACKUP_ID"),$(migrate_fields)}"
 }
 
 do_start() {
@@ -1239,15 +1341,15 @@ do_deploy() {
   local digest=$1 with_env=$2
   CMD=deploy
   require_phase idle
-  # stdin（app.env 與收據 AI 控制鍵）全部在備份與任何 docker 指令之前驗證。
-  if [[ $with_env == 1 ]]; then CMD=app-env; stage_app_env deploy; fi
-  do_backup
+  # stdin（app.env）在任何 docker 指令之前驗證；通過後立即寫入，因為 stack 與備份都需要其中的金鑰。
   if [[ $with_env == 1 ]]; then
     CMD=app-env
+    stage_app_env
     install_app_env
-    install_receipt_ai
-    emit_app_env "$RECEIPT_AI_STATE"
+    emit_app_env
   fi
+  ensure_stack
+  do_backup
   do_migrate "$digest"
   do_start "$digest"
   CMD=health
@@ -1265,24 +1367,23 @@ do_deploy() {
 }
 
 # ---------------------------------------------------------------------------------------------
-# 還原演練（Req 14.6、14.7；design.md Components §13）
+# 還原演練（Req 14.6、14.7；plan.md D8）
 # ---------------------------------------------------------------------------------------------
 #
 # 隔離：drill 專案只用 <env>/drill.yaml（internal 網路 `drill`、匿名卷），專案名稱 lm-drill-<env>-<8 hex> 與
-# 正式專案 lm-<env> 不同；不讀取 <env>.env、app.env、db.env，也不呼叫正式專案的任何 compose 指令。
+# 正式專案 lm-<env> 不同；不讀取 app.env，也不呼叫正式專案的任何 compose 指令（gateway.Caddyfile 與
+# db-setup.sql 取自 <env>/supabase/，唯讀）。
 # 備份：只讀取。以 fd 8 開啟最新已驗證的 .dump 後，經 /proc/$$/fd/8 重算 sha256 並以同一個 inode 還原，
 # 即使同時有部署修剪備份也不受影響；任何失敗都不刪除、不修剪備份（Req 14.7）。
-# 秘密：drill DB 密碼、Setup_Token 與合成管理員密碼每次以 /dev/urandom 產生，只寫入 state/.drill.XXXXXX/（0700）
-# 內的 drill-*.env（0600），由 docker CLI 讀取；不出現在指令列、stdout、stderr 或 drill-last.log。
+# 秘密：每次以 lm-supabase-keys env drill 產生拋棄式金鑰，只寫入 state/.drill.XXXXXX/（0700）內的 drill.env（0600），
+# 由 docker CLI 讀取；不出現在指令列、stdout、stderr 或 drill-last.log。
+# 還原：備份只含 app 與 auth 的資料（do_backup），先以目前作用中映像的遷移建立 schema，再 pg_restore --data-only。
 
 readonly DRILL_PROJECT_RE='^lm-drill-(staging|prod)-[0-9a-f]{8}$'
-# tool 輸出（JSON.stringify 的單行結果）只允許這些字元，才嵌入 lm-deploy 的輸出（不含空白、反斜線或控制字元）。
-readonly DRILL_TOOL_JSON_RE='^\{[][{}"A-Za-z0-9_:,.-]*\}$'
-readonly DRILL_TOOL_MAX=16384
 readonly DRILL_CREATED_RE='"createdAt":"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\+00:00)"'
 
 DRILL_PROJECT="" DRILL_BACKUP_ID="" DRILL_DIGEST="" DRILL_LOG=/dev/null
-DRILL_RESTORE_SECONDS=null DRILL_TOOL=null DRILL_CLEANED=null DRILL_BACKUP_JSON=null
+DRILL_RESTORE_SECONDS=null DRILL_VERIFY=null DRILL_CLEANED=null DRILL_BACKUP_JSON=null DRILL_MIGRATIONS=null
 DRILL_CMD=()
 
 jnull() { if [[ -z $1 ]]; then printf 'null'; else jstr "$1"; fi; }
@@ -1302,7 +1403,7 @@ acquire_drill_lock() {
 drill_down() {
   DRILL_UP=0
   ((${#DRILL_CMD[@]} > 0)) || return 0
-  if timeout -k 10s "$DRILL_DOWN_TIMEOUT" "${DRILL_CMD[@]}" --profile ops down -v --remove-orphans --timeout 10 >>"$DRILL_LOG" 2>&1; then
+  if timeout -k 10s "$DRILL_DOWN_TIMEOUT" "${DRILL_CMD[@]}" down -v --remove-orphans --timeout 10 </dev/null >>"$DRILL_LOG" 2>&1; then
     DRILL_CLEANED=true
   else
     DRILL_CLEANED=false
@@ -1321,9 +1422,9 @@ drill_fields() {
   local result=$1 step=$2 count
   list_backups
   count=${#B_IDS[@]}
-  printf '"project":%s,"backupId":%s,"backup":%s,"digest":%s,"restoreSeconds":%s,"result":%s,"failedStep":%s,"tool":%s,"cleanedUp":%s,"backupCount":%s' \
+  printf '"project":%s,"backupId":%s,"backup":%s,"digest":%s,"restoreSeconds":%s,"result":%s,"failedStep":%s,"migrations":%s,"verify":%s,"cleanedUp":%s,"backupCount":%s' \
     "$(jnull "$DRILL_PROJECT")" "$(jnull "$DRILL_BACKUP_ID")" "$DRILL_BACKUP_JSON" "$(jnull "$DRILL_DIGEST")" \
-    "$DRILL_RESTORE_SECONDS" "$(jstr "$result")" "$(jnull "$step")" "$DRILL_TOOL" "$DRILL_CLEANED" "$count"
+    "$DRILL_RESTORE_SECONDS" "$(jstr "$result")" "$(jnull "$step")" "$DRILL_MIGRATIONS" "$DRILL_VERIFY" "$DRILL_CLEANED" "$count"
 }
 
 # drill_fail <exit> <reason> <message> <failed-step>：先銷毀 drill 專案與秘密暫存目錄，再輸出失敗 JSON。
@@ -1350,39 +1451,37 @@ drill_purge_stale() {
   done
 }
 
-# 產生本次演練的秘密檔（只在函式區域變數中短暫存在）。
+# drill_write_secrets：lm-supabase-keys env drill → drill.env（0600），並以 app.env 的規則驗證。
 drill_write_secrets() {
-  local dbpw token pw user
-  rand_hex 24 || return 1
-  dbpw=$REPLY
-  rand_hex 24 || return 1
-  token=$REPLY
-  rand_hex 24 || return 1
-  pw=$REPLY
-  rand_hex 4 || return 1
-  user="lm-drill-$REPLY"
-  REPLY=""
-  printf 'POSTGRES_PASSWORD=%s\n' "$dbpw" >"$DRILL_DIR/drill-db.env"
-  printf 'CAMPING_DATABASE_PASSWORD=%s\nCAMPING_SETUP_TOKEN=%s\n' "$dbpw" "$token" >"$DRILL_DIR/drill-app.env"
-  printf 'CAMPING_DATABASE_PASSWORD=%s\nCAMPING_SMOKE_USERNAME=%s\nCAMPING_SMOKE_PASSWORD=%s\n' "$dbpw" "$user" "$pw" >"$DRILL_DIR/drill-tool.env"
-  chmod 0600 -- "$DRILL_DIR/drill-db.env" "$DRILL_DIR/drill-app.env" "$DRILL_DIR/drill-tool.env"
+  local keys="$BIN_DIR/lm-supabase-keys" f="$DRILL_DIR/drill.env"
+  [[ -f $keys && -x $keys ]] || return 1
+  : >"$f"
+  chmod 0600 -- "$f"
+  "$keys" env drill >"$f" 2>>"$DRILL_LOG" || return 1
+  app_env_check "$f"
 }
 
 do_drill() {
   CMD=drill
-  local id dump shaf meta line="" expected actual size created=null started t0 ms rc out last step
+  local id dump shaf meta line="" expected actual size created=null started t0 ms rc out f users profiles
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
   started=$(now_iso)
   [[ -n $S_ACTIVE_DIGEST ]] || die "$EX_STATE" no_active_slot "目前沒有作用中的版本，無法以目前 digest 執行還原演練"
   [[ -f "$ENV_DIR/drill.yaml" && ! -L "$ENV_DIR/drill.yaml" ]] || die "$EX_USAGE" config_missing "找不到 drill.yaml"
+  for f in db-setup.sql gateway.Caddyfile; do
+    [[ -f $SUPABASE_DIR/$f && ! -L $SUPABASE_DIR/$f ]] || die "$EX_USAGE" config_missing "找不到 supabase/$f"
+  done
+  [[ -f $BIN_DIR/lm-supabase-keys && -x $BIN_DIR/lm-supabase-keys ]] ||
+    die "$EX_USAGE" config_missing "找不到 $BIN_DIR/lm-supabase-keys（由 deploy/host/install.sh 安裝）"
   DRILL_DIGEST=$S_ACTIVE_DIGEST
   mkdir -p -- "$STATE_DIR"
   DRILL_LOG="$STATE_DIR/drill-last.log"
   rm -f -- "$DRILL_LOG"
   : >"$DRILL_LOG"
   chmod 0600 -- "$DRILL_LOG"
+  exec {XFD}>>"$DRILL_LOG"
 
   # 1. 最新已驗證備份（.dump.sha256 存在），重算校驗碼。
   [[ -d $BACKUP_DIR && ! -L $BACKUP_DIR ]] || drill_fail "$EX_FAIL" backup_missing "備份目錄不存在" backup_select
@@ -1411,27 +1510,36 @@ do_drill() {
   fi
   DRILL_BACKUP_JSON=$(printf '{"id":%s,"createdAt":%s,"sizeBytes":%s,"sha256":%s}' "$(jstr "$id")" "$created" "$size" "$(jstr "$expected")")
 
-  # 2. drill 專案與秘密。
+  # 2. drill 專案與拋棄式金鑰。
   rand_hex 4 || drill_fail "$EX_FAIL" internal "無法產生亂數" setup
   DRILL_PROJECT="lm-drill-$ENVN-$REPLY"
   [[ $DRILL_PROJECT =~ $DRILL_PROJECT_RE && $DRILL_PROJECT != "lm-$ENVN" ]] || drill_fail "$EX_FAIL" internal "drill 專案名稱無效" setup
   DRILL_DIR=$(mktemp -d "$STATE_DIR/.drill.XXXXXX") || drill_fail "$EX_FAIL" internal "無法建立暫存目錄" setup
   chmod 0700 -- "$DRILL_DIR"
-  drill_write_secrets || drill_fail "$EX_FAIL" internal "無法產生演練用秘密" setup
-  DRILL_CMD=(env "LM_DRILL_PROJECT=$DRILL_PROJECT" "LM_DRILL_ENV=$ENVN" "APP_IMAGE_DRILL=$IMAGE_REPO@$DRILL_DIGEST"
-    docker compose -p "$DRILL_PROJECT" --project-directory "$DRILL_DIR" -f "$ENV_DIR/drill.yaml")
+  drill_write_secrets || drill_fail "$EX_FAIL" drill_keys_failed "無法以 lm-supabase-keys 產生演練用金鑰" setup
+  DRILL_CMD=(env "LM_DRILL_PROJECT=$DRILL_PROJECT" "LM_DRILL_ENV=$ENVN" "LM_SUPABASE_DIR=$SUPABASE_DIR"
+    docker compose -p "$DRILL_PROJECT" --project-directory "$DRILL_DIR" -f "$ENV_DIR/drill.yaml" --env-file "$DRILL_DIR/drill.env")
   drill_purge_stale || drill_fail "$EX_FAIL" drill_cleanup_failed "無法清除先前殘留的 drill 資源" setup
 
-  # 3. 隔離 Database（TCP healthcheck 通過才算就緒）。
+  # 3. 隔離 Database（TCP healthcheck 通過才算就緒）+ db-setup.sql。
   DRILL_UP=1
-  timeout -k 10s "$DRILL_UP_TIMEOUT" "${DRILL_CMD[@]}" up --detach --wait --no-deps db >>"$DRILL_LOG" 2>&1 ||
-    drill_fail "$EX_FAIL" drill_db_failed "drill Database 未在 $DRILL_UP_TIMEOUT 內就緒" db_start
+  stack_db_up DRILL_CMD || drill_fail "$EX_FAIL" "$X_REASON" "$X_MSG" db_start
 
-  # 4. 還原（計時，Req 14.6）。
+  # 4. Auth（GoTrue 遷移 auth schema）、Realtime、gateway。
+  stack_services_up DRILL_CMD || drill_fail "$EX_FAIL" "$X_REASON" "$X_MSG" stack_start
+
+  # 5. 以目前作用中映像的 /app/migrations 建立 app schema（全新 Database，全部套用）。
+  if ! run_migrations DRILL_CMD "$DRILL_DIGEST"; then
+    DRILL_MIGRATIONS="{$(migrate_fields)}"
+    drill_fail "$EX_FAIL" "$X_REASON" "$X_MSG" migrate
+  fi
+  DRILL_MIGRATIONS="{$(migrate_fields)}"
+
+  # 6. 還原資料（計時，Req 14.6）：只有資料，觸發器（含外鍵）在還原期間停用。
   t0=$(now_ms)
   if timeout -k 30s "$RESTORE_TIMEOUT" "${DRILL_CMD[@]}" exec -T db \
-    pg_restore --no-owner --no-privileges --exit-on-error --single-transaction -U lm_drill -d lm_drill \
-    <"/proc/$$/fd/8" >>"$DRILL_LOG" 2>&1; then
+    pg_restore --data-only --disable-triggers --no-owner --no-privileges --exit-on-error --single-transaction \
+    -h /run/postgresql -U supabase_admin -d postgres <"/proc/$$/fd/8" >>"$DRILL_LOG" 2>&1; then
     rc=0
   else
     rc=$?
@@ -1442,138 +1550,20 @@ do_drill() {
   if ((rc == 124 || rc == 137)); then drill_fail "$EX_FAIL" restore_timeout "pg_restore 未在 $RESTORE_TIMEOUT 內完成" restore; fi
   ((rc == 0)) || drill_fail "$EX_FAIL" restore_failed "pg_restore 失敗（結束碼 $rc）" restore
 
-  # 5. 以目前映像的 Migration_Runner 補齊備份之後才套用的遷移（已是最新時不做任何事）。
-  timeout -k 30s "$MIGRATE_TIMEOUT" "${DRILL_CMD[@]}" --profile ops run --rm --no-deps -T migrate >>"$DRILL_LOG" 2>&1 ||
-    drill_fail "$EX_FAIL" migrate_failed "Migration_Runner 在 drill Database 失敗" migrate
-
-  # 6. 以目前作用中 digest 啟動隔離 App_Server。
-  timeout -k 10s "$DRILL_UP_TIMEOUT" "${DRILL_CMD[@]}" up --detach --no-deps app >>"$DRILL_LOG" 2>&1 ||
-    drill_fail "$EX_FAIL" drill_app_failed "無法啟動 drill App" app_start
-
-  # 7. 合成管理員 + smoke-fixture + Smoke_Test（/app/tools/drill.js）。
-  out="$DRILL_DIR/tool.out"
-  if timeout -k 30s "$DRILL_TOOL_TIMEOUT" "${DRILL_CMD[@]}" --profile ops run --rm --no-deps -T tool run >"$out" 2>>"$DRILL_LOG"; then
-    rc=0
-  else
-    rc=$?
-  fi
-  last=""
-  while IFS= read -r line || [[ -n $line ]]; do [[ -n $line ]] && last=$line; done <"$out"
-  if ((${#last} <= DRILL_TOOL_MAX)) && [[ $last =~ $DRILL_TOOL_JSON_RE ]]; then DRILL_TOOL=$last; fi
-  if ((rc != 0)) || [[ $DRILL_TOOL != '{"ok":true,"failedStep":null,'* ]]; then
-    step=drill_tool
-    if [[ $DRILL_TOOL =~ ^\{\"ok\":false,\"failedStep\":\"([a-z-]{1,32})\" ]]; then step=${BASH_REMATCH[1]}; fi
-    if ((rc == 124 || rc == 137)); then drill_fail "$EX_FAIL" smoke_timeout "還原演練工具未在 $DRILL_TOOL_TIMEOUT 內完成" "$step"; fi
-    drill_fail "$EX_FAIL" smoke_failed "還原演練的 Smoke_Test 未通過（步驟 $step）" "$step"
-  fi
+  # 7. 驗證：auth.users 與 app.profiles 的筆數；每個 profile 都對應一個 Auth 帳號，因此 profiles ≤ users。
+  out=$(db_sql DRILL_CMD supabase_admin -c "$Q_DRILL_COUNTS") || drill_fail "$EX_FAIL" verify_failed "無法查詢還原後的 Database" verify
+  [[ $out =~ ^([0-9]{1,12})\ ([0-9]{1,12})$ ]] || drill_fail "$EX_FAIL" verify_failed "還原後的筆數查詢結果無效" verify
+  users=$((10#${BASH_REMATCH[1]}))
+  profiles=$((10#${BASH_REMATCH[2]}))
+  DRILL_VERIFY=$(printf '{"authUsers":%s,"profiles":%s}' "$users" "$profiles")
+  ((profiles <= users)) ||
+    drill_fail "$EX_FAIL" verify_failed "還原後 app.profiles（$profiles）多於 auth.users（$users）" verify
 
   # 8. 銷毀 drill 專案（容器、網路、匿名卷）與秘密暫存目錄。
   drill_down
   drill_remove_dir
-  [[ $DRILL_CLEANED == true ]] || die "$EX_FAIL" drill_cleanup_failed "Smoke_Test 通過，但 drill 專案未能銷毀，需人工清除" "$(drill_fields fail cleanup)"
+  [[ $DRILL_CLEANED == true ]] || die "$EX_FAIL" drill_cleanup_failed "還原與驗證通過，但 drill 專案未能銷毀，需人工清除" "$(drill_fields fail cleanup)"
   emit "{\"ok\":true,\"command\":\"drill\",\"env\":$(jstr "$ENVN"),$(drill_fields pass ""),\"startedAt\":$(jstr "$started"),\"endedAt\":$(jstr "$(now_iso)")}"
-}
-
-# ---------------------------------------------------------------------------------------------
-# Smoke_Account 佈建（Req 27.17–27.24；design.md Components §21.4）
-# ---------------------------------------------------------------------------------------------
-#
-# 密碼只經 stdin → state/.smoke-pw.XXXXXX（0600）→ Smoke_Provisioner 容器的 stdin；從不放入變數、指令列參數、
-# 環境變數、stdout／stderr 或狀態檔。暫存檔列在 TMP_FILES，cleanup 在任何結束路徑刪除。
-
-SMOKE_PW_FILE=""
-
-# 只限 Host_Operator：在取鎖與任何 Docker 指令之前呼叫（Req 27.17）。
-require_operator() {
-  local msg="smoke-account 只限 Host_Operator 在 Deploy_Host 上以 sudo 執行"
-  # 經 SSH forced command（不論值）→ 部署憑證，拒絕。
-  [[ -z ${SSH_ORIGINAL_COMMAND+set} ]] || die "$EX_USAGE" operator_only "$msg"
-  # 非 root → 拒絕；唯一例外是非 sudo 執行（LM_TRUST_ENV=1）且 LM_TEST_OPERATOR=1（bats）。
-  if [[ ${EUID} -ne 0 ]] && ! [[ $LM_TRUST_ENV == 1 && ${LM_TEST_OPERATOR:-} == 1 ]]; then
-    die "$EX_USAGE" operator_only "$msg"
-  fi
-  # 部署帳號經 sudo（即使 sudoers 不允許此 argv，仍再擋一次）。
-  case ${SUDO_USER:-} in
-    lm-deploy-staging | lm-deploy-prod) die "$EX_USAGE" operator_only "$msg" ;;
-  esac
-  return 0
-}
-
-# stdin → 0600 暫存檔；空、超過 SMOKE_PW_MAX 位元組或含 NUL → 結束碼 2。之後 stdin 改為 /dev/null，
-# 後續的 docker compose exec／run（預設轉送 stdin）不會讀到任何內容。
-stage_smoke_password() {
-  local tmp size
-  mkdir -p -- "$STATE_DIR"
-  tmp=$(mktemp "$STATE_DIR/.smoke-pw.XXXXXX") || die "$EX_FAIL" internal "無法建立暫存檔"
-  TMP_FILES+=("$tmp")
-  chmod 0600 -- "$tmp"
-  head -c "$((SMOKE_PW_MAX + 1))" >"$tmp" || die "$EX_USAGE" password_invalid "無法讀取 stdin"
-  exec 0</dev/null
-  size=$(stat -c %s -- "$tmp")
-  ((size > 0)) || die "$EX_USAGE" password_invalid "stdin 沒有內容"
-  ((size <= SMOKE_PW_MAX)) || die "$EX_USAGE" password_invalid "stdin 超過 $SMOKE_PW_MAX 位元組"
-  [[ $(tr -d '\000' <"$tmp" | wc -c) -eq $size ]] || die "$EX_USAGE" password_invalid "stdin 不得包含 NUL 字元"
-  SMOKE_PW_FILE=$tmp
-}
-
-# service_running <svc>：docker compose ps --status running -q <svc> 有輸出即為執行中。
-service_running() {
-  local ids
-  ids=$("${COMPOSE_CMD[@]}" ps --status running -q "$1") || return 2
-  [[ -n $ids ]]
-}
-
-# db 未執行 → 啟動並等待健康檢查（DB_UP_TIMEOUT）；proxy 未執行 → 啟動。已執行中的服務不重新建立。
-ensure_services() {
-  CMD=services
-  local digest=$1 db=running proxy=running rc
-  build_compose "$digest"
-  if service_running db; then rc=0; else rc=$?; fi
-  ((rc != 2)) || die "$EX_FAIL" db_start_failed "無法查詢 db 服務狀態"
-  if ((rc != 0)); then
-    timeout -k 10s "$DB_UP_TIMEOUT" "${COMPOSE_CMD[@]}" up -d --wait --no-deps db >&2 ||
-      die "$EX_FAIL" db_start_failed "Database 未在 $DB_UP_TIMEOUT 內啟動並通過健康檢查"
-    db=started
-  fi
-  if service_running proxy; then rc=0; else rc=$?; fi
-  ((rc != 2)) || die "$EX_FAIL" proxy_start_failed "無法查詢 proxy 服務狀態"
-  if ((rc != 0)); then
-    "${COMPOSE_CMD[@]}" up -d --no-deps proxy >&2 || die "$EX_FAIL" proxy_start_failed "無法啟動 LM_Proxy"
-    proxy=started
-  fi
-  emit "{\"ok\":true,\"command\":\"services\",\"env\":$(jstr "$ENVN"),\"db\":$(jstr "$db"),\"proxy\":$(jstr "$proxy")}"
-}
-
-# do_smoke_account <digest> [tool-args...]：services → backup → migrate → Smoke_Provisioner。
-do_smoke_account() {
-  local digest=$1 out rc last="" line tool=null reason
-  shift
-  stage_smoke_password
-  ensure_services "$digest"
-  do_backup
-  do_migrate "$digest"
-  CMD=smoke-account
-  build_compose "$digest"
-  out=$(mktemp "$STATE_DIR/.smoke-out.XXXXXX") || die "$EX_FAIL" internal "無法建立暫存檔"
-  TMP_FILES+=("$out")
-  if timeout -k 10s "$SMOKE_TOOL_TIMEOUT" "${COMPOSE_CMD[@]}" --profile ops run --rm --no-deps -T \
-    --entrypoint bun migrate /app/tools/create-smoke-account.js "$@" <"$SMOKE_PW_FILE" >"$out"; then
-    rc=0
-  else
-    rc=$?
-  fi
-  rm -f -- "$SMOKE_PW_FILE"
-  untrack "$SMOKE_PW_FILE"
-  SMOKE_PW_FILE=""
-  while IFS= read -r line || [[ -n $line ]]; do [[ -n $line ]] && last=$line; done <"$out"
-  if ((${#last} <= SMOKE_TOOL_MAX)) && [[ $last =~ $SMOKE_TOOL_JSON_RE ]]; then tool=$last; fi
-  if ((rc != 0)); then
-    reason="結束碼 $rc"
-    if ((rc == 124 || rc == 137)); then reason="未在 $SMOKE_TOOL_TIMEOUT 內完成"; fi
-    if [[ $tool =~ \"reason\":\"([a-z_]{1,32})\" ]]; then reason=${BASH_REMATCH[1]}; fi
-    die "$EX_FAIL" smoke_account_failed "Smoke_Provisioner 未完成（$reason）" "\"digest\":$(jstr "$digest"),\"tool\":$tool"
-  fi
-  emit "{\"ok\":true,\"command\":\"smoke-account\",\"env\":$(jstr "$ENVN"),\"digest\":$(jstr "$digest"),\"tool\":$tool}"
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -1599,7 +1589,7 @@ parse_ssh_command() {
   for ((i = 0; i < ${#toks[@]}; i++)); do
     [[ ! ${toks[i]} =~ $ENV_RE ]] || usage "不得指定其他環境"
   done
-  # 只接受明列的子命令（Req 27.18）；smoke-account 等其他值在取鎖與任何 Docker 指令前拒絕。
+  # 只接受明列的子命令（Req 27.18）；其他值在取鎖與任何 Docker 指令前拒絕。
   if ((${#toks[@]} > 0)) && [[ " $SSH_SUBCOMMANDS " != *" ${toks[0]} "* ]]; then
     usage "SSH forced command 不允許此子命令"
   fi
@@ -1689,7 +1679,6 @@ main() {
     app-env)
       (($# == 0)) || usage "app-env 不接受參數"
       acquire_lock
-      # 只寫入 app.env；收據 AI 的控制鍵在此為「不允許的鍵」（金鑰只在 deploy 建立新容器時生效）。
       stage_app_env
       install_app_env
       emit_app_env
@@ -1711,48 +1700,6 @@ main() {
       (($# == 0)) || usage "drill 不接受參數"
       acquire_drill_lock; load_state; load_env_config
       do_drill
-      ;;
-    smoke-account)
-      # 第一個動作：只限 Host_Operator（取鎖與任何 Docker 指令之前，Req 27.17）。
-      require_operator
-      local sd="" su="" sf="" su_set=0 sf_set=0
-      local -a tool_args=()
-      while (($# > 0)); do
-        case $1 in
-          --username)
-            ((su_set == 0 && $# >= 2)) || usage "smoke-account 的 --username 需要一個值且只能指定一次"
-            su=$2 su_set=1
-            [[ $su =~ $SMOKE_USER_RE ]] || usage "--username 格式無效"
-            tool_args+=(--username "$su")
-            shift 2
-            ;;
-          --fixture)
-            ((sf_set == 0 && $# >= 2)) || usage "smoke-account 的 --fixture 需要一個值且只能指定一次"
-            sf=$2 sf_set=1
-            [[ $sf =~ $SMOKE_FIXTURE_RE ]] || usage "--fixture 格式無效"
-            tool_args+=(--fixture "$sf")
-            shift 2
-            ;;
-          -*) usage "smoke-account 參數無效" ;;
-          *)
-            [[ -z $sd ]] || usage "smoke-account 只接受一個 <digest>"
-            sd=$1
-            shift
-            ;;
-        esac
-      done
-      [[ -n $sd ]] || usage "smoke-account 需要 <digest>"
-      [[ ! -t 0 ]] || die "$EX_USAGE" password_stdin_required "密碼必須經 stdin 提供（例如 sudo cat <秘密檔> | sudo lm-deploy $ENVN smoke-account <digest>）"
-      trap 'exit 129' HUP
-      trap 'exit 130' INT
-      trap 'exit 143' TERM
-      acquire_lock; load_state
-      require_phase idle
-      load_env_config
-      parse_digest "$sd"
-      [[ -f "$ENV_DIR/app.env" ]] || die "$EX_USAGE" config_missing "找不到 app.env"
-      [[ -f "$ENV_DIR/db.env" ]] || die "$EX_USAGE" config_missing "找不到 db.env"
-      do_smoke_account "$DIGEST" "${tool_args[@]}"
       ;;
     *)
       usage "未知的子命令"

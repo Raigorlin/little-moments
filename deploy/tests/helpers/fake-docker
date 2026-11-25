@@ -1,26 +1,33 @@
 #!/usr/bin/env bash
 # 測試用的假 docker（deploy/tests/lm-deploy.bats）。不連線任何 daemon。
 #
-# 每次呼叫在 $FAKE_DOCKER_LOG 追加一行：參數以空白連接；compose 呼叫另附 [new=<APP_IMAGE_NEW>] 與
-# [openai=<LM_OPENAI_KEY_SOURCE>|<CAMPING_OPENAI_API_KEY_FILE>]（未設定時為 unset；只有路徑，不含金鑰）。
-# 以環境變數控制行為（未設定 = 成功）：
-#   FAKE_PG_DUMP_FAIL=1          exec -T db pg_dump 以結束碼 1 失敗（不輸出內容）
+# 每次呼叫在 $FAKE_DOCKER_LOG 追加一行：參數以空白連接；compose 呼叫另附 [blue=<APP_IMAGE_BLUE> green=<APP_IMAGE_GREEN>]
+# （未設定時為空字串）。以環境變數控制行為（未設定 = 成功）：
+#   FAKE_STACK_FAIL=db|setup|auth|realtime|gateway
+#                                up -d --wait --no-deps db／db-setup.sql 的 psql／up -d --no-deps <svc> 失敗
+#   FAKE_STACK_UNHEALTHY=auth|realtime|gateway
+#                                exec -T gateway 的健康檢查（wget http://auth:9999/health、http://realtime:4000/healthcheck、
+#                                sh -c '... /auth/v1/health'）失敗
+#   FAKE_PG_DUMP_FAIL=1          exec -T db sh -c '... pg_dump ...' 以結束碼 1 失敗（不輸出內容）
 #   FAKE_PG_DUMP_EMPTY=1         pg_dump 成功但不輸出任何位元組
 #   FAKE_PG_RESTORE_LIST_FAIL=1  exec -T db pg_restore --list 以結束碼 1 失敗
-#   FAKE_MIGRATE_FAIL=1          --profile ops run ... migrate 失敗
-#   FAKE_UP_FAIL=1               pull／up 失敗
-#   FAKE_HEALTH_FAIL=all|blue|green  exec -T proxy wget .../healthz 失敗
+#   FAKE_LIST_NO_APP=1           pg_restore --list 只有 auth 的 TABLE DATA（emptyDatabase）
+#   FAKE_LIST_NO_DATA=1          pg_restore --list 沒有任何 TABLE DATA
+#   FAKE_CREATE_FAIL=1           docker create 失敗
+#   FAKE_CP_FAIL=1               docker cp 失敗
+#   FAKE_MIGRATIONS_DIR=<dir>    docker cp <cid>:/app/migrations/. <dest> 複製這個目錄的檔案（未設定 = 兩個預設檔案）
+#   FAKE_APPLIED=<file>          psql 查詢 lm_ops.schema_migrations 的輸出（每行 "<version> <sha256>"；未設定 = 空）
+#   FAKE_REALTIME_MESSAGES=t|f   psql 查詢 to_regclass('realtime.messages') 的輸出（未設定 = t）
+#   FAKE_MIGRATION_FAIL=<name>   套用遷移（psql --single-transaction）時，stdin 含 <name> 即失敗
+#   FAKE_UP_FAIL=1               pull／up app-* 失敗
+#   FAKE_HEALTH_FAIL=all|blue|green  exec -T proxy wget .../robots.txt 失敗
 #   FAKE_CADDY_RELOAD_FAIL=1     exec -T proxy caddy reload 失敗
 #   FAKE_IMAGE_LIST=<file>       image ls 的輸出（每行一個 digest）
-# smoke-account（Req 27）：
-#   FAKE_DB_RUNNING=0|1          compose ps --status running -q db 是否輸出容器 id（未設定 = 1）
-#   FAKE_PROXY_RUNNING=0|1       同上，proxy
-#   FAKE_PS_FAIL=1               compose ps 失敗
-#   FAKE_PROXY_UP_FAIL=1         up -d --no-deps proxy 失敗（FAKE_UP_FAIL=1 時 db 與 proxy 的 up 也失敗）
-#   FAKE_SMOKE_TOOL_OUT=<text>   run ... /app/tools/create-smoke-account.js 的 stdout（未設定 = 成功的 JSON）
-#   FAKE_SMOKE_TOOL_RC=<n>       同上的結束碼（未設定 = 0）
-#   FAKE_STDIN_DIR=<dir>         設定時，把 pg_dump、migrate 與 create-smoke-account.js 收到的 stdin 追加寫入
-#                                <dir>/{pg_dump,migrate,tool}.stdin（未設定時不讀取 stdin，tool 的 stdin 一律讀完）
+#   FAKE_RESTORE_FAIL=1          還原演練的 pg_restore --data-only 失敗
+#   FAKE_DRILL_COUNTS=<text>     還原演練驗證查詢（auth.users、app.profiles 的筆數）的輸出（未設定 = "3 2"）
+#   FAKE_DOWN_FAIL=1             compose down 失敗
+#   FAKE_STDIN_DIR=<dir>         設定時，把 db-setup、遷移與 pg_restore 收到的 stdin 追加寫入
+#                                <dir>/{setup,migrations,restore}.stdin
 #   FAKE_ENV_LOG=<file>          設定時，每次呼叫把自己的環境（env 輸出）追加寫入此檔，供測試檢查秘密未經環境傳遞
 set -u
 
@@ -28,8 +35,7 @@ log=${FAKE_DOCKER_LOG:?FAKE_DOCKER_LOG 未設定}
 args=" $* "
 
 if [[ ${1:-} == compose ]]; then
-  printf '%s [new=%s] [openai=%s|%s]\n' "$*" "${APP_IMAGE_NEW:-}" \
-    "${LM_OPENAI_KEY_SOURCE-unset}" "${CAMPING_OPENAI_API_KEY_FILE-unset}" >>"$log"
+  printf '%s [blue=%s green=%s]\n' "$*" "${APP_IMAGE_BLUE:-}" "${APP_IMAGE_GREEN:-}" >>"$log"
 else
   printf '%s\n' "$*" >>"$log"
 fi
@@ -37,42 +43,82 @@ if [[ -n ${FAKE_ENV_LOG:-} ]]; then
   { printf -- '--- %s\n' "$*"; env; } >>"$FAKE_ENV_LOG"
 fi
 
-# capture_stdin <name>：FAKE_STDIN_DIR 設定時把 stdin 追加到 <dir>/<name>.stdin。
-capture_stdin() {
-  if [[ -n ${FAKE_STDIN_DIR:-} ]]; then
-    cat >>"$FAKE_STDIN_DIR/$1.stdin"
-  elif [[ ${2:-} == always ]]; then
-    cat >/dev/null
-  fi
+# take_stdin <name>：讀完 stdin；FAKE_STDIN_DIR 設定時追加到 <dir>/<name>.stdin，內容另放在 STDIN_TEXT。
+take_stdin() {
+  STDIN_TEXT=$(cat)
+  if [[ -n ${FAKE_STDIN_DIR:-} ]]; then printf '%s\n' "$STDIN_TEXT" >>"$FAKE_STDIN_DIR/$1.stdin"; fi
 }
 
 case $args in
-  *" ps --status running -q db "*)
-    [[ ${FAKE_PS_FAIL:-} == 1 ]] && exit 1
-    [[ ${FAKE_DB_RUNNING:-1} == 1 ]] && printf '0123456789ab\n'
-    exit 0
-    ;;
-  *" ps --status running -q proxy "*)
-    [[ ${FAKE_PS_FAIL:-} == 1 ]] && exit 1
-    [[ ${FAKE_PROXY_RUNNING:-1} == 1 ]] && printf 'ba9876543210\n'
-    exit 0
-    ;;
+  # ---- Supabase stack ----
   *" up -d --wait --no-deps db "*)
-    [[ ${FAKE_UP_FAIL:-} == 1 ]] && exit 1
+    [[ ${FAKE_STACK_FAIL:-} == db ]] && exit 1
     exit 0
     ;;
-  *" up -d --no-deps proxy "*)
-    [[ ${FAKE_UP_FAIL:-} == 1 || ${FAKE_PROXY_UP_FAIL:-} == 1 ]] && exit 1
+  *" up -d --no-deps auth "* | *" up -d --no-deps realtime "* | *" up -d --no-deps gateway "*)
+    for s in auth realtime gateway; do
+      [[ $args == *" up -d --no-deps $s "* && ${FAKE_STACK_FAIL:-} == "$s" ]] && exit 1
+    done
     exit 0
     ;;
-  *" --entrypoint bun migrate /app/tools/create-smoke-account.js"*)
-    capture_stdin tool always
-    default_out='{"ok":true,"username":"smoke-bot","account":"created","fixture":"smoke-fixture","fixtureStatus":"created"}'
-    printf '%s\n' "${FAKE_SMOKE_TOOL_OUT-$default_out}"
-    exit "${FAKE_SMOKE_TOOL_RC:-0}"
+  *" exec -T db psql "*" -U supabase_admin "*" -q -f - "*)
+    take_stdin setup
+    [[ ${FAKE_STACK_FAIL:-} == setup ]] && exit 1
+    exit 0
     ;;
-  *" exec -T db pg_dump "*)
-    capture_stdin pg_dump
+  *" exec -T gateway wget "*"http://auth:9999/health"*)
+    [[ ${FAKE_STACK_UNHEALTHY:-} == auth ]] && exit 1
+    exit 0
+    ;;
+  *" exec -T gateway wget "*"http://realtime:4000/healthcheck"*)
+    [[ ${FAKE_STACK_UNHEALTHY:-} == realtime ]] && exit 1
+    exit 0
+    ;;
+  *" exec -T gateway sh -c "*"/auth/v1/health"*)
+    [[ ${FAKE_STACK_UNHEALTHY:-} == gateway ]] && exit 1
+    exit 0
+    ;;
+  *" exec -T gateway sh -c "*"/tenants/realtime-dev/health"*)
+    exit 0
+    ;;
+  # ---- 遷移 ----
+  " create "*)
+    [[ ${FAKE_CREATE_FAIL:-} == 1 ]] && exit 1
+    printf '%s\n' 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    exit 0
+    ;;
+  " cp "*":/app/migrations/. "*)
+    [[ ${FAKE_CP_FAIL:-} == 1 ]] && exit 1
+    dest=${!#}
+    if [[ -n ${FAKE_MIGRATIONS_DIR:-} ]]; then
+      cp -a -- "$FAKE_MIGRATIONS_DIR"/. "$dest"
+    else
+      printf 'create schema app;\n' >"$dest/20250101000000_app_schema.sql"
+      printf 'create table app.profiles (id uuid primary key);\n' >"$dest/20250102000000_profiles.sql"
+    fi
+    exit 0
+    ;;
+  " rm -f "*)
+    exit 0
+    ;;
+  *" exec -T db psql "*"to_regclass('realtime.messages')"*)
+    printf '%s\n' "${FAKE_REALTIME_MESSAGES:-t}"
+    exit 0
+    ;;
+  *" exec -T db psql "*"create schema if not exists lm_ops"*)
+    exit 0
+    ;;
+  *" exec -T db psql "*"from lm_ops.schema_migrations"*)
+    [[ -n ${FAKE_APPLIED:-} && -f ${FAKE_APPLIED} ]] && cat -- "$FAKE_APPLIED"
+    exit 0
+    ;;
+  *" exec -T db psql "*" --single-transaction -f - "*)
+    take_stdin migrations
+    if [[ -n ${FAKE_MIGRATION_FAIL:-} && $STDIN_TEXT == *"$FAKE_MIGRATION_FAIL"* ]]; then exit 3; fi
+    exit 0
+    ;;
+  # ---- 備份與還原 ----
+  *" exec -T db sh -c "*"pg_dump"*)
     [[ ${FAKE_PG_DUMP_FAIL:-} == 1 ]] && { echo "fake pg_dump: failure" >&2; exit 1; }
     [[ ${FAKE_PG_DUMP_EMPTY:-} == 1 ]] && exit 0
     printf 'PGDMP-fake-%s-%s-%s\n' "$$" "$RANDOM" "$RANDOM"
@@ -81,16 +127,27 @@ case $args in
   *" exec -T db pg_restore --list "*)
     cat >/dev/null
     [[ ${FAKE_PG_RESTORE_LIST_FAIL:-} == 1 ]] && { echo "fake pg_restore: failure" >&2; exit 1; }
-    printf '%s\n' ';' '; Archive created by fake' \
-      '215; 1259 16385 TABLE public trips postgres' \
-      '3401; 0 16385 TABLE DATA public trips postgres'
+    printf '%s\n' ';' '; Archive created by fake'
+    [[ ${FAKE_LIST_NO_DATA:-} == 1 ]] && exit 0
+    printf '%s\n' '3390; 0 16500 TABLE DATA auth users supabase_auth_admin'
+    [[ ${FAKE_LIST_NO_APP:-} == 1 ]] || printf '%s\n' '3401; 0 16385 TABLE DATA app profiles postgres' \
+      '3402; 0 16390 TABLE DATA app trips postgres'
     exit 0
     ;;
-  *" run --rm --no-deps -T migrate "*)
-    capture_stdin migrate
-    [[ ${FAKE_MIGRATE_FAIL:-} == 1 ]] && exit 1
+  *" exec -T db pg_restore --data-only "*)
+    take_stdin restore
+    [[ ${FAKE_RESTORE_FAIL:-} == 1 ]] && exit 1
     exit 0
     ;;
+  *" exec -T db psql "*"count(*) from auth.users"*)
+    printf '%s\n' "${FAKE_DRILL_COUNTS-3 2}"
+    exit 0
+    ;;
+  *" down -v "*)
+    [[ ${FAKE_DOWN_FAIL:-} == 1 ]] && exit 1
+    exit 0
+    ;;
+  # ---- App 槽位與 proxy ----
   *" pull app-"* | *" up -d --no-deps app-"*)
     [[ ${FAKE_UP_FAIL:-} == 1 ]] && exit 1
     exit 0
@@ -98,9 +155,9 @@ case $args in
   *" exec -T proxy wget "*)
     case ${FAKE_HEALTH_FAIL:-} in
       all) exit 1 ;;
-      blue | green) [[ $args == *"http://app-${FAKE_HEALTH_FAIL}:5173/healthz"* ]] && exit 1 ;;
+      blue | green) [[ $args == *"http://app-${FAKE_HEALTH_FAIL}:8080/robots.txt"* ]] && exit 1 ;;
     esac
-    printf 'ok\n'
+    printf 'User-agent: *\n'
     exit 0
     ;;
   *" exec -T proxy caddy reload "*)

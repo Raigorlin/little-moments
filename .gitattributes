@@ -11,3 +11,5 @@ deploy/registry/mirror.list text eol=lf
 # Jenkins controller 與 agent 的容器設定、防火牆腳本、systemd unit 範本與 .conf／.in／.example 檔：
 # Windows 檢出時不得加入 CR（腳本與 unit 在主機上會失敗；tests/deploy-jenkins.test.js 檢查 LF）。
 deploy/jenkins/** text eol=lf
+# Supabase API gateway 的 Caddyfile 與 db-setup.sql 在 Deploy_Host 的容器內讀取（plan.md D6）。
+deploy/supabase/** text eol=lf

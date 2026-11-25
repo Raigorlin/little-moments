@@ -27,7 +27,8 @@
 #             IPv4／IPv6 位址或 CIDR、前綴不為 0、非 IPv4-mapped IPv6、不涵蓋 LM_LAN_CIDR 任一整個網段；
 #             非空時 LM_LAN_CIDR 必須為 1–8 個 IPv4 網路位址/8–/32；Req 25.7、25.8）。staging 設有
 #             Edge_Trusted_Proxies，或規則檔宣告了 Public_Port 但 prod 的 Edge_Trusted_Proxies 為空時 WARN。
-#   db        compose.yaml 解析後 db 服務沒有 ports；執行中的 db 容器沒有任何發布連接埠、不是 host 網路。
+#   db        compose.yaml 解析後 db、auth、realtime、gateway、app-blue、app-green 沒有 ports 或 network_mode；
+#             這些服務執行中的容器沒有任何發布連接埠、不是 host 網路（只有 proxy 發布連接埠；plan.md D6）。
 #   backup    /var/backups/little-moments 與 <env>/ 為 lm-ops 擁有、0700、不是符號連結；其下所有檔案
 #             皆為 lm-ops 擁有且群組／其他人無任何權限；不在 Docker 資料目錄內、不在 git 工作目錄內。
 #   account   lm-deploy-<env> 存在、未設定密碼、不在 docker（或 docker.sock 所屬群組）及其他特權群組；
@@ -37,7 +38,8 @@
 #   files     /opt/lm/bin/lm-deploy 與上層目錄、/srv/lm/<env> 為 root 擁有且群組／其他人不可寫；
 #             /etc/sudoers.d/lm-deploy 為 root 0440 且 visudo -c 通過；/etc/sudoers 與（存在時）/etc/sudoers-rs
 #             載入 /etc/sudoers.d（sudo-rs 在 /etc/sudoers-rs 存在時讀取它而非 /etc/sudoers）；
-#             app.env／db.env 為 0600 root。
+#             /opt/lm/bin/lm-supabase-keys 存在且可執行；app.env 為 0600 root；supabase/gateway.Caddyfile 與
+#             supabase/db-setup.sql 存在（root 擁有、不可由他人寫入）。db.env 已不再使用（plan.md D6）。
 #
 # 結束碼：0 沒有 FAIL；1 至少一項 FAIL；2 參數錯誤或未以 root 執行。
 
@@ -49,6 +51,9 @@ export PATH
 
 readonly OPS_USER=lm-ops
 readonly LM_BIN=/opt/lm/bin/lm-deploy
+readonly LM_KEYS_BIN=/opt/lm/bin/lm-supabase-keys
+# 不發布連接埠的服務（只有 proxy 面向 LAN；plan.md D6）。
+readonly INTERNAL_SERVICES="db auth realtime gateway app-blue app-green"
 readonly BACKUP_ROOT=/var/backups/little-moments
 readonly UNIT_NAME=lm-docker-user.service
 readonly SUDOERS_FILE=/etc/sudoers.d/lm-deploy
@@ -550,43 +555,49 @@ check_proxy() {
 # ---------------------------------------------------------------------------------------------
 
 check_db() {
-  local env=$1 d="$LM_ROOT/$1" out ids id ports mode publish_all
+  local env=$1 d="$LM_ROOT/$1" out ids id ports mode publish_all svc found=0
+  local -a envfiles=()
   if ((DOCKER_OK == 0)); then
-    fail db "[$env] 無法連線 Docker daemon，無法確認 db 未發布連接埠"
+    fail db "[$env] 無法連線 Docker daemon，無法確認 db 與 Supabase 服務未發布連接埠"
     return 0
   fi
   if [[ -f $d/compose.yaml && -f $d/$env.env ]]; then
+    envfiles=(--env-file "$d/$env.env")
+    # compose.yaml 的金鑰變數為必要（${VAR:?}）；app.env 尚未寫入（首次部署前）時 config 會失敗並改為 WARN。
+    [[ -f $d/app.env ]] && envfiles+=(--env-file "$d/app.env")
+    # shellcheck disable=SC2086 # INTERNAL_SERVICES 是固定的服務名稱清單
     if out=$(env "LM_ENV=$env" "APP_IMAGE_BLUE=example.invalid/lm@$ZERO_DIGEST" \
-      "APP_IMAGE_GREEN=example.invalid/lm@$ZERO_DIGEST" "APP_IMAGE_NEW=example.invalid/lm@$ZERO_DIGEST" \
-      docker compose --project-directory "$d" -f "$d/compose.yaml" --env-file "$d/$env.env" config db 2>/dev/null); then
+      "APP_IMAGE_GREEN=example.invalid/lm@$ZERO_DIGEST" \
+      docker compose --project-directory "$d" -f "$d/compose.yaml" "${envfiles[@]}" --profile blue --profile green \
+      config $INTERNAL_SERVICES 2>/dev/null); then
       if grep -Eq '^[[:space:]]+(ports|network_mode):' <<<"$out"; then
-        fail db "[$env] compose.yaml 的 db 服務宣告了 ports 或 network_mode"
+        fail db "[$env] compose.yaml 的 $INTERNAL_SERVICES 之一宣告了 ports 或 network_mode"
       else
-        pass db "[$env] compose.yaml 的 db 服務沒有 ports"
+        pass db "[$env] compose.yaml 的 $INTERNAL_SERVICES 都沒有 ports"
       fi
     else
-      warn db "[$env] docker compose config 失敗（$env.env 是否仍含佔位符？），略過靜態檢查"
+      warn db "[$env] docker compose config 失敗（$env.env 是否仍含佔位符、app.env 是否存在？），略過靜態檢查"
     fi
   else
     fail db "[$env] 找不到 $d/compose.yaml 或 $d/$env.env"
   fi
 
-  ids=$(docker ps -a --filter "label=com.docker.compose.project=lm-$env" \
-    --filter "label=com.docker.compose.service=db" --format '{{.ID}}' 2>/dev/null || true)
-  if [[ -z $ids ]]; then
-    warn db "[$env] 沒有 db 容器，只完成靜態檢查"
-    return 0
-  fi
-  for id in $ids; do
-    ports=$(docker inspect --format '{{range $p, $b := .HostConfig.PortBindings}}{{$p}} {{end}}{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{$p}} {{end}}{{end}}' "$id")
-    mode=$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$id")
-    publish_all=$(docker inspect --format '{{.HostConfig.PublishAllPorts}}' "$id")
-    if [[ -n ${ports// /} || $mode == host || $publish_all == true ]]; then
-      fail db "[$env] db 容器 $id 發布了連接埠或使用 host 網路（ports：${ports:-none}，network：$mode）"
-    else
-      pass db "[$env] db 容器 $id 沒有發布任何連接埠"
-    fi
+  for svc in $INTERNAL_SERVICES; do
+    ids=$(docker ps -a --filter "label=com.docker.compose.project=lm-$env" \
+      --filter "label=com.docker.compose.service=$svc" --format '{{.ID}}' 2>/dev/null || true)
+    for id in $ids; do
+      found=1
+      ports=$(docker inspect --format '{{range $p, $b := .HostConfig.PortBindings}}{{$p}} {{end}}{{range $p, $b := .NetworkSettings.Ports}}{{if $b}}{{$p}} {{end}}{{end}}' "$id")
+      mode=$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$id")
+      publish_all=$(docker inspect --format '{{.HostConfig.PublishAllPorts}}' "$id")
+      if [[ -n ${ports// /} || $mode == host || $publish_all == true ]]; then
+        fail db "[$env] $svc 容器 $id 發布了連接埠或使用 host 網路（ports：${ports:-none}，network：$mode）"
+      else
+        pass db "[$env] $svc 容器 $id 沒有發布任何連接埠"
+      fi
+    done
   done
+  ((found == 1)) || warn db "[$env] 沒有 db、Supabase 或 App 容器，只完成靜態檢查"
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -791,17 +802,33 @@ check_files() {
   done
   ((found_main == 1)) || fail files "找不到 /etc/sudoers 或 /etc/sudoers-rs"
 
+  if path_safe "$LM_KEYS_BIN" && [[ -x $LM_KEYS_BIN ]]; then
+    pass files "$LM_KEYS_BIN 與上層目錄皆為 root 擁有且不可由他人寫入"
+  else
+    fail files "$LM_KEYS_BIN 不存在、不可執行，或其本身／上層目錄可由非 root 寫入（還原演練需要它）"
+  fi
+
   for env in "${ENV_LIST[@]}"; do
     d="$LM_ROOT/$env"
     if path_safe "$d"; then pass files "[$env] $d 為 root 擁有且不可由他人寫入"; else fail files "[$env] $d 不存在或可由非 root 寫入"; fi
-    for f in app.env db.env; do
-      if [[ ! -e $d/$f ]]; then
-        warn files "[$env] $d/$f 不存在"
-        continue
+    if [[ ! -e $d/app.env ]]; then
+      warn files "[$env] $d/app.env 不存在（第一次部署以 --app-env-stdin 寫入）"
+    else
+      read -r uid _ mode <<<"$(stat -c '%u %G %a' -- "$d/app.env")"
+      if [[ $uid == 0 && $mode == 600 && ! -L $d/app.env ]]; then
+        pass files "[$env] app.env 為 root 0600"
+      else
+        fail files "[$env] $d/app.env 擁有者／權限為 uid $uid $mode，預期 root 0600"
       fi
-      read -r uid _ mode <<<"$(stat -c '%u %G %a' -- "$d/$f")"
-      [[ $uid == 0 && $mode == 600 && ! -L $d/$f ]] && pass files "[$env] $f 為 root 0600" || fail files "[$env] $d/$f 擁有者／權限為 uid $uid $mode，預期 root 0600"
+    fi
+    for f in supabase/gateway.Caddyfile supabase/db-setup.sql; do
+      if [[ -f $d/$f && ! -L $d/$f ]] && path_safe "$d/$f"; then
+        pass files "[$env] $f 存在且為 root 擁有、不可由他人寫入"
+      else
+        fail files "[$env] $d/$f 不存在、是符號連結，或可由非 root 寫入（請執行 deploy/host/install.sh）"
+      fi
     done
+    [[ ! -e $d/db.env ]] || warn files "[$env] $d/db.env 已不再使用（Bun 版本的 Database 憑證），確認後可移除"
   done
 }
 

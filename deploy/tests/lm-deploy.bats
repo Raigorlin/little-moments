@@ -1,10 +1,11 @@
 #!/usr/bin/env bats
-# deploy/bin/lm-deploy 的行為測試（tasks.md 14.4；Requirements 14.3、14.5、18.7、20.4、20.9、20.12）。
+# deploy/bin/lm-deploy 的行為測試（tasks.md 14.4；Requirements 14.3、14.5、18.7、20.4、20.9、20.12；plan.md D6–D8）。
 #
-# 以 PATH 中假的 docker（helpers/fake-docker，pg_dump／pg_restore 經 `docker compose exec -T db ...` 呼叫）
-# 與不等待的 sleep 執行；每個測試在 BATS_TEST_TMPDIR 有獨立的 LM_ROOT、備份目錄與鎖目錄。
+# 以 PATH 中假的 docker（helpers/fake-docker：Supabase stack、遷移、pg_dump／pg_restore 經 `docker compose exec -T ...`
+# 與 `docker create／cp／rm`）與不等待的 sleep 執行；每個測試在 BATS_TEST_TMPDIR 有獨立的 LM_ROOT、備份目錄與鎖目錄。
+# app.env 由真正的 deploy/bin/lm-supabase-keys 產生。
 #
-# 執行：bats deploy/tests/lm-deploy.bats（需要 bash ≥ 4.4、GNU coreutils、util-linux flock；不需要 Docker）。
+# 執行：bats deploy/tests/lm-deploy.bats（需要 bash ≥ 4.4、GNU coreutils、util-linux flock、openssl；不需要 Docker）。
 
 bats_require_minimum_version 1.5.0
 
@@ -14,8 +15,294 @@ setup() { setup_fixture; }
 
 idle_green() { write_state PHASE=idle ACTIVE_COLOR=green "ACTIVE_DIGEST=$D1" "HISTORY=$D1"; }
 
+# fresh_backup：state 記錄一份剛完成的已驗證備份（migrate 的前提）。
+fresh_backup() {
+  seed_backups 1
+  idle_green
+  printf 'LAST_BACKUP_ID=staging-20240101T000010Z-0000001\nLAST_BACKUP_AT=%s\n' "$(date -u +%s)" >>"$STATE"
+}
+
 # ---------------------------------------------------------------------------------------------
-# Req 14.3：備份失敗 → 不執行 Migration_Runner、不動容器
+# deploy 的順序：app.env → stack → backup → migrate → start → health → switch
+# ---------------------------------------------------------------------------------------------
+
+@test "deploy: happy path runs app.env -> stack -> backup -> migrate -> start -> health -> switch in order" {
+  idle_green
+  rm -f "$ENV_DIR/app.env"
+  lm staging deploy "$D2" --app-env-stdin <"$APP_ENV_FILE"
+  assert_status 0
+  local db setup auth rt gw ha hr hg dump create cp mig up hp reload
+  db=$(call_line 'up -d --wait --no-deps db ')
+  setup=$(call_line 'exec -T db psql .* -U supabase_admin .* -q -f - ')
+  auth=$(call_line 'up -d --no-deps auth ')
+  rt=$(call_line 'up -d --no-deps realtime ')
+  gw=$(call_line 'up -d --no-deps gateway ')
+  ha=$(call_line 'exec -T gateway wget .*http://auth:9999/health')
+  hr=$(call_line 'exec -T gateway wget .*http://realtime:4000/healthcheck')
+  hg=$(call_line 'exec -T gateway sh -c .*/auth/v1/health')
+  dump=$(call_line 'exec -T db sh -c .*pg_dump')
+  create=$(call_line "^create $REPO@$D2\$")
+  cp=$(call_line '^cp [0-9a-f]+:/app/migrations/\. ')
+  mig=$(call_line '--single-transaction -f - ')
+  up=$(call_line 'up -d --no-deps app-blue ')
+  hp=$(call_line 'exec -T proxy wget .*http://app-blue:8080/robots.txt')
+  reload=$(call_line 'caddy reload')
+  [ "$db" -gt 0 ]
+  [ "$setup" -gt "$db" ]
+  [ "$auth" -gt "$setup" ]
+  [ "$rt" -gt "$auth" ]
+  [ "$gw" -gt "$rt" ]
+  [ "$ha" -gt "$gw" ]
+  [ "$hr" -gt "$ha" ]
+  [ "$hg" -gt "$hr" ]
+  [ "$dump" -gt "$hg" ]
+  [ "$create" -gt "$dump" ]
+  [ "$cp" -gt "$create" ]
+  [ "$mig" -gt "$cp" ]
+  [ "$up" -gt "$mig" ]
+  [ "$hp" -gt "$up" ]
+  [ "$reload" -gt "$hp" ]
+  # 每個步驟一行 JSON。
+  [ "${#lines[@]}" -eq 7 ]
+  assert_contains "${lines[0]}" '"command":"app-env"'
+  assert_contains "${lines[1]}" '{"ok":true,"command":"stack","env":"staging","services":["db","auth","realtime","gateway"]'
+  assert_contains "${lines[2]}" '"command":"backup"'
+  assert_contains "${lines[3]}" '"command":"migrate"'
+  assert_contains "${lines[3]}" '"applied":["20250101000000_app_schema.sql","20250102000000_profiles.sql"],"skipped":[]'
+  assert_contains "${lines[4]}" '"command":"start"'
+  assert_contains "${lines[5]}" '"command":"health"'
+  assert_contains "${lines[6]}" '"command":"switch"'
+  # Compose 一律以 <env>.env 與 app.env 兩個 --env-file 執行。
+  assert_call_fixed "--env-file $ENV_DIR/staging.env --env-file $ENV_DIR/app.env"
+  assert_call_fixed "--profile blue up -d --no-deps app-blue [blue=$REPO@$D2 green=$REPO@$D1]"
+  grep -q 'reverse_proxy app-blue:8080' "$UPSTREAM"
+  cmp "$APP_ENV_FILE" "$ENV_DIR/app.env"
+  [ "$(stat -c %a "$ENV_DIR/app.env")" = 600 ]
+  [ "$(state_get PHASE)" = switched ]
+  [ "$(state_get ACTIVE_COLOR)" = blue ]
+  [ "$(state_get ACTIVE_DIGEST)" = "$D2" ]
+  [ "$(state_get PREVIOUS_COLOR)" = green ]
+  [ "$(count_files '*.dump.sha256')" -eq 1 ]
+  assert_no_app_env_tmp
+}
+
+@test "deploy: app.env is written before the stack; its secrets never reach docker args, env or output" {
+  idle_green
+  rm -f "$ENV_DIR/app.env"
+  export FAKE_ENV_LOG="$BATS_TEST_TMPDIR/env.log"
+  lm staging deploy "$D2" --app-env-stdin <"$APP_ENV_FILE"
+  assert_status 0
+  assert_contains "${lines[0]}" '{"ok":true,"command":"app-env","env":"staging","keys":["LM_DB_PASSWORD","LM_JWT_SECRET","LM_ANON_KEY","LM_SERVICE_KEY","LM_JWT_KEYS","LM_JWKS","LM_REALTIME_SECRET_KEY_BASE","LM_REALTIME_DB_ENC_KEY"]}'
+  local k v
+  while IFS='=' read -r k v; do
+    assert_secret_not_leaked "$v"
+  done <"$APP_ENV_FILE"
+  # db-setup.sql 經 stdin 交給 psql（容器內以 \getenv 讀取密碼）。
+  export FAKE_STDIN_DIR="$BATS_TEST_TMPDIR/stdin"
+  mkdir -p "$FAKE_STDIN_DIR"
+  idle_green
+  lm staging deploy "$D3"
+  assert_status 0
+  cmp "$ENV_DIR/supabase/db-setup.sql" "$FAKE_STDIN_DIR/setup.stdin"
+}
+
+@test "deploy: without app.env and without --app-env-stdin -> config_missing before any docker call" {
+  idle_green
+  rm -f "$ENV_DIR/app.env"
+  lm staging deploy "$D2"
+  assert_status 2
+  assert_contains "$(last_line)" '"reason":"config_missing"'
+  assert_contains "$(last_line)" 'app.env'
+  assert_no_docker_calls
+  lm staging health green
+  assert_status 2
+  assert_contains "$(last_line)" '"reason":"config_missing"'
+  assert_no_docker_calls
+}
+
+@test "deploy: missing supabase/db-setup.sql or gateway.Caddyfile -> config_missing before any docker call" {
+  idle_green
+  local f
+  for f in db-setup.sql gateway.Caddyfile; do
+    mv "$ENV_DIR/supabase/$f" "$BATS_TEST_TMPDIR/$f"
+    lm staging deploy "$D2"
+    assert_status 2
+    assert_contains "$(last_line)" '"reason":"config_missing"'
+    assert_contains "$(last_line)" "supabase/$f"
+    mv "$BATS_TEST_TMPDIR/$f" "$ENV_DIR/supabase/$f"
+  done
+  assert_no_docker_calls
+}
+
+# ---------------------------------------------------------------------------------------------
+# app.env 驗證（plan.md D6、D16）：在任何 docker 指令前
+# ---------------------------------------------------------------------------------------------
+
+@test "app.env: unknown keys, bad formats, duplicates and missing keys are rejected before any docker call" {
+  idle_green
+  local in="$BATS_TEST_TMPDIR/in" good
+  good=$(cat "$APP_ENV_FILE")
+  local -a cases=(
+    "CAMPING_DATABASE_PASSWORD=x|不允許的鍵：CAMPING_DATABASE_PASSWORD"
+    "LM_DB_PASSWORD=short|LM_DB_PASSWORD"
+    "LM_DB_PASSWORD=$(printf 'G%.0s' {1..48})|LM_DB_PASSWORD"
+    "LM_JWT_SECRET=$(printf 'a%.0s' {1..31})|LM_JWT_SECRET"
+    "LM_REALTIME_DB_ENC_KEY=0123456789abcdef0|LM_REALTIME_DB_ENC_KEY"
+    "LM_REALTIME_SECRET_KEY_BASE=abc|LM_REALTIME_SECRET_KEY_BASE"
+    "LM_ANON_KEY=not-a-jwt|LM_ANON_KEY"
+    "LM_SERVICE_KEY=a.b.c d|LM_SERVICE_KEY"
+    'LM_JWT_KEYS={"kty":"EC"}|LM_JWT_KEYS'
+    'LM_JWKS=[{"kty":"oct"}]|LM_JWKS'
+    'LM_JWKS={"keys": []}|LM_JWKS'
+    'LM_JWT_KEYS=[{"k":"$(id)"}]|LM_JWT_KEYS'
+    "LM_DB_PASSWORD=|LM_DB_PASSWORD"
+    "lowercase=x|KEY=VALUE"
+  )
+  local c line want key
+  for c in "${cases[@]}"; do
+    line=${c%|*}
+    want=${c##*|}
+    key=${line%%=*}
+    # 以無效的一行取代同名鍵（或加在最後）。
+    { grep -v "^$key=" <<<"$good" || true; printf '%s\n' "$line"; } >"$in"
+    lm staging deploy "$D2" --app-env-stdin <"$in"
+    assert_status 2
+    assert_contains "$(last_line)" '"reason":"app_env_invalid"'
+    assert_contains "$(last_line)" "$want"
+    assert_no_docker_calls
+    [ "$(count_files '*.dump')" -eq 0 ]
+    assert_no_app_env_tmp
+  done
+  # 重複的鍵、缺少的鍵、CR、空 stdin。
+  { printf '%s\n' "$good"; grep '^LM_JWKS=' <<<"$good"; } >"$in"
+  lm staging app-env <"$in"
+  assert_status 2
+  assert_contains "$(last_line)" '重複的鍵：LM_JWKS'
+  grep -v '^LM_REALTIME_DB_ENC_KEY=' <<<"$good" >"$in"
+  lm staging app-env <"$in"
+  assert_status 2
+  assert_contains "$(last_line)" '缺少必要的鍵：LM_REALTIME_DB_ENC_KEY'
+  sed 's/$/\r/' <<<"$good" >"$in"
+  lm staging app-env <"$in"
+  assert_status 2
+  assert_contains "$(last_line)" 'CR'
+  lm staging app-env </dev/null
+  assert_status 2
+  assert_contains "$(last_line)" 'stdin 沒有內容'
+  # 原本的 app.env 不變；錯誤訊息不含任何值。
+  cmp "$APP_ENV_FILE" "$ENV_DIR/app.env"
+  assert_no_docker_calls
+  assert_no_app_env_tmp
+}
+
+@test "app-env: valid input is written 0600 atomically and only key names are printed" {
+  local in="$BATS_TEST_TMPDIR/in"
+  bash "$KEYS_TOOL" env staging >"$in"
+  printf '# comment\n\n' >>"$in"
+  lm staging app-env <"$in"
+  assert_status 0
+  [ "${#lines[@]}" -eq 1 ]
+  assert_contains "$output" '"keys":["LM_DB_PASSWORD","LM_JWT_SECRET","LM_ANON_KEY","LM_SERVICE_KEY","LM_JWT_KEYS","LM_JWKS","LM_REALTIME_SECRET_KEY_BASE","LM_REALTIME_DB_ENC_KEY"]'
+  cmp "$in" "$ENV_DIR/app.env"
+  [ "$(stat -c %a "$ENV_DIR/app.env")" = 600 ]
+  local v
+  v=$(sed -n 's/^LM_JWT_SECRET=//p' "$in")
+  [[ $output != *"$v"* && $stderr != *"$v"* ]]
+  assert_no_docker_calls
+  assert_no_app_env_tmp
+}
+
+# ---------------------------------------------------------------------------------------------
+# <env>.env 驗證：LM_ALLOWED_HOSTS、LM_HEALTH_HOST、LM_SITE_URL、LM_PUBLIC_SIGNUP（plan.md D9、D12）
+# ---------------------------------------------------------------------------------------------
+
+@test "config: invalid LM_ALLOWED_HOSTS, LM_SITE_URL or LM_PUBLIC_SIGNUP exit 2 before any docker call" {
+  idle_green
+  cp "$ENV_DIR/staging.env" "$BATS_TEST_TMPDIR/staging.env.orig"
+  local -a cases=(
+    "LM_ALLOWED_HOSTS=|LM_ALLOWED_HOSTS"
+    "LM_ALLOWED_HOSTS=lm.lan *|LM_ALLOWED_HOSTS"
+    "LM_ALLOWED_HOSTS=lm.lan *.example.test|LM_ALLOWED_HOSTS"
+    "LM_ALLOWED_HOSTS=lm.lan bad_host|LM_ALLOWED_HOSTS"
+    "LM_ALLOWED_HOSTS=lm.lan 192.0.2.300|LM_ALLOWED_HOSTS"
+    "LM_ALLOWED_HOSTS=other.lan 192.0.2.10|必須包含 LM_HEALTH_HOST"
+    "LM_ALLOWED_HOSTS=lm.lan,192.0.2.10|LM_ALLOWED_HOSTS"
+    "LM_ALLOWED_HOSTS=lm.lan $(printf 'h%d.lan ' {1..16})|LM_ALLOWED_HOSTS"
+    "LM_HEALTH_HOST=|LM_HEALTH_HOST"
+    "LM_SITE_URL=|LM_SITE_URL"
+    "LM_SITE_URL=www.our-littlemoments.com|LM_SITE_URL"
+    "LM_SITE_URL=https://www.our-littlemoments.com/app|LM_SITE_URL"
+    "LM_SITE_URL=ftp://lm.lan|LM_SITE_URL"
+    "LM_PUBLIC_SIGNUP=|LM_PUBLIC_SIGNUP"
+    "LM_PUBLIC_SIGNUP=yes|LM_PUBLIC_SIGNUP"
+  )
+  local c
+  for c in "${cases[@]}"; do
+    cp "$BATS_TEST_TMPDIR/staging.env.orig" "$ENV_DIR/staging.env"
+    printf '%s\n' "${c%|*}" >>"$ENV_DIR/staging.env"
+    lm staging deploy "$D2"
+    assert_status 2
+    assert_contains "$(last_line)" '"reason":"config_invalid"'
+    assert_contains "$(last_line)" "${c##*|}"
+    assert_no_docker_calls
+  done
+  # 16 個項目、https origin 帶連接埠與 true 皆可。
+  cp "$BATS_TEST_TMPDIR/staging.env.orig" "$ENV_DIR/staging.env"
+  printf 'LM_ALLOWED_HOSTS=lm.lan %s\nLM_SITE_URL=https://www.our-littlemoments.com:8443\nLM_PUBLIC_SIGNUP=true\n' \
+    "$(printf 'h%d.lan ' {1..15})" >>"$ENV_DIR/staging.env"
+  lm staging health green
+  assert_status 0
+}
+
+# ---------------------------------------------------------------------------------------------
+# stack（plan.md D6）：失敗即停止，不備份
+# ---------------------------------------------------------------------------------------------
+
+@test "stack: each failing step stops the deploy before backup with its own reason" {
+  idle_green
+  local -a cases=(
+    "FAKE_STACK_FAIL=db|stack_db_failed"
+    "FAKE_STACK_FAIL=setup|stack_setup_failed"
+    "FAKE_STACK_FAIL=auth|stack_auth_failed"
+    "FAKE_STACK_FAIL=realtime|stack_realtime_failed"
+    "FAKE_STACK_FAIL=gateway|stack_gateway_failed"
+    "FAKE_STACK_UNHEALTHY=auth|stack_auth_failed"
+    "FAKE_STACK_UNHEALTHY=realtime|stack_realtime_failed"
+    "FAKE_STACK_UNHEALTHY=gateway|stack_gateway_failed"
+  )
+  local c
+  for c in "${cases[@]}"; do
+    : >"$FAKE_DOCKER_LOG"
+    export "${c%|*}"
+    lm staging deploy "$D2"
+    assert_status 1
+    assert_contains "$(last_line)" '"command":"stack"'
+    assert_contains "$(last_line)" "\"reason\":\"${c##*|}\""
+    refute_call 'pg_dump|^create |up -d --no-deps app-|caddy reload'
+    unset FAKE_STACK_FAIL FAKE_STACK_UNHEALTHY
+  done
+  # setup 失敗時不啟動 auth；db 失敗時不執行 db-setup.sql。
+  export FAKE_STACK_FAIL=db
+  : >"$FAKE_DOCKER_LOG"
+  lm staging deploy "$D2"
+  refute_call 'psql|up -d --no-deps auth'
+  export FAKE_STACK_FAIL=setup
+  : >"$FAKE_DOCKER_LOG"
+  lm staging deploy "$D2"
+  refute_call 'up -d --no-deps auth'
+  # 健康檢查重試 LM_STACK_TRIES 次。
+  unset FAKE_STACK_FAIL
+  export FAKE_STACK_UNHEALTHY=auth
+  : >"$FAKE_DOCKER_LOG"
+  lm staging deploy "$D2"
+  [ "$(grep -c 'http://auth:9999/health' "$FAKE_DOCKER_LOG")" -eq 2 ]
+  [ "$(count_files '*.dump')" -eq 0 ]
+  [ "$(state_get PHASE)" = idle ]
+  [ "$(state_get ACTIVE_DIGEST)" = "$D1" ]
+}
+
+# ---------------------------------------------------------------------------------------------
+# Req 14.3：備份（plan.md D8）失敗 → 不遷移、不動容器
 # ---------------------------------------------------------------------------------------------
 
 @test "deploy: pg_dump failure aborts before migrate and leaves no partial" {
@@ -24,38 +311,53 @@ idle_green() { write_state PHASE=idle ACTIVE_COLOR=green "ACTIVE_DIGEST=$D1" "HI
   lm staging deploy "$D2"
   assert_status 1
   assert_contains "$(last_line)" '"reason":"backup_create_failed"'
-  assert_call 'exec -T db pg_dump -Fc'
-  refute_call 'migrate'
-  refute_call 'up -d|pull app-|caddy reload'
+  assert_call 'exec -T db sh -c PGPASSWORD=\$POSTGRES_PASSWORD exec pg_dump -Fc --no-password -h /run/postgresql -U supabase_admin -d postgres --data-only --schema=app --schema=auth --exclude-table=auth.schema_migrations'
+  refute_call '^create |--single-transaction'
+  refute_call 'up -d --no-deps app-|pull app-|caddy reload'
   assert_no_partials
   [ "$(count_files '*.dump')" -eq 0 ]
   [ "$(state_get PHASE)" = idle ]
   [ "$(state_get ACTIVE_DIGEST)" = "$D1" ]
 }
 
-@test "deploy: pg_restore --list verify failure aborts before migrate and leaves no partial" {
+@test "deploy: pg_restore --list failure, an empty dump or no TABLE DATA fail verification before migrate" {
   idle_green
-  export FAKE_PG_RESTORE_LIST_FAIL=1
-  lm staging deploy "$D2"
-  assert_status 1
-  assert_contains "$(last_line)" '"reason":"backup_verify_failed"'
-  assert_call 'exec -T db pg_restore --list'
-  refute_call 'migrate'
-  refute_call 'up -d|pull app-|caddy reload'
-  assert_no_partials
-  [ "$(count_files '*.dump')" -eq 0 ]
-  [ "$(count_files '*.tmp')" -eq 0 ]
+  local v
+  for v in FAKE_PG_RESTORE_LIST_FAIL=1 FAKE_PG_DUMP_EMPTY=1 FAKE_LIST_NO_DATA=1; do
+    : >"$FAKE_DOCKER_LOG"
+    export "$v"
+    lm staging deploy "$D2"
+    assert_status 1
+    assert_contains "$(last_line)" '"reason":"backup_verify_failed"'
+    refute_call '^create |--single-transaction|up -d --no-deps app-'
+    assert_no_partials
+    [ "$(count_files '*.dump')" -eq 0 ]
+    [ "$(count_files '*.tmp')" -eq 0 ]
+    unset "${v%%=*}"
+  done
 }
 
-@test "deploy: empty dump fails verification before migrate" {
-  idle_green
-  export FAKE_PG_DUMP_EMPTY=1
-  lm staging deploy "$D2"
-  assert_status 1
-  assert_contains "$(last_line)" '"reason":"backup_verify_failed"'
-  refute_call 'migrate'
-  assert_no_partials
+@test "backup: data-only dump of app and auth; emptyDatabase means no app.* TABLE DATA" {
+  lm staging backup
+  assert_status 0
+  assert_contains "$(last_line)" '"tables":3,"appTables":2,"emptyDatabase":false'
+  export FAKE_LIST_NO_APP=1
+  lm staging backup
+  assert_status 0
+  assert_contains "$(last_line)" '"tables":1,"appTables":0,"emptyDatabase":true'
+  local id
+  id=$(state_get LAST_BACKUP_ID)
+  (cd "$BACKUPS" && sha256sum -c --status "$id.dump.sha256")
+  grep -q '"emptyDatabase":true' "$BACKUPS/$id.json"
+  # pg_dump 的指令列不含密碼（只有容器內的 $POSTGRES_PASSWORD）。
+  local pw
+  pw=$(sed -n 's/^LM_DB_PASSWORD=//p' "$ENV_DIR/app.env")
+  [ "$(grep -cF -- "$pw" "$FAKE_DOCKER_LOG")" -eq 0 ]
 }
+
+# ---------------------------------------------------------------------------------------------
+# 遷移（plan.md D7）
+# ---------------------------------------------------------------------------------------------
 
 @test "migrate: refuses without a recent verified backup" {
   idle_green
@@ -63,17 +365,123 @@ idle_green() { write_state PHASE=idle ACTIVE_COLOR=green "ACTIVE_DIGEST=$D1" "HI
   assert_status 3
   assert_contains "$(last_line)" '"reason":"backup_required"'
   assert_no_docker_calls
+  # 備份過舊也一樣。
+  seed_backups 1
+  printf 'LAST_BACKUP_ID=staging-20240101T000010Z-0000001\nLAST_BACKUP_AT=%s\n' "$(($(date -u +%s) - 7200))" >>"$STATE"
+  lm staging migrate "$D2"
+  assert_status 3
+  assert_contains "$(last_line)" '"reason":"backup_required"'
+  assert_no_docker_calls
 }
 
-@test "deploy: migrate failure does not start the new container" {
+@test "migrate: extracts /app/migrations from the new image, waits for realtime.messages, applies each file with its record" {
+  fresh_backup
+  mig_dir 20250101000000_a.sql 20250102000000_b.sql 20250103000000_c.sql
+  export FAKE_STDIN_DIR="$BATS_TEST_TMPDIR/stdin"
+  mkdir -p "$FAKE_STDIN_DIR"
+  lm staging migrate "$REPO@$D2"
+  assert_status 0
+  assert_contains "$(last_line)" "\"digest\":\"$D2\""
+  assert_contains "$(last_line)" '"applied":["20250101000000_a.sql","20250102000000_b.sql","20250103000000_c.sql"],"skipped":[]'
+  assert_call "^create $REPO@$D2\$"
+  assert_call '^rm -f 0123456789abcdef'
+  assert_call "to_regclass\\('realtime.messages'\\)"
+  assert_call 'create schema if not exists lm_ops'
+  [ "$(grep -c -- '-U postgres -d postgres -v ON_ERROR_STOP=1 --no-psqlrc -q --single-transaction -f - ' "$FAKE_DOCKER_LOG")" -eq 3 ]
+  # 每個檔案的內容之後是同一個交易內的 INSERT（版本與 sha256）。
+  local sha
+  sha=$(sha256sum "$FAKE_MIGRATIONS_DIR/20250102000000_b.sql" | cut -d' ' -f1)
+  grep -qF -- '-- 20250102000000_b.sql' "$FAKE_STDIN_DIR/migrations.stdin"
+  grep -qF -- "INSERT INTO lm_ops.schema_migrations (version, sha256) VALUES ('20250102000000_b', '$sha');" "$FAKE_STDIN_DIR/migrations.stdin"
+  # 暫存目錄已移除；不啟動任何容器。
+  [ -z "$(compgen -G "$ENV_DIR/state/.migrations.*" || true)" ]
+  refute_call 'up -d|caddy reload'
+}
+
+@test "migrate: realtime.messages missing -> tenant health via the gateway, then migrate_failed after the retries" {
+  fresh_backup
+  export FAKE_REALTIME_MESSAGES=f
+  lm staging migrate "$D2"
+  assert_status 1
+  assert_contains "$(last_line)" '"reason":"migrate_failed"'
+  assert_contains "$(last_line)" 'realtime.messages'
+  assert_call 'exec -T gateway sh -c .*/realtime/v1/api/tenants/realtime-dev/health'
+  [ "$(grep -c "to_regclass" "$FAKE_DOCKER_LOG")" -eq 3 ]
+  refute_call '--single-transaction'
+}
+
+@test "migrate: already-applied files are skipped; only the new file is applied" {
+  fresh_backup
+  mig_dir 20250101000000_a.sql 20250102000000_b.sql 20250103000000_c.sql
+  applied 20250101000000_a.sql 20250102000000_b.sql
+  export FAKE_STDIN_DIR="$BATS_TEST_TMPDIR/stdin"
+  mkdir -p "$FAKE_STDIN_DIR"
+  lm staging migrate "$D2"
+  assert_status 0
+  assert_contains "$(last_line)" '"applied":["20250103000000_c.sql"],"skipped":["20250101000000_a.sql","20250102000000_b.sql"]'
+  [ "$(grep -c -- '--single-transaction' "$FAKE_DOCKER_LOG")" -eq 1 ]
+  [ "$(grep -cF -- '-- 20250101000000_a.sql' "$FAKE_STDIN_DIR/migrations.stdin")" -eq 0 ]
+}
+
+@test "migrate: a changed sha256 of an applied file fails with migration_changed and applies nothing" {
+  fresh_backup
+  mig_dir 20250101000000_a.sql 20250102000000_b.sql 20250103000000_c.sql
+  applied 20250101000000_a.sql 20250102000000_b.sql
+  printf -- '-- edited\n' >>"$FAKE_MIGRATIONS_DIR/20250102000000_b.sql"
+  lm staging migrate "$D2"
+  assert_status 1
+  assert_contains "$(last_line)" '"reason":"migration_changed"'
+  assert_contains "$(last_line)" '"migration":"20250102000000_b.sql"'
+  assert_contains "$(last_line)" '"applied":[]'
+  refute_call '--single-transaction'
+}
+
+@test "migrate: a failing file stops before later files; the deploy does not start a container" {
   idle_green
-  export FAKE_MIGRATE_FAIL=1
+  mig_dir 20250101000000_a.sql 20250102000000_b.sql 20250103000000_c.sql
+  export FAKE_MIGRATION_FAIL=20250102000000_b
   lm staging deploy "$D2"
   assert_status 1
   assert_contains "$(last_line)" '"reason":"migrate_failed"'
-  refute_call 'up -d|pull app-|caddy reload'
+  assert_contains "$(last_line)" '"migration":"20250102000000_b.sql"'
+  assert_contains "$(last_line)" '"applied":["20250101000000_a.sql"]'
+  [ "$(grep -c -- '--single-transaction' "$FAKE_DOCKER_LOG")" -eq 2 ]
+  refute_call 'up -d --no-deps app-|pull app-|caddy reload'
   [ "$(state_get PHASE)" = idle ]
   [ "$(state_get ACTIVE_DIGEST)" = "$D1" ]
+}
+
+@test "migrate: invalid file names, an empty /app/migrations or a failing docker create/cp are migrate_failed" {
+  fresh_backup
+  local -a names=("20250101000000_a.sql bad.sql" "2025010100000_short.sql" "20250101000000_Upper.sql" "20250101000000_a.txt")
+  local n
+  for n in "${names[@]}"; do
+    : >"$FAKE_DOCKER_LOG"
+    # shellcheck disable=SC2086
+    mig_dir $n
+    lm staging migrate "$D2"
+    assert_status 1
+    assert_contains "$(last_line)" '"reason":"migrate_failed"'
+    refute_call '--single-transaction'
+  done
+  mig_dir
+  lm staging migrate "$D2"
+  assert_status 1
+  assert_contains "$(last_line)" '沒有任何遷移檔'
+  unset FAKE_MIGRATIONS_DIR
+  local v
+  for v in FAKE_CREATE_FAIL=1 FAKE_CP_FAIL=1; do
+    : >"$FAKE_DOCKER_LOG"
+    export "$v"
+    lm staging migrate "$D2"
+    assert_status 1
+    assert_contains "$(last_line)" '"reason":"migrate_failed"'
+    refute_call '--single-transaction'
+    unset "${v%%=*}"
+  done
+  # docker cp 失敗時仍移除暫存容器（cleanup）。
+  assert_call '^rm -f 0123456789abcdef'
+  [ -z "$(compgen -G "$ENV_DIR/state/.migrations.*" || true)" ]
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -141,7 +549,7 @@ idle_green() { write_state PHASE=idle ACTIVE_COLOR=green "ACTIVE_DIGEST=$D1" "HI
     assert_status 4
     assert_contains "$(last_line)" '"reason":"deploy_in_progress"'
   done
-  lm staging app-env <<<"CAMPING_DATABASE_NAME=x"
+  lm staging app-env <"$APP_ENV_FILE"
   assert_status 4
   # status 不取鎖，並回報部署進行中。
   lm staging status
@@ -159,8 +567,17 @@ idle_green() { write_state PHASE=idle ACTIVE_COLOR=green "ACTIVE_DIGEST=$D1" "HI
 }
 
 # ---------------------------------------------------------------------------------------------
-# Req 20.4：健康失敗 → 不切換
+# Req 20.4：健康失敗 → 不切換（GET /robots.txt on 8080）
 # ---------------------------------------------------------------------------------------------
+
+@test "health: GET http://app-<color>:8080/robots.txt through the proxy with the health Host" {
+  idle_green
+  lm staging health green
+  assert_status 0
+  assert_contains "$(last_line)" '"healthy":true'
+  assert_call 'exec -T proxy wget -q -O - --header Host: lm.lan -T 5 http://app-green:8080/robots.txt'
+  refute_call 'healthz|5173'
+}
 
 @test "deploy: health failure removes new container and does not switch" {
   idle_green
@@ -172,8 +589,8 @@ idle_green() { write_state PHASE=idle ACTIVE_COLOR=green "ACTIVE_DIGEST=$D1" "HI
   assert_contains "$(last_line)" '"reason":"health_failed"'
   assert_contains "$(last_line)" '"healthy":false'
   assert_contains "$(last_line)" '"results":[{"t":0,"ok":false'
-  assert_call "up -d --no-deps app-blue \\[new=$REPO@$D2\\]"
-  assert_call 'exec -T proxy wget .*http://app-blue:5173/healthz'
+  assert_call "up -d --no-deps app-blue \\[blue=$REPO@$D2 "
+  assert_call 'exec -T proxy wget .*http://app-blue:8080/robots.txt'
   assert_call '--profile blue rm -s -f app-blue'
   refute_call 'caddy reload'
   refute_call 'app-green'
@@ -209,38 +626,16 @@ idle_green() { write_state PHASE=idle ACTIVE_COLOR=green "ACTIVE_DIGEST=$D1" "HI
   [ "$(state_get PHASE)" = started ]
 }
 
-@test "deploy: healthy candidate runs backup -> migrate -> start -> switch in order" {
-  idle_green
-  lm staging deploy "$D2"
-  assert_status 0
-  local b m u r
-  b=$(call_line 'pg_dump')
-  m=$(call_line 'run --rm --no-deps -T migrate')
-  u=$(call_line 'up -d --no-deps app-blue')
-  r=$(call_line 'caddy reload')
-  [ "$b" -gt 0 ]
-  [ "$m" -gt "$b" ]
-  [ "$u" -gt "$m" ]
-  [ "$r" -gt "$u" ]
-  assert_call "run --rm --no-deps -T migrate \\[new=$REPO@$D2\\]"
-  grep -q 'reverse_proxy app-blue:5173' "$UPSTREAM"
-  [ "$(state_get PHASE)" = switched ]
-  [ "$(state_get ACTIVE_COLOR)" = blue ]
-  [ "$(state_get ACTIVE_DIGEST)" = "$D2" ]
-  [ "$(state_get PREVIOUS_COLOR)" = green ]
-  [ "$(count_files '*.dump.sha256')" -eq 1 ]
-}
-
 @test "deploy: refuses while a previous deploy is unfinished (phase switched)" {
   write_state PHASE=switched ACTIVE_COLOR=blue "ACTIVE_DIGEST=$D2" PREVIOUS_COLOR=green "PREVIOUS_DIGEST=$D1" "HISTORY=$D1"
-  lm staging deploy "$D3"
+  lm staging deploy "$D3" --app-env-stdin <"$APP_ENV_FILE"
   assert_status 3
   assert_contains "$(last_line)" '"reason":"invalid_phase"'
   assert_no_docker_calls
 }
 
 # ---------------------------------------------------------------------------------------------
-# Req 20.9：回滾不執行 Migration_Runner
+# Req 20.9：回滾不執行遷移
 # ---------------------------------------------------------------------------------------------
 
 @test "rollback (auto, after switch): restores previous upstream without migrate" {
@@ -253,8 +648,8 @@ idle_green() { write_state PHASE=idle ACTIVE_COLOR=green "ACTIVE_DIGEST=$D1" "HI
   assert_contains "$(last_line)" '"restored":true'
   assert_call 'caddy reload'
   assert_call '--profile blue rm -s -f app-blue'
-  refute_call 'migrate'
-  grep -q 'reverse_proxy app-green:5173' "$UPSTREAM"
+  refute_call 'migrations|--single-transaction|^create '
+  grep -q 'reverse_proxy app-green:8080' "$UPSTREAM"
   [ "$(state_get PHASE)" = idle ]
   [ "$(state_get ACTIVE_COLOR)" = green ]
   [ "$(state_get ACTIVE_DIGEST)" = "$D1" ]
@@ -268,7 +663,7 @@ idle_green() { write_state PHASE=idle ACTIVE_COLOR=green "ACTIVE_DIGEST=$D1" "HI
   assert_status 0
   assert_contains "$(last_line)" '"migrationsRun":false'
   assert_call '--profile blue rm -s -f app-blue'
-  refute_call 'migrate'
+  refute_call 'migrations|--single-transaction|^create '
   refute_call 'caddy reload'
   [ "$(sha256sum <"$UPSTREAM")" = "$before" ]
   [ "$(state_get PHASE)" = idle ]
@@ -279,7 +674,7 @@ idle_green() { write_state PHASE=idle ACTIVE_COLOR=green "ACTIVE_DIGEST=$D1" "HI
   lm staging rollback
   assert_status 3
   assert_contains "$(last_line)" '"reason":"nothing_to_rollback"'
-  refute_call 'migrate'
+  refute_call 'migrations|--single-transaction'
 }
 
 @test "rollback <digest>: switches to a retained digest without migrate" {
@@ -289,12 +684,12 @@ idle_green() { write_state PHASE=idle ACTIVE_COLOR=green "ACTIVE_DIGEST=$D1" "HI
   assert_status 0
   assert_contains "$(last_line)" '"mode":"manual"'
   assert_contains "$(last_line)" '"migrationsRun":false'
-  assert_call "up -d --no-deps app-green \\[new=$REPO@$D1\\]"
-  assert_call 'exec -T proxy wget .*http://app-green:5173/healthz'
+  assert_call "up -d --no-deps app-green \\[blue=$REPO@$D3 green=$REPO@$D1\\]"
+  assert_call 'exec -T proxy wget .*http://app-green:8080/robots.txt'
   assert_call 'caddy reload'
-  refute_call 'migrate'
+  refute_call 'migrations|--single-transaction|^create '
   refute_call 'pg_dump'
-  grep -q 'reverse_proxy app-green:5173' "$UPSTREAM"
+  grep -q 'reverse_proxy app-green:8080' "$UPSTREAM"
   [ "$(state_get PHASE)" = switched ]
   [ "$(state_get ACTIVE_DIGEST)" = "$D1" ]
   [ "$(state_get PREVIOUS_DIGEST)" = "$D3" ]
@@ -311,7 +706,7 @@ idle_green() { write_state PHASE=idle ACTIVE_COLOR=green "ACTIVE_DIGEST=$D1" "HI
   assert_contains "$(last_line)" '"reason":"health_failed"'
   assert_call '--profile green rm -s -f app-green'
   refute_call 'caddy reload'
-  refute_call 'migrate'
+  refute_call 'migrations|--single-transaction'
   [ "$(sha256sum <"$UPSTREAM")" = "$before" ]
   [ "$(state_get PHASE)" = idle ]
   [ "$(state_get ACTIVE_DIGEST)" = "$D3" ]
@@ -346,13 +741,16 @@ idle_green() { write_state PHASE=idle ACTIVE_COLOR=green "ACTIVE_DIGEST=$D1" "HI
   assert_no_docker_calls
 }
 
-@test "args: unknown env, cross-env and unknown subcommand are usage errors" {
+@test "args: unknown env, cross-env, unknown and removed subcommands are usage errors" {
   lm qa status
   assert_status 2
   lm staging deploy prod
   assert_status 2
   lm staging frobnicate
   assert_status 2
+  lm staging smoke-account "$D2"
+  assert_status 2
+  assert_contains "$(last_line)" '"reason":"usage"'
   assert_no_docker_calls
 }
 
@@ -415,6 +813,126 @@ PY
   [ "$(count_files '*.dump')" -eq 14 ]
   [ "$(count_files 'staging-20240101T000010Z-*')" -eq 0 ]
   [ "$(count_files 'staging-20240101T000011Z-*')" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------------------------
+# 還原演練（Req 14.6、14.7；plan.md D8）
+# ---------------------------------------------------------------------------------------------
+
+drill_setup() {
+  idle_green
+  seed_backups 3
+  seed_real_backup
+  export FAKE_STDIN_DIR="$BATS_TEST_TMPDIR/stdin"
+  mkdir -p "$FAKE_STDIN_DIR"
+}
+
+@test "drill: restores data-only into a fresh stack migrated from the active image, verifies counts and never prunes" {
+  drill_setup
+  local before
+  before=$(ls "$BACKUPS" | sort)
+  lm staging drill
+  assert_status 0
+  [ "${#lines[@]}" -eq 1 ]
+  assert_contains "$output" '"ok":true,"command":"drill","env":"staging","project":"lm-drill-staging-'
+  assert_contains "$output" "\"backupId\":\"$BACKUP_ID\""
+  assert_contains "$output" "\"digest\":\"$D1\""
+  assert_contains "$output" '"result":"pass","failedStep":null'
+  assert_contains "$output" '"migrations":{"applied":["20250101000000_app_schema.sql","20250102000000_profiles.sql"],"skipped":[]}'
+  assert_contains "$output" '"verify":{"authUsers":3,"profiles":2}'
+  assert_contains "$output" '"cleanedUp":true,"backupCount":4'
+  # 順序：db（+ db-setup.sql）→ auth、realtime、gateway → 遷移（目前作用中的映像）→ pg_restore --data-only → 驗證 → down -v。
+  local db setup gw create mig restore verify down
+  db=$(call_line '-p lm-drill-staging-[0-9a-f]{8} .* up -d --wait --no-deps db ')
+  setup=$(call_line '-p lm-drill-staging-.* exec -T db psql .* -q -f - ')
+  gw=$(call_line '-p lm-drill-staging-.* up -d --no-deps gateway ')
+  create=$(call_line "^create $REPO@$D1\$")
+  mig=$(call_line '-p lm-drill-staging-.* --single-transaction -f - ')
+  restore=$(call_line '-p lm-drill-staging-.* exec -T db pg_restore --data-only --disable-triggers ')
+  verify=$(call_line 'count\(\*\) from auth.users')
+  down=$(call_line '-p lm-drill-staging-.* down -v --remove-orphans')
+  [ "$db" -gt 0 ]
+  [ "$setup" -gt "$db" ]
+  [ "$gw" -gt "$setup" ]
+  [ "$create" -gt "$gw" ]
+  [ "$mig" -gt "$create" ]
+  [ "$restore" -gt "$mig" ]
+  [ "$verify" -gt "$restore" ]
+  [ "$down" -gt "$verify" ]
+  # 備份內容原樣交給 pg_restore；只使用 drill.yaml 與拋棄式 drill.env，不碰正式專案或 app.env。
+  cmp "$BACKUPS/$BACKUP_ID.dump" "$FAKE_STDIN_DIR/restore.stdin"
+  assert_call_fixed "-f $ENV_DIR/drill.yaml --env-file $ENV_DIR/state/.drill."
+  refute_call "compose --project-directory $ENV_DIR -f $ENV_DIR/compose.yaml"
+  refute_call "app.env"
+  # 備份一份都沒有被刪除；秘密暫存目錄已刪除；正式狀態不變。
+  [ "$(ls "$BACKUPS" | sort)" = "$before" ]
+  [ -z "$(compgen -G "$ENV_DIR/state/.drill.*" || true)" ]
+  [ "$(stat -c %a "$ENV_DIR/state/drill-last.log")" = 600 ]
+  [ "$(state_get ACTIVE_DIGEST)" = "$D1" ]
+  [ "$(state_get PHASE)" = idle ]
+}
+
+@test "drill: failing steps report failedStep, tear the project down and keep every backup" {
+  drill_setup
+  local before
+  before=$(ls "$BACKUPS" | sort)
+  local -a cases=(
+    "FAKE_STACK_FAIL=db|stack_db_failed|db_start"
+    "FAKE_STACK_FAIL=setup|stack_setup_failed|db_start"
+    "FAKE_STACK_UNHEALTHY=realtime|stack_realtime_failed|stack_start"
+    "FAKE_CREATE_FAIL=1|migrate_failed|migrate"
+    "FAKE_RESTORE_FAIL=1|restore_failed|restore"
+    "FAKE_DRILL_COUNTS=2 5|verify_failed|verify"
+    "FAKE_DRILL_COUNTS=garbage|verify_failed|verify"
+  )
+  local c v reason step
+  for c in "${cases[@]}"; do
+    v=${c%%|*}
+    reason=${c#*|}
+    reason=${reason%|*}
+    step=${c##*|}
+    : >"$FAKE_DOCKER_LOG"
+    export "$v"
+    lm staging drill
+    assert_status 1
+    assert_contains "$(last_line)" "\"reason\":\"$reason\""
+    assert_contains "$(last_line)" "\"result\":\"fail\",\"failedStep\":\"$step\""
+    assert_contains "$(last_line)" '"cleanedUp":true'
+    assert_call 'down -v --remove-orphans'
+    [ "$(ls "$BACKUPS" | sort)" = "$before" ]
+    [ -z "$(compgen -G "$ENV_DIR/state/.drill.*" || true)" ]
+    unset "${v%%=*}"
+  done
+}
+
+@test "drill: a checksum mismatch fails at backup_verify before any compose call" {
+  drill_setup
+  printf 'tampered\n' >>"$BACKUPS/$BACKUP_ID.dump"
+  lm staging drill
+  assert_status 1
+  assert_contains "$(last_line)" '"reason":"backup_checksum_mismatch"'
+  assert_contains "$(last_line)" '"failedStep":"backup_verify"'
+  refute_call '^compose'
+  [ -f "$BACKUPS/$BACKUP_ID.dump" ]
+}
+
+@test "drill: needs an active digest, drill.yaml, supabase/ files and lm-supabase-keys" {
+  drill_setup
+  write_state PHASE=idle
+  lm staging drill
+  assert_status 3
+  assert_contains "$(last_line)" '"reason":"no_active_slot"'
+  idle_green
+  rm "$LM_BIN_DIR/lm-supabase-keys"
+  lm staging drill
+  assert_status 2
+  assert_contains "$(last_line)" 'lm-supabase-keys'
+  cp "$KEYS_TOOL" "$LM_BIN_DIR/lm-supabase-keys"
+  rm "$ENV_DIR/supabase/gateway.Caddyfile"
+  lm staging drill
+  assert_status 2
+  assert_contains "$(last_line)" 'supabase/gateway.Caddyfile'
+  assert_no_docker_calls
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -510,60 +1028,22 @@ PY
 }
 
 # ---------------------------------------------------------------------------------------------
-# Req 27.17–27.24：smoke-account（Host_Operator 限定；design.md Components §21.4）
-# 測試密碼是固定的非秘密字串，含空白、引號、$、反斜線與 shell 特殊字元。
+# Req 27.18：SSH forced command 只接受 SSH_SUBCOMMANDS
 # ---------------------------------------------------------------------------------------------
 
-SMOKE_PW='not-a-secret Sm0ke "pw" $HOME \ ;|&*'
-
-smoke_setup() {
+@test "SSH forced command: subcommands outside the allowlist are usage errors before lock or docker" {
   idle_green
-  export LM_TEST_OPERATOR=1
-  printf 'CAMPING_DATABASE_NAME=little_moments\nCAMPING_DATABASE_USER=lm_app\nCAMPING_DATABASE_PASSWORD=placeholder\n' >"$ENV_DIR/app.env"
-  PWFILE="$BATS_TEST_TMPDIR/smoke-pw"
-  printf '%s\n' "$SMOKE_PW" >"$PWFILE"
-  export FAKE_STDIN_DIR="$BATS_TEST_TMPDIR/stdin" FAKE_ENV_LOG="$BATS_TEST_TMPDIR/env.log"
-  mkdir -p "$FAKE_STDIN_DIR"
-}
-
-# smoke [args...]：以 $PWFILE 為 stdin 執行 lm-deploy staging smoke-account。
-smoke() { lm staging smoke-account "$@" <"$PWFILE"; }
-
-assert_no_lock_taken() {
-  if [[ -e $LM_LOCK_DIR/lm-staging.lock ]]; then printf 'lock file was created\n'; return 1; fi
-}
-
-assert_no_pw_files() {
-  local f
-  for f in "$ENV_DIR"/state/.smoke-pw.* "$ENV_DIR"/state/.smoke-out.*; do
-    if [[ -e $f ]]; then printf 'leftover temp file: %s\n' "$f"; return 1; fi
-  done
-}
-
-# 密碼不得出現在 lm-deploy 的 stdout／stderr、fake docker 的參數與環境紀錄，或 state/ 下的任何檔案。
-assert_pw_not_leaked() {
-  if [[ $output == *"$SMOKE_PW"* || $stderr == *"$SMOKE_PW"* ]]; then printf 'password in lm-deploy output\n'; return 1; fi
-  if grep -qF -- "$SMOKE_PW" "$FAKE_DOCKER_LOG"; then printf 'password in docker args\n'; return 1; fi
-  if [[ -f ${FAKE_ENV_LOG:-/nonexistent} ]] && grep -qF -- "$SMOKE_PW" "$FAKE_ENV_LOG"; then printf 'password in docker env\n'; return 1; fi
-  if grep -rqF -- "$SMOKE_PW" "$ENV_DIR/state"; then printf 'password in state/\n'; return 1; fi
-}
-
-@test "smoke-account: SSH forced command cannot reach smoke-account (usage, no lock, no docker)" {
-  smoke_setup
   local cmd
-  for cmd in "smoke-account $D2" "staging smoke-account $D2" "smoke-account staging $D2" \
-    "lm-deploy staging smoke-account $REPO@$D2" "/opt/lm/bin/lm-deploy smoke-account $D2 --username smoke-bot" \
-    "frobnicate" "--wait"; do
+  for cmd in "smoke-account $D2" "staging smoke-account $D2" "frobnicate" "--wait" "lm-deploy staging frobnicate"; do
     export SSH_ORIGINAL_COMMAND=$cmd
-    lm staging <"$PWFILE"
+    lm staging </dev/null
     assert_status 2
     assert_contains "$(last_line)" '"reason":"usage"'
     assert_contains "$stderr" 'SSH forced command 不允許此子命令'
   done
   unset SSH_ORIGINAL_COMMAND
   assert_no_docker_calls
-  assert_no_lock_taken
-  assert_no_pw_files
+  [[ ! -e $LM_LOCK_DIR/lm-staging.lock ]]
 }
 
 @test "SSH forced command: every allowlisted subcommand still passes the allowlist" {
@@ -586,614 +1066,4 @@ assert_pw_not_leaked() {
     [[ $stderr != *'不允許此子命令'* ]] || { printf 'allowlisted %s was rejected\n%s\n' "$cmd" "$stderr"; return 1; }
   done
   unset SSH_ORIGINAL_COMMAND
-}
-
-@test "smoke-account: SSH_ORIGINAL_COMMAND set (any value) -> operator_only before lock or docker" {
-  smoke_setup
-  local v
-  for v in '' status "smoke-account $D2"; do
-    export SSH_ORIGINAL_COMMAND=$v
-    smoke "$D2"
-    assert_status 2
-    assert_contains "$(last_line)" '"reason":"operator_only"'
-    run --separate-stderr bash "$LM_DEPLOY" smoke-account staging "$D2" <"$PWFILE"
-    assert_status 2
-    assert_contains "$(last_line)" '"reason":"operator_only"'
-  done
-  unset SSH_ORIGINAL_COMMAND
-  assert_no_docker_calls
-  assert_no_lock_taken
-  assert_no_pw_files
-}
-
-@test "smoke-account: non-root without LM_TEST_OPERATOR, or SUDO_USER is a deploy account -> operator_only" {
-  if [[ $EUID -eq 0 ]]; then skip "must run as non-root"; fi
-  smoke_setup
-  unset LM_TEST_OPERATOR
-  smoke "$D2"
-  assert_status 2
-  assert_contains "$(last_line)" '"reason":"operator_only"'
-  export LM_TEST_OPERATOR=0
-  smoke "$D2"
-  assert_status 2
-  assert_contains "$(last_line)" '"reason":"operator_only"'
-  export LM_TEST_OPERATOR=1
-  local u
-  for u in lm-deploy-staging lm-deploy-prod; do
-    export SUDO_USER=$u
-    smoke "$D2"
-    assert_status 2
-    assert_contains "$(last_line)" '"reason":"operator_only"'
-  done
-  unset SUDO_USER
-  assert_no_docker_calls
-  assert_no_lock_taken
-}
-
-@test "smoke-account: invalid digest and arguments exit 2 before any docker call" {
-  smoke_setup
-  local bad
-  for bad in "sha256:abc" "latest" "$REPO:latest" "other.lan:5000/little-moments@$D2" "${D2^^}" "$REPO@sha256:xyz"; do
-    smoke "$bad"
-    assert_status 2
-    assert_contains "$(last_line)" '"reason":"invalid_digest"'
-  done
-  local long33 long101
-  long33=$(printf 'a%.0s' {1..33})
-  long101=$(printf 'f%.0s' {1..101})
-  local -a cases=(
-    ""
-    "$D2 $D3"
-    "$D2 --password x"
-    "$D2 --username=smoke-bot"
-    "$D2 --verbose"
-    "$D2 --username"
-    "$D2 --fixture"
-    "$D2 --username Smoke"
-    "$D2 --username ab"
-    "$D2 --username a_b"
-    "$D2 --username 1abc"
-    "$D2 --username $long33"
-    "$D2 --username smoke-bot --username smoke-two"
-    "$D2 --fixture .hidden"
-    "$D2 --fixture -x"
-    "$D2 --fixture $long101"
-    "$D2 --fixture a --fixture b"
-  )
-  local c
-  for c in "${cases[@]}"; do
-    # shellcheck disable=SC2086
-    smoke $c
-    assert_status 2
-    assert_contains "$(last_line)" '"reason":"usage"'
-  done
-  # 含空白、前後空白或空字串的 fixture（單一參數）。
-  for bad in "smoke fixture" " smoke-fixture" "smoke-fixture " ""; do
-    smoke "$D2" --fixture "$bad"
-    assert_status 2
-    assert_contains "$(last_line)" '"reason":"usage"'
-  done
-  smoke "$D2" --username ""
-  assert_status 2
-  assert_no_docker_calls
-  assert_no_pw_files
-}
-
-@test "smoke-account: empty, oversized or NUL-containing stdin exits 2 (password_invalid) without docker" {
-  smoke_setup
-  lm staging smoke-account "$D2" </dev/null
-  assert_status 2
-  assert_contains "$(last_line)" '"reason":"password_invalid"'
-  head -c 4097 /dev/zero | tr '\0' a >"$PWFILE"
-  smoke "$D2"
-  assert_status 2
-  assert_contains "$(last_line)" '"reason":"password_invalid"'
-  printf 'abcdefgh\0ijklmnop\n' >"$PWFILE"
-  smoke "$D2"
-  assert_status 2
-  assert_contains "$(last_line)" '"reason":"password_invalid"'
-  assert_no_docker_calls
-  assert_no_pw_files
-  [ "$(count_files '*.dump')" -eq 0 ]
-}
-
-@test "smoke-account: stdin of exactly 4096 bytes is accepted and passed through unchanged" {
-  smoke_setup
-  head -c 4096 /dev/zero | tr '\0' b >"$PWFILE"
-  smoke "$D2"
-  assert_status 0
-  cmp "$PWFILE" "$FAKE_STDIN_DIR/tool.stdin"
-  assert_no_pw_files
-}
-
-@test "smoke-account: stdin that is a terminal exits 2 (password_stdin_required)" {
-  if ! command -v script >/dev/null; then skip "script(1) not available"; fi
-  smoke_setup
-  run script -qec "bash '$LM_DEPLOY' staging smoke-account $D2" /dev/null </dev/null
-  assert_status 2
-  assert_contains "$output" '"reason":"password_stdin_required"'
-  assert_no_docker_calls
-  assert_no_lock_taken
-}
-
-@test "smoke-account: missing app.env or db.env exits 2 (config_missing) without docker" {
-  smoke_setup
-  local f
-  for f in app.env db.env; do
-    mv "$ENV_DIR/$f" "$ENV_DIR/$f.bak"
-    smoke "$D2"
-    assert_status 2
-    assert_contains "$(last_line)" '"reason":"config_missing"'
-    assert_contains "$(last_line)" "$f"
-    mv "$ENV_DIR/$f.bak" "$ENV_DIR/$f"
-  done
-  assert_no_docker_calls
-  assert_no_pw_files
-}
-
-@test "smoke-account: held lock exits 4, unfinished deploy exits 3, both without docker" {
-  smoke_setup
-  local fd
-  exec {fd}>>"$LM_LOCK_DIR/lm-staging.lock"
-  flock -n "$fd"
-  smoke "$D2"
-  assert_status 4
-  assert_contains "$(last_line)" '"reason":"deploy_in_progress"'
-  exec {fd}>&-
-  write_state PHASE=started ACTIVE_COLOR=green "ACTIVE_DIGEST=$D1" CANDIDATE_COLOR=blue "CANDIDATE_DIGEST=$D2" "HISTORY=$D1"
-  smoke "$D3"
-  assert_status 3
-  assert_contains "$(last_line)" '"reason":"invalid_phase"'
-  assert_no_docker_calls
-  assert_no_pw_files
-  [ "$(state_get PHASE)" = started ]
-}
-
-@test "smoke-account: db/proxy stopped -> up db (wait), up proxy, backup, migrate, tool in order" {
-  smoke_setup
-  export FAKE_DB_RUNNING=0 FAKE_PROXY_RUNNING=0
-  local before
-  before=$(sha256sum <"$UPSTREAM")
-  smoke "$REPO@$D2"
-  assert_status 0
-  local pd ud pp up b m t
-  pd=$(call_line 'ps --status running -q db')
-  ud=$(call_line 'up -d --wait --no-deps db')
-  pp=$(call_line 'ps --status running -q proxy')
-  up=$(call_line 'up -d --no-deps proxy')
-  b=$(call_line 'exec -T db pg_dump')
-  m=$(call_line 'run --rm --no-deps -T migrate ')
-  t=$(call_line 'run --rm --no-deps -T --entrypoint bun migrate /app/tools/create-smoke-account.js')
-  [ "$pd" -gt 0 ]
-  [ "$ud" -gt "$pd" ]
-  [ "$pp" -gt "$ud" ]
-  [ "$up" -gt "$pp" ]
-  [ "$b" -gt "$up" ]
-  [ "$m" -gt "$b" ]
-  [ "$t" -gt "$m" ]
-  assert_call "--profile ops run --rm --no-deps -T migrate \\[new=$REPO@$D2\\]"
-  assert_call "--profile ops run --rm --no-deps -T --entrypoint bun migrate /app/tools/create-smoke-account.js \\[new=$REPO@$D2\\]"
-  refute_call 'up -d --no-deps app-|pull app-|caddy reload|rm -s -f app-'
-  [ "$(sha256sum <"$UPSTREAM")" = "$before" ]
-  # 只更新最後備份；槽位欄位不變。
-  [ "$(state_get PHASE)" = idle ]
-  [ "$(state_get ACTIVE_COLOR)" = green ]
-  [ "$(state_get ACTIVE_DIGEST)" = "$D1" ]
-  [ "$(state_get HISTORY)" = "$D1" ]
-  [ -z "$(state_get CANDIDATE_COLOR)" ]
-  [ -n "$(state_get LAST_BACKUP_ID)" ]
-  [ "$(count_files '*.dump.sha256')" -eq 1 ]
-  # 每個步驟一行 JSON。
-  [ "${#lines[@]}" -eq 4 ]
-  assert_contains "${lines[0]}" '{"ok":true,"command":"services","env":"staging","db":"started","proxy":"started"}'
-  assert_contains "${lines[1]}" '"command":"backup"'
-  assert_contains "${lines[1]}" '"sha256":'
-  assert_contains "${lines[2]}" '"command":"migrate"'
-  assert_contains "$(last_line)" "{\"ok\":true,\"command\":\"smoke-account\",\"env\":\"staging\",\"digest\":\"$D2\",\"tool\":{\"ok\":true,\"username\":\"smoke-bot\",\"account\":\"created\""
-  assert_no_pw_files
-}
-
-@test "smoke-account: running db/proxy are not recreated" {
-  smoke_setup
-  export FAKE_DB_RUNNING=1 FAKE_PROXY_RUNNING=1
-  smoke "$D2"
-  assert_status 0
-  refute_call 'up -d'
-  assert_call 'ps --status running -q db'
-  assert_call 'ps --status running -q proxy'
-  assert_contains "${lines[0]}" '"db":"running","proxy":"running"'
-  assert_call 'create-smoke-account.js'
-}
-
-@test "smoke-account: password only reaches the tool's stdin; no leaks, no temp files left" {
-  smoke_setup
-  export FAKE_DB_RUNNING=0 FAKE_PROXY_RUNNING=0
-  smoke "$D2" --username smoke-two --fixture smoke-other
-  assert_status 0
-  assert_call 'create-smoke-account.js --username smoke-two --fixture smoke-other \['
-  cmp "$PWFILE" "$FAKE_STDIN_DIR/tool.stdin"
-  [ -f "$FAKE_STDIN_DIR/pg_dump.stdin" ] && [ ! -s "$FAKE_STDIN_DIR/pg_dump.stdin" ]
-  [ -f "$FAKE_STDIN_DIR/migrate.stdin" ] && [ ! -s "$FAKE_STDIN_DIR/migrate.stdin" ]
-  [ -s "$FAKE_ENV_LOG" ]
-  assert_pw_not_leaked
-  assert_no_pw_files
-
-  # 失敗路徑（工具失敗）也不留下暫存檔、不洩漏密碼。
-  : >"$FAKE_DOCKER_LOG"
-  export FAKE_SMOKE_TOOL_OUT='{"ok":false,"reason":"no_admin"}' FAKE_SMOKE_TOOL_RC=1
-  smoke "$D2"
-  assert_status 1
-  assert_pw_not_leaked
-  assert_no_pw_files
-}
-
-@test "smoke-account: db, proxy, backup and migrate failures stop before the tool" {
-  smoke_setup
-  local -a cases=(
-    "FAKE_DB_RUNNING=0 FAKE_UP_FAIL=1|db_start_failed"
-    "FAKE_PS_FAIL=1|db_start_failed"
-    "FAKE_PROXY_RUNNING=0 FAKE_PROXY_UP_FAIL=1|proxy_start_failed"
-    "FAKE_PG_DUMP_FAIL=1|backup_create_failed"
-    "FAKE_PG_RESTORE_LIST_FAIL=1|backup_verify_failed"
-    "FAKE_MIGRATE_FAIL=1|migrate_failed"
-  )
-  local c vars reason v
-  for c in "${cases[@]}"; do
-    vars=${c%|*}
-    reason=${c#*|}
-    : >"$FAKE_DOCKER_LOG"
-    for v in $vars; do export "$v"; done
-    smoke "$D2"
-    assert_status 1
-    assert_contains "$(last_line)" "\"reason\":\"$reason\""
-    refute_call 'create-smoke-account'
-    assert_pw_not_leaked
-    assert_no_pw_files
-    for v in $vars; do unset "${v%%=*}"; done
-  done
-  # db 啟動失敗時不備份、不遷移；備份失敗時不遷移。
-  export FAKE_DB_RUNNING=0 FAKE_UP_FAIL=1
-  : >"$FAKE_DOCKER_LOG"
-  smoke "$D2"
-  refute_call 'pg_dump|-T migrate |up -d --no-deps proxy'
-  unset FAKE_DB_RUNNING FAKE_UP_FAIL
-  export FAKE_PG_DUMP_FAIL=1
-  : >"$FAKE_DOCKER_LOG"
-  smoke "$D2"
-  refute_call '-T migrate '
-  [ "$(state_get ACTIVE_DIGEST)" = "$D1" ]
-}
-
-@test "smoke-account: tool failure -> exit 1, smoke_account_failed with embedded reason and JSON" {
-  smoke_setup
-  export FAKE_SMOKE_TOOL_OUT='{"ok":false,"reason":"no_admin"}' FAKE_SMOKE_TOOL_RC=1
-  smoke "$D2"
-  assert_status 1
-  assert_contains "$(last_line)" '"command":"smoke-account"'
-  assert_contains "$(last_line)" '"reason":"smoke_account_failed"'
-  assert_contains "$(last_line)" 'Smoke_Provisioner 未完成（no_admin）'
-  assert_contains "$(last_line)" '"tool":{"ok":false,"reason":"no_admin"}'
-
-  # 工具輸出含空白或反斜線 → tool 為 null。
-  local out
-  for out in '{"ok":false, "reason":"no_admin"}' '{"ok":false,"reason":"no\\admin"}' 'not json' ''; do
-    export FAKE_SMOKE_TOOL_OUT=$out
-    smoke "$D2"
-    assert_status 1
-    assert_contains "$(last_line)" '"reason":"smoke_account_failed"'
-    assert_contains "$(last_line)" '"tool":null'
-  done
-  assert_no_pw_files
-}
-
-# ---------------------------------------------------------------------------------------------
-# Req 15.6、15.7、15.9：Production 收據 AI 的金鑰檔（design.md Components §25.4、§25.8）
-# 假金鑰在執行時產生（fake_key：sk-test- 加隨機十六進位）；檔案中不含符合金鑰格式的字串。
-# ---------------------------------------------------------------------------------------------
-
-KEY_TARGET=/run/secrets/openai-api-key
-
-receipt_setup() {
-  use_prod
-  idle_green
-  install_fake_chown
-  export FAKE_ENV_LOG="$BATS_TEST_TMPDIR/env.log"
-  IN="$BATS_TEST_TMPDIR/stdin"
-}
-
-@test "receipt-ai: prod enabled writes the key file (0400, chown 10001:10001) and compose gets only paths" {
-  receipt_setup
-  local key
-  key=$(fake_key)
-  app_env_stdin "$IN" LM_RECEIPT_AI=enabled "LM_OPENAI_API_KEY=$key"
-  [ "$(head -n1 "$IN")" = LM_RECEIPT_AI=enabled ]
-  lm prod deploy "$D2" --app-env-stdin <"$IN"
-  assert_status 0
-  # 金鑰檔：內容為輸入加一個換行、0400；secrets/ 為 0700；假 chown 記錄 10001:10001。
-  printf '%s\n' "$key" | cmp - "$KEYFILE"
-  [ "$(stat -c %a "$KEYFILE")" = 400 ]
-  [ "$(stat -c %a "$ENV_DIR/secrets")" = 700 ]
-  grep -qE '^10001:10001 -- .*/secrets/\.openai-api-key\.[A-Za-z0-9]+$' "$FAKE_CHOWN_LOG"
-  # app.env 只有三個 app.env 鍵，沒有 LM_ 控制鍵或金鑰。
-  [ "$(grep -c '' "$ENV_DIR/app.env")" -eq 3 ]
-  [ "$(grep -c '^LM_' "$ENV_DIR/app.env")" -eq 0 ]
-  # 備份前金鑰檔不存在 → /dev/null；寫入後的 migrate／start／health 皆為金鑰檔路徑與容器內路徑。
-  assert_call_fixed "pg_dump -Fc --no-password -U lm_app -d little_moments [new=$REPO@$D1] [openai=/dev/null|]"
-  assert_call_fixed "--profile ops run --rm --no-deps -T migrate [new=$REPO@$D2] [openai=$KEYFILE|$KEY_TARGET]"
-  assert_call_fixed "--profile blue up -d --no-deps app-blue [new=$REPO@$D2] [openai=$KEYFILE|$KEY_TARGET]"
-  assert_call_fixed "[openai=$KEYFILE|$KEY_TARGET]"
-  local app_env
-  app_env=$(grep '"command":"app-env"' <<<"$output")
-  assert_contains "$app_env" '"keys":["CAMPING_DATABASE_NAME","CAMPING_DATABASE_USER","CAMPING_DATABASE_PASSWORD"],"receiptAi":"enabled"}'
-  [[ $app_env != *LM_RECEIPT_AI* && $app_env != *LM_OPENAI_API_KEY* ]]
-  [ "$(state_get PHASE)" = switched ]
-  [ -s "$FAKE_ENV_LOG" ]
-  assert_secret_not_leaked "$key"
-  assert_no_receipt_tmp
-}
-
-@test "receipt-ai: prod disabled deletes the key file; prod without the switch leaves it unchanged" {
-  receipt_setup
-  local old
-  old=$(fake_key)
-  put_key_file "$old"
-  app_env_stdin "$IN" LM_RECEIPT_AI=disabled
-  lm prod deploy "$D2" --app-env-stdin <"$IN"
-  assert_status 0
-  [ ! -e "$KEYFILE" ]
-  assert_contains "$(grep '"command":"app-env"' <<<"$output")" '"receiptAi":"disabled"}'
-  assert_call_fixed "--profile blue up -d --no-deps app-blue [new=$REPO@$D2] [openai=/dev/null|]"
-  # 刪除後（migrate 之後）的呼叫都不再掛載金鑰檔。
-  refute_call '(-T migrate|up -d --no-deps app-blue|proxy wget|caddy reload) .*openai=[^]]*secrets'
-  assert_secret_not_leaked "$old"
-  assert_no_receipt_tmp
-
-  # 未提供開關（尚未更新的 Jenkinsfile）：金鑰檔不變，receiptAi 依金鑰檔是否存在。
-  idle_green
-  put_key_file "$old"
-  : >"$FAKE_DOCKER_LOG"
-  app_env_stdin "$IN"
-  lm prod deploy "$D2" --app-env-stdin <"$IN"
-  assert_status 0
-  printf '%s\n' "$old" | cmp - "$KEYFILE"
-  assert_contains "$(grep '"command":"app-env"' <<<"$output")" '"receiptAi":"enabled"}'
-  assert_call_fixed "--profile blue up -d --no-deps app-blue [new=$REPO@$D2] [openai=$KEYFILE|$KEY_TARGET]"
-
-  idle_green
-  rm -f "$KEYFILE"
-  : >"$FAKE_DOCKER_LOG"
-  lm prod deploy "$D2" --app-env-stdin <"$IN"
-  assert_status 0
-  [ ! -e "$KEYFILE" ]
-  assert_contains "$(grep '"command":"app-env"' <<<"$output")" '"receiptAi":"disabled"}'
-  assert_secret_not_leaked "$old"
-  assert_no_receipt_tmp
-}
-
-@test "receipt-ai: invalid switch/key combinations exit 2 before backup or docker; key file unchanged" {
-  receipt_setup
-  local old key hex
-  old=$(fake_key)
-  put_key_file "$old"
-  key=$(fake_key)
-  hex=${key#sk-test-}
-  local -a cases=(
-    "LM_RECEIPT_AI=enabled"
-    "LM_RECEIPT_AI=enabled|LM_OPENAI_API_KEY=$key|LM_OPENAI_API_KEY=$key"
-    "LM_RECEIPT_AI=enabled|LM_OPENAI_API_KEY=$key x"
-    "LM_RECEIPT_AI=enabled|LM_OPENAI_API_KEY=pk-test-$hex"
-    "LM_RECEIPT_AI=enabled|LM_OPENAI_API_KEY=sk-$(rep a 19)"
-    "LM_RECEIPT_AI=enabled|LM_OPENAI_API_KEY=sk-$(rep a 501)"
-    "LM_RECEIPT_AI=disabled|LM_OPENAI_API_KEY=$key"
-    "LM_OPENAI_API_KEY=$key"
-    "LM_RECEIPT_AI=on|LM_OPENAI_API_KEY=$key"
-    "LM_RECEIPT_AI=on"
-    "LM_RECEIPT_AI=enabled|LM_RECEIPT_AI=enabled|LM_OPENAI_API_KEY=$key"
-    "LM_RECEIPT_AI=disabled|LM_RECEIPT_AI=disabled"
-  )
-  local c
-  local -a parts
-  for c in "${cases[@]}"; do
-    IFS='|' read -r -a parts <<<"$c"
-    app_env_stdin "$IN" "${parts[@]}"
-    lm prod deploy "$D2" --app-env-stdin <"$IN"
-    assert_status 2
-    assert_contains "$(last_line)" '"reason":"app_env_invalid"'
-    assert_no_docker_calls
-    [ "$(count_files '*.dump')" -eq 0 ]
-    printf '%s\n' "$old" | cmp - "$KEYFILE"
-    [ "$(stat -c %a "$KEYFILE")" = 400 ]
-    [ ! -s "$FAKE_CHOWN_LOG" ]
-    [ ! -e "$ENV_DIR/app.env" ]
-    assert_secret_not_leaked "$hex"
-    assert_secret_not_leaked "$old"
-    assert_no_receipt_tmp
-  done
-  [ "$(state_get PHASE)" = idle ]
-}
-
-@test "receipt-ai: staging rejects enabled or any key (receipt_ai_forbidden); disabled is accepted" {
-  idle_green
-  export FAKE_ENV_LOG="$BATS_TEST_TMPDIR/env.log"
-  IN="$BATS_TEST_TMPDIR/stdin"
-  local key hex c
-  key=$(fake_key)
-  hex=${key#sk-test-}
-  local -a parts cases=(
-    "LM_RECEIPT_AI=enabled|LM_OPENAI_API_KEY=$key"
-    "LM_RECEIPT_AI=enabled"
-    "LM_OPENAI_API_KEY=$key"
-    "LM_RECEIPT_AI=disabled|LM_OPENAI_API_KEY=$key"
-  )
-  for c in "${cases[@]}"; do
-    IFS='|' read -r -a parts <<<"$c"
-    app_env_stdin "$IN" "${parts[@]}"
-    lm staging deploy "$D2" --app-env-stdin <"$IN"
-    assert_status 2
-    assert_contains "$(last_line)" '"reason":"receipt_ai_forbidden"'
-    assert_no_docker_calls
-    [ "$(count_files '*.dump')" -eq 0 ]
-    [ ! -e "$ENV_DIR/secrets" ]
-    assert_secret_not_leaked "$hex"
-    assert_no_receipt_tmp
-  done
-
-  app_env_stdin "$IN" LM_RECEIPT_AI=disabled
-  lm staging deploy "$D2" --app-env-stdin <"$IN"
-  assert_status 0
-  assert_contains "$(grep '"command":"app-env"' <<<"$output")" '"receiptAi":"disabled"}'
-  assert_call_fixed "--profile blue up -d --no-deps app-blue [new=$REPO@$D2] [openai=/dev/null|]"
-  refute_call 'openai=[^]]*secrets'
-  [ ! -e "$ENV_DIR/secrets" ]
-  [ "$(grep -c '^LM_' "$ENV_DIR/app.env")" -eq 0 ]
-  assert_no_receipt_tmp
-}
-
-@test "receipt-ai: app-env subcommand rejects LM_RECEIPT_AI and LM_OPENAI_API_KEY (app_env_invalid)" {
-  receipt_setup
-  local key hex l
-  key=$(fake_key)
-  hex=${key#sk-test-}
-  for l in LM_RECEIPT_AI=enabled LM_RECEIPT_AI=disabled "LM_OPENAI_API_KEY=$key"; do
-    app_env_stdin "$IN" "$l"
-    lm prod app-env <"$IN"
-    assert_status 2
-    assert_contains "$(last_line)" '"reason":"app_env_invalid"'
-    assert_contains "$(last_line)" "不允許的鍵：${l%%=*}"
-    [ ! -e "$ENV_DIR/app.env" ]
-    [ ! -e "$KEYFILE" ]
-    assert_secret_not_leaked "$hex"
-    assert_no_receipt_tmp
-  done
-  # 只有 app.env 鍵時照常寫入，結果行沒有 receiptAi。
-  app_env_stdin "$IN"
-  lm prod app-env <"$IN"
-  assert_status 0
-  [[ $(last_line) != *receiptAi* ]]
-  assert_no_docker_calls
-}
-
-@test "receipt-ai: build_compose rejects a bad prod key path and any staging key file (config_invalid, no docker)" {
-  receipt_setup
-  local key
-  key=$(fake_key)
-  mkdir -m 0700 "$ENV_DIR/secrets"
-  # 符號連結、目錄、空檔、超過 512 位元組。
-  printf '%s\n' "$key" >"$BATS_TEST_TMPDIR/elsewhere"
-  ln -s "$BATS_TEST_TMPDIR/elsewhere" "$KEYFILE"
-  lm prod health green
-  assert_status 2
-  assert_contains "$(last_line)" '"reason":"config_invalid"'
-  rm -f "$KEYFILE"
-  mkdir "$KEYFILE"
-  lm prod health green
-  assert_status 2
-  assert_contains "$(last_line)" '"reason":"config_invalid"'
-  rmdir "$KEYFILE"
-  : >"$KEYFILE"
-  lm prod rollback
-  assert_status 2
-  assert_contains "$(last_line)" '"reason":"config_invalid"'
-  rm -f "$KEYFILE"
-  head -c 513 /dev/zero | tr '\0' a >"$KEYFILE"
-  lm prod health green
-  assert_status 2
-  assert_contains "$(last_line)" '"reason":"config_invalid"'
-  rm -f "$KEYFILE"
-  # secrets/ 本身是符號連結。
-  rmdir "$ENV_DIR/secrets"
-  mkdir -m 0700 "$BATS_TEST_TMPDIR/secrets-elsewhere"
-  ln -s "$BATS_TEST_TMPDIR/secrets-elsewhere" "$ENV_DIR/secrets"
-  lm prod health green
-  assert_status 2
-  assert_contains "$(last_line)" '"reason":"config_invalid"'
-  rm -f "$ENV_DIR/secrets"
-  assert_no_docker_calls
-  # 1–512 位元組的一般檔案可以使用。
-  put_key_file "$key"
-  lm prod health green
-  assert_status 0
-  assert_call_fixed "[openai=$KEYFILE|$KEY_TARGET]"
-
-  # Staging 有金鑰檔即 config_invalid。
-  : >"$FAKE_DOCKER_LOG"
-  mkdir -m 0700 "$LM_ROOT/staging/secrets"
-  printf '%s\n' "$key" >"$LM_ROOT/staging/secrets/openai-api-key"
-  lm staging health green
-  assert_status 2
-  assert_contains "$(last_line)" '"reason":"config_invalid"'
-  assert_contains "$(last_line)" 'Staging 不得有 OpenAI 金鑰檔'
-  assert_no_docker_calls
-  assert_secret_not_leaked "$key"
-}
-
-@test "receipt-ai: non-empty CAMPING_OPENAI_* or LM_OPENAI_KEY_SOURCE in <env>.env is config_invalid; caller env is ignored" {
-  idle_green
-  cp "$ENV_DIR/staging.env" "$BATS_TEST_TMPDIR/staging.env.orig"
-  local l
-  for l in CAMPING_OPENAI_MODEL_ID=gpt-x LM_OPENAI_KEY_SOURCE=/x CAMPING_OPENAI_API_KEY_FILE=/run/secrets/openai-api-key \
-    'export CAMPING_OPENAI_IMAGE_DETAIL=low' 'CAMPING_OPENAI_MAX_COMPLETION_TOKENS = "100"'; do
-    cp "$BATS_TEST_TMPDIR/staging.env.orig" "$ENV_DIR/staging.env"
-    printf '%s\n' "$l" >>"$ENV_DIR/staging.env"
-    lm staging deploy "$D2"
-    assert_status 2
-    assert_contains "$(last_line)" '"reason":"config_invalid"'
-    assert_contains "$(last_line)" '必須保持空白'
-    assert_no_docker_calls
-  done
-  # 空白值（含空引號）可以使用。
-  cp "$BATS_TEST_TMPDIR/staging.env.orig" "$ENV_DIR/staging.env"
-  printf 'CAMPING_OPENAI_MODEL_ID=\nCAMPING_OPENAI_IMAGE_DETAIL=""\nLM_OPENAI_KEY_SOURCE=\n' >>"$ENV_DIR/staging.env"
-  lm staging health green
-  assert_status 0
-  # 呼叫端環境中的 LM_OPENAI_KEY_SOURCE／CAMPING_OPENAI_API_KEY_FILE 被忽略。
-  : >"$FAKE_DOCKER_LOG"
-  export LM_OPENAI_KEY_SOURCE=/etc/hostname CAMPING_OPENAI_API_KEY_FILE=/etc/hostname
-  lm staging health green
-  assert_status 0
-  unset LM_OPENAI_KEY_SOURCE CAMPING_OPENAI_API_KEY_FILE
-  assert_call_fixed "[openai=/dev/null|]"
-  refute_call '/etc/hostname'
-}
-
-@test "receipt-ai: rollback without stdin keeps the key file; backup failure leaves the key file unchanged" {
-  receipt_setup
-  local old key hex c
-  old=$(fake_key)
-  put_key_file "$old"
-  write_state PHASE=switched ACTIVE_COLOR=blue "ACTIVE_DIGEST=$D2" PREVIOUS_COLOR=green "PREVIOUS_DIGEST=$D1" "HISTORY=$D1"
-  render_upstream blue
-  lm prod rollback </dev/null
-  assert_status 0
-  printf '%s\n' "$old" | cmp - "$KEYFILE"
-  assert_call_fixed "--profile blue rm -s -f app-blue [new=$REPO@$D2] [openai=$KEYFILE|$KEY_TARGET]"
-  refute_call 'openai=/dev/null'
-
-  # 手動回滾重新建立的槽位依金鑰檔掛載。
-  write_state PHASE=idle ACTIVE_COLOR=blue "ACTIVE_DIGEST=$D3" "HISTORY=$D1 $D2 $D3"
-  : >"$FAKE_DOCKER_LOG"
-  lm prod rollback "$D2" </dev/null
-  assert_status 0
-  assert_call_fixed "--profile green up -d --no-deps app-green [new=$REPO@$D2] [openai=$KEYFILE|$KEY_TARGET]"
-  printf '%s\n' "$old" | cmp - "$KEYFILE"
-
-  # 備份失敗：enabled 的新金鑰與 disabled 都不改變金鑰檔。
-  idle_green
-  key=$(fake_key)
-  hex=${key#sk-test-}
-  export FAKE_PG_DUMP_FAIL=1
-  local -a parts
-  for c in "LM_RECEIPT_AI=enabled|LM_OPENAI_API_KEY=$key" "LM_RECEIPT_AI=disabled"; do
-    : >"$FAKE_DOCKER_LOG"
-    IFS='|' read -r -a parts <<<"$c"
-    app_env_stdin "$IN" "${parts[@]}"
-    lm prod deploy "$D2" --app-env-stdin <"$IN"
-    assert_status 1
-    assert_contains "$(last_line)" '"reason":"backup_create_failed"'
-    refute_call 'migrate'
-    printf '%s\n' "$old" | cmp - "$KEYFILE"
-    [ ! -e "$ENV_DIR/app.env" ]
-    assert_secret_not_leaked "$hex"
-    assert_no_receipt_tmp
-  done
 }
