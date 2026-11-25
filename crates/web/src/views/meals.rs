@@ -27,7 +27,7 @@ use lm_core::recipes::{
     APPLY_TEMPLATE_CONFIRMATION, COMMON_INGREDIENTS, MEAL_SLOTS, RECIPE_TEMPLATES,
 };
 use lm_core::text::trim_white;
-use lm_core::time::{date_range, month_day, weekday_char};
+use lm_core::time::{date_range, days_between, month_day, parse_date, weekday_char};
 use uuid::Uuid;
 use wasm_bindgen::JsValue;
 
@@ -154,7 +154,7 @@ fn MealDateGroup(
             Some(index) => index as i64 + 1,
             None => days
                 .first()
-                .map_or(1, |start| (day - *start).num_days() + 1),
+                .map_or(1, |start| days_between(*start, day) + 1),
         })
     });
     let heading = format!("meal-date-{day}");
@@ -674,7 +674,7 @@ fn MealEditor(form: FormSession<MealFields>, days: Memo<Vec<Date>>) -> impl Into
                                     name="date"
                                     aria-label="日期"
                                     on:change=move |event| {
-                                        if let Ok(day) = event_target_value(&event).parse::<Date>() {
+                                        if let Some(day) = parse_date(&event_target_value(&event)) {
                                             draft.update(|draft| draft.day = day);
                                         }
                                     }

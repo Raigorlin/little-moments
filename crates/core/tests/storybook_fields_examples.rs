@@ -58,7 +58,7 @@ fn rejected(result: Result<TripState, Rejection>) -> (Option<String>, String) {
 
 /// 範例旅行的第 n 天（從 1 起）。
 fn day(state: &TripState, n: u64) -> Date {
-    state.card.start + chrono::Days::new(n - 1)
+    state.card.start + time::Duration::days(n as i64 - 1)
 }
 
 fn update_trip(patch: TripPatch) -> Command {

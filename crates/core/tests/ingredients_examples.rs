@@ -934,5 +934,5 @@ fn test_item_id(n: u64) -> ShoppingId {
 }
 
 fn day(text: &str) -> Date {
-    text.parse().expect("有效的日期")
+    lm_core::time::parse_date(text).expect("有效的日期")
 }

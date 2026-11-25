@@ -2,7 +2,7 @@
 use leptos::prelude::*;
 use lm_core::command::{Command, DateSpan, TripPatch};
 use lm_core::limits::{STORYBOOK_CAPTION_CHARS, STORYBOOK_HEADLINE_CHARS, TRIP_TITLE_CHARS};
-use lm_core::model::Date;
+use lm_core::time::parse_date;
 
 use super::editor::{use_editor, Editor};
 
@@ -42,13 +42,13 @@ pub(super) fn CoverPanel() -> impl IntoView {
     // Bun `shiftDates()`：所有日期一起平移，天數不變
     let on_start = move |event: leptos::ev::Event| {
         editor.set_typing("startDate", false);
-        let Ok(start) = event_target_value(&event).parse::<Date>() else {
+        let Some(start) = parse_date(&event_target_value(&event)) else {
             return;
         };
         let Some((old, end)) = editor.state(|state| (state.card.start, state.card.end)) else {
             return;
         };
-        let Some(end) = end.checked_add_signed(start.signed_duration_since(old)) else {
+        let Some(end) = end.checked_add(start - old) else {
             return;
         };
         editor.commit(

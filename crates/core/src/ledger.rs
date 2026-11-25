@@ -494,7 +494,7 @@ mod tests {
     }
 
     fn day() -> Date {
-        Date::from_ymd_opt(2026, 11, 20).expect("有效的日期")
+        crate::time::ymd(2026, 11, 20).expect("有效的日期")
     }
 
     /// 第 `ordinal` 個加入的旅伴，id 為 `n`。

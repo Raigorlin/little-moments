@@ -254,7 +254,6 @@ fn place_text(s: &TripState, place: PlaceRef) -> String {
 mod tests {
     use std::collections::BTreeSet;
 
-    use chrono::Days;
     use uuid::Uuid;
 
     use super::*;
@@ -271,7 +270,7 @@ mod tests {
 
     /// 旅行的第 n 天：2026-10-20（週二）是第 1 天。
     fn day(n: u64) -> Date {
-        "2026-10-20".parse::<Date>().expect("有效的日期") + Days::new(n - 1)
+        crate::time::ymd(2026, 10, 20).expect("有效的日期") + time::Duration::days(n as i64 - 1)
     }
 
     fn person_id(n: u64) -> PersonId {

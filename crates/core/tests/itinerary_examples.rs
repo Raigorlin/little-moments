@@ -991,7 +991,10 @@ fn items(numbers: &[u64]) -> Vec<ShoppingId> {
 
 /// 範例旅行的第 n 天（1–3）：2026-10-20 是第 1 天。
 fn day(n: u32) -> Date {
-    Date::from_ymd_opt(2026, 10, 19 + n).expect("有效的日期")
+    u8::try_from(19 + n)
+        .ok()
+        .and_then(|day| lm_core::time::ymd(2026, 10, day))
+        .expect("有效的日期")
 }
 
 fn at(hour: u8, minute: u8) -> Hm {

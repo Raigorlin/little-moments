@@ -82,7 +82,10 @@ fn nth<T: From<Uuid>>(tag: Tag, n: u64) -> T {
 
 /// 旅行的第 n 天：2026-10-20（週二）是第 1 天。
 fn day(n: u32) -> Date {
-    Date::from_ymd_opt(2026, 10, 19 + n).expect("有效的日期")
+    u8::try_from(19 + n)
+        .ok()
+        .and_then(|day| lm_core::time::ymd(2026, 10, day))
+        .expect("有效的日期")
 }
 
 fn at(hour: u8, minute: u8) -> Hm {

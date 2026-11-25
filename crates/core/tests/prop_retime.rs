@@ -22,7 +22,6 @@
 
 mod support;
 
-use chrono::TimeDelta;
 use lm_core::dates::{retime_by_day_index, BlockedDay};
 use lm_core::limits::TRIP_DAYS;
 use lm_core::model::{Date, DaySetting, TripState};
@@ -51,9 +50,11 @@ proptest! {
         let start = state
             .card
             .start
-            .checked_add_signed(TimeDelta::days(shift))
+            .checked_add(time::Duration::days(shift))
             .expect("新的開始日在日期範圍內");
-        let new_days: Vec<Date> = start.iter_days().take(count.days(old_days.len())).collect();
+        let new_days: Vec<Date> = std::iter::successors(Some(start), |day| day.next_day())
+            .take(count.days(old_days.len()))
+            .collect();
         let end = new_days[new_days.len() - 1];
         let before = edited(state, &edits, &old_days, new_days.len());
         // retime_by_day_index() 的前提：輸入滿足 I5；下面算預期結果時也依賴它
@@ -178,7 +179,9 @@ fn edited(
 
 /// `start` 到 `end`（含兩端）的每一天，依日期遞增。
 fn days_between(start: Date, end: Date) -> Vec<Date> {
-    start.iter_days().take_while(|&day| day <= end).collect()
+    std::iter::successors(Some(start), |day| day.next_day())
+        .take_while(|&day| day <= end)
+        .collect()
 }
 
 /// Trim_White 之後不是空的：含有不是 Unicode White_Space 的字元。

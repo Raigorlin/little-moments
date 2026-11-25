@@ -28,7 +28,7 @@ use lm_core::ledger::{
 };
 use lm_core::model::{Date, Entity, Expense, ExpenseCategory, RowKey, Settlement, TripState};
 use lm_core::text::{char_count, has_control_chars, trim_white};
-use lm_core::time::date_text;
+use lm_core::time::{date_text, parse_date, ymd};
 use uuid::Uuid;
 
 use crate::art;
@@ -183,18 +183,18 @@ fn cents_input(cents: i64) -> String {
 /// 瀏覽器所在時區今天的日期（`<input type="date">` 的值），需求 29.11。
 fn local_today() -> String {
     let now = js_sys::Date::new_0();
-    Date::from_ymd_opt(
-        i32::try_from(now.get_full_year()).unwrap_or(1970),
-        now.get_month() + 1,
-        now.get_date(),
-    )
-    .map(|date| date.to_string())
-    .unwrap_or_default()
+    let year = i32::try_from(now.get_full_year()).unwrap_or(1970);
+    u8::try_from(now.get_month() + 1)
+        .ok()
+        .zip(u8::try_from(now.get_date()).ok())
+        .and_then(|(month, day)| ymd(year, month, day))
+        .map(|date| date.to_string())
+        .unwrap_or_default()
 }
 
 /// `<input type="date">` 的值；空的或無效時是 `None`。
 fn parse_day(text: &str) -> Option<Date> {
-    text.trim().parse().ok()
+    parse_date(text.trim())
 }
 
 /// 選單中的旅伴；「請選擇」是 `None`。

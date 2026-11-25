@@ -127,7 +127,7 @@ pub const EXPENSE_PARTICIPANTS: RangeInclusive<usize> = 1..=100;
 
 // ── 邀請連結 ──
 
-/// 邀請連結在建立 7 天後到期（以 `chrono::TimeDelta::days()` 使用，所以是 `i64`）。
+/// 邀請連結在建立 7 天後到期（Database 的 `make_interval(days => …)`；與日期的天數同為 `i64`）。
 pub const INVITE_TTL_DAYS: i64 = 7;
 /// 每趟旅行最多 20 個 Active_Invite。
 pub const TRIP_ACTIVE_INVITES_MAX: usize = 20;

@@ -19,7 +19,7 @@ use crate::ids::{
 use crate::time::Hm;
 
 /// 沒有時區的日期（西元曆），線上格式為 `YYYY-MM-DD`。
-pub type Date = chrono::NaiveDate;
+pub type Date = time::Date;
 
 /// 每趟旅行的提交序號（Seq），也是列的版本（Row_Version）：最後新增、修改或刪除這一列的 Seq。
 pub type Seq = u64;
@@ -416,8 +416,10 @@ pub struct TripCard {
     pub title: String,
     /// 0–100 字。
     pub destination: String,
+    #[serde(with = "crate::time::iso_date")]
     pub start: Date,
     /// `start..=end` 含頭尾 1–31 天。
+    #[serde(with = "crate::time::iso_date")]
     pub end: Date,
     /// 介紹，0–1000 字。
     pub description: String,
@@ -493,6 +495,7 @@ pub enum PlaceRef {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Route {
     pub id: RouteId,
+    #[serde(with = "crate::time::iso_date")]
     pub day: Date,
     /// 每台車每天最多一條路線。
     pub vehicle: VehicleId,
@@ -525,6 +528,7 @@ pub struct Stop {
 /// 一個 Trip_Day 的設定；以日期為鍵，每天最多一列。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DaySetting {
+    #[serde(with = "crate::time::iso_date")]
     pub day: Date,
     /// 0–20 字；只有空白視為未設定。
     pub title: Option<String>,
@@ -543,6 +547,7 @@ pub struct DaySetting {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Activity {
     pub id: ActivityId,
+    #[serde(with = "crate::time::iso_date")]
     pub day: Date,
     pub time: Hm,
     /// 1–100 字。
@@ -574,6 +579,7 @@ pub enum Participation {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Meal {
     pub id: MealId,
+    #[serde(with = "crate::time::iso_date")]
     pub day: Date,
     pub slot: MealSlot,
     /// 用餐時間；未設定時使用餐次的預設時間（不寫入）。
@@ -643,6 +649,7 @@ pub struct Departure {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Expense {
     pub id: ExpenseId,
+    #[serde(with = "crate::time::iso_date")]
     pub day: Date,
     /// 項目名稱，1–100 字。
     pub title: String,
@@ -664,6 +671,7 @@ pub struct Expense {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settlement {
     pub id: SettlementId,
+    #[serde(with = "crate::time::iso_date")]
     pub day: Date,
     pub from: PersonId,
     /// 與 `from` 不同。
@@ -706,7 +714,7 @@ string_enum! {
 #[serde(untagged)]
 pub enum RowKey {
     Id(Uuid),
-    Day(Date),
+    Day(#[serde(with = "crate::time::iso_date")] Date),
 }
 
 impl RowKey {
@@ -1121,7 +1129,7 @@ mod tests {
     }
 
     fn day(text: &str) -> Date {
-        text.parse().expect("有效的日期")
+        crate::time::parse_date(text).expect("有效的日期")
     }
 
     fn hm(hour: u8, minute: u8) -> Hm {

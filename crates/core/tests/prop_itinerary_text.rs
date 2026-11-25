@@ -22,7 +22,6 @@
 
 mod support;
 
-use chrono::Datelike;
 use lm_core::itinerary::{place_name, stop_task};
 use lm_core::itinerary_text::itinerary_text;
 use lm_core::model::{Date, PlaceRef, Route, Row, TripState};
@@ -115,12 +114,9 @@ fn check_days(state: &TripState, text: &str) -> Result<(), TestCaseError> {
     Ok(())
 }
 
-/// 旅行的每一天，依日期遞增：開始日到結束日（含兩端）。以 chrono 另外計算，不使用 lm-core 的 `date_range()`。
+/// 旅行的每一天，依日期遞增：開始日到結束日（含兩端）。以 time 另外計算，不使用 lm-core 的 `date_range()`。
 fn trip_dates(state: &TripState) -> Vec<Date> {
-    state
-        .card
-        .start
-        .iter_days()
+    std::iter::successors(Some(state.card.start), |date| date.next_day())
         .take_while(|date| *date <= state.card.end)
         .collect()
 }
@@ -134,7 +130,7 @@ fn is_day_header(line: &str) -> bool {
 /// 當日標題沒有設定，或經 `clean_text()` 之後是空字串時為「未命名的一天」。
 fn header_line(state: &TripState, n: usize, date: Date) -> String {
     const WEEKDAYS: [char; 7] = ['日', '一', '二', '三', '四', '五', '六'];
-    let weekday = WEEKDAYS[date.weekday().num_days_from_sunday() as usize];
+    let weekday = WEEKDAYS[date.weekday().number_days_from_sunday() as usize];
     let title = state
         .day_settings
         .get(&date)
@@ -143,7 +139,7 @@ fn header_line(state: &TripState, n: usize, date: Date) -> String {
         .filter(|title| !title.is_empty());
     format!(
         "第 {n} 天・{}/{}（週{weekday}）｜{}",
-        date.month(),
+        u8::from(date.month()),
         date.day(),
         title.as_deref().unwrap_or("未命名的一天")
     )

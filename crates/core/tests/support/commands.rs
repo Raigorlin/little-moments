@@ -11,7 +11,6 @@
 use std::collections::BTreeSet;
 use std::fmt::Debug;
 
-use chrono::Days;
 use lm_core::apply::Ctx;
 use lm_core::command::{
     ActivityDraft, ActivityPatch, Command, DateSpan, DaySettingPatch, ExpenseDraft, ExpensePatch,
@@ -34,6 +33,7 @@ use proptest::prelude::*;
 use proptest::sample::{select, subsequence, Index};
 use proptest::strategy::Union;
 use serde_json::json;
+use time::Duration;
 use uuid::Uuid;
 
 use super::ids::{id, SeqIds, Tag};
@@ -283,7 +283,7 @@ impl Pools {
             expenses: s.expenses.keys().copied().collect(),
             settlements: s.settlements.keys().copied().collect(),
             days: lm_core::time::date_range(s.card.start, s.card.end),
-            outside: vec![s.card.start - Days::new(1), s.card.end + Days::new(1)],
+            outside: vec![s.card.start - Duration::DAY, s.card.end + Duration::DAY],
         }
     }
 
@@ -436,12 +436,13 @@ fn trip_commands(state: &TripState, p: &Pools, arms: &mut Vec<BoxedStrategy<Comm
     // 改日期：平移 -2..=2 天、1–6 天（可能縮短），也有結束日早於開始日與超過 31 天
     let dates = prop_oneof![
         6 => (0_u64..=4, 1_u64..=6, any::<bool>()).prop_map(move |(shift, days, earlier)| {
-            let start = if earlier { start - Days::new(shift.min(2)) } else { start + Days::new(shift.min(2)) };
-            DateSpan { start, end: start + Days::new(days - 1) }
+            let shift = Duration::days(shift.min(2) as i64);
+            let start = if earlier { start - shift } else { start + shift };
+            DateSpan { start, end: start + Duration::days(days as i64 - 1) }
         }),
-        1 => Just(DateSpan { start, end: start - Days::new(1) }),
-        1 => Just(DateSpan { start, end: start + Days::new(31) }),
-        1 => Just(DateSpan { start, end: start + Days::new(len.saturating_sub(1)) }),
+        1 => Just(DateSpan { start, end: start - Duration::DAY }),
+        1 => Just(DateSpan { start, end: start + Duration::days(31) }),
+        1 => Just(DateSpan { start, end: start + Duration::days(len.saturating_sub(1) as i64) }),
     ]
     .boxed();
     let mut destinations: Vec<String> = DESTINATIONS.iter().map(|d| (*d).to_owned()).collect();
@@ -1003,7 +1004,7 @@ fn gear_and_ledger_commands(p: &Pools, arms: &mut Vec<BoxedStrategy<Command>>) {
     let ledger_day = || {
         prop_oneof![
             4 => p.day(),
-            1 => Just(Date::from_ymd_opt(2024, 2, 29).expect("有效的日期")),
+            1 => Just(lm_core::time::ymd(2024, 2, 29).expect("有效的日期")),
         ]
         .boxed()
     };

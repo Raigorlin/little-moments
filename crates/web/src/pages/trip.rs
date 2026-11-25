@@ -24,7 +24,7 @@ use lm_core::ids::{PersonId, TripId};
 use lm_core::model::{Date, Slot, TripCard};
 use lm_core::rules::{gear_progress, unassigned_gear};
 use lm_core::text::trim_js_whitespace;
-use lm_core::time::{date_range, month_day};
+use lm_core::time::{date_range, days_between, month_day};
 
 use crate::app::{home_path, trip_path, use_toasts, HeaderKind, Shell, Toasts};
 use crate::art::{self, Illustration};
@@ -529,19 +529,23 @@ fn TripLoaded(trip: TripId, handle: TripHandle, stores: TripStores) -> impl Into
 
 /// 台灣時間（UTC+8）今天的日期。
 fn taiwan_today() -> Option<Date> {
+    taiwan_date(js_sys::Date::now() as i64)
+}
+
+/// Unix 時間 `now_ms`（毫秒）在台灣時間（UTC+8）的日期。
+fn taiwan_date(now_ms: i64) -> Option<Date> {
     const UTC8_MS: i64 = 8 * 3_600_000;
     const DAY_MS: i64 = 86_400_000;
-    // 1970-01-01 是西元第 719,163 天（0001-01-01 為第 1 天）
-    const UNIX_EPOCH_FROM_CE: i64 = 719_163;
-    let now_ms = js_sys::Date::now() as i64;
-    let days = (now_ms + UTC8_MS).div_euclid(DAY_MS) + UNIX_EPOCH_FROM_CE;
-    Date::from_num_days_from_ce_opt(i32::try_from(days).ok()?)
+    // 1970-01-01 的儒略日數（Julian Day Number）
+    const UNIX_EPOCH_JULIAN_DAY: i64 = 2_440_588;
+    let days = (now_ms + UTC8_MS).div_euclid(DAY_MS) + UNIX_EPOCH_JULIAN_DAY;
+    Date::from_julian_day(i32::try_from(days).ok()?).ok()
 }
 
 /// 倒數（需求 32.3）：D = 開始日減去今天。D 大於 0 時「距離出發」「{D}」「天」，D 等於 0 時「今天出發」「GO」「!」，
 /// D 小於 0 時「旅行手冊」「{Trip_Day 的天數}」「天的好日子」。
 fn countdown(card: &TripCard, today: Date) -> (&'static str, String, &'static str) {
-    let days = card.start.signed_duration_since(today).num_days();
+    let days = days_between(today, card.start);
     match days {
         d if d > 0 => ("距離出發", d.to_string(), "天"),
         0 => ("今天出發", "GO".to_owned(), "!"),
@@ -808,5 +812,29 @@ fn Sidebar(
                 {art::static_svg(icons::LEAF)} " 把垃圾帶走，把風景留下。"
             </div>
         </aside>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use lm_core::time::ymd;
+
+    use super::taiwan_date;
+
+    const HOUR_MS: i64 = 3_600_000;
+
+    #[test]
+    fn taiwan_date_is_the_utc_plus_8_calendar_day() {
+        let day = |y, m, d| ymd(y, m, d).expect("有效的日期");
+        assert_eq!(taiwan_date(0), Some(day(1970, 1, 1)));
+        // UTC 15:59:59.999 仍是台灣的同一天，16:00 起是隔天
+        assert_eq!(taiwan_date(16 * HOUR_MS - 1), Some(day(1970, 1, 1)));
+        assert_eq!(taiwan_date(16 * HOUR_MS), Some(day(1970, 1, 2)));
+        // 1970 年之前（負數）
+        assert_eq!(taiwan_date(-8 * HOUR_MS), Some(day(1970, 1, 1)));
+        assert_eq!(taiwan_date(-8 * HOUR_MS - 1), Some(day(1969, 12, 31)));
+        // 2026-11-24T16:00:00Z 是台灣的 2026-11-25 00:00；2028-02-28T16:00:00Z 是閏日
+        assert_eq!(taiwan_date(1_795_536_000_000), Some(day(2026, 11, 25)));
+        assert_eq!(taiwan_date(1_835_366_400_000), Some(day(2028, 2, 29)));
     }
 }

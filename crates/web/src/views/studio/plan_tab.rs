@@ -29,7 +29,7 @@ use lm_core::storybook::{
     stop_task_parts, EventSource, StudioDay, StudioEvent, StudioKind, StudioRoute, StudioStop,
     STUDIO_STOP_KINDS,
 };
-use lm_core::time::{date_text, Hm};
+use lm_core::time::{date_text, parse_date, Hm};
 use uuid::Uuid;
 
 use super::editor::{
@@ -1311,10 +1311,10 @@ fn EventEntry(i: usize, source: EventSource, today: Today) -> impl IntoView {
 
 /// 旅行日期平移 `from` 到 `to` 的天數（Decision D6）。
 fn shifted(start: Date, end: Date, from: Date, to: Date) -> Option<DateSpan> {
-    let offset = to.signed_duration_since(from);
+    let offset = to - from;
     Some(DateSpan {
-        start: start.checked_add_signed(offset)?,
-        end: end.checked_add_signed(offset)?,
+        start: start.checked_add(offset)?,
+        end: end.checked_add(offset)?,
     })
 }
 
@@ -1456,7 +1456,7 @@ pub(super) fn PlanPanel() -> impl IntoView {
     let (arrival_invalid, arrival_described) = invalid_attrs(editor, "dayArrival");
 
     let on_date = move |event: ev::Event| {
-        let Ok(to) = event_target_value(&event).parse::<Date>() else {
+        let Some(to) = parse_date(&event_target_value(&event)) else {
             return;
         };
         let Some(from) = editor.day_date() else {
@@ -1486,7 +1486,7 @@ pub(super) fn PlanPanel() -> impl IntoView {
         let Some((start, end)) = editor.state(|state| (state.card.start, state.card.end)) else {
             return;
         };
-        let Some(next) = end.succ_opt() else {
+        let Some(next) = end.next_day() else {
             return;
         };
         let added = editor.commit(
@@ -1550,7 +1550,7 @@ pub(super) fn PlanPanel() -> impl IntoView {
         let Some((start, end)) = editor.state(|state| (state.card.start, state.card.end)) else {
             return;
         };
-        let Some(previous) = end.pred_opt() else {
+        let Some(previous) = end.previous_day() else {
             return;
         };
         editor.open_stops.set(BTreeSet::new());

@@ -180,7 +180,7 @@ mod tests {
     use crate::time::Hm;
 
     fn day(text: &str) -> Date {
-        text.parse().expect("有效的日期")
+        crate::time::parse_date(text).expect("有效的日期")
     }
 
     fn at(hour: u8, minute: u8) -> Hm {

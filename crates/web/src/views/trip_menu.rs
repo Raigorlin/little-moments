@@ -102,7 +102,7 @@ fn parse_date(value: &str) -> Option<Date> {
     if value.len() != 10 {
         return None;
     }
-    Date::parse_from_str(value, "%Y-%m-%d").ok()
+    lm_core::time::parse_date(value)
 }
 
 /// 以 LM_Core 在目前的 Optimistic_View 上檢查一個 Command，不送出（需求 19.17 的移除前檢查）。還沒有畫面時視為成立，

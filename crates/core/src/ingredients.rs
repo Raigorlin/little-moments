@@ -1090,7 +1090,7 @@ mod tests {
     }
 
     fn day() -> Date {
-        "2026-11-20".parse().expect("有效的日期")
+        crate::time::ymd(2026, 11, 20).expect("有效的日期")
     }
 
     fn card() -> TripCard {

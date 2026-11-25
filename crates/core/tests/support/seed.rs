@@ -52,8 +52,7 @@ pub fn vehicle(n: u64) -> VehicleId {
 
 /// `YYYY-MM-DD` 的日期。
 pub fn day(text: &str) -> Date {
-    text.parse()
-        .unwrap_or_else(|error| panic!("{text:?} 不是有效的日期：{error}"))
+    lm_core::time::parse_date(text).unwrap_or_else(|| panic!("{text:?} 不是有效的日期"))
 }
 
 /// `HH:MM` 的時刻。

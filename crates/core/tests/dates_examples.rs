@@ -227,7 +227,7 @@ fn place_id(n: u64) -> PlaceId {
 }
 
 fn date(text: &str) -> Date {
-    text.parse().expect("有效的日期")
+    lm_core::time::parse_date(text).expect("有效的日期")
 }
 
 fn at(hour: u8, minute: u8) -> Hm {

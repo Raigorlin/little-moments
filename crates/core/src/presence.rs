@@ -437,7 +437,7 @@ mod tests {
             person: Some(PersonId(Uuid::from_u128(2))),
             editing: Some(EditTarget {
                 entity: Entity::DaySetting,
-                key: RowKey::Day(chrono::NaiveDate::from_ymd_opt(2026, 7, 1).unwrap()),
+                key: RowKey::Day(crate::time::ymd(2026, 7, 1).unwrap()),
             }),
         };
         let value = json!({

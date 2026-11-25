@@ -20,7 +20,7 @@ use lm_core::apply::{creator_name, new_trip_card};
 use lm_core::command::{Input, TripDraft};
 use lm_core::ids::TripId;
 use lm_core::model::{CoverKind, Date, TripStatus};
-use lm_core::time::weekday_char;
+use lm_core::time::{parse_date as parse_iso_date, weekday_char};
 use uuid::Uuid;
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -88,7 +88,13 @@ const fn status_label(status: TripStatus) -> &'static str {
 /// 現行 `fullDate()`：`toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })`，
 /// 例如 2026-10-20 為「2026年10月20日 週二」。
 pub fn full_date(date: Date) -> String {
-    format!("{} 週{}", date.format("%Y年%-m月%-d日"), weekday_char(date))
+    format!(
+        "{:04}年{}月{}日 週{}",
+        date.year(),
+        u8::from(date.month()),
+        date.day(),
+        weekday_char(date)
+    )
 }
 
 /// 現行 `dateSpan()`：開始日等於結束日時只有一個日期，否則以「 – 」連接（需求 17.1）。
@@ -116,7 +122,7 @@ fn parse_date(value: &str) -> Option<Date> {
     if value.len() != 10 {
         return None;
     }
-    Date::parse_from_str(value, "%Y-%m-%d").ok()
+    parse_iso_date(value)
 }
 
 /// 表單中填寫的內容（尚未修剪）。
@@ -714,5 +720,35 @@ fn Field(
             {input}
             {help.map(|help| view! { <small class="help" id=help_id>{help}</small> })}
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use lm_core::time::ymd;
+
+    use super::{date_span, full_date, parse_date};
+
+    #[test]
+    fn full_dates_match_to_locale_date_string_zh_tw() {
+        let day = |y, m, d| ymd(y, m, d).expect("有效的日期");
+        assert_eq!(full_date(day(2026, 10, 20)), "2026年10月20日 週二");
+        assert_eq!(full_date(day(2027, 1, 5)), "2027年1月5日 週二");
+        assert_eq!(
+            date_span(day(2026, 12, 30), day(2026, 12, 30)),
+            "2026年12月30日 週三"
+        );
+        assert_eq!(
+            date_span(day(2026, 12, 30), day(2027, 1, 2)),
+            "2026年12月30日 週三 – 2027年1月2日 週六"
+        );
+    }
+
+    #[test]
+    fn date_inputs_are_yyyy_mm_dd() {
+        assert_eq!(parse_date("2026-12-30"), ymd(2026, 12, 30));
+        for value in ["", "2026-2-30", "2026-02-30", "2026-12-3", " 2026-12-30"] {
+            assert_eq!(parse_date(value), None, "{value:?}");
+        }
     }
 }

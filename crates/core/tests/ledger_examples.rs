@@ -545,8 +545,7 @@ fn participants(ids: &[&str]) -> BTreeSet<PersonId> {
 }
 
 fn date(text: &str) -> Date {
-    text.parse()
-        .unwrap_or_else(|error| panic!("{text:?} 不是有效的日期：{error}"))
+    lm_core::time::parse_date(text).unwrap_or_else(|| panic!("{text:?} 不是有效的日期"))
 }
 
 /// 現行 `tests/ledger.test.js` 的 `card`：「週末露營」，湖邊營地，2026-11-20 到 2026-11-22，封面 lake，規劃中。

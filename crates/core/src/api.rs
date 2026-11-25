@@ -132,7 +132,9 @@ pub struct TripSummary {
     pub id: TripId,
     pub title: String,
     pub destination: String,
+    #[serde(with = "crate::time::iso_date")]
     pub start: Date,
+    #[serde(with = "crate::time::iso_date")]
     pub end: Date,
     pub cover: CoverKind,
     pub status: TripStatus,
@@ -147,7 +149,9 @@ pub struct TripSummary {
 pub struct CreateTripRequest {
     pub id: TripId,
     pub title: String,
+    #[serde(with = "crate::time::iso_date")]
     pub start: Date,
+    #[serde(with = "crate::time::iso_date")]
     pub end: Date,
     #[serde(default)]
     pub destination: String,
@@ -198,7 +202,9 @@ pub struct InviteListItem {
 pub struct InvitePreview {
     pub title: String,
     pub destination: String,
+    #[serde(with = "crate::time::iso_date")]
     pub start: Date,
+    #[serde(with = "crate::time::iso_date")]
     pub end: Date,
     pub inviter_name: String,
     pub already_member: Option<bool>,

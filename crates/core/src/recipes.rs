@@ -852,7 +852,7 @@ mod tests {
     fn meal_on(n: u64, day: &str, slot: MealSlot) -> Meal {
         Meal {
             id: MealId(Uuid::from_u128(u128::from(n))),
-            day: day.parse().expect("有效的日期"),
+            day: crate::time::parse_date(day).expect("有效的日期"),
             slot,
             time: None,
             title: String::new(),

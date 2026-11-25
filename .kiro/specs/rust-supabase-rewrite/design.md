@@ -519,14 +519,14 @@ enabled = false
 | `presence` | `EditTarget`、`PresenceMeta`、`PresenceThrottle`；編輯者頭像：`avatar_initial`、`avatar_color`、`AVATAR_PALETTE`、`editor_stacks`、`EditorStack` | 新增 |
 | `api` | HTTP 請求與回應型別、錯誤代碼 | 新增 |
 
-`lm-core` 只依賴 `serde`、`serde_json`、`serde_with`、`uuid`、`chrono`（不啟用 clock）、`unicode-normalization`、`unicode-segmentation`（頭像取第一個字素叢集）、`regex`、`indexmap`、`thiserror`；測試另加 `proptest`。它同時編成原生與 wasm32，所以不能用執行緒、系統時間或檔案。
+`lm-core` 只依賴 `serde`、`serde_json`、`serde_with`（不啟用預設 feature）、`uuid`、`time`（`serde-human-readable`；不呼叫 `now_utc()`，2026-11-25 取代不再維護的 `chrono`，RUSTSEC-2026-0543）、`unicode-normalization`、`unicode-segmentation`（頭像取第一個字素叢集）、`regex`、`indexmap`、`thiserror`；測試另加 `proptest`。它同時編成原生與 wasm32，所以不能用執行緒、系統時間或檔案。
 
 #### 1.2 資料型別
 
 ```rust
 // crates/core/src/model.rs（節錄）
 use std::collections::{BTreeMap, BTreeSet};
-use chrono::NaiveDate as Date;
+pub type Date = time::Date; // 線上格式 `YYYY-MM-DD`
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -4020,9 +4020,9 @@ proptest! {
 | 工具 | WSL 2 的 Ubuntu 套件：`build-essential`、`pkg-config`、`libssl-dev` | 編譯原生相依套件的 C 工具鏈；native-tls 在 Linux 使用 OpenSSL，openssl-sys 以 pkg-config 找到 `libssl-dev` |
 | 工具 | Supabase CLI 3.2.0 的 Linux 版、Docker Engine（都安裝在 WSL 2 的 Ubuntu 中，不使用 Docker Desktop） | 本機 Supabase 堆疊與遷移 |
 | 工具 | Bun（Windows 上已有） | 只用於一次性的 `scripts/export-art.mjs` |
-| `lm-core` | serde、serde_json、serde_with、uuid（v4、serde，wasm 加 `js`）、chrono（不含 clock）、unicode-normalization、unicode-segmentation（頭像的字）、regex、indexmap、thiserror；dev：proptest | 型別與規則 |
+| `lm-core` | serde、serde_json、serde_with（不啟用預設 feature）、uuid（v4、serde，wasm 加 `js`）、time（macros、serde-human-readable；不讀系統時間）、unicode-normalization、unicode-segmentation（頭像的字）、regex、indexmap、thiserror；dev：proptest | 型別與規則 |
 | `lm-supabase` | serde_json；feature `server`：reqwest、jsonwebtoken、tokio、async-trait；feature `web`：wasm-bindgen、web-sys（WebSocket、MessageEvent、CloseEvent）、gloo-timers | 用戶端 |
-| `lm-server` | axum 0.8（ws）、tokio、tower-http（fs、trace）、sqlx 0.8（postgres、runtime-tokio、uuid、chrono、json）、tokio-tungstenite、futures-util、sha2、rand、hex、tracing、tracing-subscriber、dotenvy | 服務 |
+| `lm-server` | axum 0.8（ws）、tokio、tower-http（fs、trace）、sqlx 0.8（postgres、runtime-tokio、uuid、time、json）、time、tokio-tungstenite、futures-util、sha2、rand、hex、tracing、tracing-subscriber、dotenvy | 服務 |
 | `lm-web` | leptos 0.8（csr）、leptos_router 0.8、wasm-bindgen、web-sys、js-sys、gloo-net、gloo-timers、gloo-storage、uuid（js） | 前端 |
 | 服務 | Supabase：PostgreSQL、Auth、Realtime、API gateway；Studio 與 postgres-meta（開發用） | 平台 |
 | 設定 | `.cargo/config.toml` 為 wasm32 加上 `--cfg getrandom_backend="wasm_js"`（getrandom 0.3 的瀏覽器後端） | 產生 UUID |

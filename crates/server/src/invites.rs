@@ -60,7 +60,6 @@ use std::collections::HashMap;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
-use chrono::{DateTime, SecondsFormat, Utc};
 use lm_core::api::{InviteCreated, InviteListItem, InvitePreview, JoinRequest, JoinResponse};
 use lm_core::apply::join_trip;
 use lm_core::ids::{CommandId, PersonId, TripId, UserId};
@@ -71,6 +70,7 @@ use lm_core::sync::{Change, ChangeSet};
 use sha2::{Digest, Sha256};
 use sqlx::types::{JsonValue, Uuid};
 use sqlx::PgPool;
+use time::{OffsetDateTime, UtcOffset};
 
 use crate::commands::versioned_changes;
 use crate::error::ApiError;
@@ -139,7 +139,7 @@ pub async fn create(
 
     let id = random_uuid();
     let token = hex::encode(rand::random::<[u8; 32]>());
-    let expires_at = sqlx::query_scalar::<_, DateTime<Utc>>(
+    let expires_at = sqlx::query_scalar::<_, OffsetDateTime>(
         "insert into app.invites (id, trip_id, token_hash, created_by, created_at, expires_at) \
          values ($1, $2, $3, $4, now(), now() + make_interval(days => $5)) \
          returning expires_at",
@@ -175,7 +175,7 @@ pub async fn list(
     let caps = inviter(head.owner, &user, me)?;
     let creator = (!caps.can_manage).then_some(user.id.0);
 
-    let rows = sqlx::query_as::<_, (Uuid, String, DateTime<Utc>, DateTime<Utc>)>(&format!(
+    let rows = sqlx::query_as::<_, (Uuid, String, OffsetDateTime, OffsetDateTime)>(&format!(
         "select i.id, p.display_name, i.created_at, i.expires_at \
          from app.invites i join app.profiles p on p.user_id = i.created_by \
          where i.trip_id = $1 and ($2::uuid is null or i.created_by = $2) and {ACTIVE} \
@@ -487,6 +487,41 @@ fn token_hash(token: &str) -> String {
 }
 
 /// 回應中的時間：RFC 3339、UTC、毫秒（例如 `2026-01-08T03:04:05.678Z`）。
-fn timestamp(time: DateTime<Utc>) -> String {
-    time.to_rfc3339_opts(SecondsFormat::Millis, true)
+/// 小數只取到毫秒（捨去微秒），與改用 time 之前的 chrono `to_rfc3339_opts(SecondsFormat::Millis, true)` 相同。
+fn timestamp(time: OffsetDateTime) -> String {
+    let utc = time.to_offset(UtcOffset::UTC);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        utc.year(),
+        u8::from(utc.month()),
+        utc.day(),
+        utc.hour(),
+        utc.minute(),
+        utc.second(),
+        utc.millisecond()
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use time::macros::datetime;
+
+    use super::timestamp;
+
+    #[test]
+    fn timestamps_are_rfc3339_utc_with_milliseconds() {
+        assert_eq!(
+            timestamp(datetime!(2026-01-08 03:04:05.678_901 UTC)),
+            "2026-01-08T03:04:05.678Z"
+        );
+        assert_eq!(
+            timestamp(datetime!(2026-11-25 00:00:00 UTC)),
+            "2026-11-25T00:00:00.000Z"
+        );
+        // Database 回傳的時間不一定是 UTC：一律換成 UTC 再寫出
+        assert_eq!(
+            timestamp(datetime!(2026-12-02 07:30:00.999_999 +08:00)),
+            "2026-12-01T23:30:00.999Z"
+        );
+    }
 }

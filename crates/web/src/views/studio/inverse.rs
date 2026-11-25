@@ -395,7 +395,10 @@ mod tests {
     }
 
     fn date(day: u32) -> Date {
-        Date::from_ymd_opt(2026, 10, day).expect("日期")
+        u8::try_from(day)
+            .ok()
+            .and_then(|day| lm_core::time::ymd(2026, 10, day))
+            .expect("日期")
     }
 
     fn hm(hour: u8, minute: u8) -> Hm {

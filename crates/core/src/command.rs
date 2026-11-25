@@ -88,11 +88,13 @@ pub enum Command {
     },
     /// 只帶改過的欄位（需求 22.15）；那一天沒有設定時新增。
     SaveDaySetting {
+        #[serde(with = "crate::time::iso_date")]
         day: Date,
         patch: DaySettingPatch,
     },
     /// 一筆或多筆活動（常用活動一次加入），全部新增或全部不新增（需求 23.1）。
     AddActivities {
+        #[serde(with = "crate::time::iso_date")]
         day: Date,
         items: Vec<ActivityDraft>,
     },
@@ -226,7 +228,9 @@ pub fn optional_time(input: Option<&Input<Hm>>) -> Result<Option<Hm>, InvalidTim
 /// 旅行的起訖日期：開始日與結束日一起帶有、一起生效，不會只改其中一個（需求 18.1）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DateSpan {
+    #[serde(with = "crate::time::iso_date")]
     pub start: Date,
+    #[serde(with = "crate::time::iso_date")]
     pub end: Date,
 }
 
@@ -237,7 +241,9 @@ pub struct TripDraft {
     pub title: String,
     #[serde(default)]
     pub destination: String,
+    #[serde(with = "crate::time::iso_date")]
     pub start: Date,
+    #[serde(with = "crate::time::iso_date")]
     pub end: Date,
     #[serde(default)]
     pub description: String,
@@ -332,6 +338,7 @@ pub struct VehiclePatch {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RouteDraft {
     pub id: RouteId,
+    #[serde(with = "crate::time::iso_date")]
     pub day: Date,
     #[serde(default)]
     pub vehicle: Option<VehicleId>,
@@ -427,6 +434,7 @@ pub struct ActivityPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "crate::time::iso_date::option")]
     pub day: Option<Date>,
     /// 時間是必填的欄位：帶有 `null` 或空字串時是「請填寫時間，例如 08:30。」。
     #[serde(
@@ -454,6 +462,7 @@ pub struct ActivityPatch {
 /// 新增料理（需求 24.2）。負責人沒有選擇是待分配；插圖種類沒有設定時依名稱與食材推斷（需求 24.5）。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MealDraft {
+    #[serde(with = "crate::time::iso_date")]
     pub day: Date,
     pub slot: Input<MealSlot>,
     /// 用餐時間；留空時使用餐次的預設時間（需求 24.3）。
@@ -476,6 +485,7 @@ pub struct MealDraft {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MealPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "crate::time::iso_date::option")]
     pub day: Option<Date>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slot: Option<Input<MealSlot>>,
@@ -566,6 +576,7 @@ pub struct GearPatch {
 /// 新增支出（需求 29.2）。金額是整數的分；付款人沒有選擇是 `None`；不連結採買品項時 `shopping_item` 是 `None`。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExpenseDraft {
+    #[serde(with = "crate::time::iso_date")]
     pub day: Date,
     pub title: String,
     pub amount_cents: i64,
@@ -584,6 +595,7 @@ pub struct ExpenseDraft {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ExpensePatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "crate::time::iso_date::option")]
     pub day: Option<Date>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -610,6 +622,7 @@ pub struct ExpensePatch {
 /// 新增還款（需求 29.3）。付款人或收款人沒有選擇是 `None`。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SettlementDraft {
+    #[serde(with = "crate::time::iso_date")]
     pub day: Date,
     #[serde(default)]
     pub from: Option<PersonId>,
@@ -624,6 +637,7 @@ pub struct SettlementDraft {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SettlementPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "crate::time::iso_date::option")]
     pub day: Option<Date>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<PersonId>,

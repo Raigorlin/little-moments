@@ -6,7 +6,6 @@
 
 use std::collections::BTreeSet;
 
-use chrono::{Days, NaiveDate, TimeDelta};
 use lm_core::ids::{PersonId, ShoppingId, VehicleId};
 use lm_core::limits::{ROUTE_STOPS, VEHICLE_SEATS};
 use lm_core::model::{
@@ -21,6 +20,7 @@ use proptest::collection::vec;
 use proptest::option;
 use proptest::prelude::*;
 use proptest::sample::{select, subsequence, Index};
+use time::Duration;
 
 use super::ids::{id, Tag};
 use super::vocab::{
@@ -881,12 +881,12 @@ impl StateSeed {
 
 impl CardSeed {
     fn build(&self) -> TripCard {
-        let first = NaiveDate::from_ymd_opt(2026, 1, 1).expect("有效的日期");
+        let first = lm_core::time::ymd(2026, 1, 1).expect("有效的日期");
         let start = first
-            .checked_add_days(Days::new(self.start_offset))
+            .checked_add(Duration::days(self.start_offset as i64))
             .expect("開始日在日期範圍內");
         let end = start
-            .checked_add_days(Days::new(self.days as u64 - 1))
+            .checked_add(Duration::days(self.days as i64 - 1))
             .expect("結束日在日期範圍內");
         TripCard {
             id: id(Tag::Trip, 1),
@@ -963,7 +963,7 @@ fn is_my_gear(item: &GearItem, person: PersonId) -> bool {
 /// `start` 加 `days` 天（可以是負數）。
 fn offset_day(start: Date, days: i64) -> Date {
     start
-        .checked_add_signed(TimeDelta::days(days))
+        .checked_add(Duration::days(days))
         .expect("日期在範圍內")
 }
 

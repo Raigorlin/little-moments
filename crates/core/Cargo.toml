@@ -7,14 +7,19 @@ publish.workspace = true
 # 共用規則只做純計算，同時編成原生與 wasm32-unknown-unknown：
 # 不依賴 lm-supabase、lm-server、lm-web，也不使用網路、檔案、系統時間與執行緒（需求 1.3、1.4）。
 [dependencies]
-# 不啟用 clock：日期只由輸入計算，不讀系統時間與時區
-chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 indexmap = { version = "2", features = ["serde"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_with = "3"
+# 只用 serde_with::rust::double_option。不啟用預設的 std／alloc：它們以 `chrono_0_4?/…` 參照 chrono，
+# 會讓 chrono 留在 Cargo.lock（不會被編譯，但 osv-scanner 依 Cargo.lock 回報 RUSTSEC-2026-0543）
+serde_with = { version = "3", default-features = false }
 thiserror = "2"
+# 日期（model::Date = time::Date；chrono 已不再維護，RUSTSEC-2026-0543）。不使用 OffsetDateTime::now_utc()：日期只由
+# 輸入計算，不讀系統時間與時區。不啟用 time 的 serde feature：它也接受 `[年, 一年中的第幾天]` 陣列，所以日期欄位一律以
+# `time::iso_date` 只讀寫 `YYYY-MM-DD` 字串；少標一個欄位就無法編譯。parsing 與 macros：`time::parse_date()`
+# （wasm32 的建置沒有 sqlx，不會由它啟用）
+time = { version = "0.3", default-features = false, features = ["macros", "parsing", "std"] }
 unicode-normalization = "0.1"
 unicode-segmentation = "1"
 uuid = { version = "1", features = ["v4", "serde"] }

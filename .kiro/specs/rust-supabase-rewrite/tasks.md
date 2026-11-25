@@ -57,7 +57,7 @@
     - _Requirements: 1.7, 1.8_
 
   - [x] 2.2 建立四個 crate 的骨架
-    - `crates/core`（lm-core）：只依賴 design「Dependencies」列出的套件（chrono 不啟用 clock；測試另加 proptest），不依賴其他三個 crate；`lib.rs` 先宣告 design 1.1 的每個模組，內容由之後的任務填入
+    - `crates/core`（lm-core）：只依賴 design「Dependencies」列出的套件（日期原為不啟用 clock 的 chrono，2026-11-25 改為 time；測試另加 proptest），不依賴其他三個 crate；`lib.rs` 先宣告 design 1.1 的每個模組，內容由之後的任務填入
     - `crates/supabase`（lm-supabase）：feature `server`（reqwest、jsonwebtoken、tokio、async-trait）與 feature `web`（wasm-bindgen、web-sys 的 WebSocket、MessageEvent、CloseEvent、gloo-timers）；`lib.rs` 宣告 `realtime::protocol`、`realtime::socket`、只在 `feature = "web"` 而且 `target_arch = "wasm32"` 時編譯的 `realtime::web`，以及 feature `server` 的 `gotrue` 與 `jwt`；可以使用 lm-core 的型別，lm-core 不反向依賴
     - `crates/server`（lm-server，執行檔 `little-moments-server`）：design 列出的相依套件，以 feature `server` 引用 lm-supabase
     - `crates/web`（lm-web）：Leptos 0.8（csr）、leptos_router 0.8 與 design 列出的瀏覽器套件，以 feature `web` 引用 lm-supabase；`main.rs` 先掛載空白的 App；`index.html` 以 `data-trunk rel="rust"` 與 `data-wasm-opt="z"` 建置；`Trunk.toml` 依 design 4.7（輸出到 `dist`、只在 `127.0.0.1:8081` 監聽、`/api/` 代理到 `http://127.0.0.1:8080/api/`、`/realtime/v1/websocket` 以 `ws = true` 代理）

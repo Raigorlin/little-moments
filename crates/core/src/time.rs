@@ -2,14 +2,15 @@
 //! `date_text`（`10/20（週二）`）、`chinese_numeral` 與 `duration_text`。
 //!
 //! 移植自 `src/model.js` 的 `dateRange()`，以及 `src/itinerary-model.js` 的 `normalizeTimeInput()`、`monthDay()`、
-//! `weekdayChar()`、`dateText()`、`chineseNumeral()` 與 `durationText()`。日期是沒有時區的 `chrono::NaiveDate`
+//! `weekdayChar()`、`dateText()`、`chineseNumeral()` 與 `durationText()`。日期是沒有時區的 `time::Date`
 //! （西元曆），只由輸入的日期計算，不讀系統時間、時區與語系，所以每台裝置得到相同的文字（需求 31.1、31.3）。
 
 use std::fmt;
 
-use chrono::{Datelike, NaiveDate};
 use serde::de::{self, Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use time::macros::format_description;
+use time::{Date, Duration, Month};
 
 use crate::limits;
 use crate::text::{normalize_time_input, InvalidTime};
@@ -100,7 +101,72 @@ impl<'de> Deserialize<'de> for Hm {
     }
 }
 
-/// 星期，依 `Weekday::num_days_from_sunday()` 的順序。
+/// 日期欄位的 serde（`#[serde(with = "crate::time::iso_date")]`）：線上格式只有補零的 `YYYY-MM-DD` 字串
+/// （`parse_date()`），與改用 time 之前的 chrono 寫出的字串相同；其他寫法、數字與陣列都不是日期。
+/// `option` 用於 `Option<Date>`（`null` 為 `None`；欄位另加 `#[serde(default)]`）。
+pub mod iso_date {
+    use std::fmt;
+
+    use serde::de::{self, Unexpected, Visitor};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use time::Date;
+
+    /// 以 `YYYY-MM-DD` 讀寫的日期。
+    #[derive(Clone, Copy)]
+    struct Iso(Date);
+
+    impl Serialize for Iso {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.collect_str(&self.0)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for Iso {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct IsoVisitor;
+            impl Visitor<'_> for IsoVisitor {
+                type Value = Iso;
+                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str("YYYY-MM-DD 的日期")
+                }
+                fn visit_str<E: de::Error>(self, value: &str) -> Result<Iso, E> {
+                    super::parse_date(value)
+                        .map(Iso)
+                        .ok_or_else(|| E::invalid_value(Unexpected::Str(value), &self))
+                }
+            }
+            deserializer.deserialize_str(IsoVisitor)
+        }
+    }
+
+    pub fn serialize<S: Serializer>(date: &Date, serializer: S) -> Result<S::Ok, S::Error> {
+        Iso(*date).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Date, D::Error> {
+        Iso::deserialize(deserializer).map(|iso| iso.0)
+    }
+
+    /// `Option<Date>`：`None` 為 `null`。
+    pub mod option {
+        use super::*;
+
+        pub fn serialize<S: Serializer>(
+            date: &Option<Date>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            date.map(Iso).serialize(serializer)
+        }
+
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Option<Date>, D::Error> {
+            Option::<Iso>::deserialize(deserializer).map(|date| date.map(|iso| iso.0))
+        }
+    }
+}
+
+/// 星期，依 `Weekday::number_days_from_sunday()` 的順序。
 const WEEKDAYS: [char; 7] = ['日', '一', '二', '三', '四', '五', '六'];
 
 /// 中文數字 1–9；索引 0 不寫。
@@ -108,28 +174,53 @@ const DIGITS: [&str; 10] = ["", "一", "二", "三", "四", "五", "六", "七",
 
 /// 旅行的每一天（Trip_Day）：`start` 到 `end`（含兩端）依日期遞增（現行 `dateRange()`）。
 /// `end` 早於 `start`，或超過 `limits::TRIP_DAYS` 的 31 天時是空的，例如 2028-02-28 到 2028-03-01 是 3 天。
-pub fn date_range(start: NaiveDate, end: NaiveDate) -> Vec<NaiveDate> {
+pub fn date_range(start: Date, end: Date) -> Vec<Date> {
     // end 早於 start 時天數小於 1；轉成 usize 失敗或不在 1–31 天都是空的
-    let days = end.signed_duration_since(start).num_days() + 1;
+    let days = days_between(start, end) + 1;
     match usize::try_from(days) {
-        Ok(days) if limits::TRIP_DAYS.contains(&days) => start.iter_days().take(days).collect(),
+        Ok(days) if limits::TRIP_DAYS.contains(&days) => iter_days(start).take(days).collect(),
         _ => Vec::new(),
     }
 }
+/// `year` 年 `month` 月 `day` 日；不是有效的日期時是 `None`。
+pub fn ymd(year: i32, month: u8, day: u8) -> Option<Date> {
+    Date::from_calendar_date(year, Month::try_from(month).ok()?, day).ok()
+}
+/// 補零的 `YYYY-MM-DD`（與 JSON 中的日期同一格式，例如 `<input type="date">` 的值）；其他寫法、空字串或不是
+/// 有效的日期時是 `None`。
+pub fn parse_date(text: &str) -> Option<Date> {
+    // 與 Bun 的 /^\d{4}-\d{2}-\d{2}$/ 相同：年份恰好四位數字，沒有正負號（time 的 [year] 另外接受 +／-）
+    if text.len() != 10 || !text.as_bytes()[..4].iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    Date::parse(text, format_description!("[year]-[month]-[day]")).ok()
+}
+/// `from` 到 `to` 的天數；`to` 早於 `from` 時是負數。
+pub fn days_between(from: Date, to: Date) -> i64 {
+    (to - from).whole_days()
+}
+/// `date` 加上 `days` 天（可以是負數）；超出可表示的日期時是 `None`。
+pub fn add_days(date: Date, days: i64) -> Option<Date> {
+    date.checked_add(Duration::days(days))
+}
+/// 從 `start` 起依日期遞增的每一天。
+pub fn iter_days(start: Date) -> impl Iterator<Item = Date> {
+    std::iter::successors(Some(start), |day| day.next_day())
+}
 
 /// 不補零的「{月}/{日}」，例如 2026-10-20 為「10/20」、2027-01-05 為「1/5」（現行 `monthDay()`）。
-pub fn month_day(date: NaiveDate) -> String {
-    format!("{}/{}", date.month(), date.day())
+pub fn month_day(date: Date) -> String {
+    format!("{}/{}", u8::from(date.month()), date.day())
 }
 
 /// 星期的一個字：日、一、二、三、四、五、六之一（現行 `weekdayChar()`）。
-pub fn weekday_char(date: NaiveDate) -> char {
-    WEEKDAYS[date.weekday().num_days_from_sunday() as usize]
+pub fn weekday_char(date: Date) -> char {
+    WEEKDAYS[date.weekday().number_days_from_sunday() as usize]
 }
 
 /// 「{M/D}（週{X}）」，例如 2026-10-20 為「10/20（週二）」（需求 31.3，現行 `dateText()`）；
 /// 括號是全形的 U+FF08 與 U+FF09（需求 31.18）。
-pub fn date_text(date: NaiveDate) -> String {
+pub fn date_text(date: Date) -> String {
     format!("{}（週{}）", month_day(date), weekday_char(date))
 }
 
@@ -171,8 +262,8 @@ pub fn duration_text(days: usize) -> String {
 mod tests {
     use super::*;
 
-    fn day(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).expect("有效的日期")
+    fn day(year: i32, month: u8, day: u8) -> Date {
+        ymd(year, month, day).expect("有效的日期")
     }
 
     fn hm(hour: u8, minute: u8) -> Hm {
@@ -290,6 +381,106 @@ mod tests {
         assert_eq!(date_text(day(2027, 1, 1)), "1/1（週五）");
     }
 
+    /// 日期欄位（`iso_date` 與 `iso_date::option`）的線上格式。
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct Dated {
+        #[serde(with = "iso_date")]
+        day: Date,
+        #[serde(default, with = "iso_date::option")]
+        maybe: Option<Date>,
+    }
+
+    #[test]
+    fn dates_are_written_and_parsed_as_yyyy_mm_dd() {
+        // 線上格式（與改用 time 之前的 chrono 相同）：補零的 YYYY-MM-DD
+        for (date, text) in [
+            (day(2026, 10, 20), "2026-10-20"),
+            (day(2027, 1, 5), "2027-01-05"),
+            (day(1, 1, 1), "0001-01-01"),
+            (day(9999, 12, 31), "9999-12-31"),
+        ] {
+            assert_eq!(date.to_string(), text);
+            assert_eq!(parse_date(text), Some(date), "{text}");
+            let dated = Dated {
+                day: date,
+                maybe: Some(date),
+            };
+            let json = serde_json::json!({ "day": text, "maybe": text });
+            assert_eq!(serde_json::to_value(&dated).expect("可以序列化"), json);
+            assert_eq!(
+                serde_json::from_value::<Dated>(json).expect("可以解析"),
+                dated
+            );
+        }
+        let unset = Dated {
+            day: day(2026, 10, 20),
+            maybe: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&unset).expect("可以序列化"),
+            r#"{"day":"2026-10-20","maybe":null}"#
+        );
+        for json in [
+            r#"{"day":"2026-10-20","maybe":null}"#,
+            r#"{"day":"2026-10-20"}"#,
+        ] {
+            assert_eq!(
+                serde_json::from_str::<Dated>(json).expect("可以解析"),
+                unset,
+                "{json}"
+            );
+        }
+        // 只接受 YYYY-MM-DD 字串：其他寫法、不存在的日期、數字、陣列（[年, 一年中的第幾天]）與 null 都不是日期
+        for text in [
+            "",
+            "2026-02-30",
+            "2026-13-01",
+            "2026-1-5",
+            "26-01-05",
+            "2026/01/05",
+            "2026-01-05T00:00",
+            " 2026-01-05",
+            "2026-01-05 ",
+            "+2026-01-05",
+            "+02026-01-05",
+            "-2026-01-05",
+            "２０２６-01-05",
+        ] {
+            assert_eq!(parse_date(text), None, "{text:?}");
+            let json = serde_json::json!({ "day": text });
+            assert!(serde_json::from_value::<Dated>(json).is_err(), "{text:?}");
+        }
+        for value in [
+            serde_json::json!([2026, 293]),
+            serde_json::json!(20261020),
+            serde_json::json!(null),
+            serde_json::json!({ "year": 2026 }),
+        ] {
+            let json = serde_json::json!({ "day": value.clone() });
+            assert!(serde_json::from_value::<Dated>(json).is_err(), "{value}");
+            let json = serde_json::json!({ "day": "2026-10-20", "maybe": value.clone() });
+            assert_eq!(
+                serde_json::from_value::<Dated>(json).is_ok(),
+                value.is_null(),
+                "{value}"
+            );
+        }
+    }
+    #[test]
+    fn date_helpers_count_and_step_days() {
+        assert_eq!(ymd(2026, 2, 29), None);
+        assert_eq!(ymd(2026, 0, 1), None);
+        assert_eq!(days_between(day(2026, 10, 20), day(2026, 10, 27)), 7);
+        assert_eq!(days_between(day(2026, 10, 27), day(2026, 10, 20)), -7);
+        assert_eq!(add_days(day(2028, 2, 28), 1), Some(day(2028, 2, 29)));
+        assert_eq!(add_days(day(2027, 1, 1), -1), Some(day(2026, 12, 31)));
+        assert_eq!(add_days(Date::MAX, 1), None);
+        let days: Vec<Date> = iter_days(day(2026, 12, 30)).take(3).collect();
+        assert_eq!(
+            days,
+            [day(2026, 12, 30), day(2026, 12, 31), day(2027, 1, 1)]
+        );
+    }
     #[test]
     fn chinese_numeral_writes_1_to_99_in_chinese() {
         let cases = [
